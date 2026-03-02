@@ -147,40 +147,49 @@ function showLoading(show) {
 }
 
 async function login() {
-  const e = document.getElementById('email').value.trim(),
-        p = document.getElementById('password').value.trim(),
-        btn = document.querySelector('button');
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value.trim();
+  const btn = document.querySelector('button');
 
-  if (!e || !p) return showAlert('يرجى إدخال البريد الإلكتروني وكلمة المرور');
+  if (!email || !password) {
+    showAlert('يرجى إدخال البريد الإلكتروني وكلمة المرور');
+    return;
+  }
 
   btn.disabled = true;
   showLoading(true);
 
-  if (!APP_BASE_URL) await fetchAppUrl();
+  // ⚠️ هذا هو الرابط الخاص بتطبيق Google Apps Script
+  const GAS_URL = 'https://script.google.com/macros/s/AKfycbzObysqX-0hKJkUWv7w4yzbNBAUyLAmGTVdPbGfR9ARAQwSGm6mgoW6WjfppB7jo5t4/exec';
 
-  if (!google?.script?.run) {
-    showAlert('خطأ داخلي: google.script.run غير متاح بعد.');
-    btn.disabled = false; showLoading(false); return;
+  try {
+    const response = await fetch(GAS_URL, {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'login',
+        email: email,
+        password: password
+      })
+    });
+
+    const result = await response.json();
+    btn.disabled = false;
+    showLoading(false);
+
+    if (result.success) {
+      sessionStorage.setItem('currentUser', JSON.stringify(result.user));
+      const dashboardPage = getDashboardPageForUser(result.user.type);
+      // التوجيه إلى لوحة التحكم (والتي يجب أن تكون صفحة HTML أخرى على GitHub)
+      window.location.href = `Dashboard.html?user=${encodeURIComponent(JSON.stringify(result.user))}`;
+    } else {
+      showAlert(result.message || 'خطأ في تسجيل الدخول');
+    }
+  } catch (error) {
+    btn.disabled = false;
+    showLoading(false);
+    showAlert('خطأ في الاتصال بالخادم');
   }
-
-  google.script.run
-    .withSuccessHandler(r => {
-      btn.disabled = false; showLoading(false);
-      if (r.success) {
-        sessionStorage.setItem('currentUser', JSON.stringify(r.user));
-        if (r.appUrl) sessionStorage.setItem('baseAppUrl', r.appUrl);
-        const page = r.dashboardPage || 'Dashboard';
-        const baseUrl = APP_BASE_URL || (location.origin + location.pathname);
-        window.top.location.href = baseUrl + '?page=' + page;
-      } else showAlert(r.message || 'خطأ في تسجيل الدخول');
-    })
-    .withFailureHandler(err => {
-      btn.disabled = false; showLoading(false);
-      showAlert('خطأ اتصال: ' + err);
-    })
-    .loginUser(e, p);
 }
-
 window.addEventListener("load", async () => {
   console.log("FRAME:", window.self === window.top ? "TOP" : "IFRAME");
   console.log("typeof google:", typeof google);
@@ -197,3 +206,4 @@ window.addEventListener("load", async () => {
 
 </body>
 </html>
+
