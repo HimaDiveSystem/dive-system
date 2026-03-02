@@ -400,42 +400,13 @@
   <script>
     console.log("🚀 SalesDashboard بدأ التحميل");
     
-    let APP_BASE_URL = null;
+    // ⚠️ رابط API الخاص بتطبيق Google Apps Script
+    const GAS_URL = 'https://script.google.com/macros/s/AKfycbzEchyYD4_7wm7qhVB6wEpVJB54U_fAgH_JCurWE-_IDZc4riogptTparr7FKB8jZpO/exec';
+    
     let currentUser = null;
     let selectedBranch = null;
 
-    function fetchAppUrl() {
-      return new Promise((resolve) => {
-        google.script.run
-          .withSuccessHandler(url => {
-            APP_BASE_URL = url;
-            console.log('✅ APP_BASE_URL:', APP_BASE_URL);
-            resolve(url);
-          })
-          .withFailureHandler(error => {
-            console.error('❌ فشل جلب الرابط:', error);
-            APP_BASE_URL = window.location.origin + window.location.pathname;
-            console.log('⚠️ استخدام رابط Fallback:', APP_BASE_URL);
-            resolve(APP_BASE_URL);
-          })
-          .getAppUrl();
-      });
-    }
-
-    function getUserFromUrl() {
-      const urlParams = new URLSearchParams(window.location.search);
-      const userParam = urlParams.get('user');
-      if (userParam) {
-        try {
-          return JSON.parse(decodeURIComponent(userParam));
-        } catch (e) {
-          console.error('خطأ في فك تشفير بيانات المستخدم:', e);
-          return null;
-        }
-      }
-      return null;
-    }
-
+    // ==================== دوال مساعدة ====================
     function showAlert(message) {
       const modal = document.getElementById('customAlertModal');
       document.getElementById('alertMessage').innerText = message;
@@ -476,6 +447,7 @@
       cancelBtn.addEventListener('click', cancelHandler);
     }
 
+    // ==================== دوال الفروع ====================
     function showBranchSelector(branches) {
       const content = document.getElementById('mainContent');
       let options = '<option value="">-- اختر الفرع --</option>';
@@ -505,33 +477,48 @@
       showDashboard();
     }
 
-    function loadUserBranches() {
+    async function loadUserBranches() {
       console.log('🔍 loadUserBranches - centerId:', currentUser?.centerId);
       
       if (!currentUser?.centerId) {
         showAlert('لا يوجد مركز تابع للمستخدم');
-        showDashboard(); // عرض الواجهة كحل بديل
+        showDashboard();
         return;
       }
+
+      showLoading(true, 'جاري تحميل الفروع...');
       
-      google.script.run
-        .withSuccessHandler(function(branches) {
-          console.log('🔍 branches من السيرفر:', branches);
-          if (branches && branches.length > 0) {
-            showBranchSelector(branches);
-          } else {
-            showAlert('لا توجد فروع متاحة لهذا المركز');
-            showDashboard();
-          }
-        })
-        .withFailureHandler(function(error) {
-          console.error('❌ فشل في تحميل الفروع:', error);
-          showAlert('فشل في تحميل الفروع: ' + error.message);
+      try {
+        const response = await fetch(GAS_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            action: 'getBranchesByCenter',
+            centerId: currentUser.centerId
+          })
+        });
+
+        const data = await response.json();
+        console.log('🔍 استجابة الفروع:', data);
+        
+        if (data.success && data.branches && data.branches.length > 0) {
+          showBranchSelector(data.branches);
+        } else {
+          showAlert('لا توجد فروع متاحة لهذا المركز');
           showDashboard();
-        })
-        .getBranchesByCenter(currentUser.centerId);
+        }
+      } catch (error) {
+        console.error('❌ فشل تحميل الفروع:', error);
+        showAlert('فشل في تحميل الفروع');
+        showDashboard();
+      } finally {
+        showLoading(false);
+      }
     }
 
+    // ==================== دوال الصفحة الرئيسية ====================
     function showDashboard() {
       const content = document.getElementById('mainContent');
       content.innerHTML = `
@@ -571,21 +558,13 @@
         return;
       }
       
-      if (!APP_BASE_URL) {
-        console.warn('⚠️ APP_BASE_URL غير متوفر، جاري التحميل...');
-        fetchAppUrl().then(() => {
-          const url = APP_BASE_URL + '?page=SalesInvoice&user=' + encodeURIComponent(JSON.stringify(currentUser));
-          console.log('🚀 التوجيه إلى:', url);
-          window.top.location.href = url;
-        });
-        return;
-      }
-      
-      const url = APP_BASE_URL + '?page=SalesInvoice&user=' + encodeURIComponent(JSON.stringify(currentUser));
+      // التوجيه إلى صفحة الفاتورة مع بيانات المستخدم
+      const url = `SalesInvoice.html?user=${encodeURIComponent(JSON.stringify(currentUser))}`;
       console.log('🚀 التوجيه إلى:', url);
-      window.top.location.href = url;
+      window.location.href = url;
     }
 
+    // ==================== دوال التبويبات والتصفية ====================
     function showTab(tab) {
       document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
       event.target.classList.add('active');
@@ -600,36 +579,38 @@
       showAlert('تصفية حسب ' + status + ' - قيد التطوير');
     }
 
+    // ==================== تسجيل الخروج ====================
     function logout() {
       showConfirm('هل أنت متأكد من تسجيل الخروج؟', function() {
         sessionStorage.removeItem('currentUser');
         sessionStorage.removeItem('selectedBranch');
-        if (APP_BASE_URL) {
-          window.top.location.href = APP_BASE_URL + '?page=Login';
-        } else {
-          window.top.location.href = '?page=Login';
-        }
+        window.location.href = 'Login.html';
       });
     }
 
+    // ==================== التحميل الأولي ====================
     document.addEventListener('DOMContentLoaded', async function() {
       console.log("📌 DOMContentLoaded تم التفعيل");
       
-      await fetchAppUrl();
-      
+      // استرجاع بيانات المستخدم
       let userData = sessionStorage.getItem('currentUser');
       
       if (!userData) {
-        const urlUser = getUserFromUrl();
-        if (urlUser) {
-          userData = JSON.stringify(urlUser);
-          sessionStorage.setItem('currentUser', userData);
+        const urlParams = new URLSearchParams(window.location.search);
+        const userParam = urlParams.get('user');
+        if (userParam) {
+          try {
+            userData = decodeURIComponent(userParam);
+            sessionStorage.setItem('currentUser', userData);
+          } catch (e) {
+            console.error('خطأ في فك تشفير بيانات المستخدم:', e);
+          }
         }
       }
 
       if (!userData) {
         console.log("❌ لا يوجد مستخدم، التوجيه إلى Login");
-        window.top.location.href = APP_BASE_URL + '?page=Login';
+        window.location.href = 'Login.html';
         return;
       }
 
@@ -637,29 +618,32 @@
         currentUser = JSON.parse(userData);
         document.getElementById('userNameDisplay').textContent = currentUser.name || 'Sales Rep';
 
+        // التحقق من نوع المستخدم
         if (currentUser.type !== 'Sales') {
           if (currentUser.type === 'Accountant') {
-            window.top.location.href = APP_BASE_URL + '?page=AccountantDashboard';
+            window.location.href = 'AccountantDashboard.html';
             return;
           } else {
-            window.top.location.href = APP_BASE_URL + '?page=Dashboard';
+            window.location.href = 'Dashboard.html';
             return;
           }
         }
 
+        // استرجاع الفرع المحفوظ
         const savedBranch = sessionStorage.getItem('selectedBranch');
         if (savedBranch) {
           selectedBranch = JSON.parse(savedBranch);
           showDashboard();
         } else {
-          loadUserBranches();
+          await loadUserBranches();
         }
       } catch (e) {
         console.error(e);
-        window.top.location.href = APP_BASE_URL + '?page=Login';
+        window.location.href = 'Login.html';
       }
     });
 
+    // ربط الدوال بالنافذة العامة
     window.showTab = showTab;
     window.filterInvoices = filterInvoices;
     window.logout = logout;
