@@ -638,23 +638,13 @@
       hotels: null
     };
 
+    // ✅ رابط Google Apps Script الموحد
+    const GAS_URL = 'https://script.google.com/macros/s/AKfycbwgVeGytJHZtWIgxDtFb0dgONtzQ1nWA-6ckWCWmQ4egRc0qn8iggrdgF_L5MjOd68/exec';
+
     // ==================== دالة جلب الرابط من السيرفر ====================
     function fetchAppUrl() {
-      return new Promise((resolve) => {
-        google.script.run
-          .withSuccessHandler(url => {
-            APP_BASE_URL = url;
-            console.log('✅ APP_BASE_URL:', APP_BASE_URL);
-            resolve(url);
-          })
-          .withFailureHandler(error => {
-            console.error('❌ فشل جلب الرابط:', error);
-            APP_BASE_URL = window.location.origin + window.location.pathname;
-            console.log('⚠️ استخدام رابط Fallback:', APP_BASE_URL);
-            resolve(APP_BASE_URL);
-          })
-          .getAppUrl();
-      });
+      APP_BASE_URL = GAS_URL;
+      return Promise.resolve(APP_BASE_URL);
     }
 
     // ==================== استخراج بيانات المستخدم من الرابط ====================
@@ -710,8 +700,9 @@
 
     // ==================== التحقق من أسعار الصرف ====================
     function checkExchangeRates() {
-      google.script.run
-        .withSuccessHandler(function(result) {
+      fetch(GAS_URL + '?action=checkExchangeRateStatus')
+        .then(r => r.json())
+        .then(function(result) {
           if (result.status === 'block') {
             document.getElementById('mainContent').innerHTML = `
               <div class="error-message">
@@ -727,11 +718,10 @@
             showInvoiceForm();
           }
         })
-        .withFailureHandler(function(error) {
+        .catch(function(error) {
           console.error('Error checking exchange rates:', error);
           showInvoiceForm();
-        })
-        .checkExchangeRateStatus();
+        });
     }
     
     function showInvoiceFormWithWarning(warningMessage) {
@@ -916,12 +906,13 @@
         return;
       }
       
-      google.script.run
-        .withSuccessHandler(function(nationalities) {
+      fetch(GAS_URL + '?action=getNationalities')
+        .then(r => r.json())
+        .then(function(nationalities) {
           cache.nationalities = nationalities;
           populateNationalities(nationalities);
         })
-        .getNationalities();
+        .catch(err => console.error('Error loading nationalities:', err));
     }
 
     function populateNationalities(nationalities) {
@@ -939,12 +930,13 @@
         return;
       }
       
-      google.script.run
-        .withSuccessHandler(function(hotels) {
+      fetch(GAS_URL + '?action=getHotels')
+        .then(r => r.json())
+        .then(function(hotels) {
           cache.hotels = hotels;
           populateHotels(hotels);
         })
-        .getHotels();
+        .catch(err => console.error('Error loading hotels:', err));
     }
 
     function populateHotels(hotels) {
@@ -962,12 +954,13 @@
         return;
       }
       
-      google.script.run
-        .withSuccessHandler(function(trips) {
+      fetch(GAS_URL + '?action=getUniqueTrips')
+        .then(r => r.json())
+        .then(function(trips) {
           cache.trips = trips;
           populateTrips(trips);
         })
-        .getUniqueTrips();
+        .catch(err => console.error('Error loading trips:', err));
     }
 
     function populateTrips(trips) {
@@ -1003,28 +996,33 @@
       const tripName = document.getElementById('tripName').value;
       if (!tripName) return;
       
-      google.script.run
-        .withSuccessHandler(function(def) {
+      fetch(GAS_URL + '?action=getTripDefinition&tripName=' + encodeURIComponent(tripName))
+        .then(r => r.json())
+        .then(function(def) {
           if (def && def.items) {
-            currentTripDefinition = def.items; // تخزين أسماء البنود
+            currentTripDefinition = def.items;
             currentTripCategory = def.category || '';
             loadTripPrices(tripName, currentTripCategory);
           } else {
             showAlert('No items found for this trip');
           }
         })
-        .withFailureHandler(function(err) {
+        .catch(function(err) {
           showAlert('Error loading trip definition: ' + err.message);
-        })
-        .getTripDefinition(tripName);
+        });
     }
     
     // ==================== تحميل أسعار الرحلة ====================
     function loadTripPrices(tripName, category) {
       const currency = document.getElementById('invoiceCurrency').value;
       
-      google.script.run
-        .withSuccessHandler(function(data) {
+      fetch(GAS_URL, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action: 'getTripPrices', tripName: tripName, currency: currency, category: category})
+      })
+        .then(r => r.json())
+        .then(function(data) {
           if (data && data.prices) {
             currentTripItems = data.prices;
             displayTripItems(tripName);
@@ -1032,10 +1030,9 @@
             showAlert('No prices found for this trip');
           }
         })
-        .withFailureHandler(function(err) {
+        .catch(function(err) {
           showAlert('Error loading prices: ' + err.message);
-        })
-        .getTripPrices(tripName, currency, category);
+        });
     }
     
     // ==================== عرض بنود الرحلة ====================
@@ -1149,12 +1146,12 @@
       
       // إذا لم يكن موجوداً، نجلب من السيرفر
       try {
-        const rates = await new Promise((resolve, reject) => {
-          google.script.run
-            .withSuccessHandler(resolve)
-            .withFailureHandler(reject)
-            .getExchangeRate(date);
+        const resp = await fetch(GAS_URL, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({action: 'getExchangeRate', dateStr: date})
         });
+        const rates = await resp.json();
         
         if (rates) {
           exchangeRatesCache[date] = rates; // تخزين في الكاش
@@ -1211,8 +1208,13 @@
       const fullPhone = code + number;
       const phoneOnly = number;
       
-      google.script.run
-        .withSuccessHandler(function(customer) {
+      fetch(GAS_URL, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action: 'searchCustomerByPhone', phone: phoneOnly})
+      })
+        .then(r => r.json())
+        .then(function(customer) {
           const loader = document.getElementById('phoneLoader');
           if (loader) loader.style.display = 'none';
           
@@ -1223,19 +1225,23 @@
             document.getElementById('roomNo').value = customer.roomNo || '';
           } else {
             // جرب البحث بالرقم كامل مع الكود
-            google.script.run
-              .withSuccessHandler(function(customer2) {
+            fetch(GAS_URL, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({action: 'searchCustomerByPhone', phone: fullPhone})
+            })
+              .then(r2 => r2.json())
+              .then(function(customer2) {
                 if (customer2) {
                   document.getElementById('guestName').value = customer2.name || '';
                   document.getElementById('nationality').value = customer2.nationality || '';
                   document.getElementById('hotel').value = customer2.hotel || '';
                   document.getElementById('roomNo').value = customer2.roomNo || '';
                 }
-              })
-              .searchCustomerByPhone(fullPhone);
+              });
           }
         })
-        .searchCustomerByPhone(phoneOnly);
+        .catch(err => console.error('Search error:', err));
     }
     
     // ==================== دوال التوقيع ====================
@@ -1451,25 +1457,34 @@
       saveBtn.disabled = true;
       
       // 1️⃣ حفظ الفاتورة أولاً
-      google.script.run
-        .withSuccessHandler(function(response) {
+      fetch(GAS_URL, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action: 'saveInvoice', invoiceData: invoiceData})
+      })
+        .then(r => r.json())
+        .then(function(response) {
           if (response.success) {
             showAlert(`✅ Invoice saved successfully\nInvoice number: ${response.voucherNo}`);
             clearForm();
             
             // 2️⃣ بعد الحفظ، استدعاء saveAndGenerateInvoice لإنشاء PDF
-            google.script.run
-              .withSuccessHandler(function(pdfResponse) {
+            fetch(GAS_URL, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({action: 'saveAndGenerateInvoice', invoiceId: response.voucherNo})
+            })
+              .then(r2 => r2.json())
+              .then(function(pdfResponse) {
                 if (pdfResponse.success) {
                   window.open(pdfResponse.url, '_blank');
                 } else {
                   console.warn('⚠️ PDF generation warning:', pdfResponse.message);
                 }
               })
-              .withFailureHandler(function(pdfError) {
+              .catch(function(pdfError) {
                 console.error('❌ PDF generation error:', pdfError);
-              })
-              .saveAndGenerateInvoice(response.voucherNo);
+              });
               
           } else {
             showAlert('❌ Error: ' + response.message);
@@ -1477,12 +1492,11 @@
           saveBtn.textContent = originalText;
           saveBtn.disabled = false;
         })
-        .withFailureHandler(function(error) {
+        .catch(function(error) {
           saveBtn.textContent = originalText;
           saveBtn.disabled = false;
           showAlert('❌ Connection error: ' + error.message);
-        })
-        .saveInvoice(invoiceData);
+        });
     }
     
     // ==================== إعادة تعيين النموذج بالكامل ====================
@@ -1619,10 +1633,14 @@
       newBookingBtn.disabled = true;
 
       // 🟢 إرسال البيانات لـ GAS - حفظ الفاتورة أولاً
-      google.script.run
-        .withSuccessHandler(response => {
+      fetch(GAS_URL, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action: 'saveInvoice', invoiceData: invoiceData})
+      })
+        .then(r => r.json())
+        .then(response => {
           if (response.success) {
-            // حفظ بيانات العميل مؤقتًا
             const customerData = {
               guestName: fields.guestName.value,
               nationality: fields.nationality.value,
@@ -1632,7 +1650,6 @@
               phoneNumber: phoneNumber
             };
 
-            // مسح الحقول مع الاحتفاظ ببيانات العميل
             [
               'activeDate','tripTime','invoiceCurrency','tripName',
               'adultCount','childCount','infantCount',
@@ -1652,7 +1669,6 @@
             currentTripCategory = '';
             currentTripDefinition = null;
 
-            // إعادة تعبئة بيانات العميل
             Object.entries(customerData).forEach(([key, value]) => {
               const el = document.getElementById(key);
               if (el) el.value = value;
@@ -1660,31 +1676,33 @@
 
             showAlert(`✅ Invoice saved successfully!\nVoucher: ${response.voucherNo}\nYou can now book another trip for the same customer.`);
 
-            // استدعاء saveAndGenerateInvoice لإنشاء PDF
-            google.script.run
-              .withSuccessHandler(function(pdfResponse) {
+            fetch(GAS_URL, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({action: 'saveAndGenerateInvoice', invoiceId: response.voucherNo})
+            })
+              .then(r2 => r2.json())
+              .then(function(pdfResponse) {
                 if (pdfResponse.success) {
                   window.open(pdfResponse.url, '_blank');
                 } else {
                   console.warn('⚠️ PDF generation warning:', pdfResponse.message);
                 }
               })
-              .withFailureHandler(function(pdfError) {
+              .catch(function(pdfError) {
                 console.error('❌ PDF generation error:', pdfError);
-              })
-              .saveAndGenerateInvoice(response.voucherNo);
+              });
           } else {
             showAlert('❌ Error: ' + response.message);
           }
           newBookingBtn.textContent = originalText;
           newBookingBtn.disabled = false;
         })
-        .withFailureHandler(error => {
+        .catch(error => {
           newBookingBtn.textContent = originalText;
           newBookingBtn.disabled = false;
           showAlert('❌ Connection error: ' + error.message);
-        })
-        .saveInvoice(invoiceData);
+        });
     }
 
     // ==================== العودة للداشبورد (معدلة لاستخدام APP_BASE_URL) ====================
