@@ -548,11 +548,10 @@
           })
           .withFailureHandler(error => {
             console.error('❌ فشل جلب الرابط:', error);
-            // Fallback: استخدام الرابط الحالي
             APP_BASE_URL = window.location.origin + window.location.pathname;
             resolve(APP_BASE_URL);
           })
-          .getAppUrl(); // هذه الدالة يجب أن تكون موجودة في Code.gs
+          .getAppUrl();
       });
     }
 
@@ -570,6 +569,7 @@
       }
       return null;
     }
+
     // دوال المودال المخصص
     function showConfirm(message, onConfirm) {
       const modal = document.getElementById('customConfirmModal');
@@ -610,19 +610,15 @@
       okBtn.addEventListener('click', okHandler);
     }
 
-       function logout() {
+    function logout() {
       showConfirm('هل أنت متأكد من تسجيل الخروج؟', function() {
         sessionStorage.removeItem('currentUser');
         sessionStorage.removeItem('appUrl');
-        if (APP_BASE_URL) {
-          window.top.location.href = APP_BASE_URL + '?page=Login';
-        } else {
-          window.top.location.href = '?page=Login'; // Fallback
-        }
+        window.location.href = 'Login.html';
       });
     }
 
-    // التحقق من وجود المستخدم عند تحميل الصفحة (معدل لانتظار fetchAppUrl)
+    // التحقق من وجود المستخدم عند تحميل الصفحة
     document.addEventListener('DOMContentLoaded', async function() {
       console.log("📌 DOMContentLoaded تم التفعيل");
       
@@ -642,7 +638,7 @@
       
       if (!userData) {
         console.log("❌ لا يوجد مستخدم، التوجيه إلى Login");
-        window.top.location.href = APP_BASE_URL + '?page=Login';
+        window.location.href = 'Login.html';
         return;
       }
       
@@ -653,12 +649,12 @@
         
         if (currentUser.type !== 'Owner' && currentUser.type !== 'Admin') {
           console.log("❌ نوع المستخدم غير مسموح:", currentUser.type);
-          window.top.location.href = APP_BASE_URL + '?page=Login';
+          window.location.href = 'Login.html';
           return;
         }
       } catch (e) {
         console.error("❌ خطأ في تحليل userData:", e);
-        window.top.location.href = APP_BASE_URL + '?page=Login';
+        window.location.href = 'Login.html';
         return;
       }
       
@@ -666,7 +662,6 @@
       showSection('welcome');
       loadStats();
     });
-
 
     function showSection(section) {
       console.log("🔄 showSection تم استدعاؤها بالقسم:", section);
@@ -702,25 +697,20 @@
         return;
       }
 
-      google.script.run
-        .withSuccessHandler(function(count) {
-          document.getElementById('branchesCount').textContent = count || '0';
-        })
-        .withFailureHandler(function(error) {
-          console.error("❌ فشل جلب عدد الفروع:", error);
-          document.getElementById('branchesCount').textContent = '0';
-        })
-        .getOwnerBranchesCount(currentUser.centerId);
+      // ✅ استخدام GET بدل google.script.run
+      async function fetchCount(url, elementId) {
+        try {
+          const response = await fetch(url);
+          const data = await response.json();
+          document.getElementById(elementId).textContent = data || '0';
+        } catch (error) {
+          console.error(`❌ فشل جلب ${elementId}:`, error);
+          document.getElementById(elementId).textContent = '0';
+        }
+      }
 
-      google.script.run
-        .withSuccessHandler(function(count) {
-          document.getElementById('staffCount').textContent = count || '0';
-        })
-        .withFailureHandler(function(error) {
-          console.error("❌ فشل جلب عدد الموظفين:", error);
-          document.getElementById('staffCount').textContent = '0';
-        })
-        .getOwnerStaffCount(currentUser.centerId);
+      fetchCount(`${GAS_URL}?action=getOwnerBranchesCount&centerId=${encodeURIComponent(currentUser.centerId)}`, 'branchesCount');
+      fetchCount(`${GAS_URL}?action=getOwnerStaffCount&centerId=${encodeURIComponent(currentUser.centerId)}`, 'staffCount');
 
       document.getElementById('todayInvoices').textContent = '0';
       document.getElementById('todaySales').textContent = '0';
@@ -728,27 +718,30 @@
 
     // ==================== دوال الفروع ====================
     function loadBranches() {
-  console.log("loadBranches تم استدعاؤها");
-  
-  document.querySelectorAll('.menu-item').forEach(item => item.classList.remove('active'));
-  const activeItem = document.querySelector('.menu-item[onclick*="loadBranches()"]');
-  if (activeItem) activeItem.classList.add('active');
-  
-  document.getElementById('contentArea').innerHTML = '<div style="text-align: center; padding: 50px;">جاري تحميل الفروع...</div>';
-  
-  google.script.run
-    .withSuccessHandler(displayBranches)
-    .withFailureHandler(function(error) {
-      console.error("❌ فشل تحميل الفروع:", error);
-      document.getElementById('contentArea').innerHTML = '<div style="text-align: center; padding: 50px; color: red;">فشل تحميل الفروع</div>';
-    })
-    .getBranchesByCenter(currentUser.centerId);  // ✅ استخدم الدالة الصحيحة
-}
+      console.log("loadBranches تم استدعاؤها");
+      
+      document.querySelectorAll('.menu-item').forEach(item => item.classList.remove('active'));
+      const activeItem = document.querySelector('.menu-item[onclick*="loadBranches()"]');
+      if (activeItem) activeItem.classList.add('active');
+      
+      document.getElementById('contentArea').innerHTML = '<div style="text-align: center; padding: 50px;">جاري تحميل الفروع...</div>';
+      
+      // ✅ استخدام GET بدل google.script.run
+      fetch(`${GAS_URL}?action=getBranchesByCenter&centerId=${encodeURIComponent(currentUser.centerId)}`)
+        .then(response => response.json())
+        .then(data => displayBranches(data))
+        .catch(error => {
+          console.error("❌ فشل تحميل الفروع:", error);
+          document.getElementById('contentArea').innerHTML = '<div style="text-align: center; padding: 50px; color: red;">فشل تحميل الفروع</div>';
+        });
+    }
 
     function displayBranches(branchesData) {
       console.log("displayBranches تم استدعاؤها", branchesData);
       
-      if (!branchesData || branchesData.length === 0) {
+      const branchesArray = Array.isArray(branchesData) ? branchesData : (branchesData.branches || []);
+      
+      if (!branchesArray || branchesArray.length === 0) {
         document.getElementById('contentArea').innerHTML = `
           <div class="content-area">
             <div class="content-header">
@@ -785,7 +778,7 @@
               <tbody>
       `;
 
-      branchesData.forEach(branch => {
+      branchesArray.forEach(branch => {
         const isActive = branch.isActive === 'TRUE' || branch.isActive === true;
         
         html += `
@@ -832,27 +825,30 @@
 
     // ==================== دوال الموظفين ====================
     function loadStaff() {
-  console.log("loadStaff تم استدعاؤها");
-  
-  document.querySelectorAll('.menu-item').forEach(item => item.classList.remove('active'));
-  const activeItem = document.querySelector('.menu-item[onclick*="loadStaff()"]');
-  if (activeItem) activeItem.classList.add('active');
-  
-  document.getElementById('contentArea').innerHTML = '<div style="text-align: center; padding: 50px;">جاري تحميل الموظفين...</div>';
-  
-  google.script.run
-    .withSuccessHandler(displayStaff)
-    .withFailureHandler(function(error) {
-      console.error("❌ فشل تحميل الموظفين:", error);
-      document.getElementById('contentArea').innerHTML = '<div style="text-align: center; padding: 50px; color: red;">فشل تحميل الموظفين</div>';
-    })
-    .getStaffByCenter(currentUser.centerId);  // ✅ استخدم الدالة الصحيحة
-}
+      console.log("loadStaff تم استدعاؤها");
+      
+      document.querySelectorAll('.menu-item').forEach(item => item.classList.remove('active'));
+      const activeItem = document.querySelector('.menu-item[onclick*="loadStaff()"]');
+      if (activeItem) activeItem.classList.add('active');
+      
+      document.getElementById('contentArea').innerHTML = '<div style="text-align: center; padding: 50px;">جاري تحميل الموظفين...</div>';
+      
+      // ✅ استخدام GET بدل google.script.run
+      fetch(`${GAS_URL}?action=getStaffByCenter&centerId=${encodeURIComponent(currentUser.centerId)}`)
+        .then(response => response.json())
+        .then(data => displayStaff(data))
+        .catch(error => {
+          console.error("❌ فشل تحميل الموظفين:", error);
+          document.getElementById('contentArea').innerHTML = '<div style="text-align: center; padding: 50px; color: red;">فشل تحميل الموظفين</div>';
+        });
+    }
 
     function displayStaff(staffData) {
       console.log("displayStaff تم استدعاؤها", staffData);
       
-      if (!staffData || staffData.length === 0) {
+      const staffArray = Array.isArray(staffData) ? staffData : (staffData.staff || []);
+      
+      if (!staffArray || staffArray.length === 0) {
         document.getElementById('contentArea').innerHTML = `
           <div class="content-area">
             <div class="content-header">
@@ -890,7 +886,7 @@
               <tbody>
       `;
 
-      staffData.forEach(user => {
+      staffArray.forEach(user => {
         const statusClass = user.isActive ? 'status-active' : 'status-inactive';
         const statusText = user.isActive ? 'نشط' : 'غير نشط';
         
@@ -1019,4 +1015,3 @@
   </script>
 </body>
 </html>
-
