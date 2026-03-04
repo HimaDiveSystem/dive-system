@@ -1367,7 +1367,6 @@
     
     // ==================== حفظ الفاتورة (محدث مع التوقيع واستدعاء saveAndGenerateInvoice) ====================
    async function saveInvoice() {
-  // التحقق من الحقول المطلوبة
   if (!document.getElementById('guestName').value) { showAlert('Please enter guest name'); return; }
   if (!document.getElementById('nationality').value) { showAlert('Please select nationality'); return; }
   if (!document.getElementById('hotel').value) { showAlert('Please select hotel'); return; }
@@ -1423,8 +1422,8 @@
     discount: parseFloat(document.getElementById('discount').value) || 0,
     cost: currentTripItems.some(p => p > 0),
     activitiesText,
-    issueDate,
-    signatureData
+    issueDate
+    // ❌ لا نضع signatureData هنا — سيُرسل عبر POST منفصل
   };
 
   for (let i = 0; i < 10; i++) {
@@ -1437,11 +1436,8 @@
   saveBtn.disabled = true;
 
   try {
-    // 1️⃣ حفظ الفاتورة بدون التوقيع
-    const sigData = invoiceData.signatureData;
-    const invoiceDataNoSig = Object.assign({}, invoiceData, { signatureData: '' });
-    const saveUrl = GAS_URL + '?action=saveInvoice&data=' + encodeURIComponent(JSON.stringify(invoiceDataNoSig));
-
+    // 1️⃣ حفظ الفاتورة بدون التوقيع عبر GET
+    const saveUrl = GAS_URL + '?action=saveInvoice&data=' + encodeURIComponent(JSON.stringify(invoiceData));
     const r = await fetch(saveUrl);
     const response = await r.json();
 
@@ -1456,21 +1452,18 @@
     showAlert(`✅ Invoice saved successfully\nInvoice number: ${voucherNo}`);
     clearForm();
 
-    // 2️⃣ حفظ التوقيع وانتظاره قبل إنشاء PDF
-    if (sigData) {
-  try {
-    const formData = new FormData();
-    formData.append('action', 'saveSignature');
-    formData.append('voucherNo', voucherNo);
-    formData.append('sig', sigData);
-    await fetch(GAS_URL, {
-      method: 'POST',
-      body: formData
-    });
-  } catch(sigError) {
-    console.warn('⚠️ فشل حفظ التوقيع:', sigError);
-  }
-}
+    // 2️⃣ حفظ التوقيع عبر POST مع voucherNo
+    if (signatureData) {
+      try {
+        const formData = new FormData();
+        formData.append('action', 'saveSignature');
+        formData.append('voucherNo', voucherNo);
+        formData.append('sig', signatureData);
+        await fetch(GAS_URL, { method: 'POST', body: formData });
+      } catch(sigError) {
+        console.warn('⚠️ فشل حفظ التوقيع:', sigError);
+      }
+    }
 
     // 3️⃣ إنشاء PDF بعد حفظ التوقيع
     try {
@@ -1530,192 +1523,172 @@
     }
     
     // ==================== حجز جديد (مع الاحتفاظ ببيانات العميل واستدعاء saveAndGenerateInvoice) ====================
-    async function newBooking(event) {
-      event.preventDefault(); // منع أي submit افتراضي إذا كان الزر ضمن form
+  async function newBooking(event) {
+  event.preventDefault();
 
-      // 🟢 تجميع الحقول الأساسية
-      const fields = {
-        guestName: document.getElementById('guestName'),
-        nationality: document.getElementById('nationality'),
-        hotel: document.getElementById('hotel'),
-        roomNo: document.getElementById('roomNo'),
-        activeDate: document.getElementById('activeDate'),
-        tripTime: document.getElementById('tripTime'),
-        invoiceCurrency: document.getElementById('invoiceCurrency'),
-        tripName: document.getElementById('tripName'),
-      };
+  const fields = {
+    guestName: document.getElementById('guestName'),
+    nationality: document.getElementById('nationality'),
+    hotel: document.getElementById('hotel'),
+    roomNo: document.getElementById('roomNo'),
+    activeDate: document.getElementById('activeDate'),
+    tripTime: document.getElementById('tripTime'),
+    invoiceCurrency: document.getElementById('invoiceCurrency'),
+    tripName: document.getElementById('tripName'),
+  };
 
-      // التحقق من الحقول المطلوبة
-      for (const [key, field] of Object.entries(fields)) {
-        if (!field.value.trim()) {
-          showAlert(`Please enter/select ${key}`);
-          field.focus();
-          return;
-        }
-      }
+  for (const [key, field] of Object.entries(fields)) {
+    if (!field.value.trim()) {
+      showAlert(`Please enter/select ${key}`);
+      field.focus();
+      return;
+    }
+  }
 
-      if (!currentTripDefinition) {
-        showAlert('Please load trip items first');
-        return;
-      }
-
-      // 🟢 تجهيز رقم الهاتف
-      const phoneCode = (document.getElementById('phoneCode').value || '').replace(/[^0-9+]/g, '');
-      const phoneNumber = (document.getElementById('phoneNumber').value || '').replace(/[^0-9]/g, '');
-
-      // 🟢 إنشاء نص الأنشطة
-      const activitiesText = buildActivitiesText();
-
-      // 🟢 تاريخ ووقت الفاتورة
-      const now = new Date();
-      const day = now.getDate().toString().padStart(2, '0');
-      const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      const month = monthNames[now.getMonth()];
-      const year = now.getFullYear().toString().slice(-2);
-      const hours = now.getHours().toString().padStart(2,'0');
-      const minutes = now.getMinutes().toString().padStart(2,'0');
-      const seconds = now.getSeconds().toString().padStart(2,'0');
-      const issueDate = `${day}/${month}/${year}, ${hours}:${minutes}:${seconds}`;
-
-      // 🟢 جمع البيانات المالية وعدد الأشخاص
-      const parseNum = (id) => parseFloat(document.getElementById(id)?.value) || 0;
-
-      const invoiceData = {
-        rest: parseNum('displayRest'),
-        activeDate: fields.activeDate.value,
-        salesId: currentUser.id,
-        time: fields.tripTime.value,
-        trip: fields.tripName.value,
-        cashUSD: parseNum('cashUSD'),
-        cashEUR: parseNum('cashEUR'),
-        cashGBP: parseNum('cashGBP'),
-        cashLE: parseNum('cashLE'),
-        visaUSD: parseNum('visaUSD'),
-        visaEUR: parseNum('visaEUR'),
-        visaGBP: parseNum('visaGBP'),
-        visaLE: parseNum('visaLE'),
-        hotel: fields.hotel.value,
-        roomNo: fields.roomNo.value,
-        nationality: fields.nationality.value,
-        guestName: fields.guestName.value,
-        contactNo: phoneCode + phoneNumber,
-        notes: document.getElementById('notes').value || '',
-        paymentPrice: parseNum('displayTotal'),
-        invoiceCurrency: fields.invoiceCurrency.value,
-        centerName: currentUser.centerName || '',
-        branchName: currentUser.branchName || '',
-        salesName: currentUser.name || '',
-        adultCount: parseNum('adultCount'),
-        childCount: parseNum('childCount'),
-        infantCount: parseNum('infantCount'),
-        discount: parseNum('discount'),
-        cost: currentTripItems.some(p => p > 0),
-        activitiesText,
-        issueDate,
-        signatureData
-      };
-
-      // 🟢 إضافة بنود الرحلة
-      for (let i = 0; i < 10; i++) {
-        invoiceData[`item${i}`] = parseNum(`qty_${i}`);
-      }
-
-      // 🟢 زر الحفظ
-      const newBookingBtn = event.target;
-      const originalText = newBookingBtn.textContent;
-      newBookingBtn.textContent = '⏳ Saving...';
-      newBookingBtn.disabled = true;
-
-      // 🟢 إرسال البيانات لـ GAS عبر GET مع البيانات مشفرة
-      // نرسل البيانات بدون التوقيع أولاً (لتجنب تجاوز حد URL)
-      const sigDataNB = invoiceData.signatureData;
-      const invoiceDataNoSigNB = Object.assign({}, invoiceData, { signatureData: '' });
-      const newBookingUrl = GAS_URL + '?action=saveInvoice&data=' + encodeURIComponent(JSON.stringify(invoiceDataNoSigNB));
-      try {
-  const r = await fetch(newBookingUrl);
-  const response = await r.json();
-
-  if (!response.success) {
-    showAlert('❌ Error: ' + response.message);
-    newBookingBtn.textContent = originalText;
-    newBookingBtn.disabled = false;
+  if (!currentTripDefinition) {
+    showAlert('Please load trip items first');
     return;
   }
 
-  const voucherNo = response.voucherNo;
+  const phoneCode = (document.getElementById('phoneCode').value || '').replace(/[^0-9+]/g, '');
+  const phoneNumber = (document.getElementById('phoneNumber').value || '').replace(/[^0-9]/g, '');
+  const activitiesText = buildActivitiesText();
 
-  // reset الفورم مع الاحتفاظ ببيانات العميل
-  const customerData = {
-    guestName: fields.guestName.value,
-    nationality: fields.nationality.value,
-    hotel: fields.hotel.value,
-    roomNo: fields.roomNo.value,
-    phoneCode: phoneCode,
-    phoneNumber: phoneNumber
+  const now = new Date();
+  const day = now.getDate().toString().padStart(2, '0');
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const month = monthNames[now.getMonth()];
+  const year = now.getFullYear().toString().slice(-2);
+  const hours = now.getHours().toString().padStart(2,'0');
+  const minutes = now.getMinutes().toString().padStart(2,'0');
+  const seconds = now.getSeconds().toString().padStart(2,'0');
+  const issueDate = `${day}/${month}/${year}, ${hours}:${minutes}:${seconds}`;
+
+  const parseNum = (id) => parseFloat(document.getElementById(id)?.value) || 0;
+
+  const invoiceData = {
+    rest: parseNum('displayRest'),
+    activeDate: fields.activeDate.value,
+    salesId: currentUser.id,
+    time: fields.tripTime.value,
+    trip: fields.tripName.value,
+    cashUSD: parseNum('cashUSD'), cashEUR: parseNum('cashEUR'),
+    cashGBP: parseNum('cashGBP'), cashLE: parseNum('cashLE'),
+    visaUSD: parseNum('visaUSD'), visaEUR: parseNum('visaEUR'),
+    visaGBP: parseNum('visaGBP'), visaLE: parseNum('visaLE'),
+    hotel: fields.hotel.value, roomNo: fields.roomNo.value,
+    nationality: fields.nationality.value, guestName: fields.guestName.value,
+    contactNo: phoneCode + phoneNumber,
+    notes: document.getElementById('notes').value || '',
+    paymentPrice: parseNum('displayTotal'),
+    invoiceCurrency: fields.invoiceCurrency.value,
+    centerName: currentUser.centerName || '',
+    branchName: currentUser.branchName || '',
+    salesName: currentUser.name || '',
+    adultCount: parseNum('adultCount'), childCount: parseNum('childCount'),
+    infantCount: parseNum('infantCount'), discount: parseNum('discount'),
+    cost: currentTripItems.some(p => p > 0),
+    activitiesText, issueDate
+    // ❌ لا نضع signatureData هنا
   };
 
-  ['activeDate','tripTime','invoiceCurrency','tripName',
-   'adultCount','childCount','infantCount',
-   'cashUSD','cashEUR','cashGBP','cashLE',
-   'visaUSD','visaEUR','visaGBP','visaLE',
-   'notes','discount'
-  ].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
-
-  document.getElementById('displayTotal').textContent = '0';
-  document.getElementById('displayRest').textContent = '0';
-  document.getElementById('tripItemsContainer').innerHTML = '';
-  document.getElementById('tripSelectionContainer').style.display = 'none';
-  document.getElementById('signaturePreview').innerHTML = '';
-  document.getElementById('signaturePreview').style.display = 'none';
-  signatureData = null;
-  currentTripItems = [];
-  currentTripCategory = '';
-  currentTripDefinition = null;
-
-  Object.entries(customerData).forEach(([key, value]) => {
-    const el = document.getElementById(key);
-    if (el) el.value = value;
-  });
-
-  showAlert(`✅ Invoice saved successfully!\nVoucher: ${voucherNo}\nYou can now book another trip for the same customer.`);
-
-  // 2️⃣ حفظ التوقيع أولاً
-  if (sigData) {
-  try {
-    const formData = new FormData();
-    formData.append('action', 'saveSignature');
-    formData.append('voucherNo', voucherNo);
-    formData.append('sig', sigData);
-    await fetch(GAS_URL, {
-      method: 'POST',
-      body: formData
-    });
-  } catch(sigError) {
-    console.warn('⚠️ فشل حفظ التوقيع:', sigError);
-  }
-}
-    
-
-  // 3️⃣ إنشاء PDF
-  try {
-    const r2 = await fetch(GAS_URL + '?action=saveAndGenerateInvoice&invoiceId=' + encodeURIComponent(voucherNo));
-    const pdfResponse = await r2.json();
-    if (pdfResponse.success) {
-      window.open(pdfResponse.url, '_blank');
-    } else {
-      console.warn('⚠️ PDF generation warning:', pdfResponse.message);
-    }
-  } catch(pdfError) {
-    console.error('❌ PDF generation error:', pdfError);
+  for (let i = 0; i < 10; i++) {
+    invoiceData[`item${i}`] = parseNum(`qty_${i}`);
   }
 
-} catch(error) {
-  showAlert('❌ Connection error: ' + error.message);
-}
+  // حفظ التوقيع الحالي قبل reset الفورم
+  const currentSig = signatureData;
 
-newBookingBtn.textContent = originalText;
+  const newBookingBtn = event.target;
+  const originalText = newBookingBtn.textContent;
+  newBookingBtn.textContent = '⏳ Saving...';
+  newBookingBtn.disabled = true;
+
+  try {
+    // 1️⃣ حفظ الفاتورة
+    const newBookingUrl = GAS_URL + '?action=saveInvoice&data=' + encodeURIComponent(JSON.stringify(invoiceData));
+    const r = await fetch(newBookingUrl);
+    const response = await r.json();
+
+    if (!response.success) {
+      showAlert('❌ Error: ' + response.message);
+      newBookingBtn.textContent = originalText;
       newBookingBtn.disabled = false;
+      return;
     }
+
+    const voucherNo = response.voucherNo;
+
+    // حفظ بيانات العميل قبل reset
+    const customerData = {
+      guestName: fields.guestName.value,
+      nationality: fields.nationality.value,
+      hotel: fields.hotel.value,
+      roomNo: fields.roomNo.value,
+      phoneCode: phoneCode,
+      phoneNumber: phoneNumber
+    };
+
+    // reset الفورم
+    ['activeDate','tripTime','invoiceCurrency','tripName',
+     'adultCount','childCount','infantCount',
+     'cashUSD','cashEUR','cashGBP','cashLE',
+     'visaUSD','visaEUR','visaGBP','visaLE',
+     'notes','discount'
+    ].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+
+    document.getElementById('displayTotal').textContent = '0';
+    document.getElementById('displayRest').textContent = '0';
+    document.getElementById('tripItemsContainer').innerHTML = '';
+    document.getElementById('tripSelectionContainer').style.display = 'none';
+    document.getElementById('signaturePreview').innerHTML = '';
+    document.getElementById('signaturePreview').style.display = 'none';
+    signatureData = null;
+    currentTripItems = [];
+    currentTripCategory = '';
+    currentTripDefinition = null;
+
+    // استعادة بيانات العميل
+    Object.entries(customerData).forEach(([key, value]) => {
+      const el = document.getElementById(key);
+      if (el) el.value = value;
+    });
+
+    showAlert(`✅ Invoice saved successfully!\nVoucher: ${voucherNo}\nYou can now book another trip for the same customer.`);
+
+    // 2️⃣ حفظ التوقيع (currentSig محفوظ قبل reset)
+    if (currentSig) {
+      try {
+        const formData = new FormData();
+        formData.append('action', 'saveSignature');
+        formData.append('voucherNo', voucherNo);
+        formData.append('sig', currentSig);
+        await fetch(GAS_URL, { method: 'POST', body: formData });
+      } catch(sigError) {
+        console.warn('⚠️ فشل حفظ التوقيع:', sigError);
+      }
+    }
+
+    // 3️⃣ إنشاء PDF
+    try {
+      const r2 = await fetch(GAS_URL + '?action=saveAndGenerateInvoice&invoiceId=' + encodeURIComponent(voucherNo));
+      const pdfResponse = await r2.json();
+      if (pdfResponse.success) {
+        window.open(pdfResponse.url, '_blank');
+      } else {
+        console.warn('⚠️ PDF generation warning:', pdfResponse.message);
+      }
+    } catch(pdfError) {
+      console.error('❌ PDF generation error:', pdfError);
+    }
+
+  } catch(error) {
+    showAlert('❌ Connection error: ' + error.message);
+  }
+
+  newBookingBtn.textContent = originalText;
+  newBookingBtn.disabled = false;
+}
    
     // ==================== العودة للداشبورد (معدلة لاستخدام APP_BASE_URL) ====================
     function goBack() {
@@ -1799,6 +1772,7 @@ newBookingBtn.textContent = originalText;
   </script>
 </body>
 </html>
+
 
 
 
