@@ -73,6 +73,18 @@
     .signature-actions { display: flex; gap: 15px; justify-content: center; flex-wrap: wrap; }
     .warning-message { background: #fff3cd; color: #856404; border: 2px solid #ffeeba; border-radius: 15px; padding: 15px; margin-bottom: 20px; text-align: center; font-weight: 600; }
     .error-message { background: #f8d7da; color: #721c24; border: 2px solid #f5c6cb; border-radius: 15px; padding: 15px; margin-bottom: 20px; text-align: center; font-weight: 600; }
+    /* ===== حقل الوقت المخصص ===== */
+    .time-group { display: flex; align-items: center; gap: 8px; }
+    .time-select { flex: 1; padding: 12px 8px !important; text-align: center; font-size: 18px !important; font-weight: 600; }
+    .time-separator { font-size: 22px; font-weight: 800; color: #1e2b4f; }
+    /* ===== تحسين section-title ===== */
+    .section-title { color: #1e2b4f; font-size: 20px !important; font-weight: 800 !important; margin-bottom: 20px; padding: 12px 15px; border-bottom: 3px solid #ffd966; border-left: 5px solid #1e2b4f; background: #f0f4ff; border-radius: 10px; text-align: left; }
+    /* ===== تحسين labels ===== */
+    .form-group label { display: block; margin-bottom: 8px; color: #1e2b4f; font-weight: 700; font-size: 15px; }
+    .payment-item label { display: block; margin-bottom: 10px; color: #1e2b4f; font-weight: 700; font-size: 15px; }
+    .count-item label { display: block; margin-bottom: 10px; color: #1e2b4f; font-weight: 700; font-size: 15px; }
+    /* ===== phone code رقمي ===== */
+    input#phoneCode { -webkit-text-security: none; inputmode: numeric; }
     @media (max-width: 768px) {
       .payment-row { grid-template-columns: repeat(2, 1fr); }
       .counts-group { grid-template-columns: 1fr; }
@@ -212,8 +224,8 @@
           <div class="form-group">
             <label class="required">Phone Number</label>
             <div class="phone-group">
-              <input type="text" class="form-control phone-code" id="phoneCode" placeholder="+20" value="+20">
-              <input type="tel" class="form-control" id="phoneNumber" placeholder="1012345678" onkeyup="searchCustomerDelayed()">
+              <input type="tel" inputmode="numeric" class="form-control phone-code" id="phoneCode" placeholder="+20" value="+20">
+              <input type="tel" inputmode="numeric" class="form-control" id="phoneNumber" placeholder="1012345678" onkeyup="searchCustomerDelayed()">
               <div class="phone-loader" id="phoneLoader"></div>
             </div>
           </div>
@@ -251,7 +263,27 @@
           </div>
           <div class="form-group">
             <label class="required">Time</label>
-            <input type="time" class="form-control" id="tripTime" onchange="checkTripSelection()">
+            <div class="time-group">
+              <select class="form-control time-select" id="tripTimeHour" onchange="updateTripTime()">
+                <option value="">HH</option>
+                <option value="05">05</option><option value="06">06</option>
+                <option value="07">07</option><option value="08">08</option>
+                <option value="09">09</option><option value="10">10</option>
+                <option value="11">11</option><option value="12">12</option>
+                <option value="13">13</option><option value="14">14</option>
+                <option value="15">15</option><option value="16">16</option>
+                <option value="17">17</option><option value="18">18</option>
+                <option value="19">19</option><option value="20">20</option>
+                <option value="21">21</option>
+              </select>
+              <span class="time-separator">:</span>
+              <select class="form-control time-select" id="tripTimeMin" onchange="updateTripTime()">
+                <option value="">MM</option>
+                <option value="00">00</option><option value="15">15</option>
+                <option value="30">30</option><option value="45">45</option>
+              </select>
+            </div>
+            <input type="hidden" id="tripTime">
           </div>
           <div class="form-group">
             <label class="required">Invoice Currency</label>
@@ -564,6 +596,19 @@
       return parts.join(' - ');
     }
 
+    // ==================== تحديث حقل الوقت المخفي ====================
+    function updateTripTime() {
+      const h = document.getElementById('tripTimeHour').value;
+      const m = document.getElementById('tripTimeMin').value;
+      const timeInput = document.getElementById('tripTime');
+      if (h && m) {
+        timeInput.value = h + ':' + m;
+        checkTripSelection();
+      } else {
+        timeInput.value = '';
+      }
+    }
+
     // ✅ جمع بيانات الفاتورة في دالة موحدة
     function collectInvoiceData() {
       const code = (document.getElementById('phoneCode').value || '').replace(/[^0-9+]/g,'');
@@ -622,28 +667,39 @@
       return true;
     }
 
-    async function generatePDF(voucherNo) {
+    // ✅ إضافة فاتورة إلى Invoice_PDF بدون توليد PDF (للـ New Booking)
+    async function addInvoiceToSheet(voucherNo) {
       try {
-        const r = await fetch(GAS_URL + '?action=saveAndGenerateInvoice&invoiceId=' + encodeURIComponent(voucherNo));
-        const pdf = await r.json();
-        if (pdf.success) window.open(pdf.url, '_blank');
-        else console.warn('⚠️ PDF:', pdf.message);
-      } catch(e) { console.error('❌ PDF error:', e); }
+        const r = await fetch(GAS_URL + '?action=addInvoiceToSheet&invoiceId=' + encodeURIComponent(voucherNo));
+        const res = await r.json();
+        if (!res.success) console.warn('⚠️ addInvoiceToSheet:', res.message);
+      } catch(e) { console.error('❌ addInvoiceToSheet error:', e); }
     }
 
-    // ==================== حفظ الفاتورة ====================
+    // ✅ توليد PDF يجمع كل فواتير الجلسة (للـ Save Invoice)
+    async function generateSessionPDF() {
+      try {
+        const r = await fetch(GAS_URL + '?action=generateSessionPDF');
+        const pdf = await r.json();
+        if (pdf.success) {
+          window.open(pdf.url, '_blank');
+        } else {
+          console.warn('⚠️ generateSessionPDF:', pdf.message);
+        }
+      } catch(e) { console.error('❌ generateSessionPDF error:', e); }
+    }
+
+    // ==================== حفظ الفاتورة (الأخيرة في الجلسة → PDF كامل) ====================
     async function saveInvoice(event) {
       if (!validateForm()) return;
 
       const invoiceData = collectInvoiceData();
-
       const btn = event.target;
       const originalText = btn.textContent;
       btn.textContent = '⏳ Saving...';
       btn.disabled = true;
 
       try {
-        // ✅ POST مع Content-Type: text/plain لتجاوز CORS مع دعم base64 التوقيع
         const response = await fetch(GAS_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain' },
@@ -659,9 +715,15 @@
         }
 
         const voucherNo = result.voucherNo;
+
+        // ✅ أضف الفاتورة الأخيرة إلى Invoice_PDF
+        await addInvoiceToSheet(voucherNo);
+
         showAlert(`✅ Invoice saved!\nVoucher: ${voucherNo}`);
         clearForm();
-        await generatePDF(voucherNo);
+
+        // ✅ ثم أنشئ PDF واحد يجمع كل الجلسة
+        await generateSessionPDF();
 
       } catch(error) {
         showAlert('❌ Connection error: ' + error.message);
@@ -671,7 +733,7 @@
       btn.disabled = false;
     }
 
-    // ==================== حجز جديد ====================
+    // ==================== حجز جديد (يحفظ بدون فتح PDF) ====================
     async function newBooking(event) {
       event.preventDefault();
       if (!validateForm()) return;
@@ -694,7 +756,6 @@
       btn.disabled = true;
 
       try {
-        // ✅ POST مع التوقيع مدمج
         const response = await fetch(GAS_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain' },
@@ -711,8 +772,12 @@
 
         const voucherNo = result.voucherNo;
 
+        // ✅ أضف الفاتورة إلى Invoice_PDF بدون فتح PDF
+        await addInvoiceToSheet(voucherNo);
+
         // reset جزئي مع الإبقاء على بيانات العميل
-        ['activeDate','tripTime','invoiceCurrency','tripName',
+        ['activeDate','tripTimeHour','tripTimeMin','tripTime',
+         'invoiceCurrency','tripName',
          'adultCount','childCount','infantCount',
          'cashUSD','cashEUR','cashGBP','cashLE',
          'visaUSD','visaEUR','visaGBP','visaLE',
@@ -735,8 +800,7 @@
         document.getElementById('phoneCode').value   = customerData.phoneCode;
         document.getElementById('phoneNumber').value = customerData.phoneNumber;
 
-        showAlert(`✅ Invoice saved!\nVoucher: ${voucherNo}\nFill the next trip for the same customer.`);
-        await generatePDF(voucherNo);
+        showAlert(`✅ Booking saved! Voucher: ${voucherNo}\nFill the next trip for the same customer.`);
 
       } catch(error) {
         showAlert('❌ Connection error: ' + error.message);
@@ -749,8 +813,10 @@
     // ==================== مسح النموذج ====================
     function clearForm() {
       ['phoneCode','phoneNumber','guestName','nationality','hotel','roomNo',
-       'adultCount','childCount','infantCount','activeDate','tripTime','invoiceCurrency',
-       'tripName','cashUSD','cashEUR','cashGBP','cashLE',
+       'adultCount','childCount','infantCount','activeDate',
+       'tripTimeHour','tripTimeMin','tripTime',
+       'invoiceCurrency','tripName',
+       'cashUSD','cashEUR','cashGBP','cashLE',
        'visaUSD','visaEUR','visaGBP','visaLE','notes','discount'
       ].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
       document.getElementById('displayTotal').textContent = '0';
@@ -813,6 +879,7 @@
     window.showAlert = showAlert;
     window.searchCustomerDelayed = searchCustomerDelayed;
     window.checkTripSelection = checkTripSelection;
+    window.updateTripTime = updateTripTime;
     window.loadTripDefinition = loadTripDefinition;
     window.updateItemTotalAndGrandTotal = updateItemTotalAndGrandTotal;
     window.updateAllCalculations = updateAllCalculations;
