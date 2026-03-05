@@ -639,7 +639,7 @@
     };
 
     // ✅ رابط Google Apps Script الموحد
-  const GAS_URL = 'https://script.google.com/macros/s/AKfycbwcELqXijQDYFkk0w6VeLMfQkwb-O9_9jbMrXdDSAGhXSI6N2i2rv0Y-6uks4vCAfJr/exec';
+  const GAS_URL = 'https://script.google.com/macros/s/AKfycbzvS7iU55Nun1jubwAvOyG51im5a6TEYicq-jmTzKi8izbGOkNSuY0yAXE00BKTLw/exec';
 
     // ==================== دالة جلب الرابط من السيرفر ====================
     function fetchAppUrl() {
@@ -1426,6 +1426,9 @@
     // ❌ لا نضع signatureData هنا — سيُرسل عبر POST منفصل
   };
 
+  signatureData: signatureData || ""  // ✅ نضمّن التوقيع مباشرة
+  };
+
   for (let i = 0; i < 10; i++) {
     invoiceData[`item${i}`] = parseFloat(document.getElementById(`qty_${i}`)?.value) || 0;
   }
@@ -1436,46 +1439,36 @@
   saveBtn.disabled = true;
 
   try {
-    // 1️⃣ حفظ الفاتورة بدون التوقيع عبر GET
-    const saveUrl = GAS_URL + '?action=saveInvoice&data=' + encodeURIComponent(JSON.stringify(invoiceData));
-    const r = await fetch(saveUrl);
-    const response = await r.json();
+    // ✅ إرسال عبر POST لدعم base64 الطويل
+    const response = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'saveInvoice', ...invoiceData })
+    });
+    const result = await response.json();
 
-    if (!response.success) {
-      showAlert('❌ Error: ' + response.message);
+    if (!result.success) {
+      showAlert('❌ Error: ' + result.message);
       saveBtn.textContent = originalText;
       saveBtn.disabled = false;
       return;
     }
 
-    const voucherNo = response.voucherNo;
-    showAlert(`✅ Invoice saved successfully\nInvoice number: ${voucherNo}`);
+    const voucherNo = result.voucherNo;
+    showAlert(`✅ Invoice saved!\nVoucher: ${voucherNo}`);
     clearForm();
 
-    // 2️⃣ حفظ التوقيع عبر POST مع voucherNo
-    if (signatureData) {
-      try {
-        const formData = new FormData();
-        formData.append('action', 'saveSignature');
-        formData.append('voucherNo', voucherNo);
-        formData.append('sig', signatureData);
-        await fetch(GAS_URL, { method: 'POST', body: formData });
-      } catch(sigError) {
-        console.warn('⚠️ فشل حفظ التوقيع:', sigError);
-      }
-    }
-
-    // 3️⃣ إنشاء PDF بعد حفظ التوقيع
+    // ✅ إنشاء PDF مباشرة بدون خطوة توقيع منفصلة
     try {
       const r2 = await fetch(GAS_URL + '?action=saveAndGenerateInvoice&invoiceId=' + encodeURIComponent(voucherNo));
       const pdfResponse = await r2.json();
       if (pdfResponse.success) {
         window.open(pdfResponse.url, '_blank');
       } else {
-        console.warn('⚠️ PDF generation warning:', pdfResponse.message);
+        console.warn('⚠️ PDF:', pdfResponse.message);
       }
     } catch(pdfError) {
-      console.error('❌ PDF generation error:', pdfError);
+      console.error('❌ PDF error:', pdfError);
     }
 
   } catch(error) {
@@ -1485,9 +1478,11 @@
   saveBtn.textContent = originalText;
   saveBtn.disabled = false;
 }
+
     
     // ==================== إعادة تعيين النموذج بالكامل ====================
     function clearForm() {
+      document.getElementById('phoneCode').value = '';
       document.getElementById('guestName').value = '';
       document.getElementById('phoneNumber').value = '';
       document.getElementById('nationality').value = '';
@@ -1753,9 +1748,14 @@
       
       checkExchangeRates();
     // تنظيف Invoice_PDF عند بدء جلسة جديدة
-fetch(GAS_URL + '?action=startNewSession')
+// توليد Session ID فريد لهذه الجلسة
+const SESSION_ID = 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+sessionStorage.setItem('invoiceSessionId', SESSION_ID);
+
+// تنظيف Invoice_PDF فقط إذا كانت جلسة جديدة حقيقية
+fetch(GAS_URL + '?action=startNewSession&sessionId=' + encodeURIComponent(SESSION_ID))
   .then(r => r.json())
-  .then(res => console.log('🆕 جلسة جديدة:', res.message))
+  .then(res => console.log('جلسة:', res.message))
   .catch(err => console.warn('startNewSession error:', err));
 
 checkExchangeRates();
@@ -1779,6 +1779,7 @@ checkExchangeRates();
   </script>
 </body>
 </html>
+
 
 
 
