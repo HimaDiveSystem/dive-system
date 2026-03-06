@@ -156,7 +156,7 @@
     let isMultiBooking = false;         // للتمييز بين Single و Multiple
     let lastCustomerData = null;        // آخر بيانات عميل (لإعادة الاستخدام)
 
-    const GAS_URL = 'https://script.google.com/macros/s/AKfycbzAlcJOGzUB0X9bmh-jaUQ1d_kslajN_k2aDTqF4Q1VDLqbeP2DtDPKnM3qHkqBqDw/exec';
+    const GAS_URL = 'https://script.google.com/macros/s/AKfycbz9411UtQjOgeNGaZkSgDd5GRc2QHTnaA5UiinkRcnl_Z0iaTiF8tz1VKtfQTyoaeLB/exec';
 
     function fetchAppUrl() {
       APP_BASE_URL = GAS_URL;
@@ -720,200 +720,209 @@
     }
 
     // ==================== توليد PDF ====================
-    async function generatePDF(voucherNo) {
-      try {
-        const r   = await fetch(GAS_URL + '?action=saveAndGenerateInvoice&invoiceId=' + encodeURIComponent(voucherNo));
-        const pdf = await r.json();
-        if (pdf.success) window.open(pdf.url, '_blank');
-        else console.warn('⚠️ PDF:', pdf.message);
-      } catch(e) { console.error('❌ PDF error:', e); }
-    }
+   // في ملف SalesInvoice.html - استبدل دالة generatePDF بهذا:
 
-    async function generateMultiplePDF() {
-      if (sessionInvoices.length === 0) {
-        showAlert('No invoices in session');
-        return;
-      }
-      
-      try {
-        const response = await fetch(GAS_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain' },
-          body: JSON.stringify({ 
-            action: 'generatePDFFromIds', 
-            ids: sessionInvoices 
-          })
-        });
-        const result = await response.json();
-        if (result.success) {
-          window.open(result.url, '_blank');
-          showAlert(`✅ PDF generated with ${result.invoiceCount} invoices`);
-          // مسح الجلسة بعد التوليد
-          sessionInvoices = [];
-          updateSessionBadge();
-          document.getElementById('saveAllBtn').style.display = 'none';
-          isMultiBooking = false;
-          lastCustomerData = null;
-        } else {
-          showAlert('❌ Error: ' + result.message);
-        }
-      } catch(error) {
-        showAlert('❌ Connection error: ' + error.message);
-      }
-    }
+async function generatePDF(voucherNo) {
+  try {
+    // استخدام generatePDFFromInvoiceIds بدلاً من saveAndGenerateInvoice
+    const response = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ 
+        action: 'generatePDFFromIds', 
+        ids: [voucherNo] 
+      })
+    });
+    const pdf = await response.json();
+    if (pdf.success) window.open(pdf.url, '_blank');
+    else console.warn('⚠️ PDF:', pdf.message);
+  } catch(e) { 
+    console.error('❌ PDF error:', e);
+    showAlert('خطأ في إنشاء PDF: ' + e.message);
+  }
+}
+    // في ملف SalesInvoice.html - أضف هذه الدالة:
 
+async function generateMultiplePDF() {
+  if (sessionInvoices.length === 0) {
+    showAlert('No invoices in session');
+    return;
+  }
+  
+  try {
+    const response = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ 
+        action: 'generatePDFFromIds', 
+        ids: sessionInvoices 
+      })
+    });
+    const result = await response.json();
+    if (result.success) {
+      window.open(result.url, '_blank');
+      showAlert(`✅ PDF generated with ${result.invoiceCount} invoices`);
+      // مسح الجلسة بعد التوليد
+      sessionInvoices = [];
+      updateSessionBadge();
+      document.getElementById('saveAllBtn').style.display = 'none';
+      isMultiBooking = false;
+      lastCustomerData = null;
+      clearForm();
+    } else {
+      showAlert('❌ Error: ' + result.message);
+    }
+  } catch(error) {
+    showAlert('❌ Connection error: ' + error.message);
+  }
+}
     // ==================== Save Invoice (مُعدّل) ====================
-    async function saveInvoice(event) {
-      if (!validateForm()) return;
-      const invoiceData = collectInvoiceData();
-      
-      // حفظ بيانات العميل للاستخدام المستقبلي
-      lastCustomerData = {
-        guestName:   invoiceData.guestName,
-        nationality: invoiceData.nationality,
-        hotel:       invoiceData.hotel,
-        roomNo:      invoiceData.roomNo,
-        phoneCode:   document.getElementById('phoneCode').value,
-        phoneNumber: document.getElementById('phoneNumber').value
-      };
-      
-      const btn = event.target;
-      const originalText = btn.textContent;
-      btn.textContent = '⏳ Saving...';
-      btn.disabled = true;
-      
-      try {
-        const response = await fetch(GAS_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain' },
-          body: JSON.stringify({ action: 'saveInvoice', ...invoiceData })
-        });
-        const result = await response.json();
-        if (!result.success) {
-          showAlert('❌ Error: ' + result.message);
-          btn.textContent = originalText; btn.disabled = false;
-          return;
-        }
-        
-        const voucherNo = result.voucherNo;
-        
-        // إذا كانت هذه أول فاتورة في الجلسة
-        if (sessionInvoices.length === 0) {
-          sessionInvoices = [voucherNo];
-          isMultiBooking = false;
-        } else {
-          // إذا كانت فاتورة إضافية
-          sessionInvoices.push(voucherNo);
-          isMultiBooking = true;
-        }
-        
-        updateSessionBadge();
-        showAlert(`✅ Invoice saved!\nVoucher: ${voucherNo}`);
-        
-        // إذا كانت فاتورة مفردة (ليست في وضع multi)، نولد PDF فوراً
-        if (!isMultiBooking) {
-          clearForm();
-          await generatePDF(voucherNo);
-          sessionInvoices = []; // نمسح الجلسة لأنها انتهت
-          updateSessionBadge();
-          lastCustomerData = null;
-        } else {
-          // إذا كانت متعددة، نظهر زر Save All
-          document.getElementById('saveAllBtn').style.display = 'inline-block';
-          // لا نمسح الفورم هنا
-        }
-        
-      } catch(error) {
-        showAlert('❌ Connection error: ' + error.message);
-      }
-      
-      btn.textContent = originalText;
-      btn.disabled = false;
-    }
+    // في ملف SalesInvoice.html - استبدل دالة saveInvoice بهذا:
 
+async function saveInvoice(event) {
+  if (!validateForm()) return;
+  const invoiceData = collectInvoiceData();
+  
+  // حفظ بيانات العميل للاستخدام المستقبلي
+  lastCustomerData = {
+    guestName:   invoiceData.guestName,
+    nationality: invoiceData.nationality,
+    hotel:       invoiceData.hotel,
+    roomNo:      invoiceData.roomNo,
+    phoneCode:   document.getElementById('phoneCode').value,
+    phoneNumber: document.getElementById('phoneNumber').value
+  };
+  
+  const btn = event.target;
+  const originalText = btn.textContent;
+  btn.textContent = '⏳ Saving...';
+  btn.disabled = true;
+  
+  try {
+    const response = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'saveInvoice', ...invoiceData })
+    });
+    const result = await response.json();
+    if (!result.success) {
+      showAlert('❌ Error: ' + result.message);
+      btn.textContent = originalText; btn.disabled = false;
+      return;
+    }
+    
+    const voucherNo = result.voucherNo;
+    
+    // إضافة الفاتورة للجلسة
+    sessionInvoices.push(voucherNo);
+    updateSessionBadge();
+    
+    showAlert(`✅ Invoice saved!\nVoucher: ${voucherNo}`);
+    
+    // إذا كانت فاتورة مفردة (لم نستخدم New Booking)، نولد PDF فوراً
+    if (!isMultiBooking) {
+      clearForm();
+      await generatePDF(voucherNo);
+      sessionInvoices = []; // نمسح الجلسة لأنها انتهت
+      updateSessionBadge();
+      lastCustomerData = null;
+    } else {
+      // إذا كانت متعددة، نظهر زر Save All
+      document.getElementById('saveAllBtn').style.display = 'inline-block';
+      // لا نمسح الفورم هنا
+    }
+    
+  } catch(error) {
+    showAlert('❌ Connection error: ' + error.message);
+  }
+  
+  btn.textContent = originalText;
+  btn.disabled = false;
+}
     // ==================== New Booking (مُعدّل) ====================
-    async function newBooking(event) {
-      event.preventDefault();
-      if (!validateForm()) return;
-      
-      const invoiceData = collectInvoiceData();
-      
-      // حفظ بيانات العميل
-      lastCustomerData = {
-        guestName:   invoiceData.guestName,
-        nationality: invoiceData.nationality,
-        hotel:       invoiceData.hotel,
-        roomNo:      invoiceData.roomNo,
-        phoneCode:   document.getElementById('phoneCode').value,
-        phoneNumber: document.getElementById('phoneNumber').value
-      };
-      
-      const btn = event.target;
-      const originalText = btn.textContent;
-      btn.textContent = '⏳ Saving...';
-      btn.disabled = true;
-      
-      try {
-        const response = await fetch(GAS_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain' },
-          body: JSON.stringify({ action: 'saveInvoice', ...invoiceData })
-        });
-        const result = await response.json();
-        if (!result.success) {
-          showAlert('❌ Error: ' + result.message);
-          btn.textContent = originalText; btn.disabled = false;
-          return;
-        }
-        
-        const voucherNo = result.voucherNo;
-        
-        // إضافة الفاتورة للجلسة
-        sessionInvoices.push(voucherNo);
-        isMultiBooking = true;
-        updateSessionBadge();
-        
-        // reset جزئي مع الإبقاء على بيانات العميل
-        ['activeDate','tripTime','invoiceCurrency','tripName',
-         'adultCount','childCount','infantCount',
-         'cashUSD','cashEUR','cashGBP','cashLE',
-         'visaUSD','visaEUR','visaGBP','visaLE',
-         'notes','discount'
-        ].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
-        
-        document.getElementById('displayTotal').textContent = '0';
-        document.getElementById('displayRest').textContent  = '0';
-        document.getElementById('tripItemsContainer').innerHTML = '';
-        document.getElementById('tripSelectionContainer').style.display = 'none';
-        document.getElementById('signaturePreview').innerHTML = '';
-        document.getElementById('signaturePreview').style.display = 'none';
-        signatureData = null;
-        currentTripItems = []; 
-        currentTripCategory = ''; 
-        currentTripDefinition = null;
-        
-        // استعادة بيانات العميل
-        document.getElementById('guestName').value   = lastCustomerData.guestName;
-        document.getElementById('nationality').value = lastCustomerData.nationality;
-        document.getElementById('hotel').value       = lastCustomerData.hotel;
-        document.getElementById('roomNo').value      = lastCustomerData.roomNo;
-        document.getElementById('phoneCode').value   = lastCustomerData.phoneCode;
-        document.getElementById('phoneNumber').value = lastCustomerData.phoneNumber;
-        
-        // إظهار رسالة
-        showAlert(`✅ Invoice saved!\nVoucher: ${voucherNo}\nFill the next trip for the same customer.`);
-        
-        // إظهار زر Save All
-        document.getElementById('saveAllBtn').style.display = 'inline-block';
-        
-      } catch(error) {
-        showAlert('❌ Connection error: ' + error.message);
-      }
-      
-      btn.textContent = originalText;
-      btn.disabled = false;
-    }
+  // في ملف SalesInvoice.html - استبدل دالة newBooking بهذا:
 
+async function newBooking(event) {
+  event.preventDefault();
+  if (!validateForm()) return;
+  
+  const invoiceData = collectInvoiceData();
+  
+  // حفظ بيانات العميل
+  lastCustomerData = {
+    guestName:   invoiceData.guestName,
+    nationality: invoiceData.nationality,
+    hotel:       invoiceData.hotel,
+    roomNo:      invoiceData.roomNo,
+    phoneCode:   document.getElementById('phoneCode').value,
+    phoneNumber: document.getElementById('phoneNumber').value
+  };
+  
+  const btn = event.target;
+  const originalText = btn.textContent;
+  btn.textContent = '⏳ Saving...';
+  btn.disabled = true;
+  
+  try {
+    const response = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'saveInvoice', ...invoiceData })
+    });
+    const result = await response.json();
+    if (!result.success) {
+      showAlert('❌ Error: ' + result.message);
+      btn.textContent = originalText; btn.disabled = false;
+      return;
+    }
+    
+    const voucherNo = result.voucherNo;
+    
+    // إضافة الفاتورة للجلسة
+    sessionInvoices.push(voucherNo);
+    isMultiBooking = true;
+    updateSessionBadge();
+    
+    // reset جزئي مع الإبقاء على بيانات العميل
+    ['activeDate','tripTime','invoiceCurrency','tripName',
+     'adultCount','childCount','infantCount',
+     'cashUSD','cashEUR','cashGBP','cashLE',
+     'visaUSD','visaEUR','visaGBP','visaLE',
+     'notes','discount'
+    ].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+    
+    document.getElementById('displayTotal').textContent = '0';
+    document.getElementById('displayRest').textContent  = '0';
+    document.getElementById('tripItemsContainer').innerHTML = '';
+    document.getElementById('tripSelectionContainer').style.display = 'none';
+    document.getElementById('signaturePreview').innerHTML = '';
+    document.getElementById('signaturePreview').style.display = 'none';
+    signatureData = null;
+    currentTripItems = []; 
+    currentTripCategory = ''; 
+    currentTripDefinition = null;
+    
+    // استعادة بيانات العميل
+    document.getElementById('guestName').value   = lastCustomerData.guestName;
+    document.getElementById('nationality').value = lastCustomerData.nationality;
+    document.getElementById('hotel').value       = lastCustomerData.hotel;
+    document.getElementById('roomNo').value      = lastCustomerData.roomNo;
+    document.getElementById('phoneCode').value   = lastCustomerData.phoneCode;
+    document.getElementById('phoneNumber').value = lastCustomerData.phoneNumber;
+    
+    // إظهار رسالة
+    showAlert(`✅ Invoice saved!\nVoucher: ${voucherNo}\nFill the next trip for the same customer.`);
+    
+    // إظهار زر Save All
+    document.getElementById('saveAllBtn').style.display = 'inline-block';
+    
+  } catch(error) {
+    showAlert('❌ Connection error: ' + error.message);
+  }
+  
+  btn.textContent = originalText;
+  btn.disabled = false;
+}
     // ==================== Save All Invoices ====================
     async function saveAllInvoices() {
       if (sessionInvoices.length === 0) {
@@ -1020,4 +1029,5 @@
   </script>
 </body>
 </html>
+
 
