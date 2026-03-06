@@ -67,18 +67,22 @@
     .btn-secondary:hover { background: #d0ddeb; }
     .btn-success { background: #27ae60; color: white; border: none; padding: 15px 30px; border-radius: 40px; font-weight: 600; font-size: 16px; cursor: pointer; transition: 0.3s; }
     .btn-success:hover { background: #2ecc71; transform: translateY(-2px); }
+    .btn-warning { background: #f39c12; color: white; border: none; padding: 15px 30px; border-radius: 40px; font-weight: 600; font-size: 16px; cursor: pointer; transition: 0.3s; }
+    .btn-warning:hover { background: #e67e22; transform: translateY(-2px); }
+    .session-badge { background: #f39c12; color: white; padding: 8px 15px; border-radius: 40px; font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
     .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 9999; }
     .modal-content { background: white; width: 90%; max-width: 600px; border-radius: 30px; padding: 30px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.3); }
     .signature-canvas { border: 2px solid #dee2e6; border-radius: 15px; background: white; width: 100%; height: 200px; margin: 20px 0; cursor: crosshair; }
     .signature-actions { display: flex; gap: 15px; justify-content: center; flex-wrap: wrap; }
     .warning-message { background: #fff3cd; color: #856404; border: 2px solid #ffeeba; border-radius: 15px; padding: 15px; margin-bottom: 20px; text-align: center; font-weight: 600; }
     .error-message { background: #f8d7da; color: #721c24; border: 2px solid #f5c6cb; border-radius: 15px; padding: 15px; margin-bottom: 20px; text-align: center; font-weight: 600; }
+    .info-message { background: #d1ecf1; color: #0c5460; border: 2px solid #bee5eb; border-radius: 15px; padding: 10px 15px; margin: 10px 0; text-align: center; font-weight: 600; }
     @media (max-width: 768px) {
       .payment-row { grid-template-columns: repeat(2, 1fr); }
       .counts-group { grid-template-columns: 1fr; }
       .total-row { flex-direction: column; }
       .action-buttons { flex-direction: column; }
-      .btn-primary, .btn-secondary, .btn-success, .signature-btn { width: 100%; }
+      .btn-primary, .btn-secondary, .btn-success, .btn-warning, .signature-btn { width: 100%; }
     }
     @media (max-width: 480px) { .payment-row { grid-template-columns: 1fr; } }
   </style>
@@ -94,6 +98,9 @@
             <span class="meta-item" id="centerNameDisplay"><i>🏢</i> <span></span></span>
             <span class="meta-item" id="branchNameDisplay"><i>📍</i> <span></span></span>
           </div>
+        </div>
+        <div id="sessionBadgeContainer" style="display: none;">
+          <span class="session-badge">📋 Multi-Booking: <span id="sessionCount">0</span></span>
         </div>
         <button class="back-btn" onclick="window.goBack()">🔙 Back to Dashboard</button>
       </div>
@@ -136,9 +143,20 @@
     let lastX = 0;
     let lastY = 0;
     let exchangeRatesCache = {};
-    const cache = { trips: null, nationalities: null, hotels: null };
+    const cache = { 
+      trips: null, 
+      nationalities: null, 
+      hotels: null,
+      customers: {},           // ذاكرة مؤقتة للعملاء
+      tripDefinitions: {}      // ذاكرة مؤقتة لتعريفات الرحلات
+    };
 
-    const GAS_URL = 'https://script.google.com/macros/s/AKfycbzmorgxEcu8bSuqEcMB_FCybDdPCM2Cv3rwZKVfbE32WOV31zta64yKaspnS0hBYfUA/exec';
+    // ==================== متغيرات الجلسة للفواتير المتعددة ====================
+    let sessionInvoices = [];           // لتخزين أرقام الفواتير في الجلسة الحالية
+    let isMultiBooking = false;         // للتمييز بين Single و Multiple
+    let lastCustomerData = null;        // آخر بيانات عميل (لإعادة الاستخدام)
+
+    const GAS_URL = 'https://script.google.com/macros/s/AKfycbwChAPHoJgCJvDYbuHmfGpr5PtMfjt8vDwn4UuW0iSp87ioG22Ysbh2k-WPRHqLX2X2/exec';
 
     function fetchAppUrl() {
       APP_BASE_URL = GAS_URL;
@@ -176,6 +194,18 @@
         const branchSpan = document.querySelector('#branchNameDisplay span');
         if (centerSpan) centerSpan.textContent = currentUser.centerName || 'No Center';
         if (branchSpan) branchSpan.textContent = currentUser.branchName || 'No Branch';
+      }
+    }
+
+    // ==================== تحديث عداد الجلسة ====================
+    function updateSessionBadge() {
+      const container = document.getElementById('sessionBadgeContainer');
+      const countSpan = document.getElementById('sessionCount');
+      if (sessionInvoices.length > 0) {
+        container.style.display = 'inline-block';
+        countSpan.textContent = sessionInvoices.length;
+      } else {
+        container.style.display = 'none';
       }
     }
 
@@ -324,11 +354,27 @@
           <button class="btn-primary"   onclick="window.saveInvoice(event)">💾 Save Invoice</button>
           <button class="btn-secondary" onclick="window.clearForm()">🔄 Clear All</button>
           <button class="btn-success"   onclick="window.newBooking(event)">➕ New Booking</button>
+          <button class="btn-warning"   id="saveAllBtn" onclick="window.saveAllInvoices()" style="display:none;">💾 Save All as PDF</button>
         </div>
       `;
       loadNationalities();
       loadHotels();
       loadTrips();
+      
+      // إذا كان هناك جلسة نشطة، أظهر زر Save All
+      if (sessionInvoices.length > 0) {
+        document.getElementById('saveAllBtn').style.display = 'inline-block';
+      }
+      
+      // إذا كان هناك آخر بيانات عميل، استعدها
+      if (lastCustomerData) {
+        document.getElementById('guestName').value   = lastCustomerData.guestName || '';
+        document.getElementById('nationality').value = lastCustomerData.nationality || '';
+        document.getElementById('hotel').value       = lastCustomerData.hotel || '';
+        document.getElementById('roomNo').value      = lastCustomerData.roomNo || '';
+        document.getElementById('phoneCode').value   = lastCustomerData.phoneCode || '+20';
+        document.getElementById('phoneNumber').value = lastCustomerData.phoneNumber || '';
+      }
     }
 
     // ==================== تحميل القوائم ====================
@@ -381,10 +427,22 @@
     function loadTripDefinition() {
       const tripName = document.getElementById('tripName').value;
       if (!tripName) return;
+      
+      // التحقق من الذاكرة المؤقتة أولاً
+      if (cache.tripDefinitions[tripName]) {
+        const def = cache.tripDefinitions[tripName];
+        currentTripDefinition = def.items;
+        currentTripCategory   = def.category || '';
+        loadTripPrices(tripName, currentTripCategory);
+        return;
+      }
+      
       fetch(GAS_URL + '?action=getTripDefinition&tripName=' + encodeURIComponent(tripName))
         .then(r => r.json())
         .then(function(def) {
           if (def && def.items) {
+            // تخزين في الذاكرة المؤقتة
+            cache.tripDefinitions[tripName] = def;
             currentTripDefinition = def.items;
             currentTripCategory   = def.category || '';
             loadTripPrices(tripName, currentTripCategory);
@@ -468,7 +526,7 @@
       document.getElementById('restCurrency').textContent = currency;
     }
 
-    // ==================== البحث عن عميل ====================
+    // ==================== البحث عن عميل (مُحسّن بالذاكرة المؤقتة) ====================
     let searchTimeout;
     function searchCustomerDelayed() {
       clearTimeout(searchTimeout);
@@ -476,16 +534,34 @@
       if (number.length < 5) return;
       const loader = document.getElementById('phoneLoader');
       if (loader) loader.style.display = 'block';
-      searchTimeout = setTimeout(performSearch, 600);
+      // تقليل وقت التأخير لزيادة السرعة
+      searchTimeout = setTimeout(performSearch, 300);
     }
+    
     function performSearch() {
       const code   = document.getElementById('phoneCode').value.replace(/[^0-9+]/g,'');
       const number = document.getElementById('phoneNumber').value.replace(/[^0-9]/g,'');
+      const fullPhone = code + number;
+      
+      // التحقق من الذاكرة المؤقتة أولاً
+      if (cache.customers[fullPhone]) {
+        const c = cache.customers[fullPhone];
+        document.getElementById('guestName').value   = c.name        || '';
+        document.getElementById('nationality').value = c.nationality || '';
+        document.getElementById('hotel').value       = c.hotel       || '';
+        document.getElementById('roomNo').value      = c.roomNo      || '';
+        const loader = document.getElementById('phoneLoader');
+        if (loader) loader.style.display = 'none';
+        return;
+      }
+      
       fetch(GAS_URL + '?action=searchCustomerByPhone&phone=' + encodeURIComponent(number))
         .then(r=>r.json()).then(function(c) {
           const loader = document.getElementById('phoneLoader');
           if (loader) loader.style.display = 'none';
           if (c) {
+            // تخزين في الذاكرة المؤقتة
+            cache.customers[fullPhone] = c;
             document.getElementById('guestName').value   = c.name        || '';
             document.getElementById('nationality').value = c.nationality || '';
             document.getElementById('hotel').value       = c.hotel       || '';
@@ -494,6 +570,7 @@
             fetch(GAS_URL+'?action=searchCustomerByPhone&phone='+encodeURIComponent(code+number))
               .then(r2=>r2.json()).then(function(c2) {
                 if (c2) {
+                  cache.customers[fullPhone] = c2;
                   document.getElementById('guestName').value   = c2.name        || '';
                   document.getElementById('nationality').value = c2.nationality || '';
                   document.getElementById('hotel').value       = c2.hotel       || '';
@@ -652,14 +729,59 @@
       } catch(e) { console.error('❌ PDF error:', e); }
     }
 
-    // ==================== Save Invoice ====================
+    async function generateMultiplePDF() {
+      if (sessionInvoices.length === 0) {
+        showAlert('No invoices in session');
+        return;
+      }
+      
+      try {
+        const response = await fetch(GAS_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify({ 
+            action: 'generatePDFFromIds', 
+            ids: sessionInvoices 
+          })
+        });
+        const result = await response.json();
+        if (result.success) {
+          window.open(result.url, '_blank');
+          showAlert(`✅ PDF generated with ${result.invoiceCount} invoices`);
+          // مسح الجلسة بعد التوليد
+          sessionInvoices = [];
+          updateSessionBadge();
+          document.getElementById('saveAllBtn').style.display = 'none';
+          isMultiBooking = false;
+          lastCustomerData = null;
+        } else {
+          showAlert('❌ Error: ' + result.message);
+        }
+      } catch(error) {
+        showAlert('❌ Connection error: ' + error.message);
+      }
+    }
+
+    // ==================== Save Invoice (مُعدّل) ====================
     async function saveInvoice(event) {
       if (!validateForm()) return;
       const invoiceData = collectInvoiceData();
+      
+      // حفظ بيانات العميل للاستخدام المستقبلي
+      lastCustomerData = {
+        guestName:   invoiceData.guestName,
+        nationality: invoiceData.nationality,
+        hotel:       invoiceData.hotel,
+        roomNo:      invoiceData.roomNo,
+        phoneCode:   document.getElementById('phoneCode').value,
+        phoneNumber: document.getElementById('phoneNumber').value
+      };
+      
       const btn = event.target;
       const originalText = btn.textContent;
       btn.textContent = '⏳ Saving...';
       btn.disabled = true;
+      
       try {
         const response = await fetch(GAS_URL, {
           method: 'POST',
@@ -672,34 +794,65 @@
           btn.textContent = originalText; btn.disabled = false;
           return;
         }
+        
         const voucherNo = result.voucherNo;
+        
+        // إذا كانت هذه أول فاتورة في الجلسة
+        if (sessionInvoices.length === 0) {
+          sessionInvoices = [voucherNo];
+          isMultiBooking = false;
+        } else {
+          // إذا كانت فاتورة إضافية
+          sessionInvoices.push(voucherNo);
+          isMultiBooking = true;
+        }
+        
+        updateSessionBadge();
         showAlert(`✅ Invoice saved!\nVoucher: ${voucherNo}`);
-        clearForm();
-        await generatePDF(voucherNo);
+        
+        // إذا كانت فاتورة مفردة (ليست في وضع multi)، نولد PDF فوراً
+        if (!isMultiBooking) {
+          clearForm();
+          await generatePDF(voucherNo);
+          sessionInvoices = []; // نمسح الجلسة لأنها انتهت
+          updateSessionBadge();
+          lastCustomerData = null;
+        } else {
+          // إذا كانت متعددة، نظهر زر Save All
+          document.getElementById('saveAllBtn').style.display = 'inline-block';
+          // لا نمسح الفورم هنا
+        }
+        
       } catch(error) {
         showAlert('❌ Connection error: ' + error.message);
       }
+      
       btn.textContent = originalText;
       btn.disabled = false;
     }
 
-    // ==================== New Booking ====================
+    // ==================== New Booking (مُعدّل) ====================
     async function newBooking(event) {
       event.preventDefault();
       if (!validateForm()) return;
+      
       const invoiceData = collectInvoiceData();
-      const customerData = {
-        guestName:   document.getElementById('guestName').value,
-        nationality: document.getElementById('nationality').value,
-        hotel:       document.getElementById('hotel').value,
-        roomNo:      document.getElementById('roomNo').value,
+      
+      // حفظ بيانات العميل
+      lastCustomerData = {
+        guestName:   invoiceData.guestName,
+        nationality: invoiceData.nationality,
+        hotel:       invoiceData.hotel,
+        roomNo:      invoiceData.roomNo,
         phoneCode:   document.getElementById('phoneCode').value,
         phoneNumber: document.getElementById('phoneNumber').value
       };
+      
       const btn = event.target;
       const originalText = btn.textContent;
       btn.textContent = '⏳ Saving...';
       btn.disabled = true;
+      
       try {
         const response = await fetch(GAS_URL, {
           method: 'POST',
@@ -712,7 +865,14 @@
           btn.textContent = originalText; btn.disabled = false;
           return;
         }
+        
         const voucherNo = result.voucherNo;
+        
+        // إضافة الفاتورة للجلسة
+        sessionInvoices.push(voucherNo);
+        isMultiBooking = true;
+        updateSessionBadge();
+        
         // reset جزئي مع الإبقاء على بيانات العميل
         ['activeDate','tripTime','invoiceCurrency','tripName',
          'adultCount','childCount','infantCount',
@@ -720,6 +880,7 @@
          'visaUSD','visaEUR','visaGBP','visaLE',
          'notes','discount'
         ].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+        
         document.getElementById('displayTotal').textContent = '0';
         document.getElementById('displayRest').textContent  = '0';
         document.getElementById('tripItemsContainer').innerHTML = '';
@@ -727,19 +888,46 @@
         document.getElementById('signaturePreview').innerHTML = '';
         document.getElementById('signaturePreview').style.display = 'none';
         signatureData = null;
-        currentTripItems = []; currentTripCategory = ''; currentTripDefinition = null;
+        currentTripItems = []; 
+        currentTripCategory = ''; 
+        currentTripDefinition = null;
+        
         // استعادة بيانات العميل
-        document.getElementById('guestName').value   = customerData.guestName;
-        document.getElementById('nationality').value = customerData.nationality;
-        document.getElementById('hotel').value       = customerData.hotel;
-        document.getElementById('roomNo').value      = customerData.roomNo;
-        document.getElementById('phoneCode').value   = customerData.phoneCode;
-        document.getElementById('phoneNumber').value = customerData.phoneNumber;
+        document.getElementById('guestName').value   = lastCustomerData.guestName;
+        document.getElementById('nationality').value = lastCustomerData.nationality;
+        document.getElementById('hotel').value       = lastCustomerData.hotel;
+        document.getElementById('roomNo').value      = lastCustomerData.roomNo;
+        document.getElementById('phoneCode').value   = lastCustomerData.phoneCode;
+        document.getElementById('phoneNumber').value = lastCustomerData.phoneNumber;
+        
+        // إظهار رسالة
         showAlert(`✅ Invoice saved!\nVoucher: ${voucherNo}\nFill the next trip for the same customer.`);
-        await generatePDF(voucherNo);
+        
+        // إظهار زر Save All
+        document.getElementById('saveAllBtn').style.display = 'inline-block';
+        
       } catch(error) {
         showAlert('❌ Connection error: ' + error.message);
       }
+      
+      btn.textContent = originalText;
+      btn.disabled = false;
+    }
+
+    // ==================== Save All Invoices ====================
+    async function saveAllInvoices() {
+      if (sessionInvoices.length === 0) {
+        showAlert('No invoices to save');
+        return;
+      }
+      
+      const btn = document.getElementById('saveAllBtn');
+      const originalText = btn.textContent;
+      btn.textContent = '⏳ Generating...';
+      btn.disabled = true;
+      
+      await generateMultiplePDF();
+      
       btn.textContent = originalText;
       btn.disabled = false;
     }
@@ -751,14 +939,19 @@
        'tripName','cashUSD','cashEUR','cashGBP','cashLE',
        'visaUSD','visaEUR','visaGBP','visaLE','notes','discount'
       ].forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+      
       document.getElementById('displayTotal').textContent = '0';
       document.getElementById('displayRest').textContent  = '0';
       document.getElementById('tripItemsContainer').innerHTML = '';
       document.getElementById('tripSelectionContainer').style.display = 'none';
       document.getElementById('signaturePreview').innerHTML = '';
       document.getElementById('signaturePreview').style.display = 'none';
+      
       signatureData = null;
-      currentTripItems = []; currentTripCategory = ''; currentTripDefinition = null;
+      currentTripItems = []; 
+      currentTripCategory = ''; 
+      currentTripDefinition = null;
+      lastCustomerData = null;
     }
 
     function goBack() {
@@ -790,7 +983,22 @@
           window.top.location.href = APP_BASE_URL + '?page=Login'; return;
         }
       } catch(e) { window.top.location.href = APP_BASE_URL + '?page=Login'; return; }
+      
+      // استعادة الجلسة إذا كانت موجودة في sessionStorage
+      const savedSession = sessionStorage.getItem('sessionInvoices');
+      if (savedSession) {
+        try {
+          sessionInvoices = JSON.parse(savedSession);
+          updateSessionBadge();
+        } catch(e) {}
+      }
+      
       checkExchangeRates();
+    });
+
+    // حفظ الجلسة قبل إغلاق الصفحة
+    window.addEventListener('beforeunload', function() {
+      sessionStorage.setItem('sessionInvoices', JSON.stringify(sessionInvoices));
     });
 
     // ربط الدوال
@@ -804,6 +1012,7 @@
     window.saveInvoice                  = saveInvoice;
     window.clearForm                    = clearForm;
     window.newBooking                   = newBooking;
+    window.saveAllInvoices              = saveAllInvoices;
     window.openSignatureModal           = openSignatureModal;
     window.clearSignature               = clearSignature;
     window.confirmSignature             = confirmSignature;
