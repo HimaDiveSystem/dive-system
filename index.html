@@ -7,7 +7,7 @@
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
     html, body { width:100%; height:100%; overflow:hidden; background:#0b1a2e; }
-    #app-frame { width:100%; height:100vh; border:none; display:none; }
+    #app-frame  { width:100%; height:100vh; border:none; display:none; }
     #login-wrap { display:none; width:100%; height:100vh; overflow:auto; }
     #splash {
       position:fixed; inset:0; background:#0b1a2e;
@@ -32,7 +32,7 @@
   <div class="splash-spinner"></div>
 </div>
 
-<!-- صفحات Apps Script -->
+<!-- صفحات Apps Script داخل iframe -->
 <iframe id="app-frame" src=""
   allow="clipboard-read; clipboard-write"
   sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation">
@@ -42,84 +42,81 @@
 <div id="login-wrap"></div>
 
 <script>
-  const GAS_URL   = 'https://script.google.com/macros/s/AKfycbxy3i2tiKsZpTkFj0gljt0_LuXFzdOlZAU10AtIrVFdAi_n3gcQjvMxLKpWiV0EHPI2/exec';
-  const BASE_PATH = window.location.pathname.replace(/[^/]*$/, ''); // مثال: /dive-system/
+  var _GAS_URL  = 'https://script.google.com/macros/s/AKfycbxy3i2tiKsZpTkFj0gljt0_LuXFzdOlZAU10AtIrVFdAi_n3gcQjvMxLKpWiV0EHPI2/exec';
+  var BASE_PATH = window.location.pathname.replace(/[^/]*$/, '');
 
-  const frame     = document.getElementById('app-frame');
-  const loginWrap = document.getElementById('login-wrap');
-  const splash    = document.getElementById('splash');
+  var frame     = document.getElementById('app-frame');
+  var loginWrap = document.getElementById('login-wrap');
+  var splash    = document.getElementById('splash');
 
-  function hideSplash() { setTimeout(() => splash.classList.add('hidden'), 300); }
+  function hideSplash() { setTimeout(function(){ splash.classList.add('hidden'); }, 300); }
 
-  // ── Login: يُحمَّل من GitHub مباشرة بدون iframe ──────────────
+  // دالة التنقل — متاحة لـ login.js
+  window.__navigateTo = function(page, params) {
+    var newUrl = location.origin + location.pathname + '?page=' + page;
+    history.pushState({ page: page }, '', newUrl);
+    if (page === 'Login') showLogin();
+    else showGASPage(page, params || '');
+  };
+
+  // ── Login من GitHub مباشرة ────────────────────────────────────
   function showLogin() {
     frame.style.display     = 'none';
     loginWrap.style.display = 'block';
-    loginWrap.innerHTML     = '<div style="color:white;text-align:center;padding:80px;font-size:18px;">جارٍ التحميل...</div>';
 
     fetch(BASE_PATH + 'Login.html?v=' + Date.now())
-      .then(r => r.text())
-      .then(html => {
-        // استخرج body فقط
-        const match = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-        const bodyContent = match ? match[1] : html;
+      .then(function(r){ return r.text(); })
+      .then(function(html){
+        // أدرج HTML
+        loginWrap.innerHTML = html;
 
-        loginWrap.innerHTML = bodyContent;
-
-        // استخرج style
-        const styleMatches = html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi);
-        for (const m of styleMatches) {
-          const s = document.createElement('style');
-          s.textContent = m[1];
-          document.head.appendChild(s);
+        // أدرج الأنماط
+        var styleRe = /<style[^>]*>([\s\S]*?)<\/style>/gi, m;
+        while ((m = styleRe.exec(html)) !== null) {
+          var st = document.createElement('style');
+          st.textContent = m[1];
+          document.head.appendChild(st);
         }
 
-        // شغّل السكريبتات في السياق العام
-        const scripts = loginWrap.querySelectorAll('script');
-        let allCode = '';
-        scripts.forEach(old => { allCode += old.textContent + '\n'; });
-        const s = document.createElement('script');
-        s.textContent = allCode;
+        // حمّل login.js مرة واحدة
+        var old = document.getElementById('_login_js');
+        if (old) old.remove();
+        var s = document.createElement('script');
+        s.id  = '_login_js';
+        s.src = BASE_PATH + 'login.js?v=' + Date.now();
         document.head.appendChild(s);
 
         hideSplash();
       })
-      .catch(err => {
-        loginWrap.innerHTML = '<p style="color:white;text-align:center;padding:50px;">خطأ في تحميل صفحة الدخول</p>';
+      .catch(function(err){
+        loginWrap.innerHTML = '<p style="color:white;text-align:center;padding:80px;font-size:18px;">خطأ في تحميل صفحة الدخول</p>';
         console.error(err);
         hideSplash();
       });
   }
 
-  // ── باقي الصفحات: داخل iframe من Apps Script ────────────────
+  // ── Apps Script داخل iframe ───────────────────────────────────
   function showGASPage(page, params) {
     loginWrap.style.display = 'none';
     loginWrap.innerHTML     = '';
     frame.style.display     = 'block';
-    let url = GAS_URL + '?page=' + encodeURIComponent(page);
+    var url = _GAS_URL + '?page=' + encodeURIComponent(page);
     if (params) url += '&' + params;
     frame.src = url;
   }
 
   frame.addEventListener('load', hideSplash);
 
-  // ── postMessage من الصفحات الداخلية ─────────────────────────
+  // ── postMessage من الصفحات الداخلية ──────────────────────────
   window.addEventListener('message', function(e) {
-    const msg = e.data;
+    var msg = e.data;
     if (!msg || msg.type !== 'navigate' || !msg.page) return;
-    const newUrl = location.origin + location.pathname + '?page=' + msg.page;
-    history.pushState({ page: msg.page }, '', newUrl);
-    navigate(msg.page, msg.params || '');
+    window.__navigateTo(msg.page, msg.params || '');
   });
 
-  function navigate(page, params) {
-    if (page === 'Login') showLogin();
-    else showGASPage(page, params);
-  }
-
-  // ── التحميل الأولي ───────────────────────────────────────────
-  const startPage = new URLSearchParams(location.search).get('page') || 'Login';
-  navigate(startPage);
+  // ── تحميل أولي ───────────────────────────────────────────────
+  var startPage = new URLSearchParams(location.search).get('page') || 'Login';
+  window.__navigateTo(startPage);
 </script>
 </body>
 </html>
