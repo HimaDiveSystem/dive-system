@@ -26,6 +26,7 @@
     .spinner { display: inline-block; width: 20px; height: 20px; border: 3px solid #ddd; border-top-color: #1e2b4f; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 8px; }
     @keyframes spin { to { transform: rotate(360deg); } }
     .success-msg { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; border-radius: 12px; padding: 12px 16px; margin-bottom: 15px; font-size: 14px; display: none; text-align: center; }
+    .debug-info { background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 10px; margin-top: 15px; font-size: 11px; color: #856404; display: none; word-break: break-all; }
   </style>
 </head>
 <body>
@@ -50,75 +51,160 @@
 
     <button class="btn-login" id="loginBtn" onclick="doLogin()">🚀 Login</button>
 
-    <a class="btn-redirect" id="redirectBtn" href="#" onclick="return goToDashboard()">
+    <a class="btn-redirect" id="redirectBtn" href="#">
       ➡️ الدخول للوحة التحكم
     </a>
 
     <div class="loading" id="loadingDiv">
       <span class="spinner"></span> جارٍ التحقق...
     </div>
+
+    <div class="debug-info" id="debugInfo"></div>
   </div>
 
   <script>
+    // ============================================================
+    // ⚙️ الإعدادات — ضع هنا رابط Web App الخاص بك
+    // ============================================================
     const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyEXU9rrScCGTOcksiONNNznJ6vG0fdi4mA5CIbpXYmohsH2MFp4dqF8bQuSqm57c36/exec";
-    let _destination = '';
 
+    // خريطة صفحات الداشبورد
+    const DASHBOARD_PAGES = {
+      Admin:      "Dashboard.html",
+      Owner:      "OwnerDashboard.html",
+      Sales:      "SalesDashboard.html",
+      Accountant: "AccountantDashboard.html"
+    };
+
+    // ============================================================
+    // تحقق: إذا المستخدم مسجّل دخول مسبقاً → توجيه فوري
+    // ============================================================
+    (function checkExistingSession() {
+      try {
+        const saved = sessionStorage.getItem('currentUser');
+        if (saved) {
+          const user = JSON.parse(saved);
+          if (user && user.type) {
+            const page = DASHBOARD_PAGES[user.type] || 'Dashboard.html';
+            window.location.href = page;
+          }
+        }
+      } catch(e) { sessionStorage.clear(); }
+    })();
+
+    // ============================================================
+    // Enter key support
+    // ============================================================
     document.addEventListener('keydown', function(e) {
       if (e.key === 'Enter') {
         const btn = document.getElementById('loginBtn');
-        if (btn.style.display !== 'none' && !btn.disabled) doLogin();
+        if (!btn.disabled && btn.style.display !== 'none') doLogin();
       }
     });
 
-   function doLogin() {
-  hideMessages();
-  const email    = document.getElementById('email').value.trim();
-  const password = document.getElementById('password').value.trim();
+    // ============================================================
+    // دالة تسجيل الدخول الرئيسية
+    // ============================================================
+    function doLogin() {
+      hideMessages();
+      const email    = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value.trim();
 
-  if (!email || !password) {
-    showError('الرجاء إدخال البريد الإلكتروني وكلمة المرور');
-    return;
-  }
+      if (!email || !password) {
+        showError('الرجاء إدخال البريد الإلكتروني وكلمة المرور');
+        return;
+      }
 
-  setLoading(true);
+      setLoading(true);
 
-  // الاتصال بـ Apps Script Web App
-  fetch(WEB_APP_URL + "?action=login&email=" + encodeURIComponent(email) + "&password=" + encodeURIComponent(password))
-    .then(res => res.json())
-    .then(result => onLoginSuccess(result))
-    .catch(err => onLoginError(err));
-}
-   function onLoginSuccess(result) {
-  setLoading(false);
-  if (!result || !result.success) {
-    showError(result?.message || 'بيانات الدخول غير صحيحة');
-    return;
-  }
+      const url = WEB_APP_URL
+        + "?action=login"
+        + "&email="    + encodeURIComponent(email)
+        + "&password=" + encodeURIComponent(password);
 
-  // حفظ بيانات المستخدم في sessionStorage
-  try {
-    sessionStorage.setItem('currentUser', JSON.stringify(result.user));
-  } catch(e) {}
+      // ── المحاولة الأولى: fetch عادي ──
+      fetch(url, { method: 'GET', redirect: 'follow' })
+        .then(res => {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.json();
+        })
+        .then(result => onLoginSuccess(result))
+        .catch(err => {
+          // ── إذا فشل fetch (CORS) → نجرب JSONP ──
+          console.warn('fetch failed, trying JSONP:', err.message);
+          doLoginJsonp(email, password);
+        });
+    }
 
-  // تحديد الصفحة المناسبة بناءً على نوع المستخدم
-  const page = result.dashboardPage || 'Dashboard';
-  const destination = page + ".html"; // مثال: SalesDashboard.html أو OwnerDashboard.html
+    // ── JSONP fallback (يتجاوز CORS تماماً) ──
+    function doLoginJsonp(email, password) {
+      const cbName = 'loginCB_' + Date.now();
+      const script = document.createElement('script');
 
-  try {
-    window.location.href = destination;
-    return;
-  } catch(e) {
-    console.log('Auto-navigate blocked, showing manual button');
-  }
+      window[cbName] = function(result) {
+        delete window[cbName];
+        document.head.removeChild(script);
+        onLoginSuccess(result);
+      };
 
-  showSuccess('✅ تم تسجيل الدخول بنجاح! اضغط الزر للمتابعة.');
-  document.getElementById('loginBtn').style.display = 'none';
-  const redirectBtn = document.getElementById('redirectBtn');
-  redirectBtn.style.display = 'block';
-  redirectBtn.href = destination;
-}
+      script.onerror = function() {
+        delete window[cbName];
+        document.head.removeChild(script);
+        setLoading(false);
+        showError('تعذر الاتصال بالخادم. تحقق من رابط Web App.');
+        showDebug('JSONP failed. URL: ' + WEB_APP_URL);
+      };
+
+      script.src = WEB_APP_URL
+        + "?action=login"
+        + "&email="    + encodeURIComponent(email)
+        + "&password=" + encodeURIComponent(password)
+        + "&callback=" + cbName;
+
+      document.head.appendChild(script);
+    }
+
+    // ============================================================
+    // معالجة نتيجة Login
+    // ============================================================
+    function onLoginSuccess(result) {
+      setLoading(false);
+
+      if (!result || !result.success) {
+        showError(result?.message || 'بيانات الدخول غير صحيحة');
+        return;
+      }
+
+      // حفظ بيانات المستخدم
+      try {
+        sessionStorage.setItem('currentUser', JSON.stringify(result.user));
+      } catch(e) {
+        console.warn('sessionStorage error:', e);
+      }
+
+      // تحديد الصفحة المناسبة
+      const page = DASHBOARD_PAGES[result.user?.type] || 'Dashboard.html';
+
+      // توجيه تلقائي
+      window.location.href = page;
+
+      // احتياطي: زر يدوي بعد ثانية
+      setTimeout(() => {
+        if (document.visibilityState !== 'hidden') {
+          showSuccess('✅ تم تسجيل الدخول! اضغط للمتابعة.');
+          document.getElementById('loginBtn').style.display = 'none';
+          const btn = document.getElementById('redirectBtn');
+          btn.href = page;
+          btn.style.display = 'block';
+        }
+      }, 1000);
+    }
+
+    // ============================================================
+    // دوال مساعدة
+    // ============================================================
     function setLoading(show) {
-      document.getElementById('loginBtn').disabled       = show;
+      document.getElementById('loginBtn').disabled        = show;
       document.getElementById('loadingDiv').style.display = show ? 'block' : 'none';
     }
 
@@ -137,11 +223,14 @@
     function hideMessages() {
       document.getElementById('errorMsg').style.display   = 'none';
       document.getElementById('successMsg').style.display = 'none';
+      document.getElementById('debugInfo').style.display  = 'none';
+    }
+
+    function showDebug(msg) {
+      const el = document.getElementById('debugInfo');
+      el.textContent   = '🔍 ' + msg;
+      el.style.display = 'block';
     }
   </script>
 </body>
 </html>
-
-
-
-
