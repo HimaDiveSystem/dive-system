@@ -77,6 +77,7 @@
     <div class="content" id="mainContent"></div>
   </div>
 
+  <!-- مودال التنبيه -->
   <div id="customAlertModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);align-items:center;justify-content:center;z-index:9999;">
     <div style="background:white;width:400px;border-radius:30px;padding:30px;text-align:center;">
       <div style="font-size:50px;margin-bottom:20px;">ℹ️</div>
@@ -85,6 +86,7 @@
     </div>
   </div>
 
+  <!-- مودال التأكيد -->
   <div id="customConfirmModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);align-items:center;justify-content:center;z-index:9999;">
     <div style="background:white;width:400px;border-radius:30px;padding:30px;text-align:center;">
       <div style="font-size:50px;margin-bottom:20px;">❓</div>
@@ -96,6 +98,7 @@
     </div>
   </div>
 
+  <!-- شاشة التحميل -->
   <div id="loadingOverlay" class="loading-overlay">
     <div class="loading-container">
       <div class="hourglass">⏳</div>
@@ -104,17 +107,44 @@
   </div>
 
 <script>
-  const GAS_URL = 'https://script.google.com/macros/s/AKfycbxy3i2tiKsZpTkFj0gljt0_LuXFzdOlZAU10AtIrVFdAi_n3gcQjvMxLKpWiV0EHPI2/exec';
-  let currentUser = null;
+  // ============================================================
+  // ⚙️ CONFIG
+  // ============================================================
+  const GAS_URL = 'https://script.google.com/macros/s/AKfycbyEXU9rrScCGTOcksiONNNznJ6vG0fdi4mA5CIbpXYmohsH2MFp4dqF8bQuSqm57c36/exec';
+
+  const PAGES = {
+    Login:               'index.html',
+    Dashboard:           'Dashboard.html',
+    OwnerDashboard:      'OwnerDashboard.html',
+    SalesDashboard:      'SalesDashboard.html',
+    AccountantDashboard: 'AccountantDashboard.html',
+    SalesInvoice:        'SalesInvoice.html',
+    BookingsToday:       'BookingsToday.html'
+  };
+
+  let currentUser   = null;
   let selectedBranch = null;
 
-  // ============================================================
-  // التنقل عبر postMessage — يُبقي رابط GitHub ثابتاً
-  // ============================================================
-  function navigateTo(page, extraParams) {
-    window.parent.postMessage({ type:'navigate', page:page, params:extraParams||'' }, '*');
+  // ── التنقل بين الصفحات ──
+  function navigateTo(page) {
+    window.location.href = PAGES[page] || (page + '.html');
   }
 
+  // ============================================================
+  // API
+  // ============================================================
+  async function apiGet(action, params = {}) {
+    const url = new URL(GAS_URL);
+    url.searchParams.set('action', action);
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+    const res = await fetch(url.toString(), { redirect: 'follow' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }
+
+  // ============================================================
+  // UI Helpers
+  // ============================================================
   function showAlert(message) {
     const modal = document.getElementById('customAlertModal');
     document.getElementById('alertMessage').innerText = message;
@@ -122,7 +152,7 @@
     document.getElementById('alertOk').onclick = () => modal.style.display = 'none';
   }
 
-  function showLoading(show, message='جاري التحميل...') {
+  function showLoading(show, message = 'جاري التحميل...') {
     document.getElementById('loadingMessage').innerText = message;
     document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none';
   }
@@ -131,15 +161,17 @@
     const modal = document.getElementById('customConfirmModal');
     document.getElementById('confirmMessage').innerText = message;
     modal.style.display = 'flex';
-    const ok = document.getElementById('confirmOk');
+    const ok     = document.getElementById('confirmOk');
     const cancel = document.getElementById('confirmCancel');
-    const okH = () => { modal.style.display='none'; onConfirm(); ok.removeEventListener('click',okH); cancel.removeEventListener('click',cancelH); };
+    const okH     = () => { modal.style.display='none'; onConfirm(); ok.removeEventListener('click',okH); cancel.removeEventListener('click',cancelH); };
     const cancelH = () => { modal.style.display='none'; ok.removeEventListener('click',okH); cancel.removeEventListener('click',cancelH); };
     ok.addEventListener('click', okH);
     cancel.addEventListener('click', cancelH);
   }
 
-  // ==================== الفروع ====================
+  // ============================================================
+  // اختيار الفرع
+  // ============================================================
   function showBranchSelector(branches) {
     let options = '<option value="">-- اختر الفرع --</option>';
     branches.forEach(b => { options += `<option value="${b.id}">${b.name}</option>`; });
@@ -147,16 +179,17 @@
       <div class="branch-selector">
         <label>🌿 اختر الفرع الذي تعمل به</label>
         <select id="branchSelect">${options}</select>
-        <br><button class="btn-primary" style="margin-top:15px;" onclick="confirmBranch()">تأكيد</button>
+        <br>
+        <button class="btn-primary" style="margin-top:15px;" onclick="confirmBranch()">تأكيد</button>
       </div>`;
   }
 
   function confirmBranch() {
-    const select = document.getElementById('branchSelect');
-    const branchId = select.value;
+    const select     = document.getElementById('branchSelect');
+    const branchId   = select.value;
     const branchName = select.options[select.selectedIndex]?.text;
     if (!branchId) { showAlert('يرجى اختيار فرع'); return; }
-    selectedBranch = { id:branchId, name:branchName };
+    selectedBranch = { id: branchId, name: branchName };
     sessionStorage.setItem('selectedBranch', JSON.stringify(selectedBranch));
     showDashboard();
   }
@@ -165,39 +198,48 @@
     if (!currentUser?.centerId) { showDashboard(); return; }
     showLoading(true, 'جاري تحميل الفروع...');
     try {
-      const res = await fetch(`${GAS_URL}?action=getBranchesByCenter&centerId=${encodeURIComponent(currentUser.centerId)}`);
-      const data = await res.json();
+      const data     = await apiGet('getBranchesByCenter', { centerId: currentUser.centerId });
       const branches = Array.isArray(data) ? data : (data.branches || []);
       if (branches.length > 0) showBranchSelector(branches);
       else { showAlert('لا توجد فروع متاحة'); showDashboard(); }
     } catch(e) {
       showAlert('فشل في تحميل الفروع');
       showDashboard();
-    } finally { showLoading(false); }
+    } finally {
+      showLoading(false);
+    }
   }
 
-  // ==================== الداشبورد ====================
+  // ============================================================
+  // الداشبورد الرئيسي
+  // ============================================================
   function showDashboard() {
+    const branchInfo = selectedBranch ? `<p style="color:#666;margin-top:5px;font-size:14px;">🌿 ${selectedBranch.name}</p>` : '';
     document.getElementById('mainContent').innerHTML = `
-      <div class="section-title">📋 قائمة العمليات</div>
+      <div class="section-title">📋 قائمة العمليات ${branchInfo}</div>
       <div class="dashboard-buttons">
         <div class="dashboard-btn" onclick="openInvoicePage()">
-          <div class="icon">➕</div><div class="title">إنشاء فاتورة جديدة</div>
+          <div class="icon">➕</div>
+          <div class="title">إنشاء فاتورة جديدة</div>
         </div>
         <div class="dashboard-btn" onclick="showAlert('فواتير معلقة - قيد التطوير')">
-          <div class="icon">⏳</div><div class="title">فواتير معلقة</div>
+          <div class="icon">⏳</div>
+          <div class="title">فواتير معلقة</div>
           <span class="badge pending">Pending</span>
         </div>
         <div class="dashboard-btn" onclick="showAlert('فواتير تم تنفيذها - قيد التطوير')">
-          <div class="icon">✅</div><div class="title">فواتير تم تنفيذها</div>
+          <div class="icon">✅</div>
+          <div class="title">فواتير تم تنفيذها</div>
           <span class="badge confirmed">Confirmed</span>
         </div>
         <div class="dashboard-btn" onclick="showAlert('فواتير ملغاة - قيد التطوير')">
-          <div class="icon">❌</div><div class="title">فواتير ملغاة</div>
+          <div class="icon">❌</div>
+          <div class="title">فواتير ملغاة</div>
           <span class="badge cancel">Cancel</span>
         </div>
         <div class="dashboard-btn" onclick="showAlert('العمولات - قيد التطوير')">
-          <div class="icon">💰</div><div class="title">العمولات</div>
+          <div class="icon">💰</div>
+          <div class="title">العمولات</div>
           <span class="badge commission">Commission</span>
         </div>
       </div>`;
@@ -225,29 +267,43 @@
     });
   }
 
-  // ==================== التحميل الأولي ====================
+  // ============================================================
+  // التحميل الأولي
+  // ============================================================
   document.addEventListener('DOMContentLoaded', async function() {
-    let userData = sessionStorage.getItem('currentUser');
-    if (!userData) {
-      try {
-        const p = new URLSearchParams(window.location.search);
-        const u = p.get('user');
-        if (u) { userData = decodeURIComponent(u); sessionStorage.setItem('currentUser', userData); }
-      } catch(e) {}
-    }
+    // جلب بيانات المستخدم من sessionStorage
+    const userData = sessionStorage.getItem('currentUser');
+
     if (!userData) { navigateTo('Login'); return; }
+
     try {
       currentUser = JSON.parse(userData);
       document.getElementById('userNameDisplay').textContent = currentUser.name || 'Sales Rep';
+
+      // التحقق من نوع المستخدم وتوجيهه للداشبورد الصحيح
       if (currentUser.type !== 'Sales') {
-        if (currentUser.type === 'Accountant') navigateTo('AccountantDashboard');
-        else navigateTo('Dashboard');
+        const redirectMap = {
+          Admin:      'Dashboard',
+          Owner:      'OwnerDashboard',
+          Accountant: 'AccountantDashboard'
+        };
+        navigateTo(redirectMap[currentUser.type] || 'Dashboard');
         return;
       }
+
+      // جلب الفرع المحفوظ أو طلب اختيار فرع
       const savedBranch = sessionStorage.getItem('selectedBranch');
-      if (savedBranch) { selectedBranch = JSON.parse(savedBranch); showDashboard(); }
-      else await loadUserBranches();
-    } catch(e) { navigateTo('Login'); }
+      if (savedBranch) {
+        selectedBranch = JSON.parse(savedBranch);
+        showDashboard();
+      } else {
+        await loadUserBranches();
+      }
+
+    } catch(e) {
+      console.error('Init error:', e);
+      navigateTo('Login');
+    }
   });
 </script>
 </body>
