@@ -22,19 +22,24 @@
     .filter-group { flex: 1; min-width: 160px; position: relative; }
     .filter-group label { display: block; font-size: 12px; color: #1e2b4f; font-weight: 600; margin-bottom: 5px; }
 
-    /* Date input يشبه مربع نص عادي */
-    .date-input-wrap { position: relative; }
+    /* Date input — قابل للكتابة + زر تقويم */
+    .date-input-wrap { position: relative; display: flex; gap: 5px; align-items: center; }
     .date-text-input {
-      width: 100%; padding: 10px 36px 10px 12px;
+      flex: 1; padding: 10px 12px;
       border: 2px solid #e9f0fa; border-radius: 15px;
-      font-size: 14px; background: white; cursor: pointer;
+      font-size: 14px; background: white;
       color: #2c3e50; letter-spacing: 0.5px;
     }
     .date-text-input:focus { outline: none; border-color: #1e2b4f; }
     .date-text-input.date-error { border-color: #e74c3c; }
-    .cal-icon { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 16px; cursor: pointer; }
-    /* hidden native date picker للاختيار */
-    .date-native { position: absolute; opacity: 0; width: 100%; height: 100%; top: 0; left: 0; cursor: pointer; }
+    .cal-icon {
+      padding: 8px 10px; background: #1e2b4f; color: #ffd966;
+      border-radius: 12px; font-size: 15px; cursor: pointer;
+      border: none; white-space: nowrap;
+    }
+    .cal-icon:hover { background: #2a3a60; }
+    /* hidden native date picker — خلف زر التقويم فقط */
+    .date-native { position: absolute; opacity: 0; width: 40px; height: 100%; top: 0; right: 0; cursor: pointer; pointer-events: none; }
 
     .date-spin { display: flex; gap: 5px; margin-top: 5px; }
     .spin-btn { flex: 1; padding: 5px; border: none; border-radius: 10px; background: #1e2b4f; color: white; font-weight: bold; cursor: pointer; transition: 0.3s; }
@@ -104,8 +109,9 @@
       <div class="filter-group">
         <label>From Date (Issue Date)</label>
         <div class="date-input-wrap">
-          <input class="date-text-input" id="filterDateFromText" placeholder="dd/Mmm/yyyy" readonly onclick="openPicker('From')">
-          <span class="cal-icon" onclick="openPicker('From')">📅</span>
+          <input class="date-text-input" id="filterDateFromText" placeholder="dd/Mmm/yyyy"
+                 oninput="onTextInput('From')" onblur="onTextBlur('From')">
+          <button class="cal-icon" onclick="openPicker('From')" type="button">📅</button>
           <input type="date" class="date-native" id="filterDateFromNative" onchange="onNativePick('From')">
         </div>
         <div class="date-spin">
@@ -119,8 +125,9 @@
       <div class="filter-group">
         <label>To Date (Issue Date)</label>
         <div class="date-input-wrap">
-          <input class="date-text-input" id="filterDateToText" placeholder="dd/Mmm/yyyy" readonly onclick="openPicker('To')">
-          <span class="cal-icon" onclick="openPicker('To')">📅</span>
+          <input class="date-text-input" id="filterDateToText" placeholder="dd/Mmm/yyyy"
+                 oninput="onTextInput('To')" onblur="onTextBlur('To')">
+          <button class="cal-icon" onclick="openPicker('To')" type="button">📅</button>
           <input type="date" class="date-native" id="filterDateToNative" onchange="onNativePick('To')">
         </div>
         <div class="date-spin">
@@ -167,7 +174,7 @@
 </div>
 
 <script>
-  const GAS_URL = 'https://script.google.com/macros/s/AKfycbyB4ZzI5UJibARWEXXSmtLYACNWqiYvv1GC_zeeBsZFMcW7pOFskDDkbiNF50zdWorq/exec';
+  const GAS_URL = 'https://script.google.com/macros/s/AKfycbyEXU9rrScCGTOcksiONNNznJ6vG0fdi4mA5CIbpXYmohsH2MFp4dqF8bQuSqm57c36/exec';
   const MONTHS  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
   const DASHBOARD_PAGES = {
@@ -225,8 +232,10 @@
   // ════════════════════════════════════════════
 
   function openPicker(which) {
-    document.getElementById('filterDate' + which + 'Native').showPicker?.() ||
-    document.getElementById('filterDate' + which + 'Native').click();
+    const native = document.getElementById('filterDate' + which + 'Native');
+    native.style.pointerEvents = 'auto';
+    try { native.showPicker(); } catch { native.click(); }
+    setTimeout(() => { native.style.pointerEvents = 'none'; }, 2000);
   }
 
   function onNativePick(which) {
@@ -237,15 +246,48 @@
     applyFilters();
   }
 
+  // الكتابة اليدوية — نقبل الإدخال ونطبّق الفلتر عند اكتمال الصيغة
+  function onTextInput(which) {
+    const textEl = document.getElementById('filterDate' + which + 'Text');
+    const val    = textEl.value.trim();
+    // إذا اكتملت الصيغة dd/Mmm/yyyy (11 حرف) نحوّل للـ native ونُطبّق
+    if (/^\d{1,2}\/[A-Za-z]{3}\/\d{4}$/.test(val)) {
+      const iso = dddmmmToISO(val);
+      if (iso) {
+        document.getElementById('filterDate' + which + 'Native').value = iso;
+        validateDates();
+        applyFilters();
+      }
+    }
+  }
+
+  // عند مغادرة الحقل — نطبّق الفلتر إذا كان التاريخ صحيحاً أو نمسحه
+  function onTextBlur(which) {
+    const textEl = document.getElementById('filterDate' + which + 'Text');
+    const val    = textEl.value.trim();
+    if (!val) {
+      document.getElementById('filterDate' + which + 'Native').value = '';
+      validateDates();
+      applyFilters();
+      return;
+    }
+    if (!/^\d{1,2}\/[A-Za-z]{3}\/\d{4}$/.test(val)) {
+      // صيغة خاطئة — امسح
+      textEl.value = '';
+      document.getElementById('filterDate' + which + 'Native').value = '';
+      validateDates();
+      applyFilters();
+    }
+  }
+
   function spinDate(which, delta) {
     const textEl   = document.getElementById('filterDate' + which + 'Text');
     const nativeEl = document.getElementById('filterDate' + which + 'Native');
     let iso = nativeEl.value;
     if (!iso) {
-      // اجعله اليوم
       iso = new Date().toISOString().split('T')[0];
     }
-    const d = new Date(iso);
+    const d = new Date(iso + 'T00:00:00');
     d.setDate(d.getDate() + delta);
     iso = d.toISOString().split('T')[0];
     nativeEl.value  = iso;
@@ -491,9 +533,20 @@
   // ════════════════════════════════════════════
   // RENDER TABLE
   // ════════════════════════════════════════════
+  function hasActiveFilter() {
+    return document.getElementById('filterDateFromNative').value ||
+           document.getElementById('filterDateToNative').value   ||
+           document.getElementById('filterText').value.trim();
+  }
+
   function renderAll() {
     renderTable();
-    buildTripsSummary(window.filteredInvoices);
+    // Trip Summary تظهر فقط عند وجود فلتر نشط
+    if (hasActiveFilter()) {
+      buildTripsSummary(window.filteredInvoices);
+    } else {
+      document.getElementById('summarySection').style.display = 'none';
+    }
   }
 
   function renderTable() {
@@ -648,4 +701,3 @@
 </script>
 </body>
 </html>
-
