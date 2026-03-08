@@ -136,12 +136,13 @@
 // ══════════════════════════════════════════════════════
 //  GLOBALS
 // ══════════════════════════════════════════════════════
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbyB4ZzI5UJibARWEXXSmtLYACNWqiYvv1GC_zeeBsZFMcW7pOFskDDkbiNF50zdWorq/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyEXU9rrScCGTOcksiONNNznJ6vG0fdi4mA5CIbpXYmohsH2MFp4dqF8bQuSqm57c36/exec';
 
 let currentUser           = null;
 let currentTripItems      = [];
 let currentTripCategory   = '';
 let currentTripDefinition = null;
+let currentTripHasCost    = false;   // ← هل للرحلة تكلفة (Cost=TRUE في Price_List)
 let signatureData         = null;
 let exchangeRatesCache    = {};
 const cache               = { trips:null, nationalities:null, hotels:null };
@@ -228,6 +229,20 @@ function showAlert(msg, icon, btnHtml) {
 }
 function closeAlert() {
   document.getElementById('alertModal').classList.remove('open');
+}
+
+// عرض نتيجة PDF — يعمل على الموبايل والكمبيوتر
+// على الموبايل: window.open محظور بعد async، نستخدم رابط مباشر
+function showPDFSuccessModal(msg, url) {
+  document.getElementById('alertMsg').textContent  = msg;
+  document.getElementById('alertIcon').textContent = '✅';
+  document.getElementById('alertBtns').innerHTML   = `
+    <a href="${url}" target="_blank" rel="noopener"
+       style="background:#27ae60;color:white;padding:12px 25px;border-radius:40px;font-weight:600;font-size:15px;text-decoration:none;display:inline-block">
+      📄 فتح PDF
+    </a>
+    <button class="btn-primary" onclick="closeAlert()" style="margin-right:10px">OK</button>`;
+  document.getElementById('alertModal').classList.add('open');
 }
 
 // ══════════════════════════════════════════════════════
@@ -476,7 +491,7 @@ function onTripFieldChange() {
   } else {
     container.style.display = 'none';
     document.getElementById('tripItemsContainer').innerHTML = '';
-    currentTripItems = []; currentTripCategory = ''; currentTripDefinition = null;
+    currentTripItems = []; currentTripCategory = ''; currentTripDefinition = null; currentTripHasCost = false;
   }
 }
 
@@ -499,7 +514,7 @@ function loadTripPrices(tripName, category) {
   fetch(GAS_URL + '?action=getTripPrices&tripName='+ encodeURIComponent(tripName)+'&currency='+ encodeURIComponent(currency)+'&category='+ encodeURIComponent(category))
     .then(r=>r.json())
     .then(function(data) {
-      if (data && data.prices) { currentTripItems = data.prices; displayTripItems(); }
+      if (data && data.prices) { currentTripItems = data.prices; currentTripHasCost = data.hasCost === true; displayTripItems(); }
       else showAlert('No prices found for this trip/currency', '⚠️');
     }).catch(err => showAlert('Error: ' + err.message, '❌'));
 }
@@ -651,6 +666,7 @@ function collectInvoiceData() {
     infantCount:     parseInt(document.getElementById('infantCount')?.value)||0,
     activitiesText:  activities.join(' | '),
     signatureData:   signatureData || '',
+    cost:            currentTripHasCost,   // ← TRUE/FALSE من Price_List عمود N
     state:           'pending'
   };
 }
@@ -676,6 +692,26 @@ function setButtonsDisabled(disabled) {
 }
 
 // ══════════════════════════════════════════════════════
+//  فتح PDF — يعمل على الكمبيوتر والهاتف
+//  window.open مبلوك في الهاتف عند استدعائه من async
+//  الحل: إنشاء رابط <a> وضغطه برمجياً في نفس الـ event loop
+// ══════════════════════════════════════════════════════
+function openPDFUrl(url) {
+  try {
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => document.body.removeChild(a), 300);
+  } catch(e) {
+    // fallback
+    window.location.href = url;
+  }
+}
+
+// ══════════════════════════════════════════════════════
 //  SAVE INVOICE  (زر Save — الحجز الأخير أو الوحيد)
 // ══════════════════════════════════════════════════════
 async function saveInvoice(event) {
@@ -696,52 +732,44 @@ async function saveInvoice(event) {
 
     if (!saveRes.success) throw new Error(saveRes.message || 'Failed to save invoice');
     const voucherNo = saveRes.voucherNo;
+    console.log('✅ saveInvoice OK:', voucherNo, '| cost:', inv.cost);
 
     // 2. توليد PDF
+    let pdfRes;
     if (sessionVouchers.length > 0) {
-      // جلسة متعددة → PDF يشمل كل الجلسة + هذه الفاتورة
       showPDFOverlay(`📄 إنشاء PDF للجلسة (${sessionVouchers.length + 1} فواتير)...`);
-      const pdfRes = await fetch(GAS_URL, {
+      console.log('📄 generateSessionPDF:', voucherNo);
+      pdfRes = await fetch(GAS_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({ action: 'generateSessionPDF', voucherNo })
       }).then(r=>r.json());
-
+      console.log('📄 generateSessionPDF response:', JSON.stringify(pdfRes));
       hidePDFOverlay();
       if (pdfRes.success) {
-        sessionVouchers = []; // إعادة تهيئة الجلسة
-        showAlert(
-          `✅ تم حفظ وإنشاء PDF لـ ${pdfRes.invoiceCount} فاتورة\n${voucherNo}`,
-          '✅',
-          `<button class="btn-success" onclick="window.open('${pdfRes.url}','_blank');closeAlert()">📄 فتح PDF</button>
-           <button class="btn-primary" onclick="closeAlert()">OK</button>`
-        );
+        sessionVouchers = [];
+        clearFormFull();
+        showPDFSuccessModal(`✅ PDF جاهز — ${pdfRes.invoiceCount} فواتير`, pdfRes.url);
       } else {
         showAlert('تم الحفظ لكن فشل إنشاء PDF: ' + pdfRes.message, '⚠️');
       }
     } else {
-      // حجز مفرد
       showPDFOverlay('📄 إنشاء PDF...');
-      const pdfRes = await fetch(GAS_URL, {
+      console.log('📄 saveAndGenerateSinglePDF:', voucherNo);
+      pdfRes = await fetch(GAS_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({ action: 'saveAndGenerateSinglePDF', voucherNo })
       }).then(r=>r.json());
-
+      console.log('📄 saveAndGenerateSinglePDF response:', JSON.stringify(pdfRes));
       hidePDFOverlay();
       if (pdfRes.success) {
-        showAlert(
-          `✅ تم حفظ الفاتورة\n${voucherNo}`,
-          '✅',
-          `<button class="btn-success" onclick="window.open('${pdfRes.url}','_blank');closeAlert()">📄 فتح PDF</button>
-           <button class="btn-primary" onclick="closeAlert()">OK</button>`
-        );
+        clearFormFull();
+        showPDFSuccessModal(`✅ تم حفظ الفاتورة — ${voucherNo}`, pdfRes.url);
       } else {
         showAlert('تم الحفظ لكن فشل إنشاء PDF: ' + pdfRes.message, '⚠️');
       }
     }
-
-    clearFormFull(); // مسح كامل بعد Save
   } catch(err) {
     hidePDFOverlay();
     showAlert('خطأ: ' + err.message, '❌');
@@ -771,6 +799,7 @@ async function newBooking(event) {
 
     if (!saveRes.success) throw new Error(saveRes.message || 'Failed to save');
     const voucherNo = saveRes.voucherNo;
+    console.log('✅ newBooking saveInvoice OK:', voucherNo);
 
     // 2. إضافة الفاتورة للجلسة في Invoice_PDF
     showPDFOverlay(`➕ إضافة ${voucherNo} للجلسة...`);
@@ -779,6 +808,7 @@ async function newBooking(event) {
       headers: { 'Content-Type': 'text/plain' },
       body: JSON.stringify({ action: 'addInvoiceToSession', voucherNo })
     }).then(r=>r.json());
+    console.log('➕ addInvoiceToSession response:', JSON.stringify(addRes));
 
     hidePDFOverlay();
 
@@ -788,11 +818,12 @@ async function newBooking(event) {
     sessionVouchers.push(voucherNo);
     updateSessionBadge();
 
-    // 4. مسح جزئي — يبقى: التليفون، الاسم، الجنسية، الفندق، الغرفة
+    // 4. مسح جزئي — تُمسح بيانات الرحلة والمدفوعات والتوقيع
+    //    تبقى: التليفون، الاسم، الجنسية، الفندق، الغرفة
     clearFormPartial();
 
     showAlert(
-      `✅ تم إضافة ${voucherNo} للجلسة\nاضغط New Booking مجدداً أو Save لإنهاء الجلسة`,
+      `✅ تم إضافة ${voucherNo} للجلسة (${sessionVouchers.length} حجوزات)\n\nيمكنك إدخال حجز جديد أو الضغط على Save لإنهاء الجلسة وإنشاء PDF`,
       '✅'
     );
   } catch(err) {
@@ -810,7 +841,7 @@ async function newBooking(event) {
 // مسح كامل (بعد Save النهائي)
 function clearFormFull() {
   signatureData = null;
-  currentTripItems = []; currentTripCategory = ''; currentTripDefinition = null;
+  currentTripItems = []; currentTripCategory = ''; currentTripDefinition = null; currentTripHasCost = false;
   const fields = ['phoneNumber','guestName','nationality','hotel','roomNo',
                   'adultCount','childCount','infantCount','activeDate','tripTime',
                   'invoiceCurrency','notes','discount'];
@@ -832,7 +863,7 @@ function clearFormFull() {
 // مسح جزئي (بعد New Booking — تبقى بيانات العميل)
 function clearFormPartial() {
   signatureData = null;
-  currentTripItems = []; currentTripCategory = ''; currentTripDefinition = null;
+  currentTripItems = []; currentTripCategory = ''; currentTripDefinition = null; currentTripHasCost = false;
   // مسح بيانات الرحلة فقط
   ['activeDate','tripTime','invoiceCurrency','notes','discount'].forEach(id => {
     const el=document.getElementById(id); if(el) el.value='';
@@ -938,4 +969,3 @@ function handleTouchEnd() { isDrawing=false; }
 </script>
 </body>
 </html>
-
