@@ -6,7 +6,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes">
   <title>إدارة الموظفين - نظام المرتبات</title>
   <style>
-    /* نفس التنسيقات السابقة */
     * { margin:0; padding:0; box-sizing:border-box; font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif; }
     body { background:linear-gradient(135deg,#667eea 0%,#764ba2 100%); min-height:100vh; padding:20px; }
     .container { max-width:1200px; margin:0 auto; background:white; border-radius:30px; box-shadow:0 20px 60px rgba(0,0,0,0.3); overflow:hidden; }
@@ -218,12 +217,23 @@
   </div>
 
   <script>
-    // الرابط الثابت - استبدله بالرابط الخاص بك
-    const APP_URL = 'https://script.google.com/macros/s/AKfycbyB4ZzI5UJibARWEXXSmtLYACNWqiYvv1GC_zeeBsZFMcW7pOFskDDkbiNF50zdWorq/exec';
-    
     let currentUser = null;
     let employees = [];
     let branches = [];
+
+    // ================ الحصول على رابط Web App من currentUser ================
+    function getAppUrl() {
+      if (currentUser && currentUser.appUrl) {
+        return currentUser.appUrl;
+      }
+      // إذا لم يكن موجوداً، نستخدم الرابط من sessionStorage
+      try {
+        const user = JSON.parse(sessionStorage.getItem('currentUser') || '{}');
+        return user.appUrl || '';
+      } catch(e) {
+        return '';
+      }
+    }
 
     // ================ دوال مساعدة ================
     function closeModal(modalId) {
@@ -282,8 +292,13 @@
     }
 
     async function callApi(action, params = {}, method = 'GET') {
+      const appUrl = getAppUrl();
+      if (!appUrl) {
+        throw new Error('رابط التطبيق غير متوفر');
+      }
+
       try {
-        const url = new URL(APP_URL);
+        const url = new URL(appUrl);
         url.searchParams.set('action', action);
         Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
         
@@ -296,32 +311,49 @@
         return data;
       } catch (error) {
         console.error('API Error:', error);
-        return { success: false, message: error.message };
+        throw error;
       }
     }
 
-    // ================ تحميل الفروع ================
-    async function loadBranches() {
-      const result = await callApi('getActiveBranches');
-      if (Array.isArray(result)) {
-        branches = result;
-        const select = document.getElementById('empBranch');
-        select.innerHTML = '<option value="">اختر الفرع</option>';
-        branches.forEach(b => {
-          select.innerHTML += `<option value="${b.id}">${b.name}</option>`;
-        });
+    // ================ تحميل الفروع الخاصة بالمركز فقط ================
+    async function loadBranchesForCenter() {
+      if (!currentUser?.centerId) {
+        console.error('لا يوجد مركز للمستخدم');
+        return;
+      }
+
+      try {
+        // استخدام API موجود لجلب فروع المركز المحدد
+        const result = await callApi('getBranchesByCenter', { centerId: currentUser.centerId });
+        
+        if (Array.isArray(result)) {
+          branches = result;
+          const select = document.getElementById('empBranch');
+          select.innerHTML = '<option value="">اختر الفرع</option>';
+          branches.forEach(b => {
+            select.innerHTML += `<option value="${b.id}">${b.name}</option>`;
+          });
+        } else {
+          console.error('فشل تحميل الفروع:', result);
+        }
+      } catch (error) {
+        console.error('خطأ في تحميل الفروع:', error);
       }
     }
 
     // ================ عرض الموظفين ================
     async function loadEmployees() {
       document.getElementById('employeesTable').innerHTML = '<div class="loader"></div>';
-      const result = await callApi('getAllEmployees');
-      if (Array.isArray(result)) {
-        employees = result;
-        displayTable();
-      } else {
-        document.getElementById('employeesTable').innerHTML = '<p>خطأ في تحميل البيانات</p>';
+      try {
+        const result = await callApi('getAllEmployees');
+        if (Array.isArray(result)) {
+          employees = result;
+          displayTable();
+        } else {
+          document.getElementById('employeesTable').innerHTML = '<p>خطأ في تحميل البيانات</p>';
+        }
+      } catch (error) {
+        document.getElementById('employeesTable').innerHTML = '<p>خطأ في الاتصال بالخادم</p>';
       }
     }
 
@@ -390,8 +422,8 @@
         el.innerHTML = '<span style="font-size:40px;">➕</span>';
       });
       
-      // تحميل الفروع
-      loadBranches();
+      // تحميل الفروع الخاصة بالمركز فقط
+      loadBranchesForCenter();
       
       // العودة للتبويب الأول
       switchTab('basic');
@@ -415,7 +447,6 @@
       
       // تجميع البيانات
       const data = {
-        action: 'addNewEmployee', // مهم جداً
         fullName: name,
         position: position,
         monthlySalary: parseFloat(document.getElementById('empSalary').value) || 0,
@@ -442,13 +473,22 @@
         data.address = document.getElementById('empAddress').value;
       }
       
-      console.log('Sending data:', data);
+      console.log('Saving employee:', data);
       
-      // استخدام POST مع البيانات كـ JSON
       try {
-        const response = await fetch(APP_URL, {
+        const appUrl = getAppUrl();
+        if (!appUrl) {
+          alert('خطأ: رابط التطبيق غير متوفر');
+          return;
+        }
+
+        // استخدام POST مع البيانات كـ JSON
+        const response = await fetch(appUrl, {
           method: 'POST',
-          body: JSON.stringify(data),
+          body: JSON.stringify({
+            action: 'addNewEmployee',
+            ...data
+          }),
           headers: {
             'Content-Type': 'application/json'
           }
@@ -458,43 +498,47 @@
         console.log('Save result:', result);
         
         if (result.success) {
-          alert('تم إضافة الموظف بنجاح');
+          alert('✅ تم إضافة الموظف بنجاح');
           closeModal('addModal');
           loadEmployees();
         } else {
-          alert('خطأ: ' + (result.message || 'غير معروف'));
+          alert('❌ خطأ: ' + (result.message || 'غير معروف'));
         }
       } catch (error) {
         console.error('Save error:', error);
-        alert('خطأ في الاتصال: ' + error.message);
+        alert('❌ خطأ في الاتصال: ' + error.message);
       }
     }
 
     // ================ دوال أخرى ================
     async function viewHistory(serial) {
-      const history = await callApi('getSalaryHistory', { serial });
-      if (Array.isArray(history) && history.length > 0) {
-        let html = '<h4>سجل تعديلات الراتب</h4><table><tr><th>الراتب</th><th>الشهر</th><th>السنة</th><th>السبب</th></tr>';
-        history.forEach(h => {
-          html += `<tr><td>${h.salary}</td><td>${h.month}</td><td>${h.year}</td><td>${h.reason}</td></tr>`;
-        });
-        html += '</table>';
-        
-        const div = document.createElement('div');
-        div.className = 'modal';
-        div.style.display = 'flex';
-        div.innerHTML = `
-          <div class="modal-content" style="max-width:600px;">
-            <div class="modal-header">
-              <h3>📜 سجل الراتب</h3>
-              <span class="close-modal" onclick="this.parentElement.parentElement.parentElement.remove()">&times;</span>
+      try {
+        const history = await callApi('getSalaryHistory', { serial });
+        if (Array.isArray(history) && history.length > 0) {
+          let html = '<h4>سجل تعديلات الراتب</h4><table><tr><th>الراتب</th><th>الشهر</th><th>السنة</th><th>السبب</th></tr>';
+          history.forEach(h => {
+            html += `<tr><td>${h.salary}</td><td>${h.month}</td><td>${h.year}</td><td>${h.reason}</td></tr>`;
+          });
+          html += '</table>';
+          
+          const div = document.createElement('div');
+          div.className = 'modal';
+          div.style.display = 'flex';
+          div.innerHTML = `
+            <div class="modal-content" style="max-width:600px;">
+              <div class="modal-header">
+                <h3>📜 سجل الراتب</h3>
+                <span class="close-modal" onclick="this.parentElement.parentElement.parentElement.remove()">&times;</span>
+              </div>
+              ${html}
             </div>
-            ${html}
-          </div>
-        `;
-        document.body.appendChild(div);
-      } else {
-        alert('لا يوجد سجل لهذا الموظف');
+          `;
+          document.body.appendChild(div);
+        } else {
+          alert('لا يوجد سجل لهذا الموظف');
+        }
+      } catch (error) {
+        alert('خطأ في تحميل السجل');
       }
     }
 
@@ -513,8 +557,20 @@
         window.location.href = 'index.html';
         return;
       }
-      currentUser = JSON.parse(userData);
-      loadEmployees();
+      
+      try {
+        currentUser = JSON.parse(userData);
+        
+        // التحقق من صلاحية المستخدم
+        if (!['Accountant', 'Admin', 'Owner'].includes(currentUser.type)) {
+          window.location.href = 'index.html';
+          return;
+        }
+        
+        loadEmployees();
+      } catch (e) {
+        window.location.href = 'index.html';
+      }
     });
 
     // ================ تعريف الدوال العامة ================
