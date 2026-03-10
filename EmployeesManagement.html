@@ -16,9 +16,14 @@
     .action-bar { display:flex; gap:15px; margin-bottom:25px; flex-wrap:wrap; }
     .btn-primary { background:#1e2b4f; color:white; border:none; padding:12px 25px; border-radius:40px; cursor:pointer; font-weight:600; }
     .btn-success { background:#27ae60; color:white; border:none; padding:12px 25px; border-radius:40px; cursor:pointer; font-weight:600; }
+    .btn-danger { background:#e74c3c; color:white; border:none; padding:12px 25px; border-radius:40px; cursor:pointer; font-weight:600; }
+    
     table { width:100%; border-collapse:collapse; background:white; border-radius:15px; overflow:hidden; box-shadow:0 5px 15px rgba(0,0,0,0.1); }
     th { background:#1e2b4f; color:white; padding:15px; }
     td { padding:12px; border-bottom:1px solid #dee2e6; text-align:center; }
+    tr:hover { background:#f8f9fa; }
+    .status-active { color:#27ae60; font-weight:600; }
+    .status-inactive { color:#e74c3c; font-weight:600; }
     
     .modal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); align-items:center; justify-content:center; z-index:10000; overflow-y:auto; }
     .modal-content { background:white; width:90%; max-width:900px; border-radius:30px; padding:30px; max-height:90vh; overflow-y:auto; }
@@ -217,23 +222,12 @@
   </div>
 
   <script>
+    // الرابط الثابت من index.html
+    const APP_URL = "https://script.google.com/macros/s/AKfycbyB4ZzI5UJibARWEXXSmtLYACNWqiYvv1GC_zeeBsZFMcW7pOFskDDkbiNF50zdWorq/exec";
+    
     let currentUser = null;
     let employees = [];
     let branches = [];
-
-    // ================ الحصول على رابط Web App من currentUser ================
-    function getAppUrl() {
-      if (currentUser && currentUser.appUrl) {
-        return currentUser.appUrl;
-      }
-      // إذا لم يكن موجوداً، نستخدم الرابط من sessionStorage
-      try {
-        const user = JSON.parse(sessionStorage.getItem('currentUser') || '{}');
-        return user.appUrl || '';
-      } catch(e) {
-        return '';
-      }
-    }
 
     // ================ دوال مساعدة ================
     function closeModal(modalId) {
@@ -291,28 +285,13 @@
       }
     }
 
-    async function callApi(action, params = {}, method = 'GET') {
-      const appUrl = getAppUrl();
-      if (!appUrl) {
-        throw new Error('رابط التطبيق غير متوفر');
-      }
-
-      try {
-        const url = new URL(appUrl);
-        url.searchParams.set('action', action);
-        Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-        
-        console.log(`Calling API: ${action}`, params);
-        
-        const res = await fetch(url.toString());
-        const data = await res.json();
-        
-        console.log(`API Response for ${action}:`, data);
-        return data;
-      } catch (error) {
-        console.error('API Error:', error);
-        throw error;
-      }
+    async function callApi(action, params = {}) {
+      const url = new URL(APP_URL);
+      url.searchParams.set('action', action);
+      Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+      
+      const res = await fetch(url.toString());
+      return await res.json();
     }
 
     // ================ تحميل الفروع الخاصة بالمركز فقط ================
@@ -323,7 +302,7 @@
       }
 
       try {
-        // استخدام API موجود لجلب فروع المركز المحدد
+        // استدعاء API خاص بفروع المركز
         const result = await callApi('getBranchesByCenter', { centerId: currentUser.centerId });
         
         if (Array.isArray(result)) {
@@ -333,6 +312,7 @@
           branches.forEach(b => {
             select.innerHTML += `<option value="${b.id}">${b.name}</option>`;
           });
+          console.log('تم تحميل الفروع:', branches);
         } else {
           console.error('فشل تحميل الفروع:', result);
         }
@@ -344,16 +324,13 @@
     // ================ عرض الموظفين ================
     async function loadEmployees() {
       document.getElementById('employeesTable').innerHTML = '<div class="loader"></div>';
-      try {
-        const result = await callApi('getAllEmployees');
-        if (Array.isArray(result)) {
-          employees = result;
-          displayTable();
-        } else {
-          document.getElementById('employeesTable').innerHTML = '<p>خطأ في تحميل البيانات</p>';
-        }
-      } catch (error) {
-        document.getElementById('employeesTable').innerHTML = '<p>خطأ في الاتصال بالخادم</p>';
+      const result = await callApi('getAllEmployees');
+      
+      if (Array.isArray(result)) {
+        employees = result;
+        displayTable();
+      } else {
+        document.getElementById('employeesTable').innerHTML = '<p>خطأ في تحميل البيانات</p>';
       }
     }
 
@@ -382,7 +359,7 @@
             <td>${emp.position}</td>
             <td>${emp.monthlySalary}</td>
             <td>${emp.paymentSystem}</td>
-            <td>${emp.status}</td>
+            <td class="${emp.status === 'نشط' ? 'status-active' : 'status-inactive'}">${emp.status}</td>
             <td>
               <button class="btn-primary" style="padding:5px 10px;" onclick="viewHistory('${emp.serial}')">📜 سجل</button>
               <button class="btn-success" style="padding:5px 10px;" onclick="openSalaryModal('${emp.serial}')">💰 راتب</button>
@@ -447,6 +424,7 @@
       
       // تجميع البيانات
       const data = {
+        action: 'addNewEmployee',
         fullName: name,
         position: position,
         monthlySalary: parseFloat(document.getElementById('empSalary').value) || 0,
@@ -473,22 +451,12 @@
         data.address = document.getElementById('empAddress').value;
       }
       
-      console.log('Saving employee:', data);
+      console.log('Sending data:', data);
       
       try {
-        const appUrl = getAppUrl();
-        if (!appUrl) {
-          alert('خطأ: رابط التطبيق غير متوفر');
-          return;
-        }
-
-        // استخدام POST مع البيانات كـ JSON
-        const response = await fetch(appUrl, {
+        const response = await fetch(APP_URL, {
           method: 'POST',
-          body: JSON.stringify({
-            action: 'addNewEmployee',
-            ...data
-          }),
+          body: JSON.stringify(data),
           headers: {
             'Content-Type': 'application/json'
           }
@@ -510,44 +478,29 @@
       }
     }
 
-    // ================ دوال أخرى ================
+    // ================ سجل الراتب ================
     async function viewHistory(serial) {
-      try {
-        const history = await callApi('getSalaryHistory', { serial });
-        if (Array.isArray(history) && history.length > 0) {
-          let html = '<h4>سجل تعديلات الراتب</h4><table><tr><th>الراتب</th><th>الشهر</th><th>السنة</th><th>السبب</th></tr>';
-          history.forEach(h => {
-            html += `<tr><td>${h.salary}</td><td>${h.month}</td><td>${h.year}</td><td>${h.reason}</td></tr>`;
-          });
-          html += '</table>';
-          
-          const div = document.createElement('div');
-          div.className = 'modal';
-          div.style.display = 'flex';
-          div.innerHTML = `
-            <div class="modal-content" style="max-width:600px;">
-              <div class="modal-header">
-                <h3>📜 سجل الراتب</h3>
-                <span class="close-modal" onclick="this.parentElement.parentElement.parentElement.remove()">&times;</span>
-              </div>
-              ${html}
-            </div>
-          `;
-          document.body.appendChild(div);
-        } else {
-          alert('لا يوجد سجل لهذا الموظف');
-        }
-      } catch (error) {
-        alert('خطأ في تحميل السجل');
+      const history = await callApi('getSalaryHistory', { serial });
+      
+      if (Array.isArray(history) && history.length > 0) {
+        let html = '<table><tr><th>الراتب</th><th>الشهر</th><th>السنة</th><th>السبب</th></tr>';
+        history.forEach(h => {
+          html += `<tr><td>${h.salary}</td><td>${h.month}</td><td>${h.year}</td><td>${h.reason}</td></tr>`;
+        });
+        html += '</table>';
+        
+        alert('سجل الراتب:\n' + history.map(h => `${h.salary} (${h.month}/${h.year})`).join('\n'));
+      } else {
+        alert('لا يوجد سجل لهذا الموظف');
       }
     }
 
     function openSalaryModal(serial) {
-      alert('سيتم فتح مودال تعديل الراتب قريباً');
+      alert('سيتم فتح تعديل الراتب قريباً');
     }
 
     function openStatusModal(serial) {
-      alert('سيتم فتح مودال تغيير الحالة قريباً');
+      alert('سيتم فتح تغيير الحالة قريباً');
     }
 
     // ================ بدء التشغيل ================
@@ -561,12 +514,12 @@
       try {
         currentUser = JSON.parse(userData);
         
-        // التحقق من صلاحية المستخدم
         if (!['Accountant', 'Admin', 'Owner'].includes(currentUser.type)) {
           window.location.href = 'index.html';
           return;
         }
         
+        console.log('المستخدم الحالي:', currentUser);
         loadEmployees();
       } catch (e) {
         window.location.href = 'index.html';
