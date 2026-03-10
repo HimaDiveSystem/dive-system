@@ -241,21 +241,75 @@
     let branches = [];
 
     // ══════════════════════════════════════════════════════
-    // HELPER - نفس gasGet من ExpenseRevenueEntry
+    // دالة showToast
     // ══════════════════════════════════════════════════════
-    function gasGet(params) {
-      const qs = Object.entries(params).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
-      return fetch(`${GAS}?${qs}`).then(r => r.json());
+    function showToast(msg, type = 'success') {
+      console.log(`🍞 Toast [${type}]: ${msg}`);
+      
+      let toast = document.getElementById('toast');
+      if (!toast) {
+        console.warn('⚠️ Toast element not found, creating one');
+        toast = document.createElement('div');
+        toast.id = 'toast';
+        toast.className = 'toast';
+        document.body.appendChild(toast);
+      }
+      
+      toast.textContent = msg;
+      toast.className = `toast toast-${type} show`;
+      
+      setTimeout(() => {
+        toast.className = 'toast';
+      }, 3000);
     }
 
     // ══════════════════════════════════════════════════════
-    // TOAST - نفس التنسيق
+    // دالة gasGet المحسنة للتشخيص
     // ══════════════════════════════════════════════════════
-    function showToast(msg, type = 'success') {
-      const t = document.getElementById('toast');
-      t.textContent = msg;
-      t.className = `toast toast-${type} show`;
-      setTimeout(() => { t.className = 'toast'; }, 3000);
+    async function gasGet(params) {
+      console.log('🔧 gasGet called with params:', params);
+      
+      const queryString = Object.entries(params)
+        .map(([key, value]) => {
+          const encodedValue = encodeURIComponent(String(value || ''));
+          return `${key}=${encodedValue}`;
+        })
+        .join('&');
+      
+      const url = `${GAS}?${queryString}`;
+      console.log('🔧 gasGet URL:', url);
+      
+      try {
+        const response = await fetch(url, {
+          method: 'GET',
+          mode: 'cors',
+          cache: 'no-cache',
+          headers: {
+            'Content-Type': 'application/json',
+          }
+        });
+        
+        console.log('🔧 Response status:', response.status);
+        console.log('🔧 Response ok:', response.ok);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const text = await response.text();
+        console.log('🔧 Raw response text (first 200):', text.substring(0, 200));
+        
+        try {
+          return JSON.parse(text);
+        } catch (e) {
+          console.error('🔧 Failed to parse JSON:', e);
+          console.error('🔧 Raw text:', text);
+          throw new Error('Invalid JSON response from server');
+        }
+      } catch (error) {
+        console.error('🔧 Fetch error:', error);
+        throw error;
+      }
     }
 
     // ══════════════════════════════════════════════════════
@@ -317,7 +371,7 @@
     }
 
     // ══════════════════════════════════════════════════════
-    // تحميل الفروع الخاصة بالمركز فقط - باستخدام gasGet
+    // تحميل الفروع الخاصة بالمركز فقط
     // ══════════════════════════════════════════════════════
     async function loadBranchesForCenter() {
       if (!currentUser?.centerId) {
@@ -338,8 +392,10 @@
           branches.forEach(b => {
             select.innerHTML += `<option value="${b.id}">${b.name}</option>`;
           });
+          console.log('تم تحميل الفروع:', branches);
         } else {
           console.error('فشل تحميل الفروع:', result);
+          showToast('فشل تحميل الفروع', 'error');
         }
       } catch (error) {
         console.error('خطأ في تحميل الفروع:', error);
@@ -348,7 +404,7 @@
     }
 
     // ══════════════════════════════════════════════════════
-    // عرض الموظفين - باستخدام gasGet
+    // عرض الموظفين
     // ══════════════════════════════════════════════════════
     async function loadEmployees() {
       document.getElementById('employeesTable').innerHTML = '<div class="loader"></div>';
@@ -358,11 +414,13 @@
         if (Array.isArray(result)) {
           employees = result;
           displayTable();
+          console.log('تم تحميل الموظفين:', employees.length);
         } else {
           document.getElementById('employeesTable').innerHTML = '<p>خطأ في تحميل البيانات</p>';
           showToast('خطأ في تحميل الموظفين', 'error');
         }
       } catch (error) {
+        console.error('خطأ في تحميل الموظفين:', error);
         document.getElementById('employeesTable').innerHTML = '<p>خطأ في الاتصال بالخادم</p>';
         showToast('خطأ في الاتصال: ' + error.message, 'error');
       }
@@ -411,6 +469,8 @@
     // فتح مودال الإضافة
     // ══════════════════════════════════════════════════════
     function openAddModal() {
+      console.log('📋 Opening add modal');
+      
       // تفريغ الحقول
       document.getElementById('empName').value = '';
       document.getElementById('empPosition').value = '';
@@ -446,92 +506,141 @@
     }
 
     // ══════════════════════════════════════════════════════
-    // حفظ الموظف الجديد - باستخدام gasGet (GET request)
+    // حفظ الموظف الجديد - مع تشخيص كامل
     // ══════════════════════════════════════════════════════
-   async function saveNewEmployee() {
-  // التحقق من الحقول المطلوبة
-  const name = document.getElementById('empName').value;
-  const position = document.getElementById('empPosition').value;
-  const startDate = document.getElementById('empStartDate').value;
-  const branchId = document.getElementById('empBranch').value;
-  
-  if (!name || !position || !startDate || !branchId) {
-    showToast('يرجى ملء جميع الحقول المطلوبة', 'error');
-    return;
-  }
-  
-  // تجميع البيانات
-  const params = {
-    action: 'addNewEmployee',
-    fullName: name,
-    position: position,
-    monthlySalary: parseFloat(document.getElementById('empSalary').value) || 0,
-    phone: document.getElementById('empPhone').value,
-    startDate: startDate,
-    branchId: branchId,
-    branchName: branches.find(b => b.id === branchId)?.name || '',
-    paymentSystem: document.getElementById('empPaymentSystem').value,
-    hasSystemAccess: document.getElementById('empHasAccess').checked ? 'true' : 'false',
-    centerId: currentUser?.centerId || '',
-    centerName: currentUser?.centerName || ''
-  };
-  
-  // بيانات النظام إذا وجدت
-  if (document.getElementById('empHasAccess').checked) {
-    if (!document.getElementById('empPassword').value) {
-      showToast('كلمة المرور مطلوبة للمستخدمين', 'error');
-      return;
+    async function saveNewEmployee() {
+      // ✋ تأكد من وصول التنفيذ لهذه النقطة
+      console.log('%c🔥🔥🔥 saveNewEmployee CALLED! 🔥🔥🔥', 'color: green; font-size: 16px; font-weight: bold');
+      console.log('🔥 Timestamp:', new Date().toISOString());
+      console.log('🔥 Current user:', currentUser);
+      
+      showToast('جاري الحفظ...', 'info');
+      
+      // التحقق من الحقول المطلوبة
+      const name = document.getElementById('empName')?.value;
+      const position = document.getElementById('empPosition')?.value;
+      const startDate = document.getElementById('empStartDate')?.value;
+      const branchId = document.getElementById('empBranch')?.value;
+      
+      console.log('📋 Form values:', { 
+        name, 
+        position, 
+        startDate, 
+        branchId,
+        salary: document.getElementById('empSalary')?.value,
+        phone: document.getElementById('empPhone')?.value,
+        paymentSystem: document.getElementById('empPaymentSystem')?.value
+      });
+      
+      // التحقق من وجود العناصر
+      if (!document.getElementById('empName')) {
+        console.error('❌ عنصر empName غير موجود في الصفحة');
+        showToast('خطأ في النموذج', 'error');
+        return;
+      }
+      
+      if (!name || !position || !startDate || !branchId) {
+        console.warn('⚠️ Missing required fields');
+        showToast('يرجى ملء جميع الحقول المطلوبة', 'error');
+        return;
+      }
+      
+      // تجميع البيانات الأساسية
+      const params = {
+        action: 'addNewEmployee',
+        fullName: name,
+        position: position,
+        monthlySalary: parseFloat(document.getElementById('empSalary')?.value) || 0,
+        phone: document.getElementById('empPhone')?.value || '',
+        startDate: startDate,
+        branchId: branchId,
+        branchName: branches.find(b => b.id === branchId)?.name || '',
+        paymentSystem: document.getElementById('empPaymentSystem')?.value || 'مرتب فقط',
+        hasSystemAccess: document.getElementById('empHasAccess')?.checked ? 'true' : 'false',
+        centerId: currentUser?.centerId || '',
+        centerName: currentUser?.centerName || ''
+      };
+      
+      // بيانات النظام إذا وجدت
+      if (document.getElementById('empHasAccess')?.checked) {
+        console.log('🔑 User has system access, collecting credentials...');
+        
+        const password = document.getElementById('empPassword')?.value;
+        if (!password) {
+          showToast('كلمة المرور مطلوبة للمستخدمين', 'error');
+          return;
+        }
+        
+        params.username = document.getElementById('empUsername')?.value || '';
+        params.password = password;
+        params.email = document.getElementById('empEmail')?.value || '';
+        params.userType = document.getElementById('empUserType')?.value || 'Employee';
+        params.address = document.getElementById('empAddress')?.value || '';
+      }
+      
+      console.log('📤 Final params object:', params);
+      
+      // بناء URL للاختبار
+      const testUrl = GAS + '?' + new URLSearchParams(params).toString();
+      console.log('📤 Full URL (for testing):', testUrl);
+      
+      // تعطيل الزر أثناء الحفظ
+      const btn = document.querySelector('#tab-images .btn-success');
+      if (!btn) {
+        console.error('❌ زر الحفظ غير موجود!');
+        return;
+      }
+      
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '⏳ جاري الحفظ...';
+      
+      try {
+        console.log('⏳ Calling gasGet with params...');
+        console.time('API Call Duration');
+        
+        const result = await gasGet(params);
+        
+        console.timeEnd('API Call Duration');
+        console.log('📥 Raw response:', result);
+        
+        if (result && result.success === true) {
+          console.log('%c✅ Save successful!', 'color: green; font-size: 14px');
+          showToast('✅ تم إضافة الموظف بنجاح', 'success');
+          closeModal('addModal');
+          await loadEmployees();
+        } else {
+          console.error('❌ Server returned error:', result);
+          const errorMsg = result?.message || 'خطأ غير معروف من الخادم';
+          showToast('❌ ' + errorMsg, 'error');
+        }
+      } catch (error) {
+        console.error('%c❌❌❌ CATCH ERROR ❌❌❌', 'color: red; font-size: 14px');
+        console.error('❌ Error name:', error.name);
+        console.error('❌ Error message:', error.message);
+        console.error('❌ Error stack:', error.stack);
+        
+        // محاولة fetch مباشرة للتشخيص
+        try {
+          console.log('🔍 Attempting direct fetch for diagnosis...');
+          const directResponse = await fetch(testUrl);
+          console.log('🔍 Direct fetch status:', directResponse.status);
+          const text = await directResponse.text();
+          console.log('🔍 Direct fetch response (first 200 chars):', text.substring(0, 200));
+        } catch (directError) {
+          console.error('🔍 Direct fetch also failed:', directError);
+        }
+        
+        showToast('❌ خطأ في الاتصال: ' + error.message, 'error');
+      } finally {
+        console.log('🏁 Finally block - re-enabling button');
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
     }
-    params.username = document.getElementById('empUsername').value;
-    params.password = document.getElementById('empPassword').value;
-    params.email = document.getElementById('empEmail').value;
-    params.userType = document.getElementById('empUserType').value;
-    params.address = document.getElementById('empAddress').value;
-  }
-  
-  // 🔍 تشخيص - عرض البيانات في الكونسول
-  console.log('📤 SENDING REQUEST ==================');
-  console.log('📤 Params:', params);
-  console.log('📤 URL:', GAS + '?' + new URLSearchParams(params).toString());
-  
-  // تعطيل الزر أثناء الحفظ
-  const btn = document.querySelector('#tab-images .btn-success');
-  btn.disabled = true;
-  btn.textContent = '⏳ جاري الحفظ...';
-  
-  try {
-    console.log('⏳ Calling gasGet...');
-    const result = await gasGet(params);
-    console.log('📥 Response:', result);
-    
-    if (result.success) {
-      console.log('✅ Save successful');
-      showToast('✅ تم إضافة الموظف بنجاح', 'success');
-      closeModal('addModal');
-      loadEmployees();
-    } else {
-      console.error('❌ Server error:', result.message);
-      showToast('❌ خطأ: ' + (result.message || 'غير معروف'), 'error');
-    }
-  } catch (error) {
-    // 🔍 تشخيص - عرض تفاصيل الخطأ
-    console.error('❌ ERROR DETAILS =================');
-    console.error('❌ Error name:', error.name);
-    console.error('❌ Error message:', error.message);
-    console.error('❌ Error stack:', error.stack);
-    if (error.response) {
-      console.error('❌ Response status:', error.response.status);
-      console.error('❌ Response text:', await error.response.text());
-    }
-    showToast('❌ خطأ في الاتصال: ' + error.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '💾 حفظ الموظف';
-    console.log('🏁 Finished save attempt');
-  }
-}
+
     // ══════════════════════════════════════════════════════
-    // سجل الراتب - باستخدام gasGet
+    // سجل الراتب
     // ══════════════════════════════════════════════════════
     async function viewHistory(serial) {
       try {
@@ -570,40 +679,51 @@
     // بدء التشغيل
     // ══════════════════════════════════════════════════════
     document.addEventListener('DOMContentLoaded', () => {
+      console.log('📋 Page loaded, initializing...');
+      
       const userData = sessionStorage.getItem('currentUser');
       if (!userData) {
+        console.warn('No user data found, redirecting to login');
         window.location.href = 'index.html';
         return;
       }
       
       try {
         currentUser = JSON.parse(userData);
+        console.log('Current user:', currentUser);
         
         if (!['Accountant', 'Admin', 'Owner'].includes(currentUser.type)) {
+          console.warn('User type not authorized:', currentUser.type);
           window.location.href = 'index.html';
           return;
         }
         
+        console.log('📋 Registering global functions...');
+        
+        window.saveNewEmployee = saveNewEmployee;
+        window.gasGet = gasGet;
+        window.showToast = showToast;
+        window.closeModal = closeModal;
+        window.switchTab = switchTab;
+        window.toggleSystemFields = toggleSystemFields;
+        window.generateEmail = generateEmail;
+        window.uploadImage = uploadImage;
+        window.previewImage = previewImage;
+        window.openAddModal = openAddModal;
+        window.loadEmployees = loadEmployees;
+        window.viewHistory = viewHistory;
+        window.openSalaryModal = openSalaryModal;
+        window.openStatusModal = openStatusModal;
+        window.goBack = goBack;
+        
+        console.log('📋 Global functions registered');
+        
         loadEmployees();
       } catch (e) {
+        console.error('Error parsing user data:', e);
         window.location.href = 'index.html';
       }
     });
-
-    // تعريف الدوال العامة
-    window.closeModal = closeModal;
-    window.switchTab = switchTab;
-    window.toggleSystemFields = toggleSystemFields;
-    window.generateEmail = generateEmail;
-    window.uploadImage = uploadImage;
-    window.previewImage = previewImage;
-    window.openAddModal = openAddModal;
-    window.saveNewEmployee = saveNewEmployee;
-    window.loadEmployees = loadEmployees;
-    window.viewHistory = viewHistory;
-    window.openSalaryModal = openSalaryModal;
-    window.openStatusModal = openStatusModal;
-    window.goBack = goBack;
   </script>
 </body>
 </html>
