@@ -158,13 +158,14 @@
           <label>الوظيفة *</label>
           <select id="empPosition">
             <option value="">اختر الوظيفة</option>
-            <option value="Admin">مدير النظام</option>
-            <option value="Owner">صاحب مركز</option>
             <option value="Accountant">محاسب</option>
             <option value="Sales">سيلز</option>
             <option value="Employee">موظف عادي</option>
             <option value="Technician">فني</option>
             <option value="Cleaner">عامل نظافة</option>
+            <option value="Driver">سائق</option>
+            <option value="Guard">أمن</option>
+            <option value="Other">أخرى</option>
           </select>
         </div>
         <div class="form-group">
@@ -290,7 +291,7 @@
         </div>
       </div>
       <small style="color:#aaa;font-size:11px;display:block;margin-top:8px;">
-        الصور اختيارية — الحجم الأقصى 1MB — تُرفع على Google Drive وتُعرض كـ =IMAGE() في أعمدة P:S
+        الصور اختيارية — الحجم الأقصى 5MB — تُرفع على Google Drive وتُعرض كـ =IMAGE() في أعمدة P:S
       </small>
 
       <div style="display:flex;justify-content:space-between;margin-top:20px;">
@@ -599,25 +600,75 @@ function translitAr(str) {
 }
 
 // ══════════════════════════════════════════════════════════
-// IMAGE HANDLING — Base64 يُرسل لـ GAS الذي يرفعها على Drive
+// IMAGE HANDLING
+// الأسلوب: رفع الصورة على Drive عبر POST مباشرة → نحفظ الـ URL
+// ثم نُرسل URL فقط في params (لا base64 في JSONP)
 // ══════════════════════════════════════════════════════════
 function onFileSelect(input, key, prevId) {
   const file = input.files[0];
   if (!file) return;
-  if (file.size > 1048576) {
-    showToast('الصورة أكبر من 1MB', 'error');
+  if (file.size > 5 * 1024 * 1024) {
+    showToast('الصورة أكبر من 5MB، برجاء ضغطها', 'error');
     input.value = '';
     return;
   }
+  // عرض preview فوري
   const reader = new FileReader();
   reader.onload = ev => {
-    imgData[key] = ev.target.result; // base64 data URL
     const prev = document.getElementById(prevId);
     prev.style.cssText += 'background-image:url("' + ev.target.result + '");background-size:cover;background-position:center;';
     prev.classList.add('uploaded');
-    prev.innerHTML = '<div class="img-ok">✓ ' + file.name + '</div>';
+    prev.innerHTML = '<div class="img-ok">⏳ جاري الرفع...</div>';
   };
   reader.readAsDataURL(file);
+
+  // رفع على Drive عبر POST
+  uploadImageToDrive(file, key, prevId);
+}
+
+async function uploadImageToDrive(file, key, prevId) {
+  try {
+    // تحويل الملف لـ base64
+    const b64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload  = e => res(e.target.result.split(',')[1]);
+      r.onerror = rej;
+      r.readAsDataURL(file);
+    });
+
+    const mimeType = file.type || 'image/jpeg';
+    const label    = (editingSerial || 'NEW') + '_' + key.toLowerCase();
+
+    const resp = await fetch(GAS, {
+      method: 'POST',
+      body: JSON.stringify({
+        action:   'uploadEmployeeImage',
+        b64:      b64,
+        mimeType: mimeType,
+        label:    label
+      })
+    });
+    const result = await resp.json();
+
+    if (result && result.url) {
+      imgData[key] = result.url; // رابط Drive المباشر
+      const prev = document.getElementById(prevId);
+      prev.innerHTML = '<div class="img-ok">✓ ' + file.name + '</div>';
+      showToast('✅ تم رفع ' + file.name, 'success');
+    } else {
+      throw new Error(result?.message || 'فشل الرفع');
+    }
+  } catch(e) {
+    // fallback: نحتفظ بـ base64 ونرسله في chunks عبر JSONP (للصور الصغيرة)
+    console.warn('Drive upload failed, using base64 fallback:', e.message);
+    const r2 = new FileReader();
+    r2.onload = ev => {
+      imgData[key] = ev.target.result;
+      const prev = document.getElementById(prevId);
+      prev.innerHTML = '<div class="img-ok">✓ ' + file.name + ' (محلي)</div>';
+    };
+    r2.readAsDataURL(file);
+  }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -667,7 +718,7 @@ async function saveEmployee() {
       email:           g('empEmail'),
       password:        g('empPassword'),
       address:         g('empAddress'),
-      // ══ الصور base64 ← GAS سيرفعها على Drive ويضع =IMAGE() في P:S ══
+      // ══ روابط Drive للصور (يُرسل URL أو base64 fallback) ══
       imgPhoto:        imgData.Employee  || '',
       imgIdFront:      imgData.IdFront   || '',
       imgIdBack:       imgData.IdBack    || '',
