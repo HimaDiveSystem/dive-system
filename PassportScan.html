@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <base target="_top">
@@ -18,7 +18,7 @@
             padding: 20px;
         }
         .container {
-            max-width: 900px;
+            max-width: 1000px;
             margin: 0 auto;
             background: white;
             border-radius: 30px;
@@ -254,6 +254,99 @@
             flex-wrap: wrap;
             margin-top: 20px;
         }
+        
+        /* Image Editor Styles */
+        .image-editor-section {
+            background: #f8f9fa;
+            border-radius: 20px;
+            padding: 20px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        .image-editor-section.active {
+            display: block;
+        }
+        .image-editor-container {
+            position: relative;
+            width: 100%;
+            height: 500px;
+            overflow: hidden;
+            border: 3px solid #1e2b4f;
+            border-radius: 15px;
+            background: #333;
+            cursor: grab;
+        }
+        .image-editor-container:active {
+            cursor: grabbing;
+        }
+        #editorImage {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            transform-origin: center center;
+            transition: transform 0.1s ease;
+            pointer-events: none;
+        }
+        .zoom-controls {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin: 15px 0;
+        }
+        .zoom-btn {
+            background: white;
+            border: 2px solid #1e2b4f;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            font-size: 24px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: 0.3s;
+        }
+        .zoom-btn:hover {
+            background: #1e2b4f;
+            color: white;
+        }
+        .zoom-level {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1e2b4f;
+            min-width: 80px;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .selection-area {
+            position: absolute;
+            border: 3px solid #ffd966;
+            background: rgba(255, 217, 102, 0.1);
+            pointer-events: none;
+            display: none;
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+        }
+        .selection-area.active {
+            display: block;
+        }
+        .image-info {
+            text-align: center;
+            margin: 10px 0;
+            color: #666;
+            font-size: 14px;
+        }
+        .filename {
+            background: #e9f0fa;
+            padding: 5px 15px;
+            border-radius: 20px;
+            display: inline-block;
+            margin: 10px 0;
+        }
     </style>
 </head>
 <body>
@@ -302,7 +395,35 @@
                 <div class="button-group">
                     <button class="btn btn-primary" onclick="document.getElementById('imageUpload').click()">🖼️ Choose Image</button>
                 </div>
-                <div id="selectedImageName" style="margin-top: 10px; color: #666;"></div>
+                <div id="selectedImageName" class="filename"></div>
+            </div>
+
+            <!-- Image Editor Section (NEW) -->
+            <div class="image-editor-section" id="imageEditorSection">
+                <h3 style="margin-bottom: 15px; color: #1e2b4f;">🖼️ Image Editor</h3>
+                <div class="image-info">
+                    <span>Use mouse to move image | Use zoom controls or mouse wheel to zoom</span>
+                </div>
+                <div class="zoom-controls">
+                    <button class="zoom-btn" onclick="zoomOut()">−</button>
+                    <span class="zoom-level" id="zoomLevel">100%</span>
+                    <button class="zoom-btn" onclick="zoomIn()">+</button>
+                    <button class="zoom-btn" onclick="resetZoom()">↺</button>
+                </div>
+                <div class="image-editor-container" id="imageContainer" 
+                     onmousedown="startDrag(event)" 
+                     onmousemove="drag(event)" 
+                     onmouseup="stopDrag()"
+                     onmouseleave="stopDrag()"
+                     onwheel="handleWheel(event)">
+                    <img id="editorImage" src="" alt="Passport Image">
+                    <div class="selection-area" id="selectionArea"></div>
+                </div>
+                <div class="button-group">
+                    <button class="btn btn-success" onclick="processSelectedArea()">🔍 Analyze Selected Area</button>
+                    <button class="btn btn-primary" onclick="processFullImage()">📄 Analyze Full Image</button>
+                    <button class="btn btn-secondary" onclick="cancelImageEdit()">↩ Back</button>
+                </div>
             </div>
 
             <!-- Manual Entry Section -->
@@ -430,12 +551,29 @@
         let stream = null;
         let isCameraStarted = false;
         let extractedData = {};
+        
+        // Image Editor Variables
+        let currentImageFile = null;
+        let currentImageData = null;
+        let scale = 1;
+        let minScale = 0.5;
+        let maxScale = 3;
+        let translateX = 0;
+        let translateY = 0;
+        let isDragging = false;
+        let startX, startY;
+        let selectionActive = false;
+        let selectionStartX, selectionStartY, selectionEndX, selectionEndY;
 
         // DOM Elements
         const video = document.getElementById('camera');
         const canvas = document.getElementById('canvas');
         const captureBtn = document.getElementById('captureBtn');
         const imageUpload = document.getElementById('imageUpload');
+        const editorImage = document.getElementById('editorImage');
+        const imageContainer = document.getElementById('imageContainer');
+        const selectionArea = document.getElementById('selectionArea');
+        const zoomLevelSpan = document.getElementById('zoomLevel');
 
         // Helper Functions
         function showAlert(message) {
@@ -462,6 +600,7 @@
             document.getElementById('cameraSection').classList.remove('active');
             document.getElementById('gallerySection').classList.remove('active');
             document.getElementById('manualSection').classList.remove('active');
+            document.getElementById('imageEditorSection').classList.remove('active');
             document.getElementById('resultBox').style.display = 'none';
             
             // Show appropriate section
@@ -524,29 +663,244 @@
             const file = e.target.files[0];
             if (!file) return;
             
-            document.getElementById('selectedImageName').innerHTML = `📁 ${file.name}`;
+            currentImageFile = file;
+            document.getElementById('selectedImageName').innerHTML = `📁 Selected: ${file.name}`;
             
-            showLoading(true, 'Processing image...');
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                currentImageData = event.target.result;
+                showImageEditor(currentImageData);
+            };
+            reader.readAsDataURL(file);
+        });
+
+        // Image Editor Functions
+        function showImageEditor(imageData) {
+            editorImage.src = imageData;
+            document.getElementById('gallerySection').classList.remove('active');
+            document.getElementById('imageEditorSection').classList.add('active');
+            resetImageTransform();
+        }
+
+        function resetImageTransform() {
+            scale = 1;
+            translateX = 0;
+            translateY = 0;
+            updateImageTransform();
+            hideSelection();
+        }
+
+        function updateImageTransform() {
+            editorImage.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+            zoomLevelSpan.textContent = Math.round(scale * 100) + '%';
+        }
+
+        function zoomIn() {
+            if (scale < maxScale) {
+                scale = Math.min(scale + 0.25, maxScale);
+                updateImageTransform();
+            }
+        }
+
+        function zoomOut() {
+            if (scale > minScale) {
+                scale = Math.max(scale - 0.25, minScale);
+                updateImageTransform();
+            }
+        }
+
+        function resetZoom() {
+            scale = 1;
+            translateX = 0;
+            translateY = 0;
+            updateImageTransform();
+        }
+
+        function handleWheel(event) {
+            event.preventDefault();
+            const delta = event.deltaY > 0 ? -0.1 : 0.1;
+            scale = Math.min(maxScale, Math.max(minScale, scale + delta));
+            updateImageTransform();
+        }
+
+        // Drag functionality
+        function startDrag(event) {
+            if (event.button !== 0) return; // Only left mouse button
+            isDragging = true;
+            startX = event.clientX - translateX;
+            startY = event.clientY - translateY;
+            imageContainer.style.cursor = 'grabbing';
             
+            // Hide selection when dragging
+            hideSelection();
+        }
+
+        function drag(event) {
+            if (!isDragging) return;
+            event.preventDefault();
+            
+            translateX = event.clientX - startX;
+            translateY = event.clientY - startY;
+            
+            updateImageTransform();
+        }
+
+        function stopDrag() {
+            isDragging = false;
+            imageContainer.style.cursor = 'grab';
+        }
+
+        // Selection functionality
+        function startSelection(event) {
+            if (event.button !== 0 || isDragging) return;
+            
+            selectionActive = true;
+            const rect = imageContainer.getBoundingClientRect();
+            selectionStartX = event.clientX - rect.left;
+            selectionStartY = event.clientY - rect.top;
+            
+            selectionArea.style.display = 'block';
+            selectionArea.style.left = selectionStartX + 'px';
+            selectionArea.style.top = selectionStartY + 'px';
+            selectionArea.style.width = '0';
+            selectionArea.style.height = '0';
+        }
+
+        function updateSelection(event) {
+            if (!selectionActive) return;
+            
+            const rect = imageContainer.getBoundingClientRect();
+            const currentX = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+            const currentY = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+            
+            const left = Math.min(selectionStartX, currentX);
+            const top = Math.min(selectionStartY, currentY);
+            const width = Math.abs(currentX - selectionStartX);
+            const height = Math.abs(currentY - selectionStartY);
+            
+            selectionArea.style.left = left + 'px';
+            selectionArea.style.top = top + 'px';
+            selectionArea.style.width = width + 'px';
+            selectionArea.style.height = height + 'px';
+            
+            selectionEndX = currentX;
+            selectionEndY = currentY;
+        }
+
+        function endSelection() {
+            selectionActive = false;
+        }
+
+        function hideSelection() {
+            selectionArea.style.display = 'none';
+        }
+
+        // Process selected area
+        async function processSelectedArea() {
+            if (!currentImageData) {
+                showAlert('No image selected');
+                return;
+            }
+
+            // Get selection bounds
+            const rect = selectionArea.getBoundingClientRect();
+            const containerRect = imageContainer.getBoundingClientRect();
+            
+            if (rect.width === 0 || rect.height === 0) {
+                showAlert('Please select an area first. Click and drag on the image to select.');
+                return;
+            }
+
+            showLoading(true, 'Processing selected area...');
+
             try {
-                const reader = new FileReader();
-                reader.onload = async function(event) {
-                    const result = await Tesseract.recognize(
-                        event.target.result,
-                        'ara+eng',
-                        { logger: m => console.log(m) }
-                    );
-                    
-                    extractedData = extractPassportData(result.data.text);
-                    displayResults(extractedData);
-                    showLoading(false);
-                };
-                reader.readAsDataURL(file);
+                // Create a canvas to crop the selected area
+                const img = new Image();
+                img.src = currentImageData;
+                
+                await new Promise((resolve) => {
+                    img.onload = resolve;
+                });
+
+                // Calculate crop coordinates considering image transform
+                const cropCanvas = document.createElement('canvas');
+                const ctx = cropCanvas.getContext('2d');
+                
+                // Adjust for zoom and pan
+                const imageRect = editorImage.getBoundingClientRect();
+                const scaleX = img.width / imageRect.width;
+                const scaleY = img.height / imageRect.height;
+                
+                const sourceX = (rect.left - containerRect.left) * scaleX;
+                const sourceY = (rect.top - containerRect.top) * scaleY;
+                const sourceWidth = rect.width * scaleX;
+                const sourceHeight = rect.height * scaleY;
+                
+                cropCanvas.width = sourceWidth;
+                cropCanvas.height = sourceHeight;
+                
+                ctx.drawImage(img, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight);
+                
+                // Process the cropped image
+                const croppedDataUrl = cropCanvas.toDataURL('image/jpeg');
+                
+                const result = await Tesseract.recognize(
+                    croppedDataUrl,
+                    'ara+eng',
+                    { logger: m => console.log(m) }
+                );
+                
+                extractedData = extractPassportData(result.data.text);
+                displayResults(extractedData);
+                
+            } catch (error) {
+                showAlert('Error processing selected area: ' + error.message);
+            } finally {
+                showLoading(false);
+                hideSelection();
+            }
+        }
+
+        // Process full image
+        async function processFullImage() {
+            if (!currentImageData) {
+                showAlert('No image selected');
+                return;
+            }
+
+            showLoading(true, 'Processing full image...');
+
+            try {
+                const result = await Tesseract.recognize(
+                    currentImageData,
+                    'ara+eng',
+                    { logger: m => console.log(m) }
+                );
+                
+                extractedData = extractPassportData(result.data.text);
+                displayResults(extractedData);
+                
             } catch (error) {
                 showAlert('Error: ' + error.message);
+            } finally {
                 showLoading(false);
+                hideSelection();
             }
-        });
+        }
+
+        function cancelImageEdit() {
+            document.getElementById('imageEditorSection').classList.remove('active');
+            document.getElementById('gallerySection').classList.add('active');
+            resetImageTransform();
+            currentImageFile = null;
+            currentImageData = null;
+        }
+
+        // Add mouse event listeners for selection
+        imageContainer.addEventListener('mousedown', startSelection);
+        imageContainer.addEventListener('mousemove', updateSelection);
+        imageContainer.addEventListener('mouseup', endSelection);
+        imageContainer.addEventListener('mouseleave', endSelection);
 
         // Extract data from text (always return English text)
         function extractPassportData(text) {
@@ -586,28 +940,24 @@
         }
 
         function extractEnglishName(text) {
-            // Try to find English name (Latin characters)
             const namePattern = /[A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?/g;
             const match = text.match(namePattern);
             return match ? match[0] : null;
         }
 
         function extractArabicName(text) {
-            // If Arabic name found, we'll keep it as is (will be displayed in English UI)
             const arabicPattern = /[أ-ي]{3,}\s+[أ-ي]{3,}(?:\s+[أ-ي]{3,})?/g;
             const match = text.match(arabicPattern);
             return match ? match[0] : null;
         }
 
         function extractNationality(text, nationalityMap) {
-            // Check for Arabic nationalities first
             for (let [arabic, english] of Object.entries(nationalityMap)) {
                 if (text.includes(arabic)) {
                     return english;
                 }
             }
             
-            // Check for English nationalities
             const englishNationalities = Object.values(nationalityMap);
             for (let nationality of englishNationalities) {
                 if (text.includes(nationality)) {
@@ -686,6 +1036,7 @@
             document.getElementById('cameraSection').classList.remove('active');
             document.getElementById('gallerySection').classList.remove('active');
             document.getElementById('manualSection').classList.remove('active');
+            document.getElementById('imageEditorSection').classList.remove('active');
         }
 
         // Manual data processing
