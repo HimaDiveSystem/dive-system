@@ -68,6 +68,8 @@
     .expiring-soon td { color:#ef6c00!important; font-weight:600; animation:pulse-row 1.5s infinite; }
     .expiring-week td { color:#f57c00!important; font-weight:600; background:#fff8e1!important; }
     @keyframes pulse-row { 0%,100%{background:#fff3e0;} 50%{background:#ffe0b2;} }
+    .loader-sm { border:3px solid #f3f3f3; border-top:3px solid #1e2b4f; border-radius:50%; width:28px; height:28px; animation:spin 1s linear infinite; margin:0 auto 10px; }
+    @keyframes spin { to{transform:rotate(360deg);} }
     .status-badge { padding:4px 11px; border-radius:28px; font-size:11px; font-weight:700; display:inline-block; }
     .status-active   { background:#d4edda; color:#155724; }
     .status-inactive { background:#f8d7da; color:#721c24; }
@@ -796,22 +798,104 @@ async function loadActivitiesCheckboxes(sel=[]) {
 // ══════════════════════════════════════════════════
 // تقارير الاشتراكات
 // ══════════════════════════════════════════════════
-function showExpiringReport() {
+async function showExpiringReport() {
   setActive('mi-expiring');
-  const list=centers.filter(c=>{const d=getDaysLeft(c.subscriptionEnd);return(c.status==='TRUE'||c.status===true)&&d.days!==null&&d.days<=7;});
-  showSubReport(list,'⚠️ الاشتراكات المنتهية / القريبة (7 أيام)');
+  // نجلب التقرير الحي من السيرفر
+  document.getElementById('subTitle').textContent = '⚠️ تقرير الاشتراكات';
+  document.getElementById('subList').innerHTML = '<div style="text-align:center;padding:30px;"><div class="loader-sm"></div><p>جاري التحميل...</p></div>';
+  document.getElementById('subModal').style.display = 'flex';
+  try {
+    const r = await jsonp('getExpiryReport');
+    renderExpiryModal(r);
+  } catch(e) {
+    document.getElementById('subList').innerHTML = '<p style="color:red;text-align:center;">خطأ في التحميل</p>';
+  }
 }
-function showCritical() { const list=centers.filter(c=>{const d=getDaysLeft(c.subscriptionEnd);return(c.status==='TRUE'||c.status===true)&&d.days!==null&&d.days<=3&&d.days>=0;}); showSubReport(list,'🔴 حرجة ≤ 3 أيام'); }
-function showWarning()  { const list=centers.filter(c=>{const d=getDaysLeft(c.subscriptionEnd);return(c.status==='TRUE'||c.status===true)&&d.days!==null&&d.days>3&&d.days<=7;}); showSubReport(list,'🟡 تحذير 4-7 أيام'); }
 
-function showSubReport(list, title) {
-  document.getElementById('subTitle').textContent=title;
-  let html='<table><thead><tr><th>المركز</th><th>تاريخ الانتهاء</th><th>المتبقي</th></tr></thead><tbody>';
-  if(!list.length) html+='<tr><td colspan="3" style="text-align:center;padding:20px;color:#aaa;">لا توجد نتائج</td></tr>';
-  list.forEach(c=>{const d=getDaysLeft(c.subscriptionEnd);html+=`<tr><td>${c.name}</td><td>${c.subscriptionEnd}</td><td>${d.text}</td></tr>`;});
-  html+='</tbody></table>';
-  document.getElementById('subList').innerHTML=html;
-  document.getElementById('subModal').style.display='flex';
+async function showCritical() {
+  document.getElementById('subTitle').textContent = '🔴 حرجة (≤ 3 أيام)';
+  document.getElementById('subList').innerHTML = '<div style="text-align:center;padding:30px;"><div class="loader-sm"></div></div>';
+  document.getElementById('subModal').style.display = 'flex';
+  try { const r=await jsonp('getExpiryReport'); renderExpiryModal(r,'critical'); }
+  catch(e) { document.getElementById('subList').innerHTML='<p style="color:red;text-align:center;">خطأ</p>'; }
+}
+
+async function showWarning() {
+  document.getElementById('subTitle').textContent = '🟡 تحذير (4-7 أيام)';
+  document.getElementById('subList').innerHTML = '<div style="text-align:center;padding:30px;"><div class="loader-sm"></div></div>';
+  document.getElementById('subModal').style.display = 'flex';
+  try { const r=await jsonp('getExpiryReport'); renderExpiryModal(r,'warning'); }
+  catch(e) { document.getElementById('subList').innerHTML='<p style="color:red;text-align:center;">خطأ</p>'; }
+}
+
+function renderExpiryModal(r, filter) {
+  // ── بناء الجدول ──
+  const sections = filter
+    ? [ filter==='critical'
+          ? {label:'🔴 حرجة (≤ 3 أيام)',   color:'#c62828', bg:'#ffebee', list:r.critical||[]}
+          : {label:'🟡 تحذير (4-7 أيام)',  color:'#e65100', bg:'#fff3e0', list:r.warning||[]}
+      ]
+    : [
+        {label:'🔴 منتهية الاشتراك',       color:'#b71c1c', bg:'#ffcdd2', list:r.expired||[]},
+        {label:'🔴 حرجة (≤ 3 أيام)',       color:'#c62828', bg:'#ffebee', list:r.critical||[]},
+        {label:'🟡 تحذير (4-7 أيام)',      color:'#e65100', bg:'#fff3e0', list:r.warning||[]}
+      ];
+
+  let html = '';
+  sections.forEach(sec => {
+    html += `<div style="margin-bottom:16px;">
+      <div style="background:${sec.bg};color:${sec.color};font-weight:700;padding:8px 14px;border-radius:10px 10px 0 0;font-size:14px;">
+        ${sec.label} — ${sec.list.length} مركز
+      </div>`;
+    if (!sec.list.length) {
+      html += `<div style="padding:14px;text-align:center;color:#aaa;font-size:13px;background:#fafafa;border:1px solid #eee;border-top:none;border-radius:0 0 10px 10px;">لا توجد نتائج</div>`;
+    } else {
+      html += `<table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead><tr>
+          <th style="background:#1e2b4f;color:#ffd966;padding:8px;text-align:right;">المركز</th>
+          <th style="background:#1e2b4f;color:#ffd966;padding:8px;text-align:center;">انتهاء الاشتراك</th>
+          <th style="background:#1e2b4f;color:#ffd966;padding:8px;text-align:center;">الأيام المتبقية</th>
+          <th style="background:#1e2b4f;color:#ffd966;padding:8px;text-align:center;">الحالة</th>
+        </tr></thead><tbody>`;
+      sec.list.forEach(c => {
+        const dText = c.diff < 0 ? `منتهي منذ ${Math.abs(c.diff)} يوم` : c.diff===0 ? 'ينتهي اليوم!' : `${c.diff} يوم`;
+        const activeIcon = c.isActive ? '✅ نشط' : '🔴 موقوف';
+        html += `<tr style="border-bottom:1px solid #eee;">
+          <td style="padding:8px;font-weight:600;">${c.name}</td>
+          <td style="padding:8px;text-align:center;">${c.endDate}</td>
+          <td style="padding:8px;text-align:center;font-weight:700;color:${sec.color};">${dText}</td>
+          <td style="padding:8px;text-align:center;">${activeIcon}</td>
+        </tr>`;
+      });
+      html += `</tbody></table>`;
+    }
+    html += `</div>`;
+  });
+
+  // زر تشغيل يدوي
+  html += `<div style="text-align:center;margin-top:16px;padding-top:14px;border-top:2px dashed #ddd;">
+    <button onclick="runCheckNow()" class="btn-primary" style="font-size:13px;padding:9px 20px;">
+      🔄 تشغيل التحقق الآن
+    </button>
+    <p style="color:#aaa;font-size:11px;margin-top:8px;">يُحدّث الحالة تلقائياً كل يوم عند منتصف الليل</p>
+  </div>`;
+
+  document.getElementById('subList').innerHTML = html;
+}
+
+async function runCheckNow() {
+  const btn = event.target;
+  btn.disabled=true; btn.textContent='⏳ جاري التحقق...';
+  try {
+    const r = await jsonp('checkSubscriptions');
+    if (r?.success) {
+      await refreshData();
+      showAlert(`✅ ${r.summary}`, ()=>showExpiringReport());
+    } else {
+      showAlert('❌ ' + (r?.message||'فشل التشغيل'));
+    }
+  } catch(e) { showAlert('❌ خطأ: '+e.message); }
+  finally { btn.disabled=false; btn.textContent='🔄 تشغيل التحقق الآن'; }
 }
 
 // ══════════════════════════════════════════════════
