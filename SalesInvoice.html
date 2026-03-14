@@ -141,6 +141,7 @@
 // ══════════════════════════════════════════════════════════
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbwX_BUpZUxhOKB-BtjykeE2lSTjlfXORGWhwoh6aJo_JYwCL6vnZjxc5r4mj7qPIcyt/exec';
 
+
 let currentUser          = null;
 let currentTripDef       = null;   // أسماء البنود من TripDefinitions
 let currentTripPrices    = [];     // أسعار البنود من Price_List
@@ -157,43 +158,31 @@ const cache = { trips:null, nationalities:null, hotels:null };
 let sigCanvas=null, sigCtx=null, isDrawing=false, lastX=0, lastY=0;
 
 // ══════════════════════════════════════════════════════════
-// JSONP — لكل الطلبات (سريع، لا CORS، لا redirect)
+// callGAS — fetch فقط (مثل باقي الملفات في النظام)
+// GET للقراءة، POST للبيانات الكبيرة
 // ══════════════════════════════════════════════════════════
-// ══════════════════════════════════════════════════════════
-// callGAS — JSONP فقط (الأسرع والأكثر استقراراً من GitHub Pages)
-// للبيانات الكبيرة (signatureData) يُرسل عبر POST مباشرة
-// ══════════════════════════════════════════════════════════
-function callGAS(action, params={}) {
-  // بيانات كبيرة (فاتورة مع توقيع) → POST
-  const dataStr = JSON.stringify(params);
-  if (dataStr.length > 1500) {
-    return fetch(GAS_URL + '?action=' + encodeURIComponent(action), {
+async function callGAS(action, params={}) {
+  const isLarge = JSON.stringify(params).length > 1000;
+
+  if (isLarge) {
+    // POST — للفواتير والتوقيعات
+    const res = await fetch(GAS_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain' },
       body: JSON.stringify({ action, ...params }),
       redirect: 'follow'
-    }).then(r => r.json());
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
   }
-  // بيانات صغيرة → JSONP (لا CORS، سريع)
-  return new Promise((res, rej) => {
-    const cb = '_cb' + Date.now() + Math.floor(Math.random()*9999);
-    const p  = { ...params, action, callback: cb };
-    const qs = Object.entries(p)
-      .map(([k,v]) => encodeURIComponent(k) + '=' + encodeURIComponent(String(v ?? '')))
-      .join('&');
-    const sc = document.createElement('script');
-    const to = setTimeout(() => {
-      delete window[cb]; sc.remove();
-      rej(new Error('انتهت مهلة الاتصال — تأكد من تحديث الـ Deployment'));
-    }, 25000);
-    window[cb] = d => { clearTimeout(to); delete window[cb]; sc.remove(); res(d); };
-    sc.onerror  = () => {
-      clearTimeout(to); delete window[cb]; sc.remove();
-      rej(new Error('فشل تحميل السكريبت — تحقق من GAS_URL والـ Deployment'));
-    };
-    sc.src = GAS_URL + '?' + qs;
-    document.head.appendChild(sc);
-  });
+
+  // GET — للقراءة وطلبات صغيرة
+  const url = new URL(GAS_URL);
+  url.searchParams.set('action', action);
+  Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, String(v ?? '')));
+  const res = await fetch(url.toString(), { redirect: 'follow' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
 }
 
 // ══════════════════════════════════════════════════════════
