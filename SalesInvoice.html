@@ -176,17 +176,20 @@ async function callGAS(action, params={}) {
 }
 
 // رفع التوقيع منفصلاً بعد حفظ الفاتورة (POST مع body صغير)
-async function uploadSignature(voucherNo, sigData) {
+// uploadSignature — يرفع التوقيع لـ GAS عبر XHR
+// XHR يتبع redirect تلقائياً ويُرسل الـ body بشكل صحيح
+function uploadSignature(voucherNo, sigData) {
   if(!sigData || !sigData.startsWith('data:image')) return;
-  try {
-    const res = await fetch(GAS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ action:'saveSignature', voucherNo, sig:sigData }),
-      redirect: 'follow'
-    });
-    // لا نحتاج نتيجة — fire and forget
-  } catch(e) { console.warn('uploadSignature failed:', e); }
+  return new Promise(resolve => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', GAS_URL, true);
+    xhr.setRequestHeader('Content-Type', 'text/plain');
+    xhr.onload  = () => { console.log('✅ uploadSignature done, status:', xhr.status); resolve(); };
+    xhr.onerror = () => { console.warn('⚠️ uploadSignature failed'); resolve(); };
+    xhr.ontimeout = () => { console.warn('⚠️ uploadSignature timeout'); resolve(); };
+    xhr.timeout = 30000;
+    xhr.send(JSON.stringify({ action:'saveSignature', voucherNo, sig:sigData }));
+  });
 }
 
 // ══════════════════════════════════════════════════════════
@@ -706,6 +709,12 @@ async function newBooking(){
 
     // رفع التوقيع منفصلاً لهذا الحجز
     if(signatureData) uploadSignature(voucherNo, signatureData);
+
+    // عند أول حجز في الجلسة → نظف شيت PDF أولاً
+    if(sessionVouchers.length === 0){
+      showPDFOverlay('🧹 تجهيز شيت الفاتورة...');
+      await callGAS('clearInvoicePDFSheet');
+    }
 
     showPDFOverlay(`➕ إضافة ${voucherNo} للجلسة...`);
     const addRes=await callGAS('addInvoiceToSession',{voucherNo});
