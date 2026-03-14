@@ -139,7 +139,7 @@
 // ══════════════════════════════════════════════════════════
 // Config & Globals
 // ══════════════════════════════════════════════════════════
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbwX_BUpZUxhOKB-BtjykeE2lSTjlfXORGWhwoh6aJo_JYwCL6vnZjxc5r4mj7qPIcyt/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyEXU9rrScCGTOcksiONNNznJ6vG0fdi4mA5CIbpXYmohsH2MFp4dqF8bQuSqm57c36/exec';
 
 let currentUser          = null;
 let currentTripDef       = null;   // أسماء البنود من TripDefinitions
@@ -160,28 +160,33 @@ let sigCanvas=null, sigCtx=null, isDrawing=false, lastX=0, lastY=0;
 // callGAS — fetch فقط (مثل باقي الملفات في النظام)
 // GET للقراءة، POST للبيانات الكبيرة
 // ══════════════════════════════════════════════════════════
+// callGAS — GET فقط لكل الطلبات
+// signatureData يُرسل منفصلاً بعد الحفظ
+// ══════════════════════════════════════════════════════════
 async function callGAS(action, params={}) {
-  const isLarge = JSON.stringify(params).length > 1000;
+  const url = new URL(GAS_URL);
+  url.searchParams.set('action', action);
+  Object.entries(params).forEach(([k,v]) => {
+    // لا نرسل signatureData في URL — يُرفع منفصلاً
+    if(k !== 'signatureData') url.searchParams.set(k, String(v ?? ''));
+  });
+  const res = await fetch(url.toString(), { redirect: 'follow' });
+  if(!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
+}
 
-  if (isLarge) {
-    // POST — للفواتير والتوقيعات
+// رفع التوقيع منفصلاً بعد حفظ الفاتورة (POST مع body صغير)
+async function uploadSignature(voucherNo, sigData) {
+  if(!sigData || !sigData.startsWith('data:image')) return;
+  try {
     const res = await fetch(GAS_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ action, ...params }),
+      body: JSON.stringify({ action:'saveSignature', voucherNo, sig:sigData }),
       redirect: 'follow'
     });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    return res.json();
-  }
-
-  // GET — للقراءة وطلبات صغيرة
-  const url = new URL(GAS_URL);
-  url.searchParams.set('action', action);
-  Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, String(v ?? '')));
-  const res = await fetch(url.toString(), { redirect: 'follow' });
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  return res.json();
+    // لا نحتاج نتيجة — fire and forget
+  } catch(e) { console.warn('uploadSignature failed:', e); }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -654,13 +659,16 @@ async function saveInvoice(){
   const inv=validate(); if(!inv) return;
   setBtns(true);
   try{
-    // 1. حفظ الفاتورة
+    // 1. حفظ الفاتورة (بدون signature في URL)
     showPDFOverlay('💾 حفظ الفاتورة...');
     const saveRes=await callGAS('saveInvoice', inv);
     if(!saveRes?.success) throw new Error(saveRes?.message||'Failed to save');
     const voucherNo=saveRes.voucherNo;
 
-    // 2. توليد PDF
+    // 2. رفع التوقيع منفصلاً (fire & forget — لا ينتظر)
+    if(signatureData) uploadSignature(voucherNo, signatureData);
+
+    // 3. توليد PDF
     let pdfRes;
     if(sessionVouchers.length>0){
       showPDFOverlay(`📄 إنشاء PDF للجلسة (${sessionVouchers.length+1} فواتير)...`);
@@ -696,6 +704,9 @@ async function newBooking(){
     if(!saveRes?.success) throw new Error(saveRes?.message||'Failed to save');
     const voucherNo=saveRes.voucherNo;
 
+    // رفع التوقيع منفصلاً لهذا الحجز
+    if(signatureData) uploadSignature(voucherNo, signatureData);
+
     showPDFOverlay(`➕ إضافة ${voucherNo} للجلسة...`);
     const addRes=await callGAS('addInvoiceToSession',{voucherNo});
     hidePDFOverlay();
@@ -704,7 +715,7 @@ async function newBooking(){
     sessionVouchers.push(voucherNo);
     updateSessionBadge();
 
-    // ── مسح جزئي: تبقى بيانات العميل + العملة ──
+    // ── مسح جزئي: تبقى بيانات العميل + العملة + التوقيع ──
     clearFormPartial();
 
     showAlert(`✅ تم إضافة ${voucherNo} للجلسة (${sessionVouchers.length} حجوزات)\n\nأدخل حجزاً جديداً أو اضغط Save لإنهاء الجلسة`,'✅');
@@ -731,10 +742,10 @@ function clearFormFull(){
 }
 
 // مسح جزئي بعد New Booking:
-// تبقى: التليفون، الاسم، الجنسية، الفندق، الغرفة، عدد الأفراد، العملة
-// تُمسح: بيانات الرحلة، المبالغ، التوقيع
+// تبقى: التليفون، الاسم، الجنسية، الفندق، الغرفة، عدد الأفراد، العملة، التوقيع
+// تُمسح: بيانات الرحلة، المبالغ فقط
 function clearFormPartial(){
-  signatureData=null;
+  // التوقيع يبقى — نفس العميل
   resetTripState();
   ['activeDate','tripTime','notes','discount'].forEach(id=>{ const e=document.getElementById(id); if(e) e.value=''; });
   const tn=document.getElementById('tripName'); if(tn) tn.value='';
