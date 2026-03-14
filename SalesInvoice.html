@@ -141,7 +141,6 @@
 // ══════════════════════════════════════════════════════════
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbwX_BUpZUxhOKB-BtjykeE2lSTjlfXORGWhwoh6aJo_JYwCL6vnZjxc5r4mj7qPIcyt/exec';
 
-
 let currentUser          = null;
 let currentTripDef       = null;   // أسماء البنود من TripDefinitions
 let currentTripPrices    = [];     // أسعار البنود من Price_List
@@ -444,10 +443,9 @@ async function searchCustomer(){
 }
 
 // ══════════════════════════════════════════════════════════
-// Trip Selection — JSONP مع Cache
+// Trip Selection — طلب واحد يجلب البنود + الأسعار معاً
 // ══════════════════════════════════════════════════════════
-const tripDefCache   = {};  // tripName → {items, category}
-const tripPriceCache = {};  // `${tripName}|${currency}` → {prices, hasCost}
+const tripDataCache = {};  // `${tripName}|${currency}` → كامل البيانات
 
 function onTripFieldChange(){
   const date=document.getElementById('activeDate')?.value;
@@ -456,16 +454,15 @@ function onTripFieldChange(){
   const cont=document.getElementById('tripSelectionContainer');
   if(date&&time&&cur){
     cont.style.display='block';
-    // إذا رحلة محددة → أعد تحميل الأسعار بالعملة الجديدة
-    const tripName=document.getElementById('tripName')?.value;
-    if(tripName&&currentTripDef) loadTripPrices(tripName, currentTripCategory);
+    // إذا رحلة محددة → أعد التحميل بالعملة الجديدة
+    const tripName=document.getElementById('tripName')?.value?.trim();
+    if(tripName) loadTripData(tripName, cur);
   } else {
     cont.style.display='none';
     resetTripState();
   }
 }
 
-// هذه تُستدعى oninput — تلغي الحالة القديمة عند تغيير اسم الرحلة
 function onTripNameInput(){
   resetTripState();
   document.getElementById('tripItemsContainer').innerHTML='';
@@ -475,47 +472,42 @@ function resetTripState(){
   currentTripDef=[]; currentTripPrices=[]; currentTripCategory=''; currentTripHasCost=false;
 }
 
-async function loadTripDefinition(){
-  const tripName=document.getElementById('tripName')?.value?.trim();
+// دالة واحدة = طلب واحد إلى GAS
+async function loadTripData(tripName, currency){
   if(!tripName) return;
+  currency = currency || document.getElementById('invoiceCurrency')?.value;
+  if(!currency) return;
 
-  // ── Cache check ──
-  if(tripDefCache[tripName]){
-    const def=tripDefCache[tripName];
-    currentTripDef=def.items; currentTripCategory=def.category;
-    await loadTripPrices(tripName, currentTripCategory);
+  const cacheKey = tripName + '|' + currency;
+  if(tripDataCache[cacheKey]){
+    const d = tripDataCache[cacheKey];
+    currentTripDef      = d.items;
+    currentTripPrices   = d.prices;
+    currentTripCategory = d.category;
+    currentTripHasCost  = d.hasCost;
+    displayTripItems();
     return;
   }
 
   try{
-    const def=await callGAS('getTripDefinition',{tripName});
-    if(!def||!def.items){ showAlert('No items found for this trip','⚠️'); return; }
-    // فلتر البنود الفارغة
-    const items=(def.items||[]).filter(x=>x&&x!=='null'&&x!=='');
-    tripDefCache[tripName]={items, category:def.category||''};
-    currentTripDef=items; currentTripCategory=def.category||'';
-    await loadTripPrices(tripName, currentTripCategory);
-  }catch(e){ showAlert('Error loading trip: '+e.message,'❌'); }
+    const d = await callGAS('getTripData', {tripName, currency});
+    if(!d || !d.items || !d.items.length){
+      showAlert('Trip not found: ' + tripName, '⚠️'); return;
+    }
+    tripDataCache[cacheKey] = d;
+    currentTripDef      = d.items;
+    currentTripPrices   = d.prices   || [];
+    currentTripCategory = d.category || '';
+    currentTripHasCost  = d.hasCost  === true;
+    displayTripItems();
+  } catch(e){ showAlert('Error: ' + e.message, '❌'); }
 }
 
-async function loadTripPrices(tripName, category){
-  const currency=document.getElementById('invoiceCurrency')?.value;
-  if(!currency) return;
-  const cacheKey=`${tripName}|${currency}`;
-
-  if(tripPriceCache[cacheKey]){
-    const d=tripPriceCache[cacheKey];
-    currentTripPrices=d.prices; currentTripHasCost=d.hasCost;
-    displayTripItems(); return;
-  }
-
-  try{
-    const d=await callGAS('getTripPrices',{tripName,currency,category});
-    if(!d?.prices){ showAlert('No prices found for this trip/currency','⚠️'); return; }
-    tripPriceCache[cacheKey]={prices:d.prices, hasCost:d.hasCost===true};
-    currentTripPrices=d.prices; currentTripHasCost=d.hasCost===true;
-    displayTripItems();
-  }catch(e){ showAlert('Error loading prices: '+e.message,'❌'); }
+// alias للتوافق مع onchange="loadTripDefinition()"
+function loadTripDefinition(){
+  const tripName = document.getElementById('tripName')?.value?.trim();
+  const currency = document.getElementById('invoiceCurrency')?.value;
+  if(tripName) loadTripData(tripName, currency);
 }
 
 function displayTripItems(){
