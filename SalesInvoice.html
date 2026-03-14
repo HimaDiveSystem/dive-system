@@ -139,7 +139,7 @@
 // ══════════════════════════════════════════════════════════
 // Config & Globals
 // ══════════════════════════════════════════════════════════
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbzMTFak2Fj9IzeTpCXukclkTWNsEGNY3dZ9RZ-A8hDb0DAY8oQsfl3gS4mPsXQdQzpG/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyIROtu-OMKccUAgyn4eSMiXi4eSNfQVIkHg9hhlepZoLd4v3XbGO5E9UAETdPZ0TxC/exec';
 
 let currentUser          = null;
 let currentTripDef       = null;   // أسماء البنود من TripDefinitions
@@ -165,12 +165,25 @@ function jsonp(action, params={}) {
     params.action=action; params.callback=cb;
     const qs=Object.entries(params).map(([k,v])=>k+'='+encodeURIComponent(String(v??''))).join('&');
     const sc=document.createElement('script');
-    const to=setTimeout(()=>{delete window[cb];sc.remove();rej(new Error('timeout'));},30000);
+    // ── timeout أطول لـ GAS (يحتاج 5-15 ثانية أحياناً) ──
+    const to=setTimeout(()=>{delete window[cb];sc.remove();rej(new Error('انتهت مهلة الاتصال (30s) — تأكد من نشر Code.gs'));},30000);
     window[cb]=d=>{clearTimeout(to);delete window[cb];sc.remove();res(d);};
-    sc.onerror=()=>{clearTimeout(to);delete window[cb];sc.remove();rej(new Error('network error'));};
+    sc.onerror=e=>{
+      clearTimeout(to); delete window[cb]; sc.remove();
+      // خطأ شائع: الـ deployment لم يُحدَّث أو URL خاطئ
+      rej(new Error('فشل الاتصال — تأكد من نشر Code.gs كـ deployment جديد'));
+    };
     sc.src=GAS_URL+'?'+qs;
     document.head.appendChild(sc);
   });
+}
+
+// ── JSONP مع retry تلقائي مرة واحدة ──
+async function jsonpRetry(action, params={}, retries=1) {
+  for(let i=0; i<=retries; i++) {
+    try { return await jsonp(action, params); }
+    catch(e) { if(i===retries) throw e; await new Promise(r=>setTimeout(r,2000)); }
+  }
 }
 
 // POST عبر JSONP (البيانات كـ params)
@@ -263,7 +276,7 @@ function updateSessionBadge(){
 // ══════════════════════════════════════════════════════════
 async function checkExchangeRates(){
   try{
-    const r=await jsonp('checkExchangeRateStatus');
+    const r=await jsonpRetry('checkExchangeRateStatus');
     if(r?.status==='block'){
       document.getElementById('mainContent').innerHTML=`
         <div class="error-msg">⛔ ${r.message}<br>يرجى تحديث أسعار الصرف أولاً.</div>
@@ -275,7 +288,17 @@ async function checkExchangeRates(){
         document.getElementById('mainContent').insertBefore(w,document.getElementById('mainContent').firstChild);
       }
     }
-  }catch(e){ showInvoiceForm(); }
+  }catch(e){
+    console.error('checkExchangeRates error:', e);
+    // إظهار رسالة تشخيصية بدلاً من الصمت
+    document.getElementById('mainContent').innerHTML=`
+      <div class="warning-msg">
+        ⚠️ فشل الاتصال بالـ API<br>
+        <small>${e.message}</small><br>
+        <small>تأكد من: 1) نشر Code.gs كـ deployment جديد &nbsp; 2) صحة GAS_URL</small>
+      </div>`;
+    setTimeout(()=>showInvoiceForm(), 3000);
+  }
 }
 
 // ══════════════════════════════════════════════════════════
