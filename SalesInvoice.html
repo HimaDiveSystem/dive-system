@@ -160,75 +160,40 @@ let sigCanvas=null, sigCtx=null, isDrawing=false, lastX=0, lastY=0;
 // JSONP — لكل الطلبات (سريع، لا CORS، لا redirect)
 // ══════════════════════════════════════════════════════════
 // ══════════════════════════════════════════════════════════
-// callGAS — يحاول fetch أولاً، ثم JSONP كـ fallback
-// GAS يدعم CORS للـ GET requests عند الاستخدام الصحيح
+// callGAS — JSONP فقط (الأسرع والأكثر استقراراً من GitHub Pages)
+// للبيانات الكبيرة (signatureData) يُرسل عبر POST مباشرة
 // ══════════════════════════════════════════════════════════
-async function callGAS(action, params={}) {
-  // ── إذا كانت البيانات كبيرة (مثل signatureData) → POST ──
-  const paramsStr = JSON.stringify(params);
-  const isLarge   = paramsStr.length > 1500;
-
-  if (isLarge) {
-    // POST مع action في URL وبيانات في body
-    try {
-      const url = GAS_URL + '?action=' + encodeURIComponent(action);
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ action, ...params }),
-        redirect: 'follow'
-      });
-      const text = await res.text();
-      const clean = text.replace(/^[\w$]+\(/, '').replace(/\);?\s*$/, '');
-      try { return JSON.parse(clean); } catch { return JSON.parse(text); }
-    } catch(e) { console.warn('POST failed:', e.message); throw e; }
+function callGAS(action, params={}) {
+  // بيانات كبيرة (فاتورة مع توقيع) → POST
+  const dataStr = JSON.stringify(params);
+  if (dataStr.length > 1500) {
+    return fetch(GAS_URL + '?action=' + encodeURIComponent(action), {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action, ...params }),
+      redirect: 'follow'
+    }).then(r => r.json());
   }
-
-  // ── طلبات صغيرة → fetch GET أولاً ──
-  try {
-    const url = new URL(GAS_URL);
-    url.searchParams.set('action', action);
-    Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, String(v??'')));
-    const res = await fetch(url.toString(), { redirect: 'follow' });
-    if (res.ok) {
-      const text = await res.text();
-      const clean = text.replace(/^[\w$]+\(/, '').replace(/\);?\s*$/, '');
-      try { return JSON.parse(clean); } catch { return JSON.parse(text); }
-    }
-  } catch(e) {
-    console.warn('fetch GET failed, trying JSONP:', e.message);
-  }
-
-  // ── fallback: JSONP ──
-  return jsonp(action, params);
-}
-
-function jsonp(action, params={}) {
-  return new Promise((res,rej)=>{
-    const cb='cb_'+Date.now()+'_'+Math.floor(Math.random()*99999);
-    const p={...params, action, callback:cb};
-    const qs=Object.entries(p).map(([k,v])=>k+'='+encodeURIComponent(String(v??''))).join('&');
-    const sc=document.createElement('script');
-    const to=setTimeout(()=>{delete window[cb];sc.remove();rej(new Error('انتهت مهلة الاتصال'));},30000);
-    window[cb]=d=>{clearTimeout(to);delete window[cb];sc.remove();res(d);};
-    sc.onerror=()=>{clearTimeout(to);delete window[cb];sc.remove();rej(new Error('فشل الاتصال'));};
-    sc.src=GAS_URL+'?'+qs;
+  // بيانات صغيرة → JSONP (لا CORS، سريع)
+  return new Promise((res, rej) => {
+    const cb = '_cb' + Date.now() + Math.floor(Math.random()*9999);
+    const p  = { ...params, action, callback: cb };
+    const qs = Object.entries(p)
+      .map(([k,v]) => encodeURIComponent(k) + '=' + encodeURIComponent(String(v ?? '')))
+      .join('&');
+    const sc = document.createElement('script');
+    const to = setTimeout(() => {
+      delete window[cb]; sc.remove();
+      rej(new Error('انتهت مهلة الاتصال — تأكد من تحديث الـ Deployment'));
+    }, 25000);
+    window[cb] = d => { clearTimeout(to); delete window[cb]; sc.remove(); res(d); };
+    sc.onerror  = () => {
+      clearTimeout(to); delete window[cb]; sc.remove();
+      rej(new Error('فشل تحميل السكريبت — تحقق من GAS_URL والـ Deployment'));
+    };
+    sc.src = GAS_URL + '?' + qs;
     document.head.appendChild(sc);
   });
-}
-
-// alias للـ backward compatibility
-const jsonpRetry = callGAS;
-
-// POST عبر JSONP (البيانات كـ params)
-function callGAS(action, data) {
-  const flat={};
-  Object.entries(data).forEach(([k,v])=>{
-    if(v===null||v===undefined) flat[k]='';
-    else if(typeof v==='boolean') flat[k]=String(v);
-    else flat[k]=String(v);
-  });
-  return jsonp(action, flat);
 }
 
 // ══════════════════════════════════════════════════════════
@@ -244,8 +209,8 @@ document.addEventListener('DOMContentLoaded', async ()=>{
   sessionVouchers=[];
 
   // ── مسح Invoice_PDF وتحديث NationArrange بـ JSONP ──
-  jsonp('clearInvoicePDFSheet').catch(()=>{});
-  jsonp('updateNationArrange').catch(()=>{});
+  callGAS('clearInvoicePDFSheet').catch(()=>{});
+  callGAS('updateNationArrange').catch(()=>{});
 
   checkExchangeRates();
 });
@@ -444,9 +409,9 @@ function showInvoiceForm(){
 async function loadDropdowns(){
   // نطلق الثلاثة معاً
   const promises=[
-    cache.nationalities ? Promise.resolve(cache.nationalities) : jsonp('getNationalities'),
-    cache.hotels        ? Promise.resolve(cache.hotels)        : jsonp('getHotels'),
-    cache.trips         ? Promise.resolve(cache.trips)         : jsonp('getUniqueTrips')
+    cache.nationalities ? Promise.resolve(cache.nationalities) : callGAS('getNationalities'),
+    cache.hotels        ? Promise.resolve(cache.hotels)        : callGAS('getHotels'),
+    cache.trips         ? Promise.resolve(cache.trips)         : callGAS('getUniqueTrips')
   ];
   try{
     const [nats, hotels, trips] = await Promise.all(promises);
@@ -812,7 +777,7 @@ function cancelSession(){
   sessionVouchers=[];
   clearFormFull();
   closeAlert();
-  jsonp('clearInvoicePDFSheet').catch(()=>{});
+  callGAS('clearInvoicePDFSheet').catch(()=>{});
 }
 
 // ══════════════════════════════════════════════════════════
