@@ -70,8 +70,25 @@
     button:disabled { opacity:.6; cursor:not-allowed; }
     .warning-msg { background:#fff3cd; color:#856404; border:2px solid #ffeeba; border-radius:14px; padding:14px; margin-bottom:18px; text-align:center; font-weight:600; }
     .error-msg   { background:#f8d7da; color:#721c24; border:2px solid #f5c6cb; border-radius:14px; padding:14px; margin-bottom:18px; text-align:center; font-weight:600; }
+    
+    /* Time Picker Styles */
+    .time-picker-container { position: relative; width: 100%; }
+    .time-display { width: 100%; padding: 11px 14px; border: 2px solid #e9f0fa; border-radius: 14px; font-size: 15px; cursor: pointer; background: white; display: flex; align-items: center; justify-content: space-between; }
+    .time-display:hover { border-color: #ffd966; }
+    .time-display span { color: #1e2b4f; }
+    .time-display .placeholder { color: #aaa; }
+    .clock-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); align-items: center; justify-content: center; z-index: 10000; }
+    .clock-modal.open { display: flex; }
+    .clock-content { background: white; width: 90%; max-width: 320px; border-radius: 28px; padding: 20px; text-align: center; }
+    .clock-numbers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 20px 0; }
+    .clock-number { background: #f8f9fa; border: 2px solid #e9f0fa; border-radius: 50%; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 600; color: #1e2b4f; cursor: pointer; margin: 0 auto; }
+    .clock-number:hover, .clock-number.selected { background: #ffd966; border-color: #1e2b4f; color: #1e2b4f; }
+    .time-separator { font-size: 24px; font-weight: bold; color: #1e2b4f; margin: 0 5px; }
+    .selected-time { font-size: 32px; font-weight: 700; color: #1e2b4f; margin: 10px 0; }
+    .time-buttons { display: flex; gap: 10px; justify-content: center; margin-top: 20px; }
+    
     /* Modal */
-    .modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); align-items:center; justify-content:center; z-index:9999; }
+    .modal { display: none; position:fixed; inset:0; background:rgba(0,0,0,.5); align-items:center; justify-content:center; z-index:9999; }
     .modal.open { display:flex; }
     .modal-content { background:white; width:90%; max-width:560px; border-radius:28px; padding:28px; text-align:center; box-shadow:0 20px 40px rgba(0,0,0,.3); }
     .sig-canvas { border:2px solid #dee2e6; border-radius:14px; background:white; width:100%; height:200px; margin:18px 0; cursor:crosshair; touch-action:none; }
@@ -124,6 +141,23 @@
   </div>
 </div>
 
+<!-- Time Picker Modal -->
+<div id="timePickerModal" class="clock-modal">
+  <div class="clock-content">
+    <h3 style="color:#1e2b4f; margin-bottom:15px">⏰ Select Time</h3>
+    <div class="selected-time" id="selectedTimeDisplay">--:--</div>
+    <div class="clock-numbers" id="clockNumbers"></div>
+    <div style="display:flex; justify-content:center; align-items:center; margin:10px 0">
+      <span class="time-separator">:</span>
+    </div>
+    <div class="time-buttons">
+      <button class="btn-success" onclick="confirmTime()">✅ Set</button>
+      <button class="btn-secondary" onclick="clearTime()">🔄 Clear</button>
+      <button class="btn-secondary" onclick="closeTimePicker()">❌ Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- Alert Modal -->
 <div id="alertModal" class="modal">
   <div class="modal-content">
@@ -149,6 +183,8 @@ let currentTripHasCost   = false;
 let signatureData        = null;
 let sessionVouchers      = [];
 let exchangeRatesCache   = {};
+let selectedHour = null;
+let selectedMinute = null;
 
 // ── Cache للقوائم المنسدلة ──
 const cache = { trips:null, nationalities:null, hotels:null };
@@ -157,8 +193,139 @@ const cache = { trips:null, nationalities:null, hotels:null };
 let sigCanvas=null, sigCtx=null, isDrawing=false, lastX=0, lastY=0;
 
 // ══════════════════════════════════════════════════════════
-// callGAS — fetch فقط (مثل باقي الملفات في النظام)
-// GET للقراءة، POST للبيانات الكبيرة
+// منع انتهاء الجلسة - Keep Alive
+// ══════════════════════════════════════════════════════════
+let keepAliveInterval;
+
+function startKeepAlive() {
+  // إرسال نبضات كل دقيقة للحفاظ على الجلسة
+  keepAliveInterval = setInterval(() => {
+    // تحديث وقت آخر نشاط
+    sessionStorage.setItem('lastActivity', Date.now().toString());
+    
+    // إرسال طلب خفيف للسيرفر للحفاظ على الجلسة (اختياري)
+    fetch(GAS_URL + '?action=keepAlive&t=' + Date.now(), { 
+      method: 'HEAD',
+      mode: 'no-cors'
+    }).catch(() => {});
+  }, 60000); // كل دقيقة
+  
+  // التحقق من الجلسة عند العودة للتطبيق
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      // عند العودة للتطبيق، تأكد من وجود المستخدم
+      const lastActivity = sessionStorage.getItem('lastActivity');
+      const now = Date.now();
+      
+      if (lastActivity && (now - parseInt(lastActivity)) > 3600000) {
+        // إذا مر أكثر من ساعة، سجل خروج المستخدم
+        sessionStorage.removeItem('currentUser');
+        sessionStorage.removeItem('lastActivity');
+        location.href = 'index.html';
+      }
+    }
+  });
+}
+
+function stopKeepAlive() {
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// Time Picker Functions
+// ══════════════════════════════════════════════════════════
+function openTimePicker() {
+  document.getElementById('timePickerModal').classList.add('open');
+  generateClockNumbers();
+}
+
+function closeTimePicker() {
+  document.getElementById('timePickerModal').classList.remove('open');
+  selectedHour = null;
+  selectedMinute = null;
+}
+
+function generateClockNumbers() {
+  const container = document.getElementById('clockNumbers');
+  let html = '';
+  
+  // أرقام الساعات (1-12)
+  for (let i = 1; i <= 12; i++) {
+    const hour = i < 10 ? '0' + i : i.toString();
+    html += `<div class="clock-number" onclick="selectHour('${hour}')">${hour}</div>`;
+  }
+  
+  // أرقام الدقائق (00, 15, 30, 45)
+  html += `<div class="clock-number" onclick="selectMinute('00')">00</div>`;
+  html += `<div class="clock-number" onclick="selectMinute('15')">15</div>`;
+  html += `<div class="clock-number" onclick="selectMinute('30')">30</div>`;
+  html += `<div class="clock-number" onclick="selectMinute('45')">45</div>`;
+  
+  container.innerHTML = html;
+}
+
+function selectHour(hour) {
+  selectedHour = hour;
+  updateSelectedTimeDisplay();
+  
+  // تمييز الساعة المختارة
+  document.querySelectorAll('.clock-number').forEach(el => {
+    el.classList.remove('selected');
+    if (el.textContent === hour) {
+      el.classList.add('selected');
+    }
+  });
+}
+
+function selectMinute(minute) {
+  selectedMinute = minute;
+  updateSelectedTimeDisplay();
+  
+  // تمييز الدقيقة المختارة
+  document.querySelectorAll('.clock-number').forEach(el => {
+    el.classList.remove('selected');
+    if (el.textContent === minute) {
+      el.classList.add('selected');
+    }
+  });
+}
+
+function updateSelectedTimeDisplay() {
+  const display = document.getElementById('selectedTimeDisplay');
+  if (selectedHour && selectedMinute) {
+    display.textContent = `${selectedHour}:${selectedMinute}`;
+  } else if (selectedHour) {
+    display.textContent = `${selectedHour}:--`;
+  } else if (selectedMinute) {
+    display.textContent = `--:${selectedMinute}`;
+  } else {
+    display.textContent = '--:--';
+  }
+}
+
+function clearTime() {
+  selectedHour = null;
+  selectedMinute = null;
+  document.getElementById('selectedTimeDisplay').textContent = '--:--';
+  document.querySelectorAll('.clock-number').forEach(el => {
+    el.classList.remove('selected');
+  });
+}
+
+function confirmTime() {
+  if (selectedHour && selectedMinute) {
+    const timeStr = `${selectedHour}:${selectedMinute}`;
+    document.getElementById('tripTime').value = timeStr;
+    document.getElementById('timeDisplay').innerHTML = `<span>${timeStr}</span>`;
+    closeTimePicker();
+    onTripFieldChange();
+  } else {
+    showAlert('Please select both hour and minute', '⚠️');
+  }
+}
+
 // ══════════════════════════════════════════════════════════
 // callGAS — GET فقط لكل الطلبات
 // signatureData يُرسل منفصلاً بعد الحفظ
@@ -203,12 +370,20 @@ document.addEventListener('DOMContentLoaded', async ()=>{
 
   displayUserInfo();
   sessionVouchers=[];
+  
+  // بدء نبضات الحفاظ على الجلسة
+  startKeepAlive();
 
   // ── مسح Invoice_PDF وتحديث NationArrange بـ JSONP ──
   callGAS('clearInvoicePDFSheet').catch(()=>{});
   callGAS('updateNationArrange').catch(()=>{});
 
   checkExchangeRates();
+});
+
+// تنظيف عند الخروج
+window.addEventListener('beforeunload', () => {
+  stopKeepAlive();
 });
 
 function displayUserInfo() {
@@ -222,6 +397,7 @@ function displayUserInfo() {
 }
 
 function goBack() {
+  stopKeepAlive(); // إيقاف نبضات الجلسة قبل الخروج
   const pages={Admin:'Dashboard.html',Owner:'OwnerDashboard.html',Sales:'SalesDashboard.html',Accountant:'AccountantDashboard.html'};
   location.href = pages[currentUser?.type]||'SalesDashboard.html';
 }
@@ -359,8 +535,13 @@ function showInvoiceForm(){
         <input type="date" class="form-control" id="activeDate" onchange="onTripFieldChange()">
       </div>
       <div class="form-group"><label class="required">Time</label>
-       <input type="time" class="form-control" id="tripTime" onchange="onTripFieldChange()">
-       </div>
+        <div class="time-picker-container">
+          <input type="hidden" id="tripTime" onchange="onTripFieldChange()">
+          <div class="time-display" onclick="openTimePicker()" id="timeDisplay">
+            <span class="placeholder">Select time</span>
+          </div>
+        </div>
+      </div>
       <div class="form-group"><label class="required">Invoice Currency</label>
         <select class="form-control" id="invoiceCurrency" onchange="onTripFieldChange()">
           <option value="">Select currency</option>
@@ -759,7 +940,7 @@ function clearFormFull(){
   signatureData=null;
   resetTripState();
   ['phoneNumber','guestName','nationality','hotel','roomNo',
-   'adultCount','childCount','infantCount','activeDate','tripTime',
+   'adultCount','childCount','infantCount','activeDate',
    'invoiceCurrency','notes','discount'].forEach(id=>{ const e=document.getElementById(id); if(e) e.value=''; });
   const tn=document.getElementById('tripName'); if(tn) tn.value='';
   document.getElementById('tripItemsContainer').innerHTML='';
@@ -767,6 +948,9 @@ function clearFormFull(){
   const sp=document.getElementById('sigPreview'); if(sp){sp.style.display='none';sp.innerHTML='';}
   ['displayTotal','displayRest'].forEach(id=>{ const e=document.getElementById(id); if(e) e.textContent='0.00'; });
   ['cashUSD','cashEUR','cashGBP','cashLE','visaUSD','visaEUR','visaGBP','visaLE'].forEach(id=>{ const e=document.getElementById(id); if(e) e.value=''; });
+  // مسح الوقت
+  document.getElementById('tripTime').value = '';
+  document.getElementById('timeDisplay').innerHTML = '<span class="placeholder">Select time</span>';
   updateSessionBadge();
 }
 
@@ -777,10 +961,15 @@ function clearFormPartial(){
   // تُمسح: بيانات الرحلة + المبالغ + التاريخ
   // تبقى: بيانات العميل + العملة + التوقيع (نفس العميل)
   resetTripState();
-  ['activeDate','tripTime','notes','discount'].forEach(id=>{ const e=document.getElementById(id); if(e) e.value=''; });
+  ['activeDate','notes','discount'].forEach(id=>{ const e=document.getElementById(id); if(e) e.value=''; });
   const tn=document.getElementById('tripName'); if(tn) tn.value='';
   document.getElementById('tripItemsContainer').innerHTML='';
   document.getElementById('tripSelectionContainer').style.display='none';
+  
+  // مسح الوقت
+  document.getElementById('tripTime').value = '';
+  document.getElementById('timeDisplay').innerHTML = '<span class="placeholder">Select time</span>';
+  
   // التوقيع يبقى ظاهراً — نفس العميل
   // إذا يوجد توقيع محفوظ → نُعيد عرضه
   const sp=document.getElementById('sigPreview');
