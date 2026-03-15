@@ -250,6 +250,25 @@ function showPDFSuccessModal(msg, url){
   document.getElementById('alertModal').classList.add('open');
 }
 
+// يعرض روابط كل فواتير الجلسة عند الانتهاء
+function showSessionPDFsModal(allLinks){
+  const icon = allLinks.length > 1 ? '✅' : '✅';
+  const linksHtml = allLinks.map((v,i)=>
+    `<a href="${v.url}" target="_blank" rel="noopener"
+       style="display:block;background:#27ae60;color:white;padding:9px 18px;border-radius:30px;font-weight:700;font-size:14px;text-decoration:none;margin:5px auto;width:fit-content">
+       📄 ${v.voucherNo}</a>`
+  ).join('');
+  document.getElementById('alertMsg').textContent =
+    allLinks.length > 1
+      ? `✅ تم حفظ ${allLinks.length} فواتير — اضغط على كل رابط لفتح PDF`
+      : `✅ تم حفظ الفاتورة`;
+  document.getElementById('alertIcon').textContent = icon;
+  document.getElementById('alertBtns').innerHTML =
+    linksHtml +
+    `<button class="btn-primary" onclick="closeAlert()" style="margin-top:10px">OK</button>`;
+  document.getElementById('alertModal').classList.add('open');
+}
+
 // ══════════════════════════════════════════════════════════
 // Session Badge
 // ══════════════════════════════════════════════════════════
@@ -260,10 +279,16 @@ function updateSessionBadge(){
     badge=document.createElement('div'); badge.id='sessionBadge'; badge.className='session-badge';
     const c=document.getElementById('mainContent'); c.insertBefore(badge,c.firstChild);
   }
+  // كل فاتورة لها رابط PDF مستقل
+  const links = sessionVouchers.map(v=>
+    `<a href="${v.url}" target="_blank" rel="noopener"
+       style="color:#1e2b4f;font-weight:700;text-decoration:underline;font-size:12px">
+       📄 ${v.voucherNo}</a>`
+  ).join(' &nbsp;');
   badge.innerHTML=`<span class="count">${sessionVouchers.length}</span>
-    <strong>${sessionVouchers.length} حجز في الجلسة</strong>
-    <span style="font-size:11px;color:#555">(${sessionVouchers.join(' · ')})</span>
-    <span style="font-size:11px;color:#27ae60;margin-right:auto">✅ اضغط Save لإنشاء PDF</span>`;
+    <strong>${sessionVouchers.length} حجز محفوظ</strong>
+    <span style="flex:1;display:flex;gap:8px;flex-wrap:wrap;align-items:center">${links}</span>
+    <span style="font-size:11px;color:#27ae60">✅ اضغط Save للحجز الأخير</span>`;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -658,88 +683,73 @@ function setBtns(disabled){
 // ══════════════════════════════════════════════════════════
 // Save Invoice — JSONP
 // ══════════════════════════════════════════════════════════
+// saveInvoice — حفظ الفاتورة الأخيرة + PDF مستقل
+// ══════════════════════════════════════════════════════════
 async function saveInvoice(){
   const inv=validate(); if(!inv) return;
   setBtns(true);
   try{
-    // 1. تنظيف شيت PDF من أي بقايا سابقة
-    showPDFOverlay('🧹 تجهيز الفاتورة...');
-    await callGAS('clearInvoicePDFSheet');
-
-    // 2. حفظ الفاتورة
-    showPDFOverlay('💾 حفظ الفاتورة...');
-    const saveRes=await callGAS('saveInvoice', inv);
-    if(!saveRes?.success) throw new Error(saveRes?.message||'Failed to save');
-    const voucherNo=saveRes.voucherNo;
-
-    // 3. رفع التوقيع أولاً والانتظار حتى يكتمل قبل توليد PDF
-    if(signatureData){
-      showPDFOverlay('✍️ رفع التوقيع...');
-      await uploadSignature(voucherNo, signatureData);
-    }
-
-    // 4. توليد PDF
-    let pdfRes;
-    if(sessionVouchers.length>0){
-      showPDFOverlay(`📄 إنشاء PDF للجلسة (${sessionVouchers.length+1} فواتير)...`);
-      pdfRes=await callGAS('generateSessionPDF',{voucherNo});
-      hidePDFOverlay();
-      if(pdfRes?.success){
-        sessionVouchers=[];
-        clearFormFull();
-        showPDFSuccessModal(`✅ PDF جاهز — ${pdfRes.invoiceCount} فواتير`,pdfRes.url);
-      } else showAlert('تم الحفظ لكن فشل PDF: '+(pdfRes?.message||''),'⚠️');
-    } else {
-      showPDFOverlay('📄 إنشاء PDF...');
-      pdfRes=await callGAS('saveAndGenerateSinglePDF',{voucherNo});
-      hidePDFOverlay();
-      if(pdfRes?.success){
-        clearFormFull();
-        showPDFSuccessModal(`✅ تم حفظ الفاتورة — ${voucherNo}`,pdfRes.url);
-      } else showAlert('تم الحفظ لكن فشل PDF: '+(pdfRes?.message||''),'⚠️');
+    const pdfRes = await saveAndGeneratePDF(inv);
+    if(pdfRes){
+      // إظهار روابط كل الفواتير في الجلسة
+      const allLinks = [...sessionVouchers, {voucherNo:pdfRes.voucherNo, url:pdfRes.url}];
+      sessionVouchers = [];
+      clearFormFull();
+      showSessionPDFsModal(allLinks);
     }
   }catch(err){ hidePDFOverlay(); showAlert('خطأ: '+err.message,'❌'); }
   finally{ setBtns(false); }
 }
 
 // ══════════════════════════════════════════════════════════
-// New Booking — JSONP
+// newBooking — حفظ + PDF مستقل + تحضير للحجز التالي
 // ══════════════════════════════════════════════════════════
 async function newBooking(){
   const inv=validate(); if(!inv) return;
   setBtns(true);
   try{
-    showPDFOverlay('💾 حفظ الحجز في الجلسة...');
-    const saveRes=await callGAS('saveInvoice', inv);
-    if(!saveRes?.success) throw new Error(saveRes?.message||'Failed to save');
-    const voucherNo=saveRes.voucherNo;
-
-    // رفع التوقيع والانتظار حتى يُحفظ في Drive
-    if(signatureData){
-      showPDFOverlay('✍️ رفع التوقيع...');
-      await uploadSignature(voucherNo, signatureData);
+    const pdfRes = await saveAndGeneratePDF(inv);
+    if(pdfRes){
+      sessionVouchers.push({voucherNo:pdfRes.voucherNo, url:pdfRes.url});
+      updateSessionBadge();
+      clearFormPartial();
+      showAlert(
+        `✅ تم حفظ ${pdfRes.voucherNo} وإنشاء PDF\n${sessionVouchers.length} حجز في الجلسة\n\nأدخل الحجز التالي أو اضغط Save للانتهاء`,
+        '✅'
+      );
     }
-
-    // عند أول حجز في الجلسة → نظف شيت PDF أولاً
-    if(sessionVouchers.length === 0){
-      showPDFOverlay('🧹 تجهيز شيت الفاتورة...');
-      await callGAS('clearInvoicePDFSheet');
-    }
-
-    showPDFOverlay(`➕ إضافة ${voucherNo} للجلسة...`);
-    const addRes=await callGAS('addInvoiceToSession',{voucherNo});
-    hidePDFOverlay();
-    if(!addRes?.success) throw new Error(addRes?.message||'Failed to add to session');
-
-    sessionVouchers.push(voucherNo);
-    updateSessionBadge();
-
-    // ── مسح جزئي: تبقى بيانات العميل + العملة + التوقيع ──
-    clearFormPartial();
-
-    showAlert(`✅ تم إضافة ${voucherNo} للجلسة (${sessionVouchers.length} حجوزات)\n\nأدخل حجزاً جديداً أو اضغط Save لإنهاء الجلسة`,'✅');
   }catch(err){ hidePDFOverlay(); showAlert('خطأ: '+err.message,'❌'); }
   finally{ setBtns(false); }
+}
+
+// ── الدالة المشتركة: حفظ فاتورة + توقيع + PDF ──
+async function saveAndGeneratePDF(inv){
+  // 1. تنظيف شيت PDF
+  showPDFOverlay('🧹 تجهيز...');
+  await callGAS('clearInvoicePDFSheet');
+
+  // 2. حفظ الفاتورة
+  showPDFOverlay('💾 حفظ الفاتورة...');
+  const saveRes = await callGAS('saveInvoice', inv);
+  if(!saveRes?.success) throw new Error(saveRes?.message||'فشل الحفظ');
+  const voucherNo = saveRes.voucherNo;
+
+  // 3. رفع التوقيع (ننتظر قبل PDF)
+  if(signatureData){
+    showPDFOverlay('✍️ رفع التوقيع...');
+    await uploadSignature(voucherNo, signatureData);
+  }
+
+  // 4. توليد PDF
+  showPDFOverlay('📄 إنشاء PDF...');
+  const pdfRes = await callGAS('saveAndGenerateSinglePDF', {voucherNo});
+  hidePDFOverlay();
+
+  if(!pdfRes?.success){
+    showAlert('تم الحفظ لكن فشل PDF: '+(pdfRes?.message||''),'⚠️');
+    return null;
+  }
+  return {voucherNo, url:pdfRes.url};
 }
 
 // ══════════════════════════════════════════════════════════
@@ -795,7 +805,6 @@ function cancelSession(){
   sessionVouchers=[];
   clearFormFull();
   closeAlert();
-  callGAS('clearInvoicePDFSheet').catch(()=>{});
 }
 
 // ══════════════════════════════════════════════════════════
