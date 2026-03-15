@@ -123,8 +123,8 @@ async function loadData() {
     invoices = await invRes.json();
     if (!Array.isArray(invoices)) invoices = [];
     
-    // فلترة لفواتير المستخدم الحالي فقط
-    invoices = invoices.filter(inv => inv.salesId === currentUser?.id);
+    // فلترة لفواتير المستخدم الحالي فقط باستخدام SalesID (العمود E)
+    invoices = invoices.filter(inv => inv.SalesID === currentUser?.id);
     
     // تحميل أسعار الصرف
     const ratesRes = await fetch(GAS_URL + '?action=getExchangeRates');
@@ -160,6 +160,27 @@ function loadAnalytics() {
   else if (currentTab === 'commission') showCommissionChart(from, to);
 }
 
+// حساب إجمالي الفاتورة بالجنيه المصري
+function calculateTotalEGP(inv, rateRow) {
+  if (!rateRow) return 0;
+  
+  let totalEGP = 0;
+  
+  // المبالغ النقدية - الأعمدة R:U ($, €, £, LE)
+  totalEGP += (parseFloat(inv['$']) || 0) * (parseFloat(rateRow.Sales_USD) || 1);
+  totalEGP += (parseFloat(inv['€']) || 0) * (parseFloat(rateRow.Sales_EUR) || 1);
+  totalEGP += (parseFloat(inv['£']) || 0) * (parseFloat(rateRow.Sales_GBP) || 1);
+  totalEGP += (parseFloat(inv['LE']) || 0) * (parseFloat(rateRow.Sales_LE) || 1);
+  
+  // مبالغ الفيزا - الأعمدة V:Y (Visa$, Visa€, Visa£, VisaLE)
+  totalEGP += (parseFloat(inv['Visa$']) || 0) * (parseFloat(rateRow.Sales_VisaUSD) || 1);
+  totalEGP += (parseFloat(inv['Visa€']) || 0) * (parseFloat(rateRow.Sales_VisaEUR) || 1);
+  totalEGP += (parseFloat(inv['Visa£']) || 0) * (parseFloat(rateRow.Sales_VisaGBP) || 1);
+  totalEGP += (parseFloat(inv['VisaLE']) || 0) * (parseFloat(rateRow.Sales_VisaLE) || 1);
+  
+  return totalEGP;
+}
+
 // 1. الرسم اليومي (مع أسهم البورصة)
 function showDailyChart(from, to) {
   const container = document.getElementById('analyticsContent');
@@ -176,7 +197,7 @@ function showDailyChart(from, to) {
   
   // حساب المبيعات لكل يوم
   invoices.forEach(inv => {
-    const invDate = parseDDMMMYYYY(inv.activeDate);
+    const invDate = parseDDMMMYYYY(inv.ActiveDate); // العمود D
     if (invDate && invDate >= from && invDate <= to) {
       const dateKey = formatDateForDisplay(invDate);
       
@@ -184,22 +205,7 @@ function showDailyChart(from, to) {
       const rateRow = exchangeRates.find(r => r.Date === dateKey);
       
       if (rateRow) {
-        // تحويل كل العملات إلى EGP
-        // في دالة showDailyChart - استبدل جزء حساب totalEGP
-let totalEGP = 0;
-
-// Cash - باستخدام الأسماء الصحيحة
-totalEGP += (parseFloat(inv['$']) || 0) * (parseFloat(rateRow.Sales_USD) || 1);
-totalEGP += (parseFloat(inv['€']) || 0) * (parseFloat(rateRow.Sales_EUR) || 1);
-totalEGP += (parseFloat(inv['£']) || 0) * (parseFloat(rateRow.Sales_GBP) || 1);
-totalEGP += (parseFloat(inv['LE']) || 0) * (parseFloat(rateRow.Sales_LE) || 1);
-
-// Visa - باستخدام الأسماء الصحيحة
-totalEGP += (parseFloat(inv['Visa$']) || 0) * (parseFloat(rateRow.Sales_VisaUSD) || 1);
-totalEGP += (parseFloat(inv['Visa€']) || 0) * (parseFloat(rateRow.Sales_VisaEUR) || 1);
-totalEGP += (parseFloat(inv['Visa£']) || 0) * (parseFloat(rateRow.Sales_VisaGBP) || 1);
-totalEGP += (parseFloat(inv['VisaLE']) || 0) * (parseFloat(rateRow.Sales_VisaLE) || 1);
-        
+        const totalEGP = calculateTotalEGP(inv, rateRow);
         dailyData[dateKey] = (dailyData[dateKey] || 0) + totalEGP;
       }
     }
@@ -328,7 +334,7 @@ function showMonthlyChart(from, to) {
   
   // حساب المبيعات لكل شهر
   invoices.forEach(inv => {
-    const invDate = parseDDMMMYYYY(inv.activeDate);
+    const invDate = parseDDMMMYYYY(inv.ActiveDate); // العمود D
     if (invDate && invDate >= from && invDate <= to) {
       const monthKey = `${MONTHS[invDate.getMonth()]} ${invDate.getFullYear()}`;
       
@@ -341,26 +347,17 @@ function showMonthlyChart(from, to) {
       if (monthRates.length > 0) {
         // حساب متوسط الأسعار للشهر
         const avgRate = {
-          USD: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_USD) || 0), 0) / monthRates.length,
-          EUR: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_EUR) || 0), 0) / monthRates.length,
-          GBP: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_GBP) || 0), 0) / monthRates.length,
-          LE: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_LE) || 0), 0) / monthRates.length,
-          VisaUSD: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_VisaUSD) || 0), 0) / monthRates.length,
-          VisaEUR: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_VisaEUR) || 0), 0) / monthRates.length,
-          VisaGBP: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_VisaGBP) || 0), 0) / monthRates.length,
-          VisaLE: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_VisaLE) || 0), 0) / monthRates.length
+          Sales_USD: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_USD) || 0), 0) / monthRates.length,
+          Sales_EUR: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_EUR) || 0), 0) / monthRates.length,
+          Sales_GBP: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_GBP) || 0), 0) / monthRates.length,
+          Sales_LE: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_LE) || 0), 0) / monthRates.length,
+          Sales_VisaUSD: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_VisaUSD) || 0), 0) / monthRates.length,
+          Sales_VisaEUR: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_VisaEUR) || 0), 0) / monthRates.length,
+          Sales_VisaGBP: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_VisaGBP) || 0), 0) / monthRates.length,
+          Sales_VisaLE: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_VisaLE) || 0), 0) / monthRates.length
         };
         
-        let totalEGP = 0;
-        totalEGP += (parseFloat(inv.cashUSD) || 0) * avgRate.USD;
-        totalEGP += (parseFloat(inv.cashEUR) || 0) * avgRate.EUR;
-        totalEGP += (parseFloat(inv.cashGBP) || 0) * avgRate.GBP;
-        totalEGP += (parseFloat(inv.cashLE) || 0) * avgRate.LE;
-        totalEGP += (parseFloat(inv.visaUSD) || 0) * avgRate.VisaUSD;
-        totalEGP += (parseFloat(inv.visaEUR) || 0) * avgRate.VisaEUR;
-        totalEGP += (parseFloat(inv.visaGBP) || 0) * avgRate.VisaGBP;
-        totalEGP += (parseFloat(inv.visaLE) || 0) * avgRate.VisaLE;
-        
+        const totalEGP = calculateTotalEGP(inv, avgRate);
         monthlyData[monthKey] = (monthlyData[monthKey] || 0) + totalEGP;
       }
     }
@@ -412,30 +409,21 @@ function showMonthlyChart(from, to) {
   }, 100);
 }
 
-// 3. الرسم حسب الرحلات
+// 3. الرسم حسب الرحلات (العمود G)
 function showTripsChart(from, to) {
   const container = document.getElementById('analyticsContent');
   const tripsData = {};
   
   invoices.forEach(inv => {
-    const invDate = parseDDMMMYYYY(inv.activeDate);
+    const invDate = parseDDMMMYYYY(inv.ActiveDate); // العمود D
     if (invDate && invDate >= from && invDate <= to) {
-      const trip = inv.trip || 'Unknown';
+      const trip = inv.Trip || 'Unknown'; // العمود G
       
-      // البحث عن سعر الصرف
       const dateKey = formatDateForDisplay(invDate);
       const rateRow = exchangeRates.find(r => r.Date === dateKey);
       
       if (rateRow) {
-        let totalEGP = 0;
-        totalEGP += (parseFloat(inv.cashUSD) || 0) * (parseFloat(rateRow.Sales_USD) || 1);
-        totalEGP += (parseFloat(inv.cashEUR) || 0) * (parseFloat(rateRow.Sales_EUR) || 1);
-        totalEGP += (parseFloat(inv.cashGBP) || 0) * (parseFloat(rateRow.Sales_GBP) || 1);
-        totalEGP += (parseFloat(inv.cashLE) || 0) * (parseFloat(rateRow.Sales_LE) || 1);
-        totalEGP += (parseFloat(inv.visaUSD) || 0) * (parseFloat(rateRow.Sales_VisaUSD) || 1);
-        totalEGP += (parseFloat(inv.visaEUR) || 0) * (parseFloat(rateRow.Sales_VisaEUR) || 1);
-        totalEGP += (parseFloat(inv.visaGBP) || 0) * (parseFloat(rateRow.Sales_VisaGBP) || 1);
-        totalEGP += (parseFloat(inv.visaLE) || 0) * (parseFloat(rateRow.Sales_VisaLE) || 1);
+        const totalEGP = calculateTotalEGP(inv, rateRow);
         
         if (!tripsData[trip]) tripsData[trip] = 0;
         tripsData[trip] += totalEGP;
@@ -483,29 +471,21 @@ function showTripsChart(from, to) {
   }, 100);
 }
 
-// 4. الرسم حسب الجنسيات
+// 4. الرسم حسب الجنسيات (العمود AB)
 function showNationalitiesChart(from, to) {
   const container = document.getElementById('analyticsContent');
   const nationalitiesData = {};
   
   invoices.forEach(inv => {
-    const invDate = parseDDMMMYYYY(inv.activeDate);
+    const invDate = parseDDMMMYYYY(inv.ActiveDate); // العمود D
     if (invDate && invDate >= from && invDate <= to) {
-      const nationality = inv.nationality || 'Unknown';
+      const nationality = inv.Nationality || 'Unknown'; // العمود AB
       
       const dateKey = formatDateForDisplay(invDate);
       const rateRow = exchangeRates.find(r => r.Date === dateKey);
       
       if (rateRow) {
-        let totalEGP = 0;
-        totalEGP += (parseFloat(inv.cashUSD) || 0) * (parseFloat(rateRow.Sales_USD) || 1);
-        totalEGP += (parseFloat(inv.cashEUR) || 0) * (parseFloat(rateRow.Sales_EUR) || 1);
-        totalEGP += (parseFloat(inv.cashGBP) || 0) * (parseFloat(rateRow.Sales_GBP) || 1);
-        totalEGP += (parseFloat(inv.cashLE) || 0) * (parseFloat(rateRow.Sales_LE) || 1);
-        totalEGP += (parseFloat(inv.visaUSD) || 0) * (parseFloat(rateRow.Sales_VisaUSD) || 1);
-        totalEGP += (parseFloat(inv.visaEUR) || 0) * (parseFloat(rateRow.Sales_VisaEUR) || 1);
-        totalEGP += (parseFloat(inv.visaGBP) || 0) * (parseFloat(rateRow.Sales_VisaGBP) || 1);
-        totalEGP += (parseFloat(inv.visaLE) || 0) * (parseFloat(rateRow.Sales_VisaLE) || 1);
+        const totalEGP = calculateTotalEGP(inv, rateRow);
         
         if (!nationalitiesData[nationality]) nationalitiesData[nationality] = 0;
         nationalitiesData[nationality] += totalEGP;
@@ -553,11 +533,11 @@ function showNationalitiesChart(from, to) {
   }, 100);
 }
 
-// 5. الرسم حسب العمولات (جاهز للعمل فور إضافة البيانات)
+// 5. الرسم حسب العمولات (العمود AN)
 function showCommissionChart(from, to) {
   const container = document.getElementById('analyticsContent');
   
-  // تجميع العمولات حسب التاريخ (العمود AN - Commission)
+  // تجميع العمولات حسب التاريخ
   const commissionsData = {};
   const dateRange = [];
   
@@ -568,7 +548,7 @@ function showCommissionChart(from, to) {
   }
   
   invoices.forEach(inv => {
-    const invDate = parseDDMMMYYYY(inv.activeDate);
+    const invDate = parseDDMMMYYYY(inv.ActiveDate); // العمود D
     if (invDate && invDate >= from && invDate <= to) {
       const dateKey = formatDateForDisplay(invDate);
       const commission = parseFloat(inv.Commission) || 0; // العمود AN
@@ -582,7 +562,7 @@ function showCommissionChart(from, to) {
   
   container.innerHTML = `
     <div class="chart-container">
-      <div class="chart-title">💰 Sales Commission (Ready for implementation)</div>
+      <div class="chart-title">💰 Sales Commission</div>
       <canvas id="commissionChart"></canvas>
     </div>
     <div class="summary-stats">
