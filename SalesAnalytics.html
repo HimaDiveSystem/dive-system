@@ -115,7 +115,124 @@ function formatDateForDisplay(date) {
   return `${String(date.getDate()).padStart(2,'0')}/${MONTHS[date.getMonth()]}/${date.getFullYear()}`;
 }
 
-// تحميل البيانات
+// =================== دوال التصحيح والمرونة ===================
+
+// دالة للتحقق من البيانات وعرضها في الكونسول
+function debugData() {
+  console.log('=== DEBUG INFO ===');
+  console.log('Current User ID:', currentUser?.id);
+  console.log('Invoices count:', invoices.length);
+  console.log('Exchange Rates count:', exchangeRates.length);
+  
+  if (invoices.length > 0) {
+    console.log('First invoice:', invoices[0]);
+    console.log('Invoice keys:', Object.keys(invoices[0]));
+    console.log('Sample invoice date:', invoices[0].ActiveDate || invoices[0].activeDate);
+    console.log('Sample invoice amounts:', {
+      cashUSD: invoices[0]['$'] || invoices[0].cashUSD,
+      cashEUR: invoices[0]['€'] || invoices[0].cashEUR,
+      visaUSD: invoices[0]['Visa$'] || invoices[0].visaUSD
+    });
+  }
+  
+  if (exchangeRates.length > 0) {
+    console.log('First exchange rate:', exchangeRates[0]);
+    console.log('Exchange rate keys:', Object.keys(exchangeRates[0]));
+    console.log('Available dates:', exchangeRates.map(r => r.Date || r.date).join(', '));
+  }
+  
+  const fromDate = document.getElementById('filterDateFrom').value;
+  const toDate = document.getElementById('filterDateTo').value;
+  console.log('Selected date range:', fromDate, 'to', toDate);
+}
+
+// دالة للحصول على سعر الصرف بطريقة مرنة
+function getRateValue(rateRow, fieldName) {
+  if (!rateRow) return 0;
+  
+  // قائمة بالأسماء المحتملة للحقل
+  const possibleNames = {
+    Sales_USD: ['Sales_USD', 'SalesUSD', 'USD', 'usd'],
+    Sales_EUR: ['Sales_EUR', 'SalesEUR', 'EUR', 'eur'],
+    Sales_GBP: ['Sales_GBP', 'SalesGBP', 'GBP', 'gbp'],
+    Sales_LE: ['Sales_LE', 'SalesLE', 'LE', 'le'],
+    Sales_VisaUSD: ['Sales_VisaUSD', 'SalesVisaUSD', 'VisaUSD', 'visaUSD'],
+    Sales_VisaEUR: ['Sales_VisaEUR', 'SalesVisaEUR', 'VisaEUR', 'visaEUR'],
+    Sales_VisaGBP: ['Sales_VisaGBP', 'SalesVisaGBP', 'VisaGBP', 'visaGBP'],
+    Sales_VisaLE: ['Sales_VisaLE', 'SalesVisaLE', 'VisaLE', 'visaLE']
+  };
+  
+  const candidates = possibleNames[fieldName] || [fieldName];
+  
+  for (const name of candidates) {
+    if (rateRow[name] !== undefined && rateRow[name] !== null) {
+      const value = parseFloat(rateRow[name]);
+      if (!isNaN(value)) {
+        return value;
+      }
+    }
+  }
+  
+  return 0;
+}
+
+// دالة للحصول على التاريخ بطريقة مرنة
+function getRateDate(rateRow) {
+  return rateRow.Date || rateRow.date || rateRow['Date'] || '';
+}
+
+// دالة للحصول على قيمة من الفاتورة بطريقة مرنة
+function getInvoiceValue(inv, fieldName) {
+  if (!inv) return 0;
+  
+  const possibleFields = {
+    '$': ['$', 'cashUSD', 'USD'],
+    '€': ['€', 'cashEUR', 'EUR'],
+    '£': ['£', 'cashGBP', 'GBP'],
+    'LE': ['LE', 'cashLE'],
+    'Visa$': ['Visa$', 'visaUSD', 'VisaUSD'],
+    'Visa€': ['Visa€', 'visaEUR', 'VisaEUR'],
+    'Visa£': ['Visa£', 'visaGBP', 'VisaGBP'],
+    'VisaLE': ['VisaLE', 'visaLE', 'VisaLE']
+  };
+  
+  const candidates = possibleFields[fieldName] || [fieldName];
+  
+  for (const name of candidates) {
+    if (inv[name] !== undefined && inv[name] !== null) {
+      const value = parseFloat(inv[name]);
+      if (!isNaN(value)) {
+        return value;
+      }
+    }
+  }
+  
+  return 0;
+}
+
+// دالة حساب إجمالي الفاتورة بالجنيه المصري
+function calculateTotalEGP(inv, rateRow) {
+  if (!rateRow) return 0;
+  
+  let totalEGP = 0;
+  
+  // المبالغ النقدية
+  totalEGP += getInvoiceValue(inv, '$') * getRateValue(rateRow, 'Sales_USD');
+  totalEGP += getInvoiceValue(inv, '€') * getRateValue(rateRow, 'Sales_EUR');
+  totalEGP += getInvoiceValue(inv, '£') * getRateValue(rateRow, 'Sales_GBP');
+  totalEGP += getInvoiceValue(inv, 'LE') * getRateValue(rateRow, 'Sales_LE');
+  
+  // مبالغ الفيزا
+  totalEGP += getInvoiceValue(inv, 'Visa$') * getRateValue(rateRow, 'Sales_VisaUSD');
+  totalEGP += getInvoiceValue(inv, 'Visa€') * getRateValue(rateRow, 'Sales_VisaEUR');
+  totalEGP += getInvoiceValue(inv, 'Visa£') * getRateValue(rateRow, 'Sales_VisaGBP');
+  totalEGP += getInvoiceValue(inv, 'VisaLE') * getRateValue(rateRow, 'Sales_VisaLE');
+  
+  return totalEGP;
+}
+
+// =================== تحميل البيانات ===================
+
 async function loadData() {
   try {
     // تحميل الفواتير
@@ -123,13 +240,16 @@ async function loadData() {
     invoices = await invRes.json();
     if (!Array.isArray(invoices)) invoices = [];
     
-    // فلترة لفواتير المستخدم الحالي فقط باستخدام SalesID (العمود E)
+    // فلترة لفواتير المستخدم الحالي فقط باستخدام SalesID
     invoices = invoices.filter(inv => inv.SalesID === currentUser?.id);
     
     // تحميل أسعار الصرف
     const ratesRes = await fetch(GAS_URL + '?action=getExchangeRates');
     exchangeRates = await ratesRes.json();
     if (!Array.isArray(exchangeRates)) exchangeRates = [];
+    
+    // عرض معلومات التصحيح
+    debugData();
     
     loadAnalytics();
   } catch (error) {
@@ -150,8 +270,8 @@ function loadAnalytics() {
   const fromDate = document.getElementById('filterDateFrom').value;
   const toDate = document.getElementById('filterDateTo').value;
   
-  const from = fromDate ? new Date(fromDate) : new Date(new Date().setDate(1)); // اول الشهر
-  const to = toDate ? new Date(toDate) : new Date(); // اليوم
+  const from = fromDate ? new Date(fromDate) : new Date(new Date().setDate(1));
+  const to = toDate ? new Date(toDate) : new Date();
   
   if (currentTab === 'daily') showDailyChart(from, to);
   else if (currentTab === 'monthly') showMonthlyChart(from, to);
@@ -160,28 +280,9 @@ function loadAnalytics() {
   else if (currentTab === 'commission') showCommissionChart(from, to);
 }
 
-// حساب إجمالي الفاتورة بالجنيه المصري
-function calculateTotalEGP(inv, rateRow) {
-  if (!rateRow) return 0;
-  
-  let totalEGP = 0;
-  
-  // المبالغ النقدية - الأعمدة R:U ($, €, £, LE)
-  totalEGP += (parseFloat(inv['$']) || 0) * (parseFloat(rateRow.Sales_USD) || 1);
-  totalEGP += (parseFloat(inv['€']) || 0) * (parseFloat(rateRow.Sales_EUR) || 1);
-  totalEGP += (parseFloat(inv['£']) || 0) * (parseFloat(rateRow.Sales_GBP) || 1);
-  totalEGP += (parseFloat(inv['LE']) || 0) * (parseFloat(rateRow.Sales_LE) || 1);
-  
-  // مبالغ الفيزا - الأعمدة V:Y (Visa$, Visa€, Visa£, VisaLE)
-  totalEGP += (parseFloat(inv['Visa$']) || 0) * (parseFloat(rateRow.Sales_VisaUSD) || 1);
-  totalEGP += (parseFloat(inv['Visa€']) || 0) * (parseFloat(rateRow.Sales_VisaEUR) || 1);
-  totalEGP += (parseFloat(inv['Visa£']) || 0) * (parseFloat(rateRow.Sales_VisaGBP) || 1);
-  totalEGP += (parseFloat(inv['VisaLE']) || 0) * (parseFloat(rateRow.Sales_VisaLE) || 1);
-  
-  return totalEGP;
-}
+// =================== الرسوم البيانية ===================
 
-// 1. الرسم اليومي (مع أسهم البورصة)
+// 1. الرسم اليومي
 function showDailyChart(from, to) {
   const container = document.getElementById('analyticsContent');
   
@@ -197,12 +298,15 @@ function showDailyChart(from, to) {
   
   // حساب المبيعات لكل يوم
   invoices.forEach(inv => {
-    const invDate = parseDDMMMYYYY(inv.ActiveDate); // العمود D
+    const invDate = parseDDMMMYYYY(inv.ActiveDate);
     if (invDate && invDate >= from && invDate <= to) {
       const dateKey = formatDateForDisplay(invDate);
       
       // البحث عن سعر الصرف لهذا التاريخ
-      const rateRow = exchangeRates.find(r => r.Date === dateKey);
+      const rateRow = exchangeRates.find(r => {
+        const rateDate = getRateDate(r);
+        return rateDate === dateKey;
+      });
       
       if (rateRow) {
         const totalEGP = calculateTotalEGP(inv, rateRow);
@@ -214,7 +318,7 @@ function showDailyChart(from, to) {
   const labels = dateRange;
   const values = labels.map(d => dailyData[d] || 0);
   
-  // حساب التغير اليومي (للسهم)
+  // حساب التغير اليومي
   const changes = [];
   for (let i = 1; i < values.length; i++) {
     const prev = values[i-1] || 0;
@@ -222,7 +326,7 @@ function showDailyChart(from, to) {
     const change = prev > 0 ? ((curr - prev) / prev * 100).toFixed(1) : 0;
     changes.push(change);
   }
-  changes.unshift(0); // اول يوم لا يوجد تغير
+  changes.unshift(0);
   
   const total = values.reduce((a, b) => a + b, 0);
   const avg = total / values.filter(v => v > 0).length || 0;
@@ -248,47 +352,22 @@ function showDailyChart(from, to) {
     </div>
   `;
   
-  // رسم المخطط
   setTimeout(() => {
     const ctx = document.getElementById('dailyChart').getContext('2d');
     
-    // إنشاء dataset مع رموز الأسهم
-    const data = {
-      labels: labels,
-      datasets: [{
-        label: 'Daily Sales (EGP)',
-        data: values,
-        backgroundColor: 'rgba(30, 43, 79, 0.7)',
-        borderColor: '#1e2b4f',
-        borderWidth: 2,
-        borderRadius: 5,
-        barPercentage: 0.7,
-        categoryPercentage: 0.8,
-        
-        // إضافة رموز الأسهم فوق الأعمدة
-        datalabels: {
-          align: 'end',
-          offset: 10,
-          formatter: (value, context) => {
-            const change = changes[context.dataIndex];
-            if (change > 0) return '▲'; // سهم أخضر للأعلى
-            if (change < 0) return '▼'; // سهم أحمر للأسفل
-            return '●'; // نقطة للثبات
-          },
-          color: (context) => {
-            const change = changes[context.dataIndex];
-            if (change > 0) return '#27ae60'; // أخضر
-            if (change < 0) return '#e74c3c'; // أحمر
-            return '#f39c12'; // برتقالي
-          },
-          font: { size: 16, weight: 'bold' }
-        }
-      }]
-    };
-    
     new Chart(ctx, {
       type: 'bar',
-      data: data,
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Daily Sales (EGP)',
+          data: values,
+          backgroundColor: 'rgba(30, 43, 79, 0.7)',
+          borderColor: '#1e2b4f',
+          borderWidth: 2,
+          borderRadius: 5
+        }]
+      },
       options: {
         responsive: true,
         maintainAspectRatio: true,
@@ -296,13 +375,8 @@ function showDailyChart(from, to) {
           legend: { display: true, position: 'top' },
           tooltip: {
             callbacks: {
-              afterBody: (context) => {
-                const idx = context[0].dataIndex;
-                const change = changes[idx];
-                if (idx > 0) {
-                  return `Change from previous: ${change > 0 ? '+' : ''}${change}%`;
-                }
-                return 'First day';
+              label: (context) => {
+                return `Sales: ${context.parsed.y.toLocaleString()} EGP`;
               }
             }
           }
@@ -315,14 +389,15 @@ function showDailyChart(from, to) {
         }
       }
     });
+    
+    // إضافة الأسهم بشكل منفصل (للبساطة سنستخدم tooltip فقط)
   }, 100);
 }
 
-// 2. الرسم الشهري (بمتوسط أسعار الصرف)
+// 2. الرسم الشهري
 function showMonthlyChart(from, to) {
   const container = document.getElementById('analyticsContent');
   
-  // تجميع الفواتير حسب الشهر
   const monthlyData = {};
   const monthsList = [];
   
@@ -332,29 +407,26 @@ function showMonthlyChart(from, to) {
     monthlyData[monthKey] = 0;
   }
   
-  // حساب المبيعات لكل شهر
   invoices.forEach(inv => {
-    const invDate = parseDDMMMYYYY(inv.ActiveDate); // العمود D
+    const invDate = parseDDMMMYYYY(inv.ActiveDate);
     if (invDate && invDate >= from && invDate <= to) {
       const monthKey = `${MONTHS[invDate.getMonth()]} ${invDate.getFullYear()}`;
       
-      // متوسط أسعار الشهر
       const monthRates = exchangeRates.filter(r => {
-        const rDate = parseDDMMMYYYY(r.Date);
+        const rDate = parseDDMMMYYYY(getRateDate(r));
         return rDate && rDate.getMonth() === invDate.getMonth() && rDate.getFullYear() === invDate.getFullYear();
       });
       
       if (monthRates.length > 0) {
-        // حساب متوسط الأسعار للشهر
         const avgRate = {
-          Sales_USD: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_USD) || 0), 0) / monthRates.length,
-          Sales_EUR: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_EUR) || 0), 0) / monthRates.length,
-          Sales_GBP: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_GBP) || 0), 0) / monthRates.length,
-          Sales_LE: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_LE) || 0), 0) / monthRates.length,
-          Sales_VisaUSD: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_VisaUSD) || 0), 0) / monthRates.length,
-          Sales_VisaEUR: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_VisaEUR) || 0), 0) / monthRates.length,
-          Sales_VisaGBP: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_VisaGBP) || 0), 0) / monthRates.length,
-          Sales_VisaLE: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_VisaLE) || 0), 0) / monthRates.length
+          Sales_USD: monthRates.reduce((sum, r) => sum + getRateValue(r, 'Sales_USD'), 0) / monthRates.length,
+          Sales_EUR: monthRates.reduce((sum, r) => sum + getRateValue(r, 'Sales_EUR'), 0) / monthRates.length,
+          Sales_GBP: monthRates.reduce((sum, r) => sum + getRateValue(r, 'Sales_GBP'), 0) / monthRates.length,
+          Sales_LE: monthRates.reduce((sum, r) => sum + getRateValue(r, 'Sales_LE'), 0) / monthRates.length,
+          Sales_VisaUSD: monthRates.reduce((sum, r) => sum + getRateValue(r, 'Sales_VisaUSD'), 0) / monthRates.length,
+          Sales_VisaEUR: monthRates.reduce((sum, r) => sum + getRateValue(r, 'Sales_VisaEUR'), 0) / monthRates.length,
+          Sales_VisaGBP: monthRates.reduce((sum, r) => sum + getRateValue(r, 'Sales_VisaGBP'), 0) / monthRates.length,
+          Sales_VisaLE: monthRates.reduce((sum, r) => sum + getRateValue(r, 'Sales_VisaLE'), 0) / monthRates.length
         };
         
         const totalEGP = calculateTotalEGP(inv, avgRate);
@@ -409,31 +481,29 @@ function showMonthlyChart(from, to) {
   }, 100);
 }
 
-// 3. الرسم حسب الرحلات (العمود G)
+// 3. الرسم حسب الرحلات
 function showTripsChart(from, to) {
   const container = document.getElementById('analyticsContent');
   const tripsData = {};
   
   invoices.forEach(inv => {
-    const invDate = parseDDMMMYYYY(inv.ActiveDate); // العمود D
+    const invDate = parseDDMMMYYYY(inv.ActiveDate);
     if (invDate && invDate >= from && invDate <= to) {
-      const trip = inv.Trip || 'Unknown'; // العمود G
+      const trip = inv.Trip || 'Unknown';
       
       const dateKey = formatDateForDisplay(invDate);
-      const rateRow = exchangeRates.find(r => r.Date === dateKey);
+      const rateRow = exchangeRates.find(r => getRateDate(r) === dateKey);
       
       if (rateRow) {
         const totalEGP = calculateTotalEGP(inv, rateRow);
-        
-        if (!tripsData[trip]) tripsData[trip] = 0;
-        tripsData[trip] += totalEGP;
+        tripsData[trip] = (tripsData[trip] || 0) + totalEGP;
       }
     }
   });
   
   const sortedTrips = Object.entries(tripsData)
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 15); // اعلى 15 رحلة
+    .slice(0, 15);
   
   const labels = sortedTrips.map(t => t[0]);
   const values = sortedTrips.map(t => t[1]);
@@ -462,7 +532,7 @@ function showTripsChart(from, to) {
       options: {
         responsive: true,
         maintainAspectRatio: true,
-        indexAxis: 'y', // أفقي
+        indexAxis: 'y',
         scales: {
           x: { title: { display: true, text: 'Amount (EGP)' } }
         }
@@ -471,24 +541,22 @@ function showTripsChart(from, to) {
   }, 100);
 }
 
-// 4. الرسم حسب الجنسيات (العمود AB)
+// 4. الرسم حسب الجنسيات
 function showNationalitiesChart(from, to) {
   const container = document.getElementById('analyticsContent');
   const nationalitiesData = {};
   
   invoices.forEach(inv => {
-    const invDate = parseDDMMMYYYY(inv.ActiveDate); // العمود D
+    const invDate = parseDDMMMYYYY(inv.ActiveDate);
     if (invDate && invDate >= from && invDate <= to) {
-      const nationality = inv.Nationality || 'Unknown'; // العمود AB
+      const nationality = inv.Nationality || 'Unknown';
       
       const dateKey = formatDateForDisplay(invDate);
-      const rateRow = exchangeRates.find(r => r.Date === dateKey);
+      const rateRow = exchangeRates.find(r => getRateDate(r) === dateKey);
       
       if (rateRow) {
         const totalEGP = calculateTotalEGP(inv, rateRow);
-        
-        if (!nationalitiesData[nationality]) nationalitiesData[nationality] = 0;
-        nationalitiesData[nationality] += totalEGP;
+        nationalitiesData[nationality] = (nationalitiesData[nationality] || 0) + totalEGP;
       }
     }
   });
@@ -533,11 +601,10 @@ function showNationalitiesChart(from, to) {
   }, 100);
 }
 
-// 5. الرسم حسب العمولات (العمود AN)
+// 5. الرسم حسب العمولات
 function showCommissionChart(from, to) {
   const container = document.getElementById('analyticsContent');
   
-  // تجميع العمولات حسب التاريخ
   const commissionsData = {};
   const dateRange = [];
   
@@ -548,10 +615,10 @@ function showCommissionChart(from, to) {
   }
   
   invoices.forEach(inv => {
-    const invDate = parseDDMMMYYYY(inv.ActiveDate); // العمود D
+    const invDate = parseDDMMMYYYY(inv.ActiveDate);
     if (invDate && invDate >= from && invDate <= to) {
       const dateKey = formatDateForDisplay(invDate);
-      const commission = parseFloat(inv.Commission) || 0; // العمود AN
+      const commission = parseFloat(inv.Commission) || 0;
       commissionsData[dateKey] = (commissionsData[dateKey] || 0) + commission;
     }
   });
@@ -620,7 +687,6 @@ document.addEventListener('DOMContentLoaded', () => {
     currentUser = JSON.parse(userData);
     document.getElementById('userNameDisplay').textContent = currentUser.name || 'Sales Rep';
     
-    // تعيين التواريخ الافتراضية (اول الشهر لليوم)
     const today = new Date();
     const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
     
