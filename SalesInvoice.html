@@ -176,18 +176,18 @@ async function callGAS(action, params={}) {
 }
 
 // رفع التوقيع منفصلاً بعد حفظ الفاتورة (POST مع body صغير)
-// uploadSignature — يرفع التوقيع لـ GAS عبر XHR
-// XHR يتبع redirect تلقائياً ويُرسل الـ body بشكل صحيح
+// uploadSignature — يرفع التوقيع لـ GAS ويُعيد Promise
+// نستخدم XHR لأنه يتبع redirect مع الـ body بشكل صحيح
 function uploadSignature(voucherNo, sigData) {
-  if(!sigData || !sigData.startsWith('data:image')) return;
+  if(!sigData || !sigData.startsWith('data:image')) return Promise.resolve();
   return new Promise(resolve => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', GAS_URL, true);
     xhr.setRequestHeader('Content-Type', 'text/plain');
-    xhr.onload  = () => { console.log('✅ uploadSignature done, status:', xhr.status); resolve(); };
-    xhr.onerror = () => { console.warn('⚠️ uploadSignature failed'); resolve(); };
-    xhr.ontimeout = () => { console.warn('⚠️ uploadSignature timeout'); resolve(); };
-    xhr.timeout = 30000;
+    xhr.onload    = () => { console.log('✅ sig uploaded, status:', xhr.status); resolve(); };
+    xhr.onerror   = () => { console.warn('⚠️ sig upload failed');   resolve(); };
+    xhr.ontimeout = () => { console.warn('⚠️ sig upload timeout');  resolve(); };
+    xhr.timeout = 35000;
     xhr.send(JSON.stringify({ action:'saveSignature', voucherNo, sig:sigData }));
   });
 }
@@ -662,16 +662,23 @@ async function saveInvoice(){
   const inv=validate(); if(!inv) return;
   setBtns(true);
   try{
-    // 1. حفظ الفاتورة (بدون signature في URL)
+    // 1. تنظيف شيت PDF من أي بقايا سابقة
+    showPDFOverlay('🧹 تجهيز الفاتورة...');
+    await callGAS('clearInvoicePDFSheet');
+
+    // 2. حفظ الفاتورة
     showPDFOverlay('💾 حفظ الفاتورة...');
     const saveRes=await callGAS('saveInvoice', inv);
     if(!saveRes?.success) throw new Error(saveRes?.message||'Failed to save');
     const voucherNo=saveRes.voucherNo;
 
-    // 2. رفع التوقيع منفصلاً (fire & forget — لا ينتظر)
-    if(signatureData) uploadSignature(voucherNo, signatureData);
+    // 3. رفع التوقيع أولاً والانتظار حتى يكتمل قبل توليد PDF
+    if(signatureData){
+      showPDFOverlay('✍️ رفع التوقيع...');
+      await uploadSignature(voucherNo, signatureData);
+    }
 
-    // 3. توليد PDF
+    // 4. توليد PDF
     let pdfRes;
     if(sessionVouchers.length>0){
       showPDFOverlay(`📄 إنشاء PDF للجلسة (${sessionVouchers.length+1} فواتير)...`);
@@ -707,8 +714,11 @@ async function newBooking(){
     if(!saveRes?.success) throw new Error(saveRes?.message||'Failed to save');
     const voucherNo=saveRes.voucherNo;
 
-    // رفع التوقيع منفصلاً لهذا الحجز
-    if(signatureData) uploadSignature(voucherNo, signatureData);
+    // رفع التوقيع والانتظار حتى يُحفظ في Drive
+    if(signatureData){
+      showPDFOverlay('✍️ رفع التوقيع...');
+      await uploadSignature(voucherNo, signatureData);
+    }
 
     // عند أول حجز في الجلسة → نظف شيت PDF أولاً
     if(sessionVouchers.length === 0){
@@ -754,16 +764,23 @@ function clearFormFull(){
 // تبقى: التليفون، الاسم، الجنسية، الفندق، الغرفة، عدد الأفراد، العملة، التوقيع
 // تُمسح: بيانات الرحلة، المبالغ فقط
 function clearFormPartial(){
-  // التوقيع يبقى — نفس العميل
+  // تُمسح: بيانات الرحلة + المبالغ + التاريخ
+  // تبقى: بيانات العميل + العملة + التوقيع (نفس العميل)
   resetTripState();
   ['activeDate','tripTime','notes','discount'].forEach(id=>{ const e=document.getElementById(id); if(e) e.value=''; });
   const tn=document.getElementById('tripName'); if(tn) tn.value='';
   document.getElementById('tripItemsContainer').innerHTML='';
   document.getElementById('tripSelectionContainer').style.display='none';
-  const sp=document.getElementById('sigPreview'); if(sp){sp.style.display='none';sp.innerHTML='';}
+  // التوقيع يبقى ظاهراً — نفس العميل
+  // إذا يوجد توقيع محفوظ → نُعيد عرضه
+  const sp=document.getElementById('sigPreview');
+  if(sp && signatureData){
+    sp.style.display='block';
+    sp.innerHTML=`<img src="${signatureData}" alt="Signature" style="max-height:90px">`;
+  }
   ['displayTotal','displayRest'].forEach(id=>{ const e=document.getElementById(id); if(e) e.textContent='0.00'; });
   ['cashUSD','cashEUR','cashGBP','cashLE','visaUSD','visaEUR','visaGBP','visaLE'].forEach(id=>{ const e=document.getElementById(id); if(e) e.value=''; });
-  // ✅ تبقى: phoneNumber, guestName, nationality, hotel, roomNo, adultCount, childCount, infantCount, invoiceCurrency
+  // ✅ تبقى: phoneNumber, guestName, nationality, hotel, roomNo, adultCount, childCount, infantCount, invoiceCurrency, signatureData
 }
 
 function clearForm(){
