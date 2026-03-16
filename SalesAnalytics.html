@@ -92,17 +92,36 @@ let currentTab = 'daily';
 let exchangeRatesCache = {};
 let invoices = [];
 // دالة آمنة للحصول على قيمة العمولة
+// دالة آمنة للحصول على قيمة العمولة
 function getCommissionValue(inv) {
-  // جرب كل الأسماء المحتملة للعمود AN
-  const possibleNames = ['Commission', 'commission', 'AN', 'عمولة'];
-  for (const name of possibleNames) {
-    if (inv[name] !== undefined && inv[name] !== null) {
-      const val = parseFloat(inv[name]);
-      if (!isNaN(val)) {
-        return val;
+  if (!inv) return 0;
+  
+  // طباعة محتويات الفاتورة للتشخيص (مرة واحدة فقط)
+  if (!window._loggedCommission) {
+    console.log('🔍 نموذج فاتورة للمفاتيح:', Object.keys(inv));
+    console.log('🔍 قيمة Commission:', inv['Commission']);
+    console.log('🔍 قيمة commission:', inv['commission']);
+    window._loggedCommission = true;
+  }
+  
+  // جرب كل الاحتمالات
+  const possibleValues = [
+    inv['Commission'],
+    inv['commission'],
+    inv['COMMISSION'],
+    inv['AN'],
+    inv['عمولة']
+  ];
+  
+  for (const val of possibleValues) {
+    if (val !== undefined && val !== null) {
+      const num = parseFloat(val);
+      if (!isNaN(num)) {
+        return num;
       }
     }
   }
+  
   return 0;
 }
 // ============ دوال موحدة للتعامل مع التاريخ ============
@@ -210,7 +229,7 @@ async function loadAnalytics() {
   else if (currentTab === 'monthly') await showMonthlyChart(from, to);
   else if (currentTab === 'trips') await showTripsChart(from, to);
   else if (currentTab === 'nationalities') await showNationalitiesChart(from, to);
-  else if (currentTab === 'commission') await (from, to);
+  else if (currentTab === 'commission') showCommissionChart(from, to); // بدون await لأنها مش async
 }
 
 // ============ 1. الرسم البياني اليومي ============
@@ -425,113 +444,127 @@ function getCommissionValue(inv) {
   return parseFloat(commission) || 0;
 }
 // ============ 5. الرسم حسب العمولات ============
-async function showCommissionChart(from, to) {
+// ============ 5. الرسم حسب العمولات ============
+function showCommissionChart(from, to) {
   console.log('💰 ===== بداية الرسم حسب العمولات =====');
+  console.log('📊 عدد الفواتير الكلي:', invoices.length);
   
-  // تدمير أي رسم بياني سابق
-  const oldChart = Chart.getChart('commissionChart');
-  if (oldChart) {
-    oldChart.destroy();
-  }
-  
-  const commissionData = {};
-  const dates = [];
-  
-  // إنشاء قائمة بجميع التواريخ في النطاق المحدد
-  for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
-    const dateStr = formatDate(d);
-    dates.push(dateStr);
-    commissionData[dateStr] = 0;
-  }
-  
-  console.log('📅 التواريخ:', dates);
-  
-  // تجميع العمولات لكل يوم
-  let totalCommission = 0;
-  let invoicesWithCommission = 0;
-  
-  invoices.forEach(inv => {
-    const invDate = parseDate(inv.activeDate);
-    if (invDate && invDate >= from && invDate <= to) {
-      const dateStr = formatDate(invDate);
-      // استخدام الدالة الآمنة للحصول على العمولة
-      const commission = getCommissionValue(inv);
-      
-      if (commission > 0) {
-        commissionData[dateStr] += commission;
-        totalCommission += commission;
-        invoicesWithCommission++;
-      }
+  try {
+    const commissionData = {};
+    const dates = [];
+    let totalCommission = 0;
+    let foundAny = false;
+    
+    // إنشاء قائمة بجميع التواريخ في النطاق المحدد
+    for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+      const dateStr = formatDate(d);
+      dates.push(dateStr);
+      commissionData[dateStr] = 0;
     }
-  });
-  
-  const values = dates.map(d => commissionData[d]);
-  
-  console.log('💰 إجمالي العمولات:', totalCommission);
-  console.log('📊 عدد الفواتير بعمولات:', invoicesWithCommission);
-  console.log('📈 قيم العمولات:', values);
-  console.log('📊 بيانات الفواتير الخام (عينة):', invoices.slice(0, 3));
-  
-  // عرض الرسم
-  document.getElementById('analyticsContent').innerHTML = `
-    <div class="chart-container">
-      <div class="chart-title">💰 Commission (EGP)</div>
-      <canvas id="commissionChart"></canvas>
-    </div>
-    <div class="summary-stats">
-      <div class="stat-card">
-        <div class="stat-value">${totalCommission.toFixed(2)} EGP</div>
-        <div class="stat-label">Total Commission</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">${invoicesWithCommission}</div>
-        <div class="stat-label">Invoices with Commission</div>
-      </div>
-    </div>
-  `;
-  
-  setTimeout(() => {
-    const ctx = document.getElementById('commissionChart');
-    if (ctx) {
-      new Chart(ctx, {
-        type: 'line',
-        data: {
-          labels: dates,
-          datasets: [{
-            label: 'Commission (EGP)',
-            data: values,
-            borderColor: '#27ae60',
-            backgroundColor: 'rgba(39, 174, 96, 0.1)',
-            borderWidth: 2,
-            fill: true,
-            tension: 0.4
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: true,
-          plugins: {
-            tooltip: {
-              callbacks: {
-                label: (context) => {
-                  return `Commission: ${context.parsed.y.toFixed(2)} EGP`;
-                }
-              }
-            }
-          },
-          scales: {
-            y: { 
-              beginAtZero: true,
-              title: { display: true, text: 'Commission (EGP)' }
-            }
+    
+    console.log('📅 التواريخ المطلوبة:', dates);
+    
+    // تجميع العمولات لكل يوم
+    invoices.forEach((inv, index) => {
+      const invDate = parseDate(inv.activeDate);
+      if (invDate && invDate >= from && invDate <= top) {
+        const dateStr = formatDate(invDate);
+        
+        // جلب العمولة بعدة طرق
+        let commission = 0;
+        
+        // الطريقة الأولى: inv.Commission
+        if (inv.Commission !== undefined) {
+          commission = parseFloat(inv.Commission) || 0;
+        }
+        // الطريقة الثانية: inv.commission
+        else if (inv.commission !== undefined) {
+          commission = parseFloat(inv.commission) || 0;
+        }
+        // الطريقة الثالثة: البحث في Object.keys
+        else {
+          const keys = Object.keys(inv);
+          const commissionKey = keys.find(k => 
+            k.toLowerCase().includes('commission') || 
+            k.toLowerCase().includes('عمولة')
+          );
+          if (commissionKey) {
+            commission = parseFloat(inv[commissionKey]) || 0;
           }
         }
-      });
-      console.log('✅ تم رسم مخطط العمولات');
-    } else {
-      console.error('❌ عنصر commissionChart غير موجود');
-    }
-  }, 100);
+        
+        if (commission > 0) {
+          foundAny = true;
+          commissionData[dateStr] += commission;
+          totalCommission += commission;
+          console.log(`✅ فاتورة ${inv.voucherNo} في ${dateStr}: عمولة ${commission}`);
+        }
+      }
+    });
+    
+    console.log('💰 إجمالي العمولات:', totalCommission);
+    console.log('📊 هل تم العثور على عمولات:', foundAny);
+    console.log('📈 بيانات العمولات:', commissionData);
+    
+    const values = dates.map(d => commissionData[d]);
+    
+    // عرض الرسم
+    document.getElementById('analyticsContent').innerHTML = `
+      <div class="chart-container">
+        <div class="chart-title">💰 Commission (EGP)</div>
+        <canvas id="commissionChart"></canvas>
+      </div>
+      <div class="summary-stats">
+        <div class="stat-card">
+          <div class="stat-value">${totalCommission.toFixed(2)} EGP</div>
+          <div class="stat-label">Total Commission</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">${foundAny ? '✅' : '❌'}</div>
+          <div class="stat-label">Data Found</div>
+        </div>
+      </div>
+    `;
+    
+    // رسم المخطط بعد التأكد من وجود البيانات
+    setTimeout(() => {
+      const ctx = document.getElementById('commissionChart');
+      if (ctx) {
+        // تدمير أي رسم سابق
+        try {
+          const existingChart = Chart.getChart(ctx);
+          if (existingChart) existingChart.destroy();
+        } catch(e) {}
+        
+        new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: dates,
+            datasets: [{
+              label: 'Commission (EGP)',
+              data: values,
+              borderColor: '#27ae60',
+              backgroundColor: 'rgba(39, 174, 96, 0.1)',
+              borderWidth: 2,
+              fill: true,
+              tension: 0.4
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: true
+          }
+        });
+        console.log('✅ تم رسم مخطط العمولات');
+      }
+    }, 100);
+    
+  } catch (error) {
+    console.error('❌ خطأ في showCommissionChart:', error);
+    document.getElementById('analyticsContent').innerHTML = `
+      <div class="no-data">خطأ في تحميل بيانات العمولات: ${error.message}</div>
+    `;
+  }
   
   console.log('💰 ===== نهاية الرسم حسب العمولات =====');
 }
