@@ -91,7 +91,20 @@ let currentUser = null;
 let currentTab = 'daily';
 let exchangeRatesCache = {};
 let invoices = [];
-
+// دالة آمنة للحصول على قيمة العمولة
+function getCommissionValue(inv) {
+  // جرب كل الأسماء المحتملة للعمود AN
+  const possibleNames = ['Commission', 'commission', 'AN', 'عمولة'];
+  for (const name of possibleNames) {
+    if (inv[name] !== undefined && inv[name] !== null) {
+      const val = parseFloat(inv[name]);
+      if (!isNaN(val)) {
+        return val;
+      }
+    }
+  }
+  return 0;
+}
 // ============ دوال موحدة للتعامل مع التاريخ ============
 function parseDate(str) {
   if (!str) return null;
@@ -411,8 +424,15 @@ function getCommissionValue(inv) {
   const commission = inv.Commission || inv.commission || inv['Commission'] || 0;
   return parseFloat(commission) || 0;
 }
+// ============ 5. الرسم حسب العمولات ============
 async function showCommissionChart(from, to) {
   console.log('💰 ===== بداية الرسم حسب العمولات =====');
+  
+  // تدمير أي رسم بياني سابق
+  const oldChart = Chart.getChart('commissionChart');
+  if (oldChart) {
+    oldChart.destroy();
+  }
   
   const commissionData = {};
   const dates = [];
@@ -426,39 +446,52 @@ async function showCommissionChart(from, to) {
   
   console.log('📅 التواريخ:', dates);
   
-  // تجميع العمولات لكل يوم (بدون تحويل عملات)
+  // تجميع العمولات لكل يوم
+  let totalCommission = 0;
+  let invoicesWithCommission = 0;
+  
   invoices.forEach(inv => {
     const invDate = parseDate(inv.activeDate);
     if (invDate && invDate >= from && invDate <= to) {
       const dateStr = formatDate(invDate);
-      // العمود AN - Commission (بالجنيه المصري مباشرة)
-    const commission = getCommissionValue(inv);
-      commissionData[dateStr] += commission;
+      // استخدام الدالة الآمنة للحصول على العمولة
+      const commission = getCommissionValue(inv);
+      
+      if (commission > 0) {
+        commissionData[dateStr] += commission;
+        totalCommission += commission;
+        invoicesWithCommission++;
+      }
     }
   });
   
   const values = dates.map(d => commissionData[d]);
-  const total = values.reduce((a, b) => a + b, 0);
   
-  console.log('💰 إجمالي العمولات:', total);
+  console.log('💰 إجمالي العمولات:', totalCommission);
+  console.log('📊 عدد الفواتير بعمولات:', invoicesWithCommission);
   console.log('📈 قيم العمولات:', values);
+  console.log('📊 بيانات الفواتير الخام (عينة):', invoices.slice(0, 3));
   
   // عرض الرسم
   document.getElementById('analyticsContent').innerHTML = `
     <div class="chart-container">
       <div class="chart-title">💰 Commission (EGP)</div>
-      <canvas id="chart"></canvas>
+      <canvas id="commissionChart"></canvas>
     </div>
     <div class="summary-stats">
       <div class="stat-card">
-        <div class="stat-value">${total.toFixed(2)} EGP</div>
+        <div class="stat-value">${totalCommission.toFixed(2)} EGP</div>
         <div class="stat-label">Total Commission</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${invoicesWithCommission}</div>
+        <div class="stat-label">Invoices with Commission</div>
       </div>
     </div>
   `;
   
   setTimeout(() => {
-    const ctx = document.getElementById('chart');
+    const ctx = document.getElementById('commissionChart');
     if (ctx) {
       new Chart(ctx, {
         type: 'line',
@@ -476,6 +509,7 @@ async function showCommissionChart(from, to) {
         },
         options: {
           responsive: true,
+          maintainAspectRatio: true,
           plugins: {
             tooltip: {
               callbacks: {
@@ -493,12 +527,14 @@ async function showCommissionChart(from, to) {
           }
         }
       });
+      console.log('✅ تم رسم مخطط العمولات');
+    } else {
+      console.error('❌ عنصر commissionChart غير موجود');
     }
   }, 100);
   
   console.log('💰 ===== نهاية الرسم حسب العمولات =====');
 }
-
 function goBack() {
   window.location.href = 'SalesDashboard.html';
 }
