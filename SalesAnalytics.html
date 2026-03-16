@@ -85,45 +85,14 @@
 
 <script>
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbyBfwHQQoHb9E2bq0l-u6FLMD2XFKu_d8rZuJLnIq5iko82Bn93Emki6-cvDF_XOyRp/exec';
+
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 let currentUser = null;
 let currentTab = 'daily';
 let exchangeRatesCache = {};
 let invoices = [];
-// دالة آمنة للحصول على قيمة العمولة
-// دالة آمنة للحصول على قيمة العمولة
-function getCommissionValue(inv) {
-  if (!inv) return 0;
-  
-  // طباعة محتويات الفاتورة للتشخيص (مرة واحدة فقط)
-  if (!window._loggedCommission) {
-    console.log('🔍 نموذج فاتورة للمفاتيح:', Object.keys(inv));
-    console.log('🔍 قيمة Commission:', inv['Commission']);
-    console.log('🔍 قيمة commission:', inv['commission']);
-    window._loggedCommission = true;
-  }
-  
-  // جرب كل الاحتمالات
-  const possibleValues = [
-    inv['Commission'],
-    inv['commission'],
-    inv['COMMISSION'],
-    inv['AN'],
-    inv['عمولة']
-  ];
-  
-  for (const val of possibleValues) {
-    if (val !== undefined && val !== null) {
-      const num = parseFloat(val);
-      if (!isNaN(num)) {
-        return num;
-      }
-    }
-  }
-  
-  return 0;
-}
+
 // ============ دوال موحدة للتعامل مع التاريخ ============
 function parseDate(str) {
   if (!str) return null;
@@ -229,10 +198,39 @@ async function loadAnalytics() {
   else if (currentTab === 'monthly') await showMonthlyChart(from, to);
   else if (currentTab === 'trips') await showTripsChart(from, to);
   else if (currentTab === 'nationalities') await showNationalitiesChart(from, to);
-  else if (currentTab === 'commission') showCommissionChart(from, to); // بدون await لأنها مش async
+  else if (currentTab === 'commission') showCommissionChart(from, to);
 }
 
-// ============ 1. الرسم البياني اليومي ============
+// ============ دالة للحصول على تدرج لوني أسطواني ============
+function getCylinderGradient(ctx, color, height) {
+  const gradient = ctx.createLinearGradient(0, 0, 0, height);
+  
+  if (color === '#1e2b4f') { // أزرق داكن
+    gradient.addColorStop(0, '#3a4a7a');
+    gradient.addColorStop(0.5, '#1e2b4f');
+    gradient.addColorStop(1, '#0f1a2f');
+  } else if (color === '#ffd966') { // أصفر
+    gradient.addColorStop(0, '#ffe99c');
+    gradient.addColorStop(0.5, '#ffd966');
+    gradient.addColorStop(1, '#e6b82e');
+  } else if (color === '#9b59b6') { // بنفسجي
+    gradient.addColorStop(0, '#c39bd3');
+    gradient.addColorStop(0.5, '#9b59b6');
+    gradient.addColorStop(1, '#6c3483');
+  } else if (color === '#3498db') { // أزرق فاتح
+    gradient.addColorStop(0, '#85c1e9');
+    gradient.addColorStop(0.5, '#3498db');
+    gradient.addColorStop(1, '#1f618d');
+  } else if (color === '#27ae60') { // أخضر
+    gradient.addColorStop(0, '#6fcf97');
+    gradient.addColorStop(0.5, '#27ae60');
+    gradient.addColorStop(1, '#1e8449');
+  }
+  
+  return gradient;
+}
+
+// ============ 1. الرسم البياني اليومي (أسطواني) ============
 async function showDailyChart(from, to) {
   const dailyData = {};
   const dates = [];
@@ -260,7 +258,7 @@ async function showDailyChart(from, to) {
   document.getElementById('analyticsContent').innerHTML = `
     <div class="chart-container">
       <div class="chart-title">📅 Daily Sales (EGP)</div>
-      <canvas id="chart"></canvas>
+      <canvas id="dailyChart"></canvas>
     </div>
     <div class="summary-stats">
       <div class="stat-card"><div class="stat-value">${total.toLocaleString()} EGP</div><div class="stat-label">Total Sales</div></div>
@@ -268,25 +266,54 @@ async function showDailyChart(from, to) {
   `;
   
   setTimeout(() => {
-    const ctx = document.getElementById('chart');
-    if (ctx) {
-      new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: dates,
-          datasets: [{
-            label: 'Sales (EGP)',
-            data: values,
-            backgroundColor: '#1e2b4f'
-          }]
+    const ctx = document.getElementById('dailyChart').getContext('2d');
+    
+    // تدمير أي رسم سابق
+    try {
+      const existingChart = Chart.getChart('dailyChart');
+      if (existingChart) existingChart.destroy();
+    } catch(e) {}
+    
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: dates,
+        datasets: [{
+          label: 'Sales (EGP)',
+          data: values,
+          backgroundColor: function(context) {
+            const chart = context.chart;
+            const {ctx, chartArea} = chart;
+            if (!chartArea) return '#1e2b4f';
+            return getCylinderGradient(ctx, '#1e2b4f', chartArea.bottom - chartArea.top);
+          },
+          borderRadius: 8,
+          borderSkipped: false,
+          barPercentage: 0.7,
+          categoryPercentage: 0.8
+        }]
+      },
+      options: { 
+        responsive: true, 
+        maintainAspectRatio: true,
+        scales: { 
+          y: { 
+            beginAtZero: true,
+            grid: { color: 'rgba(0,0,0,0.05)' }
+          },
+          x: {
+            grid: { display: false }
+          }
         },
-        options: { responsive: true, scales: { y: { beginAtZero: true } } }
-      });
-    }
+        plugins: {
+          legend: { display: true, position: 'top' }
+        }
+      }
+    });
   }, 100);
 }
 
-// ============ 2. الرسم البياني الشهري ============
+// ============ 2. الرسم البياني الشهري (أسطواني) ============
 async function showMonthlyChart(from, to) {
   const monthlyData = {};
   const months = [];
@@ -316,7 +343,7 @@ async function showMonthlyChart(from, to) {
   document.getElementById('analyticsContent').innerHTML = `
     <div class="chart-container">
       <div class="chart-title">📆 Monthly Sales (EGP)</div>
-      <canvas id="chart"></canvas>
+      <canvas id="monthlyChart"></canvas>
     </div>
     <div class="summary-stats">
       <div class="stat-card"><div class="stat-value">${total.toLocaleString()} EGP</div><div class="stat-label">Total Sales</div></div>
@@ -324,25 +351,54 @@ async function showMonthlyChart(from, to) {
   `;
   
   setTimeout(() => {
-    const ctx = document.getElementById('chart');
-    if (ctx) {
-      new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: months,
-          datasets: [{
-            label: 'Sales (EGP)',
-            data: values,
-            backgroundColor: '#ffd966'
-          }]
+    const ctx = document.getElementById('monthlyChart').getContext('2d');
+    
+    // تدمير أي رسم سابق
+    try {
+      const existingChart = Chart.getChart('monthlyChart');
+      if (existingChart) existingChart.destroy();
+    } catch(e) {}
+    
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: months,
+        datasets: [{
+          label: 'Sales (EGP)',
+          data: values,
+          backgroundColor: function(context) {
+            const chart = context.chart;
+            const {ctx, chartArea} = chart;
+            if (!chartArea) return '#ffd966';
+            return getCylinderGradient(ctx, '#ffd966', chartArea.bottom - chartArea.top);
+          },
+          borderRadius: 8,
+          borderSkipped: false,
+          barPercentage: 0.7,
+          categoryPercentage: 0.8
+        }]
+      },
+      options: { 
+        responsive: true, 
+        maintainAspectRatio: true,
+        scales: { 
+          y: { 
+            beginAtZero: true,
+            grid: { color: 'rgba(0,0,0,0.05)' }
+          },
+          x: {
+            grid: { display: false }
+          }
         },
-        options: { responsive: true, scales: { y: { beginAtZero: true } } }
-      });
-    }
+        plugins: {
+          legend: { display: true, position: 'top' }
+        }
+      }
+    });
   }, 100);
 }
 
-// ============ 3. الرسم حسب الرحلات ============
+// ============ 3. الرسم حسب الرحلات (أسطواني أفقي) ============
 async function showTripsChart(from, to) {
   const tripsData = {};
   
@@ -366,30 +422,61 @@ async function showTripsChart(from, to) {
   document.getElementById('analyticsContent').innerHTML = `
     <div class="chart-container">
       <div class="chart-title">🚤 Sales by Trip</div>
-      <canvas id="chart"></canvas>
+      <canvas id="tripsChart"></canvas>
     </div>
   `;
   
   setTimeout(() => {
-    const ctx = document.getElementById('chart');
-    if (ctx) {
-      new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: labels,
-          datasets: [{
-            label: 'Sales (EGP)',
-            data: values,
-            backgroundColor: '#9b59b6'
-          }]
+    const ctx = document.getElementById('tripsChart').getContext('2d');
+    
+    // تدمير أي رسم سابق
+    try {
+      const existingChart = Chart.getChart('tripsChart');
+      if (existingChart) existingChart.destroy();
+    } catch(e) {}
+    
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Sales (EGP)',
+          data: values,
+          backgroundColor: function(context) {
+            const chart = context.chart;
+            const {ctx, chartArea} = chart;
+            if (!chartArea) return '#9b59b6';
+            // للرسم الأفقي، نستخدم العرض بدلاً من الارتفاع
+            return getCylinderGradient(ctx, '#9b59b6', chartArea.right - chartArea.left);
+          },
+          borderRadius: 8,
+          borderSkipped: false,
+          barPercentage: 0.7,
+          categoryPercentage: 0.8
+        }]
+      },
+      options: { 
+        responsive: true, 
+        maintainAspectRatio: true,
+        indexAxis: 'y',
+        scales: { 
+          x: { 
+            beginAtZero: true,
+            grid: { color: 'rgba(0,0,0,0.05)' }
+          },
+          y: {
+            grid: { display: false }
+          }
         },
-        options: { responsive: true, indexAxis: 'y' }
-      });
-    }
+        plugins: {
+          legend: { display: true, position: 'top' }
+        }
+      }
+    });
   }, 100);
 }
 
-// ============ 4. الرسم حسب الجنسيات ============
+// ============ 4. الرسم حسب الجنسيات (أسطواني أفقي) ============
 async function showNationalitiesChart(from, to) {
   const natData = {};
   
@@ -413,55 +500,61 @@ async function showNationalitiesChart(from, to) {
   document.getElementById('analyticsContent').innerHTML = `
     <div class="chart-container">
       <div class="chart-title">🌍 Sales by Nationality</div>
-      <canvas id="chart"></canvas>
+      <canvas id="nationalitiesChart"></canvas>
     </div>
   `;
   
   setTimeout(() => {
-    const ctx = document.getElementById('chart');
-    if (ctx) {
-      new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: labels,
-          datasets: [{
-            label: 'Sales (EGP)',
-            data: values,
-            backgroundColor: '#3498db'
-          }]
+    const ctx = document.getElementById('nationalitiesChart').getContext('2d');
+    
+    // تدمير أي رسم سابق
+    try {
+      const existingChart = Chart.getChart('nationalitiesChart');
+      if (existingChart) existingChart.destroy();
+    } catch(e) {}
+    
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Sales (EGP)',
+          data: values,
+          backgroundColor: function(context) {
+            const chart = context.chart;
+            const {ctx, chartArea} = chart;
+            if (!chartArea) return '#3498db';
+            return getCylinderGradient(ctx, '#3498db', chartArea.right - chartArea.left);
+          },
+          borderRadius: 8,
+          borderSkipped: false,
+          barPercentage: 0.7,
+          categoryPercentage: 0.8
+        }]
+      },
+      options: { 
+        responsive: true, 
+        maintainAspectRatio: true,
+        indexAxis: 'y',
+        scales: { 
+          x: { 
+            beginAtZero: true,
+            grid: { color: 'rgba(0,0,0,0.05)' }
+          },
+          y: {
+            grid: { display: false }
+          }
         },
-        options: { responsive: true, indexAxis: 'y' }
-      });
-    }
+        plugins: {
+          legend: { display: true, position: 'top' }
+        }
+      }
+    });
   }, 100);
 }
 
-// ============ 5. الرسم حسب العمولات ============
-  // دالة آمنة للحصول على قيمة العمولة
-function getCommissionValue(inv) {
-  // جرب عدة أسماء محتملة للعمود AN
-  const commission = inv.Commission || inv.commission || inv['Commission'] || 0;
-  return parseFloat(commission) || 0;
-}
-// ============ 5. الرسم حسب العمولات ============
-// ============ 5. الرسم حسب العمولات ============
-// ============ 5. الرسم حسب العمولات ============
-// ============ 5. الرسم حسب العمولات ============
+// ============ 5. الرسم حسب العمولات (خطي) ============
 function showCommissionChart(from, to) {
-  console.log('💰 ===== بداية الرسم حسب العمولات =====');
-  console.log('📊 عدد الفواتير الكلي:', invoices.length);
-  
-  // 🔍 تشخيص: طباعة أول 3 فواتير كاملة
-  if (invoices.length > 0) {
-    console.log('🔍 أول 3 فواتير (كاملة):');
-    for (let i = 0; i < Math.min(3, invoices.length); i++) {
-      console.log(`📄 فاتورة ${i}:`, invoices[i]);
-      console.log(`🔑 مفاتيح الفاتورة ${i}:`, Object.keys(invoices[i]));
-      console.log(`💰 قيمة Commission في الفاتورة ${i}:`, invoices[i].Commission);
-      console.log(`💰 قيمة commission في الفاتورة ${i}:`, invoices[i].commission);
-    }
-  }
-  
   const commissionData = {};
   const dates = [];
   let totalCommission = 0;
@@ -473,34 +566,14 @@ function showCommissionChart(from, to) {
     commissionData[dateStr] = 0;
   }
   
-  console.log('📅 التواريخ المطلوبة:', dates);
-  
   // تجميع العمولات لكل يوم
   invoices.forEach(inv => {
     const invDate = parseDate(inv.activeDate);
     if (invDate && invDate >= from && invDate <= to) {
       const dateStr = formatDate(invDate);
       
-      // 🔍 تشخيص: طباعة كل فاتورة في النطاق
-      console.log(`🔍 فحص الفاتورة ${inv.voucherNo} في ${dateStr}:`);
-      console.log(`   - Commission:`, inv.Commission);
-      console.log(`   - commission:`, inv.commission);
-      console.log(`   - نوع Commission:`, typeof inv.Commission);
-      
-      // محاولة الحصول على العمولة بكل الطرق
-      let commission = 0;
-      
-      if (inv.Commission !== undefined && inv.Commission !== null && inv.Commission !== '') {
-        commission = parseFloat(inv.Commission) || 0;
-        console.log(`   ✅ وجدت Commission: ${commission}`);
-      }
-      else if (inv.commission !== undefined && inv.commission !== null && inv.commission !== '') {
-        commission = parseFloat(inv.commission) || 0;
-        console.log(`   ✅ وجدت commission: ${commission}`);
-      }
-      else {
-        console.log(`   ❌ لا توجد عمولة في هذه الفاتورة`);
-      }
+      // الحصول على العمولة
+      const commission = parseFloat(inv.commission) || 0;
       
       if (commission > 0) {
         commissionData[dateStr] += commission;
@@ -510,9 +583,6 @@ function showCommissionChart(from, to) {
   });
   
   const values = dates.map(d => commissionData[d]);
-  
-  console.log('💰 إجمالي العمولات:', totalCommission);
-  console.log('📈 قيم العمولات:', values);
   
   // عرض الرسم
   document.getElementById('analyticsContent').innerHTML = `
@@ -546,9 +616,14 @@ function showCommissionChart(from, to) {
             data: values,
             borderColor: '#27ae60',
             backgroundColor: 'rgba(39, 174, 96, 0.1)',
-            borderWidth: 2,
+            borderWidth: 3,
             fill: true,
-            tension: 0.4
+            tension: 0.4,
+            pointBackgroundColor: '#27ae60',
+            pointBorderColor: 'white',
+            pointBorderWidth: 2,
+            pointRadius: 4,
+            pointHoverRadius: 6
           }]
         },
         options: {
@@ -557,16 +632,30 @@ function showCommissionChart(from, to) {
           scales: {
             y: { 
               beginAtZero: true,
+              grid: { color: 'rgba(0,0,0,0.05)' },
               title: { display: true, text: 'Commission (EGP)' }
+            },
+            x: {
+              grid: { display: false }
+            }
+          },
+          plugins: {
+            legend: { display: true, position: 'top' },
+            tooltip: {
+              backgroundColor: 'white',
+              titleColor: '#1e2b4f',
+              bodyColor: '#666',
+              borderColor: '#ffd966',
+              borderWidth: 2,
+              cornerRadius: 8
             }
           }
         }
       });
     }
   }, 100);
-  
-  console.log('💰 ===== نهاية الرسم حسب العمولات =====');
 }
+
 function goBack() {
   window.location.href = 'SalesDashboard.html';
 }
