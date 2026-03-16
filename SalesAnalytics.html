@@ -89,7 +89,7 @@ const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov
 
 let currentUser = null;
 let currentTab = 'daily';
-let exchangeRates = [];
+let exchangeRatesCache = {}; // تخزين مؤقت لأسعار الصرف
 let invoices = [];
 
 // ============ دوال موحدة للتعامل مع التاريخ ============
@@ -116,47 +116,68 @@ function formatDate(date) {
   return `${String(date.getDate()).padStart(2,'0')}/${MONTHS[date.getMonth()]}/${date.getFullYear()}`;
 }
 
-  function normalizeDate(dateStr) {
-  if (!dateStr) return '';
-  // إذا كان التاريخ بصيغة YYYY-MM-DD
-  if (dateStr.includes('-')) {
-    const [y, m, d] = dateStr.split('-');
-    return `${parseInt(d)}/${MONTHS[parseInt(m)-1]}/${y}`;
-  }
-  return dateStr;
+// ============ دالة callGAS مثل SalesInvoice ============
+async function callGAS(action, params = {}) {
+  const url = new URL(GAS_URL);
+  url.searchParams.set('action', action);
+  Object.entries(params).forEach(([k, v]) => {
+    url.searchParams.set(k, String(v ?? ''));
+  });
+  const res = await fetch(url.toString(), { redirect: 'follow' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res.json();
 }
-function getRateForDate(dateStr, rates) {
-  console.log('💰 البحث عن التاريخ:', dateStr);
+
+// ============ دالة لجلب سعر صرف يوم محدد (مثل SalesInvoice) ============
+async function getExchangeRateForDate(dateStr) {
+  console.log(`💰 جلب سعر صرف لـ ${dateStr}`);
   
-  if (!rates || !Array.isArray(rates)) {
-    console.log('⚠️ rates ليست مصفوفة:', rates);
+  // استخدام الكاش إذا كان موجوداً
+  if (exchangeRatesCache[dateStr]) {
+    console.log('✅ موجود في الكاش:', exchangeRatesCache[dateStr]);
+    return exchangeRatesCache[dateStr];
+  }
+  
+  try {
+    // جلب سعر الصرف من GAS (مثل SalesInvoice)
+    const rate = await callGAS('getExchangeRate', { dateStr: dateStr });
+    
+    if (rate) {
+      console.log('✅ تم جلب سعر الصرف:', rate);
+      exchangeRatesCache[dateStr] = rate;
+      return rate;
+    } else {
+      console.log('❌ لا يوجد سعر صرف لهذا التاريخ');
+      return null;
+    }
+  } catch (e) {
+    console.error('❌ خطأ في جلب سعر الصرف:', e);
     return null;
   }
-  
-  console.log('💰 عدد أسعار الصرف:', rates.length);
-  
-  // إنشاء خريطة للتواريخ المحولة
-  const ratesMap = {};
-  rates.forEach(rate => {
-    // تحويل التاريخ من ISO إلى DD/MMM/YYYY
-    if (rate.Date) {
-      const d = new Date(rate.Date);
-      if (!isNaN(d)) {
-        const formatted = formatDate(d);
-        ratesMap[formatted] = rate;
-        console.log(`🔄 تحويل: ${rate.Date} -> ${formatted}`);
-      }
-    }
-  });
-  
-  console.log('💰 التواريخ المتوفرة بعد التحويل:', Object.keys(ratesMap).join(', '));
-  
-  const rate = ratesMap[dateStr];
-  console.log(`💰 النتيجة: ${rate ? 'موجود' : 'غير موجود'}`);
-  
-  return rate || null;
 }
-  // ============ تحميل البيانات ============
+
+// ============ حساب إجمالي الفاتورة بالجنيه المصري ============
+function calculateTotalEGP(inv, rate) {
+  if (!rate) return 0;
+  
+  let total = 0;
+  
+  // المبالغ النقدية - باستخدام الأسماء الصحيحة من getAllInvoices
+  total += (parseFloat(inv.cashUSD) || 0) * (parseFloat(rate.cash?.USD) || 0);
+  total += (parseFloat(inv.cashEUR) || 0) * (parseFloat(rate.cash?.EUR) || 0);
+  total += (parseFloat(inv.cashGBP) || 0) * (parseFloat(rate.cash?.GBP) || 0);
+  total += (parseFloat(inv.cashLE) || 0) * (parseFloat(rate.cash?.LE) || 1);
+  
+  // مبالغ الفيزا
+  total += (parseFloat(inv.visaUSD) || 0) * (parseFloat(rate.visa?.USD) || 0);
+  total += (parseFloat(inv.visaEUR) || 0) * (parseFloat(rate.visa?.EUR) || 0);
+  total += (parseFloat(inv.visaGBP) || 0) * (parseFloat(rate.visa?.GBP) || 0);
+  total += (parseFloat(inv.visaLE) || 0) * (parseFloat(rate.visa?.LE) || 1);
+  
+  return total;
+}
+
+// ============ تحميل البيانات ============
 async function loadData() {
   console.log('📥 ===== بداية تحميل البيانات =====');
   
@@ -186,68 +207,9 @@ async function loadData() {
     
     console.log(`📊 عدد فواتير المستخدم بعد الفلترة: ${invoices.length}`);
     
-    // تحميل أسعار الصرف
- // تحميل أسعار الصرف
-console.log('4️⃣ الخطوة 4: جلب أسعار الصرف من GAS');
-const ratesRes = await fetch(GAS_URL + '?action=getExchangeRates');
-console.log('استجابة أسعار الصرف:', ratesRes.status);
-
-let ratesData = await ratesRes.json();
-console.log('💰 بيانات أسعار الصرف الخام:', ratesData);
-
-// التحقق من شكل البيانات المستلمة
-if (ratesData && typeof ratesData === 'object') {
-  // إذا كانت الاستجابة كائن يحوي success و message
-  if (ratesData.success !== undefined) {
-    console.log('⚠️ استجابة تحتوي success/message:', ratesData);
-    if (ratesData.success === false) {
-      console.warn('❌ فشل جلب أسعار الصرف:', ratesData.message);
-      exchangeRates = [];
-    } else if (Array.isArray(ratesData.data)) {
-      exchangeRates = ratesData.data;
-    }
-  }
-  // إذا كانت مصفوفة مباشرة
-  else if (Array.isArray(ratesData)) {
-    exchangeRates = ratesData;
-    console.log('✅ تم استلام مصفوفة أسعار صرف بعدد:', exchangeRates.length);
-    if (exchangeRates.length > 0) {
-      console.log('💰 أول سعر صرف:', exchangeRates[0]);
-      console.log('💰 جميع التواريخ المتوفرة:', exchangeRates.map(r => r.Date).join(', '));
-    }
-  }
-  // إذا كانت كائن بمفاتيح رقمية (كائن يشبه المصفوفة)
-  else if (typeof ratesData === 'object') {
-    const possibleArray = Object.values(ratesData);
-    if (Array.isArray(possibleArray) && possibleArray.length > 0) {
-      exchangeRates = possibleArray;
-      console.log('✅ تم تحويل الكائن إلى مصفوفة بعدد:', exchangeRates.length);
-    } else {
-      exchangeRates = [];
-    }
-  }
-} else {
-  exchangeRates = [];
-}
-
-console.log(`💰 عدد أسعار الصرف بعد المعالجة: ${exchangeRates.length}`);
-
-console.log('💰 أسعار الصرف الخام:', ratesData);
-console.log('💰 نوع البيانات:', typeof ratesData);
-console.log('💰 هل هو مصفوفة:', Array.isArray(ratesData));
-
-if (Array.isArray(ratesData) && ratesData.length > 0) {
-  console.log('💰 أول سعر صرف:', ratesData[0]);
-  console.log('💰 جميع التواريخ المتوفرة:', ratesData.map(r => r.Date).join(', '));
-  
-  // تحقق من وجود تطابق مع تاريخ من الفواتير
-  const sampleDate = formatDate(new Date(2026, 2, 9)); // 09/Mar/2026
-  const match = ratesData.find(r => r.Date === sampleDate);
-  console.log(`💰 البحث عن تطابق للتاريخ ${sampleDate}:`, match ? 'موجود' : 'غير موجود');
-} else {
-  console.log('⚠️ لا توجد بيانات أسعار صرف');
-}
-    // عرض التحليل الأول
+    // ملاحظة: لم نعد نحمل أسعار الصرف هنا - سنحملها ديناميكياً عند الحاجة
+    console.log('4️⃣ الخطوة 4: تم تحميل الفواتير فقط - أسعار الصرف تُجلب ديناميكياً');
+    
     console.log('5️⃣ الخطوة 5: بدء التحليل');
     loadAnalytics();
     
@@ -268,7 +230,7 @@ function switchTab(tab) {
   loadAnalytics();
 }
 
-function loadAnalytics() {
+async function loadAnalytics() {
   console.log(`📊 ===== بداية تحميل التحليل: ${currentTab} =====`);
   
   const fromDate = document.getElementById('filterDateFrom').value;
@@ -288,17 +250,17 @@ function loadAnalytics() {
   console.log('📅 from (كـ Date):', from);
   console.log('📅 to (كـ Date):', to);
   
-  if (currentTab === 'daily') showDailyChart(from, to);
-  else if (currentTab === 'monthly') showMonthlyChart(from, to);
-  else if (currentTab === 'trips') showTripsChart(from, to);
-  else if (currentTab === 'nationalities') showNationalitiesChart(from, to);
-  else if (currentTab === 'commission') showCommissionChart(from, to);
+  if (currentTab === 'daily') await showDailyChart(from, to);
+  else if (currentTab === 'monthly') await showMonthlyChart(from, to);
+  else if (currentTab === 'trips') await showTripsChart(from, to);
+  else if (currentTab === 'nationalities') await showNationalitiesChart(from, to);
+  else if (currentTab === 'commission') await showCommissionChart(from, to);
   
   console.log(`🏁 ===== نهاية تحميل التحليل: ${currentTab} =====`);
 }
 
 // ============ 1. الرسم البياني اليومي ============
-function showDailyChart(from, to) {
+async function showDailyChart(from, to) {
   console.log('📅 ===== بداية الرسم اليومي =====');
   
   // تجهيز البيانات
@@ -313,23 +275,22 @@ function showDailyChart(from, to) {
   
   console.log('📅 التواريخ المطلوبة:', dates);
   
-  // حساب المبيعات لكل يوم
+  // حساب المبيعات لكل يوم (مع await)
   let invoicesProcessed = 0;
   let invoicesWithRate = 0;
-  console.log('📅 عينة من التواريخ المطلوبة:', dates.slice(0, 5));
-  console.log('📅 أول فاتورة:', invoices[0] ? invoices[0].activeDate : 'لا توجد فواتير');
-  invoices.forEach(inv => {
+  
+  for (const inv of invoices) {
     invoicesProcessed++;
     const invDate = parseDate(inv.activeDate);
     if (invDate && invDate >= from && invDate <= to) {
       const dateStr = formatDate(invDate);
-      const rate = getRateForDate(dateStr, exchangeRates);
+      const rate = await getExchangeRateForDate(dateStr);
       if (rate) {
         invoicesWithRate++;
         dailyData[dateStr] += calculateTotalEGP(inv, rate);
       }
     }
-  });
+  }
   
   console.log(`📊 عدد الفواتير المعالجة: ${invoicesProcessed}`);
   console.log(`📊 عدد الفواتير مع سعر صرف: ${invoicesWithRate}`);
@@ -383,7 +344,7 @@ function showDailyChart(from, to) {
 }
 
 // ============ 2. الرسم البياني الشهري ============
-function showMonthlyChart(from, to) {
+async function showMonthlyChart(from, to) {
   console.log('📆 ===== بداية الرسم الشهري =====');
   
   const monthlyData = {};
@@ -397,34 +358,39 @@ function showMonthlyChart(from, to) {
   
   console.log('📆 الأشهر المطلوبة:', months);
   
-  invoices.forEach(inv => {
+  // تجميع أسعار الصرف لكل شهر
+  const monthRatesCache = {};
+  
+  for (const inv of invoices) {
     const invDate = parseDate(inv.activeDate);
     if (invDate && invDate >= from && invDate <= to) {
       const monthStr = `${MONTHS[invDate.getMonth()]} ${invDate.getFullYear()}`;
       
-      const monthRates = exchangeRates.filter(r => {
-        const rDate = parseDate(r.Date);
-        return rDate && rDate.getMonth() === invDate.getMonth() && rDate.getFullYear() === invDate.getFullYear();
-      });
+      // جلب سعر الصرف لهذا اليوم
+      const dateStr = formatDate(invDate);
+      const rate = await getExchangeRateForDate(dateStr);
       
-      console.log(`💰 عدد أسعار الشهر ${monthStr}: ${monthRates.length}`);
-      
-      if (monthRates.length > 0) {
-        const avgRate = {
-          Sales_USD: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_USD) || 0), 0) / monthRates.length,
-          Sales_EUR: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_EUR) || 0), 0) / monthRates.length,
-          Sales_GBP: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_GBP) || 0), 0) / monthRates.length,
-          Sales_LE: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_LE) || 1), 0) / monthRates.length,
-          Sales_VisaUSD: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_VisaUSD) || 0), 0) / monthRates.length,
-          Sales_VisaEUR: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_VisaEUR) || 0), 0) / monthRates.length,
-          Sales_VisaGBP: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_VisaGBP) || 0), 0) / monthRates.length,
-          Sales_VisaLE: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_VisaLE) || 1), 0) / monthRates.length
-        };
+      if (rate) {
+        // تخزين السعر لهذا الشهر لحساب المتوسط لاحقاً
+        if (!monthRatesCache[monthStr]) monthRatesCache[monthStr] = [];
+        monthRatesCache[monthStr].push({
+          cashUSD: rate.cash?.USD || 0,
+          cashEUR: rate.cash?.EUR || 0,
+          cashGBP: rate.cash?.GBP || 0,
+          cashLE: rate.cash?.LE || 1,
+          visaUSD: rate.visa?.USD || 0,
+          visaEUR: rate.visa?.EUR || 0,
+          visaGBP: rate.visa?.GBP || 0,
+          visaLE: rate.visa?.LE || 1
+        });
         
-        monthlyData[monthStr] += calculateTotalEGP(inv, avgRate);
+        // حساب إجمالي الفاتورة مباشرة
+        monthlyData[monthStr] += calculateTotalEGP(inv, rate);
       }
     }
-  });
+  }
+  
+  console.log(`💰 عدد أسعار كل شهر:`, Object.keys(monthRatesCache).map(m => `${m}: ${monthRatesCache[m]?.length || 0}`));
   
   const values = months.map(m => monthlyData[m]);
   const total = values.reduce((a, b) => a + b, 0);
@@ -470,25 +436,25 @@ function showMonthlyChart(from, to) {
 }
 
 // ============ 3. الرسم حسب الرحلات ============
-function showTripsChart(from, to) {
+async function showTripsChart(from, to) {
   console.log('🚤 ===== بداية الرسم حسب الرحلات =====');
   
   const tripsData = {};
   let invoicesProcessed = 0;
   
-  invoices.forEach(inv => {
+  for (const inv of invoices) {
     const invDate = parseDate(inv.activeDate);
     if (invDate && invDate >= from && invDate <= to) {
       invoicesProcessed++;
       const trip = inv.trip || 'Unknown';
       const dateStr = formatDate(invDate);
-      const rate = getRateForDate(dateStr, exchangeRates);
+      const rate = await getExchangeRateForDate(dateStr);
       
       if (rate) {
         tripsData[trip] = (tripsData[trip] || 0) + calculateTotalEGP(inv, rate);
       }
     }
-  });
+  }
   
   console.log(`📊 عدد الفواتير في النطاق: ${invoicesProcessed}`);
   console.log('🚤 بيانات الرحلات:', tripsData);
@@ -531,25 +497,25 @@ function showTripsChart(from, to) {
 }
 
 // ============ 4. الرسم حسب الجنسيات ============
-function showNationalitiesChart(from, to) {
+async function showNationalitiesChart(from, to) {
   console.log('🌍 ===== بداية الرسم حسب الجنسيات =====');
   
   const natData = {};
   let invoicesProcessed = 0;
   
-  invoices.forEach(inv => {
+  for (const inv of invoices) {
     const invDate = parseDate(inv.activeDate);
     if (invDate && invDate >= from && invDate <= to) {
       invoicesProcessed++;
       const nationality = inv.nationality || 'Unknown';
       const dateStr = formatDate(invDate);
-      const rate = getRateForDate(dateStr, exchangeRates);
+      const rate = await getExchangeRateForDate(dateStr);
       
       if (rate) {
         natData[nationality] = (natData[nationality] || 0) + calculateTotalEGP(inv, rate);
       }
     }
-  });
+  }
   
   console.log(`📊 عدد الفواتير في النطاق: ${invoicesProcessed}`);
   console.log('🌍 بيانات الجنسيات:', natData);
@@ -592,7 +558,7 @@ function showNationalitiesChart(from, to) {
 }
 
 // ============ 5. الرسم حسب العمولات ============
-function showCommissionChart(from, to) {
+async function showCommissionChart(from, to) {
   console.log('💰 ===== بداية الرسم حسب العمولات =====');
   
   const commissionData = {};
