@@ -94,6 +94,7 @@ let invoices = [];
 
 // ============ دوال موحدة للتعامل مع التاريخ ============
 function parseDate(str) {
+  console.log('🔍 parseDate المدخل:', str);
   if (!str) return null;
   // تنسيق DD/MMM/YYYY مثل 09/Mar/2026
   const parts = str.split('/');
@@ -102,9 +103,12 @@ function parseDate(str) {
     const monthIndex = MONTHS.findIndex(m => m.toLowerCase() === parts[1].toLowerCase());
     const year = parseInt(parts[2]);
     if (!isNaN(day) && monthIndex !== -1 && !isNaN(year)) {
-      return new Date(year, monthIndex, day);
+      const result = new Date(year, monthIndex, day);
+      console.log('✅ parseDate النتيجة:', result);
+      return result;
     }
   }
+  console.log('❌ parseDate فشل في التحويل');
   return null;
 }
 
@@ -114,10 +118,13 @@ function formatDate(date) {
 
 // ============ دوال تحويل العملات ============
 function getRateForDate(dateStr, rates) {
-  return rates.find(r => r.Date === dateStr) || null;
+  const rate = rates.find(r => r.Date === dateStr);
+  console.log(`💰 getRateForDate التاريخ: ${dateStr}, موجود: ${rate ? 'نعم' : 'لا'}`);
+  return rate || null;
 }
 
 function calculateTotalEGP(inv, rate) {
+  console.log('🧮 calculateTotalEGP المدخلات:', { inv, rate });
   if (!rate) return 0;
   
   let total = 0;
@@ -134,40 +141,68 @@ function calculateTotalEGP(inv, rate) {
   total += (parseFloat(inv['Visa£']) || 0) * (parseFloat(rate.Sales_VisaGBP) || 0);
   total += (parseFloat(inv['VisaLE']) || 0) * (parseFloat(rate.Sales_VisaLE) || 1);
   
+  console.log('✅ calculateTotalEGP النتيجة:', total);
   return total;
 }
 
 // ============ تحميل البيانات ============
 async function loadData() {
+  console.log('📥 ===== بداية تحميل البيانات =====');
+  
   try {
-    console.log('📥 جاري تحميل البيانات...');
+    console.log('1️⃣ الخطوة 1: جلب بيانات المستخدم');
+    console.log('currentUser:', currentUser);
     
     // تحميل الفواتير
+    console.log('2️⃣ الخطوة 2: جلب الفواتير من GAS');
     const invRes = await fetch(GAS_URL + '?action=getAllInvoices');
+    console.log('استجابة الفواتير:', invRes.status);
+    
     let invData = await invRes.json();
+    console.log('عدد الفواتير الخام:', invData.length);
+    console.log('أول فاتورة:', invData[0]);
+    console.log('مفاتيح أول فاتورة:', Object.keys(invData[0]));
+    
     invoices = Array.isArray(invData) ? invData : [];
     
-    // فلترة لفواتير المستخدم الحالي فقط - باستخدام SalesID (العمود E)
-    invoices = invoices.filter(inv => inv.salesId == currentUser?.id);
-    console.log(`📊 عدد فواتير المستخدم: ${invoices.length}`);
+    // فلترة لفواتير المستخدم الحالي فقط
+    console.log(`3️⃣ الخطوة 3: فلترة الفواتير للمستخدم ${currentUser?.id}`);
+    invoices = invoices.filter(inv => {
+      const match = inv.salesId == currentUser?.id;
+      if (match) console.log('✅ فاتورة مطابقة:', inv.voucherNo);
+      return match;
+    });
+    
+    console.log(`📊 عدد فواتير المستخدم بعد الفلترة: ${invoices.length}`);
     
     // تحميل أسعار الصرف
+    console.log('4️⃣ الخطوة 4: جلب أسعار الصرف من GAS');
     const ratesRes = await fetch(GAS_URL + '?action=getExchangeRates');
+    console.log('استجابة أسعار الصرف:', ratesRes.status);
+    
     let ratesData = await ratesRes.json();
+    console.log('عدد أسعار الصرف الخام:', ratesData.length);
+    console.log('أول سعر صرف:', ratesData[0]);
+    console.log('مفاتيح أول سعر صرف:', Object.keys(ratesData[0]));
+    
     exchangeRates = Array.isArray(ratesData) ? ratesData : [];
-    console.log(`💰 عدد أسعار الصرف: ${exchangeRates.length}`);
+    console.log(`💰 عدد أسعار الصرف بعد المعالجة: ${exchangeRates.length}`);
     
     // عرض التحليل الأول
+    console.log('5️⃣ الخطوة 5: بدء التحليل');
     loadAnalytics();
     
   } catch (error) {
-    console.error('❌ خطأ:', error);
+    console.error('❌ خطأ في تحميل البيانات:', error);
     document.getElementById('analyticsContent').innerHTML = `<div class="no-data">خطأ في تحميل البيانات</div>`;
   }
+  
+  console.log('🏁 ===== نهاية تحميل البيانات =====');
 }
 
 // ============ التبديل بين التحليلات ============
 function switchTab(tab) {
+  console.log(`🔄 تبديل التاب إلى: ${tab}`);
   currentTab = tab;
   document.querySelectorAll('.analytics-tab').forEach(t => t.classList.remove('active'));
   event.target.classList.add('active');
@@ -175,23 +210,38 @@ function switchTab(tab) {
 }
 
 function loadAnalytics() {
+  console.log(`📊 ===== بداية تحميل التحليل: ${currentTab} =====`);
+  
   const fromDate = document.getElementById('filterDateFrom').value;
   const toDate = document.getElementById('filterDateTo').value;
   
-  if (!fromDate || !toDate) return;
+  console.log('📅 التاريخ من:', fromDate);
+  console.log('📅 التاريخ إلى:', toDate);
+  
+  if (!fromDate || !toDate) {
+    console.log('⚠️ التواريخ غير مكتملة');
+    return;
+  }
   
   const from = new Date(fromDate);
   const to = new Date(toDate);
+  
+  console.log('📅 from (كـ Date):', from);
+  console.log('📅 to (كـ Date):', to);
   
   if (currentTab === 'daily') showDailyChart(from, to);
   else if (currentTab === 'monthly') showMonthlyChart(from, to);
   else if (currentTab === 'trips') showTripsChart(from, to);
   else if (currentTab === 'nationalities') showNationalitiesChart(from, to);
   else if (currentTab === 'commission') showCommissionChart(from, to);
+  
+  console.log(`🏁 ===== نهاية تحميل التحليل: ${currentTab} =====`);
 }
 
 // ============ 1. الرسم البياني اليومي ============
 function showDailyChart(from, to) {
+  console.log('📅 ===== بداية الرسم اليومي =====');
+  
   // تجهيز البيانات
   const dailyData = {};
   const dates = [];
@@ -202,20 +252,34 @@ function showDailyChart(from, to) {
     dailyData[dateStr] = 0;
   }
   
+  console.log('📅 التواريخ المطلوبة:', dates);
+  
   // حساب المبيعات لكل يوم
+  let invoicesProcessed = 0;
+  let invoicesWithRate = 0;
+  
   invoices.forEach(inv => {
-    const invDate = parseDate(inv.activeDate); // العمود D
+    invoicesProcessed++;
+    const invDate = parseDate(inv.activeDate);
     if (invDate && invDate >= from && invDate <= to) {
       const dateStr = formatDate(invDate);
       const rate = getRateForDate(dateStr, exchangeRates);
       if (rate) {
+        invoicesWithRate++;
         dailyData[dateStr] += calculateTotalEGP(inv, rate);
       }
     }
   });
   
+  console.log(`📊 عدد الفواتير المعالجة: ${invoicesProcessed}`);
+  console.log(`📊 عدد الفواتير مع سعر صرف: ${invoicesWithRate}`);
+  console.log('📊 dailyData:', dailyData);
+  
   const values = dates.map(d => dailyData[d]);
   const total = values.reduce((a, b) => a + b, 0);
+  
+  console.log('📈 القيم:', values);
+  console.log('💰 الإجمالي:', total);
   
   // عرض الرسم
   document.getElementById('analyticsContent').innerHTML = `
@@ -232,50 +296,60 @@ function showDailyChart(from, to) {
   `;
   
   setTimeout(() => {
-    new Chart(document.getElementById('chart'), {
-      type: 'bar',
-      data: {
-        labels: dates,
-        datasets: [{
-          label: 'Sales (EGP)',
-          data: values,
-          backgroundColor: '#1e2b4f'
-        }]
-      },
-      options: {
-        responsive: true,
-        scales: { y: { beginAtZero: true } }
-      }
-    });
+    const ctx = document.getElementById('chart');
+    if (ctx) {
+      console.log('🎨 رسم المخطط اليومي');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: dates,
+          datasets: [{
+            label: 'Sales (EGP)',
+            data: values,
+            backgroundColor: '#1e2b4f'
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    } else {
+      console.error('❌ عنصر canvas غير موجود');
+    }
   }, 100);
+  
+  console.log('📅 ===== نهاية الرسم اليومي =====');
 }
 
 // ============ 2. الرسم البياني الشهري ============
 function showMonthlyChart(from, to) {
+  console.log('📆 ===== بداية الرسم الشهري =====');
+  
   const monthlyData = {};
   const months = [];
   
-  // تجميع الأشهر
   for (let d = new Date(from); d <= to; d.setMonth(d.getMonth() + 1)) {
     const monthStr = `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
     months.push(monthStr);
     monthlyData[monthStr] = 0;
   }
   
-  // حساب المبيعات لكل شهر
+  console.log('📆 الأشهر المطلوبة:', months);
+  
   invoices.forEach(inv => {
-    const invDate = parseDate(inv.activeDate); // العمود D
+    const invDate = parseDate(inv.activeDate);
     if (invDate && invDate >= from && invDate <= to) {
       const monthStr = `${MONTHS[invDate.getMonth()]} ${invDate.getFullYear()}`;
       
-      // حساب متوسط أسعار الشهر
       const monthRates = exchangeRates.filter(r => {
         const rDate = parseDate(r.Date);
         return rDate && rDate.getMonth() === invDate.getMonth() && rDate.getFullYear() === invDate.getFullYear();
       });
       
+      console.log(`💰 عدد أسعار الشهر ${monthStr}: ${monthRates.length}`);
+      
       if (monthRates.length > 0) {
-        // حساب متوسط الأسعار
         const avgRate = {
           Sales_USD: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_USD) || 0), 0) / monthRates.length,
           Sales_EUR: monthRates.reduce((sum, r) => sum + (parseFloat(r.Sales_EUR) || 0), 0) / monthRates.length,
@@ -295,6 +369,9 @@ function showMonthlyChart(from, to) {
   const values = months.map(m => monthlyData[m]);
   const total = values.reduce((a, b) => a + b, 0);
   
+  console.log('📈 القيم الشهرية:', values);
+  console.log('💰 الإجمالي الشهري:', total);
+  
   document.getElementById('analyticsContent').innerHTML = `
     <div class="chart-container">
       <div class="chart-title">📆 Monthly Sales (EGP)</div>
@@ -309,32 +386,41 @@ function showMonthlyChart(from, to) {
   `;
   
   setTimeout(() => {
-    new Chart(document.getElementById('chart'), {
-      type: 'bar',
-      data: {
-        labels: months,
-        datasets: [{
-          label: 'Sales (EGP)',
-          data: values,
-          backgroundColor: '#ffd966'
-        }]
-      },
-      options: {
-        responsive: true,
-        scales: { y: { beginAtZero: true } }
-      }
-    });
+    const ctx = document.getElementById('chart');
+    if (ctx) {
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: months,
+          datasets: [{
+            label: 'Sales (EGP)',
+            data: values,
+            backgroundColor: '#ffd966'
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
   }, 100);
+  
+  console.log('📆 ===== نهاية الرسم الشهري =====');
 }
 
 // ============ 3. الرسم حسب الرحلات ============
 function showTripsChart(from, to) {
+  console.log('🚤 ===== بداية الرسم حسب الرحلات =====');
+  
   const tripsData = {};
+  let invoicesProcessed = 0;
   
   invoices.forEach(inv => {
-    const invDate = parseDate(inv.activeDate); // العمود D
+    const invDate = parseDate(inv.activeDate);
     if (invDate && invDate >= from && invDate <= to) {
-      const trip = inv.trip || 'Unknown'; // العمود G
+      invoicesProcessed++;
+      const trip = inv.trip || 'Unknown';
       const dateStr = formatDate(invDate);
       const rate = getRateForDate(dateStr, exchangeRates);
       
@@ -344,9 +430,14 @@ function showTripsChart(from, to) {
     }
   });
   
+  console.log(`📊 عدد الفواتير في النطاق: ${invoicesProcessed}`);
+  console.log('🚤 بيانات الرحلات:', tripsData);
+  
   const sorted = Object.entries(tripsData).sort((a, b) => b[1] - a[1]).slice(0, 10);
   const labels = sorted.map(s => s[0]);
   const values = sorted.map(s => s[1]);
+  
+  console.log('🏆 أفضل 10 رحلات:', sorted);
   
   document.getElementById('analyticsContent').innerHTML = `
     <div class="chart-container">
@@ -356,32 +447,41 @@ function showTripsChart(from, to) {
   `;
   
   setTimeout(() => {
-    new Chart(document.getElementById('chart'), {
-      type: 'bar',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: 'Sales (EGP)',
-          data: values,
-          backgroundColor: '#9b59b6'
-        }]
-      },
-      options: {
-        responsive: true,
-        indexAxis: 'y'
-      }
-    });
+    const ctx = document.getElementById('chart');
+    if (ctx) {
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'Sales (EGP)',
+            data: values,
+            backgroundColor: '#9b59b6'
+          }]
+        },
+        options: {
+          responsive: true,
+          indexAxis: 'y'
+        }
+      });
+    }
   }, 100);
+  
+  console.log('🚤 ===== نهاية الرسم حسب الرحلات =====');
 }
 
 // ============ 4. الرسم حسب الجنسيات ============
 function showNationalitiesChart(from, to) {
+  console.log('🌍 ===== بداية الرسم حسب الجنسيات =====');
+  
   const natData = {};
+  let invoicesProcessed = 0;
   
   invoices.forEach(inv => {
-    const invDate = parseDate(inv.activeDate); // العمود D
+    const invDate = parseDate(inv.activeDate);
     if (invDate && invDate >= from && invDate <= to) {
-      const nationality = inv.nationality || 'Unknown'; // العمود AB
+      invoicesProcessed++;
+      const nationality = inv.nationality || 'Unknown';
       const dateStr = formatDate(invDate);
       const rate = getRateForDate(dateStr, exchangeRates);
       
@@ -391,9 +491,14 @@ function showNationalitiesChart(from, to) {
     }
   });
   
+  console.log(`📊 عدد الفواتير في النطاق: ${invoicesProcessed}`);
+  console.log('🌍 بيانات الجنسيات:', natData);
+  
   const sorted = Object.entries(natData).sort((a, b) => b[1] - a[1]).slice(0, 10);
   const labels = sorted.map(s => s[0]);
   const values = sorted.map(s => s[1]);
+  
+  console.log('🏆 أفضل 10 جنسيات:', sorted);
   
   document.getElementById('analyticsContent').innerHTML = `
     <div class="chart-container">
@@ -403,26 +508,33 @@ function showNationalitiesChart(from, to) {
   `;
   
   setTimeout(() => {
-    new Chart(document.getElementById('chart'), {
-      type: 'bar',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: 'Sales (EGP)',
-          data: values,
-          backgroundColor: '#3498db'
-        }]
-      },
-      options: {
-        responsive: true,
-        indexAxis: 'y'
-      }
-    });
+    const ctx = document.getElementById('chart');
+    if (ctx) {
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'Sales (EGP)',
+            data: values,
+            backgroundColor: '#3498db'
+          }]
+        },
+        options: {
+          responsive: true,
+          indexAxis: 'y'
+        }
+      });
+    }
   }, 100);
+  
+  console.log('🌍 ===== نهاية الرسم حسب الجنسيات =====');
 }
 
 // ============ 5. الرسم حسب العمولات ============
 function showCommissionChart(from, to) {
+  console.log('💰 ===== بداية الرسم حسب العمولات =====');
+  
   const commissionData = {};
   const dates = [];
   
@@ -432,16 +544,28 @@ function showCommissionChart(from, to) {
     commissionData[dateStr] = 0;
   }
   
+  console.log('📅 التواريخ:', dates);
+  
+  let invoicesWithCommission = 0;
+  
   invoices.forEach(inv => {
-    const invDate = parseDate(inv.activeDate); // العمود D
+    const invDate = parseDate(inv.activeDate);
     if (invDate && invDate >= from && invDate <= to) {
       const dateStr = formatDate(invDate);
-      commissionData[dateStr] += parseFloat(inv.Commission) || 0; // العمود AN
+      const commission = parseFloat(inv.Commission) || 0;
+      if (commission > 0) invoicesWithCommission++;
+      commissionData[dateStr] += commission;
     }
   });
   
+  console.log(`💰 عدد الفواتير بعمولات: ${invoicesWithCommission}`);
+  console.log('💰 بيانات العمولات:', commissionData);
+  
   const values = dates.map(d => commissionData[d]);
   const total = values.reduce((a, b) => a + b, 0);
+  
+  console.log('📈 قيم العمولات:', values);
+  console.log('💰 إجمالي العمولات:', total);
   
   document.getElementById('analyticsContent').innerHTML = `
     <div class="chart-container">
@@ -457,23 +581,28 @@ function showCommissionChart(from, to) {
   `;
   
   setTimeout(() => {
-    new Chart(document.getElementById('chart'), {
-      type: 'line',
-      data: {
-        labels: dates,
-        datasets: [{
-          label: 'Commission (EGP)',
-          data: values,
-          borderColor: '#27ae60',
-          fill: false
-        }]
-      },
-      options: {
-        responsive: true,
-        scales: { y: { beginAtZero: true } }
-      }
-    });
+    const ctx = document.getElementById('chart');
+    if (ctx) {
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: dates,
+          datasets: [{
+            label: 'Commission (EGP)',
+            data: values,
+            borderColor: '#27ae60',
+            fill: false
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
   }, 100);
+  
+  console.log('💰 ===== نهاية الرسم حسب العمولات =====');
 }
 
 function goBack() {
@@ -482,14 +611,20 @@ function goBack() {
 
 // ============ التهيئة ============
 document.addEventListener('DOMContentLoaded', () => {
+  console.log('🚀 ===== بداية تهيئة الصفحة =====');
+  
   const userData = sessionStorage.getItem('currentUser');
+  console.log('👤 userData من sessionStorage:', userData);
+  
   if (!userData) {
+    console.log('❌ لا توجد بيانات مستخدم، توجيه إلى index.html');
     window.location.href = 'index.html';
     return;
   }
   
   try {
     currentUser = JSON.parse(userData);
+    console.log('✅ currentUser:', currentUser);
     document.getElementById('userNameDisplay').textContent = currentUser.name || 'Sales';
     
     const today = new Date();
@@ -498,10 +633,18 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('filterDateFrom').value = firstDay.toISOString().split('T')[0];
     document.getElementById('filterDateTo').value = today.toISOString().split('T')[0];
     
+    console.log('📅 التواريخ الافتراضية:', {
+      from: document.getElementById('filterDateFrom').value,
+      to: document.getElementById('filterDateTo').value
+    });
+    
     loadData();
   } catch (e) {
+    console.error('❌ خطأ في تحميل المستخدم:', e);
     window.location.href = 'index.html';
   }
+  
+  console.log('🏁 ===== نهاية تهيئة الصفحة =====');
 });
 
 window.switchTab = switchTab;
