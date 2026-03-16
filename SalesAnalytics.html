@@ -353,7 +353,7 @@ function getCylinderGradient(ctx, color, height) {
 }
 
 // ============ دالة لإنشاء بطاقات الإحصائيات ============
-function createStatsCards(values, unit = 'EGP', type = 'general') {
+function createStatsCards(values, unit = 'EGP', type = 'general', labels = []) {
   if (!values || values.length === 0) return '';
   
   const validValues = values.filter(v => v > 0);
@@ -370,6 +370,10 @@ function createStatsCards(values, unit = 'EGP', type = 'general') {
   const lastAvg = lastThree.length > 0 ? lastThree.reduce((a, b) => a + b, 0) / lastThree.length : 0;
   const firstAvg = firstThree.length > 0 ? firstThree.reduce((a, b) => a + b, 0) / firstThree.length : 0;
   const trend = lastAvg > firstAvg ? 'up' : (lastAvg < firstAvg ? 'down' : 'stable');
+  
+  // العثور على تاريخ أعلى قيمة
+  const maxIndex = values.indexOf(max);
+  const maxDate = labels && labels.length > maxIndex ? labels[maxIndex] : '';
   
   return `
     <div class="stats-grid">
@@ -392,20 +396,20 @@ function createStatsCards(values, unit = 'EGP', type = 'general') {
         <div class="stat-icon">🔝</div>
         <div class="stat-label">Highest</div>
         <div class="stat-value">${max.toLocaleString()} ${unit}</div>
-        <div class="stat-trend">⭐ يوم ${values.indexOf(max) !== -1 ? dates?.[values.indexOf(max)] || '' : ''}</div>
+        <div class="stat-trend">⭐ ${maxDate || ''}</div>
       </div>
       <div class="stat-card">
         <div class="stat-icon">💡</div>
         <div class="stat-label">Lowest</div>
         <div class="stat-value">${min.toLocaleString()} ${unit}</div>
-        <div class="stat-trend">📉 ${((max - min) / (max || 1) * 100).toFixed(0)}% فرق</div>
+        <div class="stat-trend">📉 ${max > 0 ? ((max - min) / max * 100).toFixed(0) : 0}% فرق</div>
       </div>
     </div>
   `;
 }
 
 // ============ دالة لإنشاء نصائح احترافية ============
-function createTips(values, type, total) {
+function createTips(values, type, total, labels = [], extraData = {}) {
   if (!values || values.length === 0) return '';
   
   const validValues = values.filter(v => v > 0);
@@ -419,7 +423,7 @@ function createTips(values, type, total) {
     if (max > avg * 1.5) {
       tips.push({
         icon: '🎯',
-        text: `أفضل يوم مبيعات كان <span class="tip-highlight">${dates?.[maxIndex] || ''}</span> بأكثر من 50% فوق المتوسط`
+        text: `أفضل يوم مبيعات كان <span class="tip-highlight">${labels[maxIndex] || ''}</span> بأكثر من 50% فوق المتوسط`
       });
     }
     if (validValues.length < values.length * 0.7) {
@@ -443,7 +447,8 @@ function createTips(values, type, total) {
       });
     }
   } else if (type === 'trips') {
-    const topTrip = Object.entries(tripsData || {}).sort((a, b) => b[1] - a[1])[0];
+    const tripsData = extraData.tripsData || {};
+    const topTrip = Object.entries(tripsData).sort((a, b) => b[1] - a[1])[0];
     if (topTrip) {
       tips.push({
         icon: '🏆',
@@ -451,7 +456,8 @@ function createTips(values, type, total) {
       });
     }
   } else if (type === 'nationalities') {
-    const topNat = Object.entries(natData || {}).sort((a, b) => b[1] - a[1])[0];
+    const natData = extraData.natData || {};
+    const topNat = Object.entries(natData).sort((a, b) => b[1] - a[1])[0];
     if (topNat) {
       tips.push({
         icon: '🌍',
@@ -459,7 +465,8 @@ function createTips(values, type, total) {
       });
     }
   } else if (type === 'commission') {
-    const commissionRate = (total / (values.reduce((a, b) => a + b, 0) || 1) * 100).toFixed(1);
+    const totalSales = extraData.totalSales || 1;
+    const commissionRate = (total / totalSales * 100).toFixed(1);
     tips.push({
       icon: '💰',
       text: `نسبة العمولات ${commissionRate}% من إجمالي المبيعات`
@@ -519,8 +526,8 @@ async function showDailyChart(from, to) {
       <div class="chart-title">📅 Daily Sales (EGP)</div>
       <canvas id="dailyChart"></canvas>
     </div>
-    ${createStatsCards(values, 'EGP', 'daily')}
-    ${createTips(values, 'daily', total)}
+    ${createStatsCards(values, 'EGP', 'daily', dates)}
+    ${createTips(values, 'daily', total, dates)}
   `;
   
   setTimeout(() => {
@@ -595,8 +602,8 @@ async function showMonthlyChart(from, to) {
       <div class="chart-title">📆 Monthly Sales (EGP)</div>
       <canvas id="monthlyChart"></canvas>
     </div>
-    ${createStatsCards(values, 'EGP', 'monthly')}
-    ${createTips(values, 'monthly', total)}
+    ${createStatsCards(values, 'EGP', 'monthly', months)}
+    ${createTips(values, 'monthly', total, months)}
   `;
   
   setTimeout(() => {
@@ -666,8 +673,8 @@ async function showTripsChart(from, to) {
       <div class="chart-title">🚤 Sales by Trip</div>
       <canvas id="tripsChart"></canvas>
     </div>
-    ${createStatsCards(values, 'EGP', 'trips')}
-    ${createTips(values, 'trips', total)}
+    ${createStatsCards(values, 'EGP', 'trips', labels)}
+    ${createTips(values, 'trips', total, labels, { tripsData })}
   `;
   
   setTimeout(() => {
@@ -738,8 +745,8 @@ async function showNationalitiesChart(from, to) {
       <div class="chart-title">🌍 Sales by Nationality</div>
       <canvas id="nationalitiesChart"></canvas>
     </div>
-    ${createStatsCards(values, 'EGP', 'nationalities')}
-    ${createTips(values, 'nationalities', total)}
+    ${createStatsCards(values, 'EGP', 'nationalities', labels)}
+    ${createTips(values, 'nationalities', total, labels, { natData })}
   `;
   
   setTimeout(() => {
@@ -795,6 +802,9 @@ function showCommissionChart(from, to) {
     commissionData[dateStr] = 0;
   }
   
+  // حساب إجمالي المبيعات لنفس الفترة
+  let totalSales = 0;
+  
   invoices.forEach(inv => {
     const invDate = parseDate(inv.activeDate);
     if (invDate && invDate >= from && invDate <= to) {
@@ -815,8 +825,8 @@ function showCommissionChart(from, to) {
       <div class="chart-title">💰 Commission (EGP)</div>
       <canvas id="commissionChart"></canvas>
     </div>
-    ${createStatsCards(values, 'EGP', 'commission')}
-    ${createTips(values, 'commission', totalCommission)}
+    ${createStatsCards(values, 'EGP', 'commission', dates)}
+    ${createTips(values, 'commission', totalCommission, dates, { totalSales })}
   `;
   
   setTimeout(() => {
