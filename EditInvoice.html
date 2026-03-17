@@ -672,12 +672,16 @@ function calculateInvoiceTotal() {
 }
 
 // ============ تحديث المجاميع ============
+// ============ تحديث المجاميع ============
 async function updateTotals() {
   const currency = document.getElementById('invoiceCurrency')?.value;
   if (!currency) return;
   
   // حساب إجمالي البنود
-  let itemsTotal = calculateInvoiceTotal();
+  let itemsTotal = 0;
+  document.querySelectorAll('[id^="total_"]').forEach(input => {
+    itemsTotal += parseFloat(input.value) || 0;
+  });
   
   const cashUSD = parseFloat(document.getElementById('cashUSD')?.value) || 0;
   const cashEUR = parseFloat(document.getElementById('cashEUR')?.value) || 0;
@@ -696,43 +700,25 @@ async function updateTotals() {
   document.getElementById('totalCurrency').textContent = currency;
   document.getElementById('restCurrency').textContent = currency;
   
-  // حساب المتبقي
-  const dateStr = document.getElementById('activeDate')?.value;
-  if (dateStr) {
-    const d = new Date(dateStr);
-    const formattedDate = formatDate(d);
-    const rate = await getExchangeRateForDate(formattedDate);
-    
-    if (rate) {
-      const key = currency === '$' ? 'USD' : currency === '€' ? 'EUR' : currency === '£' ? 'GBP' : 'LE';
-      const baseRate = rate.cash?.[key] || 1;
-      
-      const totalEGP = total * baseRate;
-      const paidEGP = (cashUSD * (rate.cash?.USD || 0)) +
-                     (cashEUR * (rate.cash?.EUR || 0)) +
-                     (cashGBP * (rate.cash?.GBP || 0)) +
-                     cashLE +
-                     (visaUSD * (rate.visa?.USD || 0)) +
-                     (visaEUR * (rate.visa?.EUR || 0)) +
-                     (visaGBP * (rate.visa?.GBP || 0)) +
-                     (visaLE * (rate.visa?.LE || 1));
-      
-      const rest = baseRate > 0 ? (totalEGP - paidEGP) / baseRate : 0;
-      document.getElementById('displayRest').textContent = rest.toFixed(2);
-    }
-  }
+  // حساب المدفوعات
+  const paidTotal = cashUSD + cashEUR + cashGBP + cashLE + visaUSD + visaEUR + visaGBP + visaLE;
+  
+  // حساب المتبقي (دون أسعار صرف للتبسيط)
+  const rest = total - paidTotal;
+  document.getElementById('displayRest').textContent = rest.toFixed(2);
+  
+  console.log('💰 itemsTotal:', itemsTotal, 'paidTotal:', paidTotal, 'rest:', rest);
 }
 
-// ============ جمع بيانات التعديل ============
 // ============ جمع بيانات التعديل ============
 function collectEditedData() {
   // جمع الـ items
   const items = [];
-  const qtyInputs = document.querySelectorAll('.item-qty');
-  qtyInputs.forEach(input => {
-    const qty = parseFloat(input.value) || 0;
-    const name = input.closest('tr').querySelector('td:first-child').textContent;
-    if (qty > 0) {
+  const rows = document.querySelectorAll('#itemsContainer tr');
+  rows.forEach(row => {
+    const name = row.querySelector('td:first-child')?.textContent;
+    const qty = row.querySelector('input[type="number"]')?.value;
+    if (name && qty && parseFloat(qty) > 0) {
       items.push(`${name}×${qty}`);
     }
   });
@@ -743,7 +729,13 @@ function collectEditedData() {
     return (num !== 0 && !isNaN(num)) ? num : '';
   };
   
-  return {
+  // حساب إجمالي البنود
+  let itemsTotal = 0;
+  document.querySelectorAll('[id^="total_"]').forEach(input => {
+    itemsTotal += parseFloat(input.value) || 0;
+  });
+  
+  const data = {
     voucherNo: currentInvoice.voucherNo,
     contactNo: document.getElementById('contactNo')?.value || '',
     guestName: document.getElementById('guestName')?.value || '',
@@ -766,7 +758,7 @@ function collectEditedData() {
     visaGBP: valueOrEmpty(document.getElementById('visaGBP')?.value),
     visaLE: valueOrEmpty(document.getElementById('visaLE')?.value),
     discount: valueOrEmpty(document.getElementById('discount')?.value),
-    paymentPrice: parseFloat(document.getElementById('displayTotal')?.textContent) || 0,
+    paymentPrice: itemsTotal, // استخدام الإجمالي المحسوب
     rest: parseFloat(document.getElementById('displayRest')?.textContent) || 0,
     activitiesText: items.join(' | '),
     supplier: document.getElementById('supplier')?.value || '',
@@ -774,6 +766,9 @@ function collectEditedData() {
     state: document.getElementById('state')?.value || 'pending',
     notes: document.getElementById('notes')?.value || ''
   };
+  
+  console.log('📊 البيانات المجمعة:', data);
+  return data;
 }
 // ============ إنشاء ملخص التغييرات ============
 function createEditSummary(original, edited) {
@@ -813,9 +808,14 @@ function createEditSummary(original, edited) {
 }
 
 // ============ حفظ التغييرات ============
+// ============ حفظ التغييرات ============
 async function saveChanges() {
   const editedData = collectEditedData();
   const editSummary = createEditSummary(originalInvoice, editedData);
+  
+  // 🔍 تشخيص: طباعة البيانات قبل الإرسال
+  console.log('📤 بيانات التعديل المرسلة:', editedData);
+  console.log('📝 ملخص التغييرات:', editSummary);
   
   try {
     showPDFOverlay('⏳ جاري حفظ التعديلات...');
@@ -829,12 +829,16 @@ async function saveChanges() {
       editSummary: editSummary
     });
     
+    console.log('📋 نتيجة copyInvoiceToEdit:', copyResult);
+    
     if (!copyResult.success) {
       throw new Error(copyResult.message || 'فشل نسخ الفاتورة');
     }
     
     // 2. تحديث الفاتورة في Invoices
     const updateResult = await callGAS('updateInvoice', editedData);
+    
+    console.log('📝 نتيجة updateInvoice:', updateResult);
     
     if (!updateResult.success) {
       throw new Error(updateResult.message || 'فشل تحديث الفاتورة');
@@ -844,6 +848,8 @@ async function saveChanges() {
     const pdfResult = await callGAS('saveAndGenerateSinglePDF', {
       voucherNo: editedData.voucherNo
     });
+    
+    console.log('📄 نتيجة saveAndGenerateSinglePDF:', pdfResult);
     
     if (!pdfResult?.success) {
       throw new Error(pdfResult?.message || 'فشل إنشاء PDF');
@@ -859,12 +865,11 @@ async function saveChanges() {
     );
     
   } catch (error) {
-    console.error('❌ خطأ:', error);
+    console.error('❌ خطأ في saveChanges:', error);
     hidePDFOverlay();
     showAlert('خطأ: ' + error.message, '❌');
   }
 }
-
 // ============ إلغاء التعديل ============
 async function cancelEdit() {
   if (confirm('هل أنت متأكد من إلغاء التعديل؟')) {
