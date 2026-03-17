@@ -169,23 +169,14 @@ async function loadInvoice() {
   try {
     showPDFOverlay('⏳ جلب بيانات الفاتورة...');
     
-    // استخدام fetch مباشرة بدلاً من callGAS
-    const url = new URL(GAS_URL);
-    url.searchParams.set('action', 'getAllInvoices');
+    // استخدام الدالة المخصصة
+    const result = await callGAS('getInvoiceByVoucher', { voucherNo });
     
-    const response = await fetch(url.toString(), { redirect: 'follow' });
-    if (!response.ok) throw new Error('HTTP ' + response.status);
-    
-    const result = await response.json();
-    const invoices = Array.isArray(result) ? result : [];
-    
-    currentInvoice = invoices.find(inv => inv.voucherNo === voucherNo);
-    
-    if (!currentInvoice) {
-      throw new Error('الفاتورة غير موجودة');
+    if (!result.success) {
+      throw new Error(result.message || 'فشل جلب الفاتورة');
     }
     
-    // عمل نسخة احتياطية
+    currentInvoice = result.invoice;
     originalInvoice = JSON.parse(JSON.stringify(currentInvoice));
     
     console.log('✅ تم جلب الفاتورة:', currentInvoice);
@@ -195,49 +186,9 @@ async function loadInvoice() {
   } catch (error) {
     console.error('❌ خطأ:', error);
     hidePDFOverlay();
-    
-    // محاولة بديلة: استخدام JSONP
-    try {
-      showPDFOverlay('⏳ محاولة بديلة...');
-      
-      // تجربة JSONP
-      const jsonpUrl = GAS_URL + '?action=getAllInvoices&callback=handleInvoiceData';
-      const script = document.createElement('script');
-      script.src = jsonpUrl;
-      
-      window.handleInvoiceData = function(data) {
-        const invoices = Array.isArray(data) ? data : [];
-        currentInvoice = invoices.find(inv => inv.voucherNo === voucherNo);
-        
-        if (currentInvoice) {
-          originalInvoice = JSON.parse(JSON.stringify(currentInvoice));
-          hidePDFOverlay();
-          renderEditForm();
-        } else {
-          throw new Error('الفاتورة غير موجودة');
-        }
-        
-        document.body.removeChild(script);
-        delete window.handleInvoiceData;
-      };
-      
-      document.body.appendChild(script);
-      
-      // مهلة 5 ثوان
-      setTimeout(() => {
-        if (!currentInvoice) {
-          hidePDFOverlay();
-          showAlert('فشل جلب بيانات الفاتورة', '❌', '<button class="btn-primary" onclick="goBack()">الرجوع</button>');
-        }
-      }, 5000);
-      
-    } catch (jsonpError) {
-      hidePDFOverlay();
-      showAlert('خطأ في جلب بيانات الفاتورة: ' + error.message, '❌', '<button class="btn-primary" onclick="goBack()">الرجوع</button>');
-    }
+    showAlert('خطأ في جلب بيانات الفاتورة: ' + error.message, '❌', '<button class="btn-primary" onclick="goBack()">الرجوع</button>');
   }
 }
-
 // ============ عرض نموذج التعديل ============
 function renderEditForm() {
   if (!currentInvoice) return;
