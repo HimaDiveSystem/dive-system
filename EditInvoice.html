@@ -809,18 +809,35 @@ function createEditSummary(original, edited) {
 
 // ============ حفظ التغييرات ============
 // ============ حفظ التغييرات ============
+// ============ حفظ التغييرات ============
 async function saveChanges() {
+  // جمع البيانات
   const editedData = collectEditedData();
   const editSummary = createEditSummary(originalInvoice, editedData);
   
-  // 🔍 تشخيص: طباعة البيانات قبل الإرسال
   console.log('📤 بيانات التعديل المرسلة:', editedData);
   console.log('📝 ملخص التغييرات:', editSummary);
   
   try {
     showPDFOverlay('⏳ جاري حفظ التعديلات...');
     
-    // 1. نسخ الفاتورة الأصلية إلى Invoices_Edit
+    // ✅ التأكد من أن paymentPrice هو الإجمالي الصحيح
+    editedData.paymentPrice = parseFloat(document.getElementById('displayTotal')?.textContent) || 0;
+    editedData.rest = parseFloat(document.getElementById('displayRest')?.textContent) || 0;
+    
+    console.log('💰 الإجمالي المحسوب:', editedData.paymentPrice);
+    console.log('💰 المتبقي المحسوب:', editedData.rest);
+    
+    // 1. تحديث الفاتورة في Invoices أولاً
+    const updateResult = await callGAS('updateInvoice', editedData);
+    
+    console.log('📝 نتيجة updateInvoice:', updateResult);
+    
+    if (!updateResult.success) {
+      throw new Error(updateResult.message || 'فشل تحديث الفاتورة');
+    }
+    
+    // 2. نسخ الفاتورة الأصلية إلى Invoices_Edit بعد التحديث
     const copyResult = await callGAS('copyInvoiceToEdit', {
       voucherNo: originalInvoice.voucherNo,
       originalData: JSON.stringify(originalInvoice),
@@ -833,15 +850,6 @@ async function saveChanges() {
     
     if (!copyResult.success) {
       throw new Error(copyResult.message || 'فشل نسخ الفاتورة');
-    }
-    
-    // 2. تحديث الفاتورة في Invoices
-    const updateResult = await callGAS('updateInvoice', editedData);
-    
-    console.log('📝 نتيجة updateInvoice:', updateResult);
-    
-    if (!updateResult.success) {
-      throw new Error(updateResult.message || 'فشل تحديث الفاتورة');
     }
     
     // 3. إنشاء PDF جديد
@@ -858,7 +866,7 @@ async function saveChanges() {
     hidePDFOverlay();
     
     showAlert(
-      `✅ تم حفظ التعديلات بنجاح\n\n${editSummary}`,
+      `✅ تم حفظ التعديلات بنجاح\n\nالإجمالي الجديد: ${editedData.paymentPrice} $\nالمتبقي: ${editedData.rest} $\n\n${editSummary}`,
       '✅',
       `<button class="btn-primary" onclick="goBack()">العودة للقائمة</button>
        <button class="btn-secondary" onclick="closeAlert()">البقاء</button>`
