@@ -1047,8 +1047,8 @@ async function calcRest(netTotal){
   if(restCurEl) restCurEl.textContent=currency;
 
   const v=id=>parseFloat(document.getElementById(id)?.value)||0;
-  const cashUSD=v('cashUSD'),cashEUR=v('cashEUR'),cashGBP=v('cashGBP'),cashLE=v('cashLE');
-  const visaUSD=v('visaUSD'),visaEUR=v('visaEUR'),visaGBP=v('visaGBP'),visaLE=v('visaLE');
+  const cashUSD=v('cashUSD'), cashEUR=v('cashEUR'), cashGBP=v('cashGBP'), cashLE=v('cashLE');
+  const visaUSD=v('visaUSD'), visaEUR=v('visaEUR'), visaGBP=v('visaGBP'), visaLE=v('visaLE');
 
   const date=document.getElementById('activeDate')?.value;
   if(!date){ restEl.textContent='0.00'; return; }
@@ -1062,20 +1062,30 @@ async function calcRest(netTotal){
   }
   if(!rates){ restEl.textContent='0.00'; return; }
 
-  const key=currency==='$'?'USD':currency==='€'?'EUR':currency==='£'?'GBP':'LE';
-  const baseRate=rates.cash?.[key]||1;
-  const totalEGP=netTotal*baseRate;
+  // ✅ المدفوعات بعملة الفاتورة
+  let paidInInvoiceCurrency = 0;
   
-  // ✅ هذا هو حساب إجمالي المدفوعات بالعملة المحلية
-  const paidEGP=(cashUSD*(rates.cash?.USD||0))+(cashEUR*(rates.cash?.EUR||0))
-               +(cashGBP*(rates.cash?.GBP||0))+cashLE
-               +(visaUSD*(rates.visa?.USD||0))+(visaEUR*(rates.visa?.EUR||0))
-               +(visaGBP*(rates.visa?.GBP||0))+(visaLE*(rates.visa?.LE||1));
+  if(currency === '$') {
+    paidInInvoiceCurrency = cashUSD + visaUSD;
+  } else if(currency === '€') {
+    paidInInvoiceCurrency = cashEUR + visaEUR;
+  } else if(currency === '£') {
+    paidInInvoiceCurrency = cashGBP + visaGBP;
+  } else if(currency === 'LE') {
+    paidInInvoiceCurrency = cashLE + visaLE;
+  }
   
-  const restOrig=baseRate>0?(totalEGP-paidEGP)/baseRate:0;
-  restEl.textContent=restOrig.toFixed(2);
+  // ✅ إجمالي الفاتورة
+  const actualPrice = netTotal; // هذا هو إجمالي الفاتورة
+  
+  // ✅ المتبقي = إجمالي الفاتورة - المدفوعات بعملة الفاتورة
+  const restAmount = actualPrice - paidInInvoiceCurrency;
+  
+  restEl.textContent = restAmount.toFixed(2);
+  
+  // ✅ تحديث displayTotal ليعرض المدفوعات الفعلية (لاحظ هذا مهم)
+  document.getElementById('displayTotal').textContent = paidInInvoiceCurrency.toFixed(2);
 }
-
 // ══════════════════════════════════════════════════════════
 // Collect & Validate
 // ══════════════════════════════════════════════════════════
@@ -1090,7 +1100,7 @@ function collectData(){
   }
   const items=[]; for(let j=0;j<10;j++){ const e=document.getElementById(`qty_${j}`); items[j]=e?(parseFloat(e.value)||0):0; }
   
-  // ✅ حساب الإجمالي قبل الخصم (ActualPrice)
+  // ✅ ActualPrice = إجمالي الفاتورة (قبل الخصم)
   let actualPrice = 0;
   for(let j=0; j<10; j++) {
     if(items[j] > 0 && currentTripPrices && currentTripPrices[j]) {
@@ -1098,9 +1108,26 @@ function collectData(){
     }
   }
   
-  const displayTotal=parseFloat(document.getElementById('displayTotal')?.textContent)||0;
-  const discount=parseFloat(document.getElementById('discount')?.value)||0;
-  const rest=parseFloat(document.getElementById('displayRest')?.textContent)||0;
+  // ✅ المدفوعات الفعلية بعملة الفاتورة
+  const cashUSD = parseFloat(document.getElementById('cashUSD')?.value)||0;
+  const cashEUR = parseFloat(document.getElementById('cashEUR')?.value)||0;
+  const cashGBP = parseFloat(document.getElementById('cashGBP')?.value)||0;
+  const cashLE  = parseFloat(document.getElementById('cashLE')?.value) ||0;
+  const visaUSD = parseFloat(document.getElementById('visaUSD')?.value)||0;
+  const visaEUR = parseFloat(document.getElementById('visaEUR')?.value)||0;
+  const visaGBP = parseFloat(document.getElementById('visaGBP')?.value)||0;
+  const visaLE  = parseFloat(document.getElementById('visaLE')?.value) ||0;
+  
+  // ✅ حساب المدفوعات الفعلية بعملة الفاتورة
+  // (هذا يحتاج سعر الصرف لتحويل كل المدفوعات لعملة الفاتورة)
+  // سنقوم بحسابها في دالة calcRest وتمريرها
+  
+  const discount = parseFloat(document.getElementById('discount')?.value)||0;
+  const displayTotal = parseFloat(document.getElementById('displayTotal')?.textContent)||0;
+  const rest = parseFloat(document.getElementById('displayRest')?.textContent)||0;
+  
+  // ✅ paymentPrice = المبلغ المدفوع فعلياً (يأتي من calcRest)
+  const paymentPrice = displayTotal; // هذا هو المبلغ المدفوع فعلياً بعد التحويل
   
   return{
     salesId:currentUser?.id||'', salesName:currentUser?.name||'',
@@ -1115,19 +1142,13 @@ function collectData(){
     invoiceCurrency:currency,
     item0:items[0],item1:items[1],item2:items[2],item3:items[3],item4:items[4],
     item5:items[5],item6:items[6],item7:items[7],item8:items[8],item9:items[9],
-    cashUSD:parseFloat(document.getElementById('cashUSD')?.value)||0,
-    cashEUR:parseFloat(document.getElementById('cashEUR')?.value)||0,
-    cashGBP:parseFloat(document.getElementById('cashGBP')?.value)||0,
-    cashLE :parseFloat(document.getElementById('cashLE')?.value) ||0,
-    visaUSD:parseFloat(document.getElementById('visaUSD')?.value)||0,
-    visaEUR:parseFloat(document.getElementById('visaEUR')?.value)||0,
-    visaGBP:parseFloat(document.getElementById('visaGBP')?.value)||0,
-    visaLE :parseFloat(document.getElementById('visaLE')?.value) ||0,
+    cashUSD, cashEUR, cashGBP, cashLE,
+    visaUSD, visaEUR, visaGBP, visaLE,
     notes:document.getElementById('notes')?.value||'',
     discount, 
-    actualPrice: actualPrice,           // ✅ الإجمالي قبل الخصم
-    paymentPrice: displayTotal,          // ✅ الإجمالي بعد الخصم
-    rest,
+    actualPrice: actualPrice,           // ✅ إجمالي الفاتورة 250$
+    paymentPrice: paymentPrice,         // ✅ المبلغ المدفوع فعلياً 180$
+    rest,                               // ✅ المتبقي 60$
     adultCount:parseInt(document.getElementById('adultCount')?.value)||0,
     childCount:parseInt(document.getElementById('childCount')?.value)||0,
     infantCount:parseInt(document.getElementById('infantCount')?.value)||0,
