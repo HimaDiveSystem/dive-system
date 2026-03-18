@@ -1022,10 +1022,12 @@ async function calcRow(i){
   
   const total = calculateInvoiceTotal();
   await updateTotalsWithTotal(total);
-  
-  console.log(`calcRow ${i}: qty=${qty}, total=${total}`);
 }
 
+async function updateAllCalc(){
+  const total = calculateInvoiceTotal();
+  await updateTotalsWithTotal(total);
+}
 function calculateInvoiceTotal() {
   let total = 0;
   let i = 0;
@@ -1068,27 +1070,26 @@ async function getExchangeRateForDate(dateStr, currency) {
   }
   return 1;
 }
+// ══════════════════════════════════════════════════════════
+// تحديث المجاميع مع تحويل العملات
+// ══════════════════════════════════════════════════════════
 async function updateTotalsWithTotal(actualPrice) {
   const currency = document.getElementById('invoiceCurrency')?.value || '';
   const dateStr = document.getElementById('activeDate')?.value;
   
+  console.log('💰 تحديث المجاميع:', { actualPrice, currency, dateStr });
+  
   // تحديث العنصر في الجدول
   const tableElement = document.querySelector('#tripItemsContainer #displayActualPrice');
-  if(tableElement) {
-    tableElement.textContent = actualPrice.toFixed(2);
-  }
+  if(tableElement) tableElement.textContent = actualPrice.toFixed(2);
   
   // تحديث العنصر في قسم الإجماليات
   const totalSectionElement = document.querySelector('.total-row #displayActualPrice');
-  if(totalSectionElement) {
-    totalSectionElement.textContent = actualPrice.toFixed(2);
-  }
+  if(totalSectionElement) totalSectionElement.textContent = actualPrice.toFixed(2);
   
   // تحديث العملة
   const currencyElement = document.getElementById('actualPriceCurrency');
-  if(currencyElement) {
-    currencyElement.textContent = currency;
-  }
+  if(currencyElement) currencyElement.textContent = currency;
   
   const discount = parseFloat(document.getElementById('discount')?.value) || 0;
   
@@ -1102,75 +1103,92 @@ async function updateTotalsWithTotal(actualPrice) {
   const visaGBP = parseFloat(document.getElementById('visaGBP')?.value) || 0;
   const visaLE = parseFloat(document.getElementById('visaLE')?.value) || 0;
   
-  // تحويل جميع المدفوعات إلى عملة الفاتورة
-  let totalPaidInInvoiceCurrency = 0;
+  console.log('💰 المدفوعات الخام:', { cashUSD, cashEUR, cashGBP, cashLE, visaUSD, visaEUR, visaGBP, visaLE });
   
-  if(dateStr) {
-    // إذا كان التاريخ موجوداً، استخدم أسعار الصرف
-    const rates = exchangeRatesCache[dateStr] || await getExchangeRateForDate(dateStr, currency);
+  // إذا لم يكن هناك تاريخ، استخدم الجمع المباشر
+  if(!dateStr) {
+    let paidInInvoiceCurrency = 0;
+    if(currency === '$') paidInInvoiceCurrency = cashUSD + visaUSD;
+    else if(currency === '€') paidInInvoiceCurrency = cashEUR + visaEUR;
+    else if(currency === '£') paidInInvoiceCurrency = cashGBP + visaGBP;
+    else if(currency === 'LE') paidInInvoiceCurrency = cashLE + visaLE;
     
-    if(rates) {
-      // تحويل كل عملة إلى عملة الفاتورة
-      if(currency === '$') {
-        totalPaidInInvoiceCurrency = cashUSD + visaUSD; // دولار مباشر
-        totalPaidInInvoiceCurrency += (cashEUR * (rates.cash?.EUR || 1)) / (rates.cash?.USD || 1);
-        totalPaidInInvoiceCurrency += (cashGBP * (rates.cash?.GBP || 1)) / (rates.cash?.USD || 1);
-        totalPaidInInvoiceCurrency += (cashLE / (rates.cash?.USD || 1));
-        totalPaidInInvoiceCurrency += (visaEUR * (rates.visa?.EUR || 1)) / (rates.visa?.USD || 1);
-        totalPaidInInvoiceCurrency += (visaGBP * (rates.visa?.GBP || 1)) / (rates.visa?.USD || 1);
-        totalPaidInInvoiceCurrency += (visaLE / (rates.visa?.USD || 1));
-      }
-      else if(currency === '€') {
-        totalPaidInInvoiceCurrency = cashEUR + visaEUR; // يورو مباشر
-        totalPaidInInvoiceCurrency += (cashUSD * (rates.cash?.USD || 1)) / (rates.cash?.EUR || 1);
-        totalPaidInInvoiceCurrency += (cashGBP * (rates.cash?.GBP || 1)) / (rates.cash?.EUR || 1);
-        totalPaidInInvoiceCurrency += (cashLE / (rates.cash?.EUR || 1));
-        totalPaidInInvoiceCurrency += (visaUSD * (rates.visa?.USD || 1)) / (rates.visa?.EUR || 1);
-        totalPaidInInvoiceCurrency += (visaGBP * (rates.visa?.GBP || 1)) / (rates.visa?.EUR || 1);
-        totalPaidInInvoiceCurrency += (visaLE / (rates.visa?.EUR || 1));
-      }
-      else if(currency === '£') {
-        totalPaidInInvoiceCurrency = cashGBP + visaGBP; // جنيه مباشر
-        totalPaidInInvoiceCurrency += (cashUSD * (rates.cash?.USD || 1)) / (rates.cash?.GBP || 1);
-        totalPaidInInvoiceCurrency += (cashEUR * (rates.cash?.EUR || 1)) / (rates.cash?.GBP || 1);
-        totalPaidInInvoiceCurrency += (cashLE / (rates.cash?.GBP || 1));
-        totalPaidInInvoiceCurrency += (visaUSD * (rates.visa?.USD || 1)) / (rates.visa?.GBP || 1);
-        totalPaidInInvoiceCurrency += (visaEUR * (rates.visa?.EUR || 1)) / (rates.visa?.GBP || 1);
-        totalPaidInInvoiceCurrency += (visaLE / (rates.visa?.GBP || 1));
-      }
-      else if(currency === 'LE') {
-        totalPaidInInvoiceCurrency = cashLE + visaLE; // جنيه مصري مباشر
-        totalPaidInInvoiceCurrency += cashUSD * (rates.cash?.USD || 1);
-        totalPaidInInvoiceCurrency += cashEUR * (rates.cash?.EUR || 1);
-        totalPaidInInvoiceCurrency += cashGBP * (rates.cash?.GBP || 1);
-        totalPaidInInvoiceCurrency += visaUSD * (rates.visa?.USD || 1);
-        totalPaidInInvoiceCurrency += visaEUR * (rates.visa?.EUR || 1);
-        totalPaidInInvoiceCurrency += visaGBP * (rates.visa?.GBP || 1);
-      }
-    }
-  } else {
-    // إذا لم يكن التاريخ موجوداً، استخدم الجمع المباشر (حل مؤقت)
-    if(currency === '$') totalPaidInInvoiceCurrency = cashUSD + visaUSD;
-    else if(currency === '€') totalPaidInInvoiceCurrency = cashEUR + visaEUR;
-    else if(currency === '£') totalPaidInInvoiceCurrency = cashGBP + visaGBP;
-    else if(currency === 'LE') totalPaidInInvoiceCurrency = cashLE + visaLE;
+    const rest = actualPrice - discount - paidInInvoiceCurrency;
+    document.getElementById('displayRest').textContent = rest.toFixed(2);
+    document.getElementById('restCurrency').textContent = currency;
+    
+    console.log('✅ بدون تحويل:', { paidInInvoiceCurrency, rest });
+    return;
   }
   
-  const rest = actualPrice - discount - totalPaidInInvoiceCurrency;
-  
-  const restElement = document.getElementById('displayRest');
-  if(restElement) restElement.textContent = rest.toFixed(2);
-  
-  const restCurrencyElement = document.getElementById('restCurrency');
-  if(restCurrencyElement) restCurrencyElement.textContent = currency;
-  
-  console.log('✅ تم التحديث:', { 
-    actualPrice, 
-    discount, 
-    totalPaidInInvoiceCurrency,
-    rest,
-    rates: exchangeRatesCache[dateStr] || 'no rates'
-  });
+  // جلب أسعار الصرف
+  try {
+    let rates = exchangeRatesCache[dateStr];
+    if(!rates) {
+      console.log('📡 جلب أسعار الصرف لتاريخ:', dateStr);
+      rates = await callGAS('getExchangeRate', { dateStr });
+      if(rates) {
+        exchangeRatesCache[dateStr] = rates;
+        console.log('✅ أسعار الصرف:', rates);
+      }
+    }
+    
+    if(!rates) {
+      console.warn('❌ لا توجد أسعار صرف');
+      return;
+    }
+    
+    // تحويل جميع المدفوعات إلى العملة الأساس (USD)
+    let totalInUSD = 0;
+    
+    // تحويل النقدي
+    totalInUSD += cashUSD;  // دولار مباشر
+    totalInUSD += cashEUR * (rates.cash?.EUR || 1);  // يورو → دولار
+    totalInUSD += cashGBP * (rates.cash?.GBP || 1);  // جنيه → دولار
+    totalInUSD += cashLE / (rates.cash?.USD || 1);   // جنيه مصري → دولار
+    
+    // تحويل الفيزا
+    totalInUSD += visaUSD;  // دولار مباشر
+    totalInUSD += visaEUR * (rates.visa?.EUR || 1);  // يورو → دولار
+    totalInUSD += visaGBP * (rates.visa?.GBP || 1);  // جنيه → دولار
+    totalInUSD += visaLE / (rates.visa?.USD || 1);   // جنيه مصري → دولار
+    
+    console.log('💰 الإجمالي بـ USD:', totalInUSD);
+    
+    // تحويل من USD إلى عملة الفاتورة
+    let paidInInvoiceCurrency = 0;
+    
+    if(currency === '$') {
+      paidInInvoiceCurrency = totalInUSD;
+    } 
+    else if(currency === '€') {
+      paidInInvoiceCurrency = totalInUSD / (rates.cash?.EUR || 1);
+    }
+    else if(currency === '£') {
+      paidInInvoiceCurrency = totalInUSD / (rates.cash?.GBP || 1);
+    }
+    else if(currency === 'LE') {
+      paidInInvoiceCurrency = totalInUSD * (rates.cash?.USD || 1);
+    }
+    
+    console.log('💰 المدفوعات بعملة الفاتورة:', paidInInvoiceCurrency);
+    
+    const rest = actualPrice - discount - paidInInvoiceCurrency;
+    
+    // تحديث العرض
+    document.getElementById('displayRest').textContent = rest.toFixed(2);
+    document.getElementById('restCurrency').textContent = currency;
+    
+    console.log('✅ النتيجة النهائية:', { 
+      actualPrice, 
+      discount, 
+      paidInInvoiceCurrency,
+      rest 
+    });
+    
+  } catch(e) {
+    console.error('❌ خطأ في تحويل العملات:', e);
+  }
 }
 async function updateAllCalc(){
   const total = calculateInvoiceTotal();
