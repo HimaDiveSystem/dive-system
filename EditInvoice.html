@@ -331,7 +331,6 @@ async function loadLists() {
   try {
     const invoices = await callGAS('getAllInvoices');
     if (Array.isArray(invoices)) {
-      // استخراج قيم فريدة من Supplier و Customer
       const supplierSet = new Set();
       const customerSet = new Set();
       invoices.forEach(inv => {
@@ -359,13 +358,11 @@ async function loadInvoice() {
   try {
     showPDFOverlay('⏳ جلب بيانات الفاتورة...');
     
-    // جلب القوائم أولاً
     await Promise.all([
       loadTripsList(),
       loadLists()
     ]);
     
-    // جلب الفاتورة
     const result = await callGAS('getAllInvoices');
     const invoices = Array.isArray(result) ? result : [];
     
@@ -381,7 +378,6 @@ async function loadInvoice() {
     console.log('✅ تم جلب الفاتورة:', currentInvoice);
     hidePDFOverlay();
     
-    // جلب بيانات الرحلة الحالية
     if (currentInvoice.trip && currentInvoice.invoiceCurrency) {
       const tripData = await loadTripData(currentInvoice.trip, currentInvoice.invoiceCurrency);
       renderEditForm(tripData);
@@ -403,28 +399,24 @@ function renderEditForm(tripData) {
   
   const activities = parseActivities(currentInvoice.activitiesText || '');
   
-  // بناء خيارات الرحلات
   let tripsOptions = '';
   tripsList.forEach(trip => {
     const selected = trip.name === currentInvoice.trip ? 'selected' : '';
     tripsOptions += `<option value="${trip.name}" ${selected}>${trip.name}</option>`;
   });
   
-  // بناء خيارات Supplier
   let supplierOptions = '<option value="">-- اختر --</option>';
   suppliersList.forEach(sup => {
     const selected = sup === currentInvoice.supplier ? 'selected' : '';
     supplierOptions += `<option value="${sup}" ${selected}>${sup}</option>`;
   });
   
-  // بناء خيارات Customer
   let customerOptions = '<option value="">-- اختر --</option>';
   customersList.forEach(cust => {
     const selected = cust === currentInvoice.customer ? 'selected' : '';
     customerOptions += `<option value="${cust}" ${selected}>${cust}</option>`;
   });
   
-  // بناء جدول البنود مع الأسعار
   let itemsRows = '';
   if (tripData && tripData.items && tripData.prices) {
     tripData.items.forEach((itemName, index) => {
@@ -433,7 +425,7 @@ function renderEditForm(tripData) {
       itemsRows += `
         <tr>
           <td>${itemName}</td>
-          <td><input type="number" class="item-qty" data-index="${index}" value="${qty}" min="0" step="1" onchange="updateItemTotal(${index}, ${price})"></td>
+          <td><input type="number" class="item-qty" data-index="${index}" data-name="${itemName}" value="${qty}" min="0" step="1" onchange="updateItemTotal(${index}, ${price})"></td>
           <td><input type="number" class="item-price" value="${price}" readonly></td>
           <td><input type="number" class="item-total" id="total_${index}" value="${(qty * price).toFixed(2)}" readonly></td>
         </tr>
@@ -488,15 +480,15 @@ function renderEditForm(tripData) {
         </select>
       </div>
       <div class="form-group" style="min-width:70px;">
-        <label>بالغ</label>
+        <label>Adult</label>
         <input type="number" class="form-control small-input" id="adultCount" value="${currentInvoice.adultCount || 0}" min="0" onchange="updateTotals()">
       </div>
       <div class="form-group" style="min-width:70px;">
-        <label>طفل</label>
+        <label>Child</label>
         <input type="number" class="form-control small-input" id="childCount" value="${currentInvoice.childCount || 0}" min="0" onchange="updateTotals()">
       </div>
       <div class="form-group" style="min-width:70px;">
-        <label>رضيع</label>
+        <label>Infant</label>
         <input type="number" class="form-control small-input" id="infantCount" value="${currentInvoice.infantCount || 0}" min="0" onchange="updateTotals()">
       </div>
     </div>
@@ -622,7 +614,6 @@ async function changeCurrency() {
   hidePDFOverlay();
   
   if (tripData) {
-    // تحديث الأسعار فقط دون إعادة رسم كامل
     tripData.items.forEach((itemName, index) => {
       const priceInput = document.querySelector(`.item-price[data-index="${index}"]`);
       if (priceInput) {
@@ -661,13 +652,10 @@ function updateAllItemTotals() {
 // ============ حساب إجمالي الفاتورة ============
 function calculateInvoiceTotal() {
   let total = 0;
-  
-  // جمع totals من البنود
   const totalInputs = document.querySelectorAll('[id^="total_"]');
   totalInputs.forEach(input => {
     total += parseFloat(input.value) || 0;
   });
-  
   return total;
 }
 
@@ -676,7 +664,6 @@ async function updateTotals() {
   const currency = document.getElementById('invoiceCurrency')?.value;
   if (!currency) return;
   
-  // حساب إجمالي البنود
   let itemsTotal = 0;
   document.querySelectorAll('[id^="total_"]').forEach(input => {
     itemsTotal += parseFloat(input.value) || 0;
@@ -692,16 +679,9 @@ async function updateTotals() {
   const visaLE = parseFloat(document.getElementById('visaLE')?.value) || 0;
   const discount = parseFloat(document.getElementById('discount')?.value) || 0;
   
-  // ✅ ActualPrice = إجمالي البنود (السعر الأصلي)
   const actualPrice = itemsTotal;
-  
-  // ✅ PaymentPrice = إجمالي البنود - الخصم (المدفوع المستحق)
   const paymentPrice = itemsTotal - discount;
-  
-  // حساب المدفوعات الفعلية
   const paidTotal = cashUSD + cashEUR + cashGBP + cashLE + visaUSD + visaEUR + visaGBP + visaLE;
-  
-  // المتبقي = ActualPrice - الخصم - المدفوعات الفعلية
   const rest = actualPrice - discount - paidTotal;
   
   document.getElementById('displayTotal').textContent = actualPrice.toFixed(2);
@@ -709,9 +689,7 @@ async function updateTotals() {
 }
 
 // ============ جمع بيانات التعديل ============
-// ============ جمع بيانات التعديل ============
 function collectEditedData() {
-  // جمع الـ items من جدول الأنشطة
   const items = [];
   const rows = document.querySelectorAll('#itemsContainer tr');
   rows.forEach(row => {
@@ -725,14 +703,12 @@ function collectEditedData() {
     }
   });
   
-  // دالة مساعدة: ترجع القيمة أو سلسلة فارغة إذا كانت 0
   const valueOrEmpty = (val) => {
     if (val === undefined || val === null) return '';
     const num = parseFloat(val);
     return (num !== 0 && !isNaN(num)) ? num : '';
   };
   
-  // تحويل التاريخ من yyyy-mm-dd إلى dd/MMM/yyyy
   const activeDateInput = document.getElementById('activeDate')?.value;
   let activeDate = '';
   if (activeDateInput) {
@@ -740,19 +716,15 @@ function collectEditedData() {
     activeDate = formatDate(d);
   }
   
-  // الحصول على الوقت
   const timeInput = document.getElementById('time')?.value || '';
   
-  // حساب إجمالي البنود من عمود الإجمالي في الجدول
   let itemsTotal = 0;
   document.querySelectorAll('[id^="total_"]').forEach(input => {
     itemsTotal += parseFloat(input.value) || 0;
   });
   
-  // حساب الخصم
   const discount = parseFloat(document.getElementById('discount')?.value) || 0;
   
-  // حساب المدفوعات
   const cashUSD = parseFloat(document.getElementById('cashUSD')?.value) || 0;
   const cashEUR = parseFloat(document.getElementById('cashEUR')?.value) || 0;
   const cashGBP = parseFloat(document.getElementById('cashGBP')?.value) || 0;
@@ -762,43 +734,26 @@ function collectEditedData() {
   const visaGBP = parseFloat(document.getElementById('visaGBP')?.value) || 0;
   const visaLE = parseFloat(document.getElementById('visaLE')?.value) || 0;
   
-  // إجمالي المدفوعات الفعلية
   const paidTotal = cashUSD + cashEUR + cashGBP + cashLE + visaUSD + visaEUR + visaGBP + visaLE;
-  
-  // حساب ActualPrice (السعر الأصلي) = إجمالي البنود
   const actualPrice = itemsTotal;
-  
-  // حساب PaymentPrice (المبلغ المستحق للعمولة) = إجمالي البنود - الخصم
   const paymentPrice = itemsTotal - discount;
-  
-  // حساب المتبقي (Rest) = السعر الأصلي - الخصم - المدفوعات الفعلية
   const rest = actualPrice - discount - paidTotal;
   
-  // تجميع كل البيانات
   const data = {
-    // بيانات أساسية
     voucherNo: currentInvoice.voucherNo,
-    issueDate: currentInvoice.issueDate, // نبقى على التاريخ الأصلي للإصدار
+    issueDate: currentInvoice.issueDate,
     activeDate: activeDate,
     time: timeInput,
-    
-    // بيانات العميل
     contactNo: document.getElementById('contactNo')?.value || '',
     guestName: document.getElementById('guestName')?.value || '',
     nationality: document.getElementById('nationality')?.value || '',
     hotel: document.getElementById('hotel')?.value || '',
     roomNo: document.getElementById('roomNo')?.value || '',
-    
-    // بيانات الرحلة
     trip: document.getElementById('tripName')?.value || '',
     invoiceCurrency: document.getElementById('invoiceCurrency')?.value || '',
-    
-    // الأعداد
     adultCount: parseInt(document.getElementById('adultCount')?.value) || 0,
     childCount: parseInt(document.getElementById('childCount')?.value) || 0,
     infantCount: parseInt(document.getElementById('infantCount')?.value) || 0,
-    
-    // المدفوعات (مع تحويل الأصفار إلى فراغ)
     cashUSD: valueOrEmpty(cashUSD),
     cashEUR: valueOrEmpty(cashEUR),
     cashGBP: valueOrEmpty(cashGBP),
@@ -807,23 +762,15 @@ function collectEditedData() {
     visaEUR: valueOrEmpty(visaEUR),
     visaGBP: valueOrEmpty(visaGBP),
     visaLE: valueOrEmpty(visaLE),
-    
-    // الإجماليات
-    actualPrice: actualPrice,           // ✅ AI: السعر الأصلي (يظهر في الفاتورة)
-    paymentPrice: paymentPrice,         // ✅ AJ: المبلغ المستحق للعمولة
+    actualPrice: actualPrice,
+    paymentPrice: paymentPrice,
     discount: valueOrEmpty(discount),
-    rest: rest,                         // ✅ A: المتبقي
-    
-    // الأنشطة
+    rest: rest,
     activitiesText: items.join(' | '),
-    
-    // بيانات إضافية
     supplier: document.getElementById('supplier')?.value || '',
     customer: document.getElementById('customer')?.value || '',
     state: document.getElementById('state')?.value || 'pending',
     notes: document.getElementById('notes')?.value || '',
-    
-    // بيانات ثابتة من الفاتورة الأصلية
     salesId: currentInvoice.salesId,
     centerName: currentInvoice.centerName,
     branchName: currentInvoice.branchName,
@@ -844,48 +791,149 @@ function collectEditedData() {
   
   return data;
 }
+
 // ============ إنشاء ملخص التغييرات ============
 function createEditSummary(original, edited) {
   const changes = [];
   
-  if (original.guestName !== edited.guestName) changes.push(`العميل: ${original.guestName} → ${edited.guestName}`);
-  if (original.nationality !== edited.nationality) changes.push(`الجنسية: ${original.nationality} → ${edited.nationality}`);
-  if (original.hotel !== edited.hotel) changes.push(`الفندق: ${original.hotel} → ${edited.hotel}`);
-  if (original.roomNo !== edited.roomNo) changes.push(`الغرفة: ${original.roomNo} → ${edited.roomNo}`);
-  if (original.contactNo !== edited.contactNo) changes.push(`الهاتف: ${original.contactNo} → ${edited.contactNo}`);
-  if (original.activeDate !== edited.activeDate) changes.push(`التاريخ: ${original.activeDate} → ${edited.activeDate}`);
-  if (original.time !== edited.time) changes.push(`الوقت: ${original.time} → ${edited.time}`);
-  if (original.trip !== edited.trip) changes.push(`الرحلة: ${original.trip} → ${edited.trip}`);
-  if (original.invoiceCurrency !== edited.invoiceCurrency) changes.push(`العملة: ${original.invoiceCurrency} → ${edited.invoiceCurrency}`);
+  // حساب الفروق المالية
+  const oldTotal = original.paymentPrice || 0;
+  const newTotal = edited.paymentPrice || 0;
+  const totalDiff = newTotal - oldTotal;
   
-  if (original.cashUSD !== edited.cashUSD) changes.push(`كاش USD: ${original.cashUSD} → ${edited.cashUSD}`);
-  if (original.cashEUR !== edited.cashEUR) changes.push(`كاش EUR: ${original.cashEUR} → ${edited.cashEUR}`);
-  if (original.cashGBP !== edited.cashGBP) changes.push(`كاش GBP: ${original.cashGBP} → ${edited.cashGBP}`);
-  if (original.cashLE !== edited.cashLE) changes.push(`كاش LE: ${original.cashLE} → ${edited.cashLE}`);
+  const oldDiscount = original.discount || 0;
+  const newDiscount = edited.discount || 0;
+  const discountDiff = newDiscount - oldDiscount;
   
-  if (original.visaUSD !== edited.visaUSD) changes.push(`فيزا USD: ${original.visaUSD} → ${edited.visaUSD}`);
-  if (original.visaEUR !== edited.visaEUR) changes.push(`فيزا EUR: ${original.visaEUR} → ${edited.visaEUR}`);
-  if (original.visaGBP !== edited.visaGBP) changes.push(`فيزا GBP: ${original.visaGBP} → ${edited.visaGBP}`);
-  if (original.visaLE !== edited.visaLE) changes.push(`فيزا LE: ${original.visaLE} → ${edited.visaLE}`);
+  // تغييرات العميل
+  if (original.guestName !== edited.guestName) 
+    changes.push(`العميل: ${original.guestName || 'فارغ'} → ${edited.guestName || 'فارغ'}`);
   
-  if (original.adultCount !== edited.adultCount) changes.push(`بالغين: ${original.adultCount} → ${edited.adultCount}`);
-  if (original.childCount !== edited.childCount) changes.push(`أطفال: ${original.childCount} → ${edited.childCount}`);
-  if (original.infantCount !== edited.infantCount) changes.push(`رضع: ${original.infantCount} → ${edited.infantCount}`);
+  if (original.nationality !== edited.nationality) 
+    changes.push(`الجنسية: ${original.nationality || 'فارغ'} → ${edited.nationality || 'فارغ'}`);
   
-  if (original.supplier !== edited.supplier) changes.push(`المنفذ: ${original.supplier || 'فارغ'} → ${edited.supplier || 'فارغ'}`);
-  if (original.customer !== edited.customer) changes.push(`العميل: ${original.customer || 'فارغ'} → ${edited.customer || 'فارغ'}`);
-  if (original.state !== edited.state) changes.push(`الحالة: ${original.state} → ${edited.state}`);
+  if (original.hotel !== edited.hotel) 
+    changes.push(`الفندق: ${original.hotel || 'فارغ'} → ${edited.hotel || 'فارغ'}`);
   
-  if (original.activitiesText !== edited.activitiesText) changes.push(`تم تحديث الأنشطة`);
+  if (original.roomNo !== edited.roomNo) 
+    changes.push(`الغرفة: ${original.roomNo || 'فارغ'} → ${edited.roomNo || 'فارغ'}`);
   
-  return changes.length > 0 ? changes.join('; ') : 'لا توجد تغييرات';
+  if (original.contactNo !== edited.contactNo) 
+    changes.push(`الهاتف: ${original.contactNo || 'فارغ'} → ${edited.contactNo || 'فارغ'}`);
+  
+  // تغييرات التاريخ والوقت
+  if (original.activeDate !== edited.activeDate) 
+    changes.push(`التاريخ: ${original.activeDate || 'فارغ'} → ${edited.activeDate || 'فارغ'}`);
+  
+  if (original.time !== edited.time) 
+    changes.push(`الوقت: ${original.time || 'فارغ'} → ${edited.time || 'فارغ'}`);
+  
+  if (original.trip !== edited.trip) 
+    changes.push(`الرحلة: ${original.trip || 'فارغ'} → ${edited.trip || 'فارغ'}`);
+  
+  if (original.invoiceCurrency !== edited.invoiceCurrency) 
+    changes.push(`العملة: ${original.invoiceCurrency || 'فارغ'} → ${edited.invoiceCurrency || 'فارغ'}`);
+  
+  // تغييرات المدفوعات - مع عرض الفرق المالي
+  if (original.cashUSD !== edited.cashUSD) {
+    const diff = (edited.cashUSD || 0) - (original.cashUSD || 0);
+    changes.push(`كاش USD: ${original.cashUSD || 0} → ${edited.cashUSD || 0} (${diff > 0 ? '+' : ''}${diff.toFixed(2)})`);
+  }
+  
+  if (original.cashEUR !== edited.cashEUR) {
+    const diff = (edited.cashEUR || 0) - (original.cashEUR || 0);
+    changes.push(`كاش EUR: ${original.cashEUR || 0} → ${edited.cashEUR || 0} (${diff > 0 ? '+' : ''}${diff.toFixed(2)})`);
+  }
+  
+  if (original.cashGBP !== edited.cashGBP) {
+    const diff = (edited.cashGBP || 0) - (original.cashGBP || 0);
+    changes.push(`كاش GBP: ${original.cashGBP || 0} → ${edited.cashGBP || 0} (${diff > 0 ? '+' : ''}${diff.toFixed(2)})`);
+  }
+  
+  if (original.cashLE !== edited.cashLE) {
+    const diff = (edited.cashLE || 0) - (original.cashLE || 0);
+    changes.push(`كاش LE: ${original.cashLE || 0} → ${edited.cashLE || 0} (${diff > 0 ? '+' : ''}${diff.toFixed(2)})`);
+  }
+  
+  if (original.visaUSD !== edited.visaUSD) {
+    const diff = (edited.visaUSD || 0) - (original.visaUSD || 0);
+    changes.push(`فيزا USD: ${original.visaUSD || 0} → ${edited.visaUSD || 0} (${diff > 0 ? '+' : ''}${diff.toFixed(2)})`);
+  }
+  
+  if (original.visaEUR !== edited.visaEUR) {
+    const diff = (edited.visaEUR || 0) - (original.visaEUR || 0);
+    changes.push(`فيزا EUR: ${original.visaEUR || 0} → ${edited.visaEUR || 0} (${diff > 0 ? '+' : ''}${diff.toFixed(2)})`);
+  }
+  
+  if (original.visaGBP !== edited.visaGBP) {
+    const diff = (edited.visaGBP || 0) - (original.visaGBP || 0);
+    changes.push(`فيزا GBP: ${original.visaGBP || 0} → ${edited.visaGBP || 0} (${diff > 0 ? '+' : ''}${diff.toFixed(2)})`);
+  }
+  
+  if (original.visaLE !== edited.visaLE) {
+    const diff = (edited.visaLE || 0) - (original.visaLE || 0);
+    changes.push(`فيزا LE: ${original.visaLE || 0} → ${edited.visaLE || 0} (${diff > 0 ? '+' : ''}${diff.toFixed(2)})`);
+  }
+  
+  // تغييرات الأعداد - باستخدام أسماء البنود من جدول الأنشطة
+  const originalItems = parseActivities(original.activitiesText || '');
+  const editedItems = parseActivities(edited.activitiesText || '');
+  
+  // إنشاء خريطة للقيم القديمة
+  const originalMap = {};
+  originalItems.forEach(item => {
+    originalMap[item.name] = item.qty;
+  });
+  
+  // إنشاء خريطة للقيم الجديدة
+  const editedMap = {};
+  editedItems.forEach(item => {
+    editedMap[item.name] = item.qty;
+  });
+  
+  // جمع كل أسماء البنود
+  const allItemNames = new Set([...Object.keys(originalMap), ...Object.keys(editedMap)]);
+  
+  allItemNames.forEach(itemName => {
+    const oldQty = originalMap[itemName] || 0;
+    const newQty = editedMap[itemName] || 0;
+    if (oldQty !== newQty) {
+      const diff = newQty - oldQty;
+      changes.push(`${itemName}: ${oldQty} → ${newQty} (${diff > 0 ? '+' : ''}${diff})`);
+    }
+  });
+  
+  // تغييرات الخصم والإجمالي
+  if (discountDiff !== 0) {
+    const sign = discountDiff > 0 ? '+' : '';
+    changes.push(`💰 الخصم: ${sign}${discountDiff}$ (من ${oldDiscount}$ إلى ${newDiscount}$)`);
+  }
+  
+  if (totalDiff !== 0) {
+    const sign = totalDiff > 0 ? '+' : '';
+    changes.push(`💰 الإجمالي: ${sign}${totalDiff}$ (من ${oldTotal}$ إلى ${newTotal}$)`);
+  }
+  
+  // تغييرات إضافية
+  if (original.supplier !== edited.supplier) 
+    changes.push(`المنفذ: ${original.supplier || 'فارغ'} → ${edited.supplier || 'فارغ'}`);
+  
+  if (original.customer !== edited.customer) 
+    changes.push(`العميل: ${original.customer || 'فارغ'} → ${edited.customer || 'فارغ'}`);
+  
+  if (original.state !== edited.state) 
+    changes.push(`الحالة: ${original.state || 'فارغ'} → ${edited.state || 'فارغ'}`);
+  
+  if (original.activitiesText !== edited.activitiesText && allItemNames.size === 0) 
+    changes.push(`📝 تم تحديث الأنشطة`);
+  
+  if (changes.length === 0) return 'لا توجد تغييرات';
+  
+  return changes.join(' | ');
 }
 
 // ============ حفظ التغييرات ============
-// ============ حفظ التغييرات ============
-// ============ حفظ التغييرات ============
 async function saveChanges() {
-  // جمع البيانات
   const editedData = collectEditedData();
   const editSummary = createEditSummary(originalInvoice, editedData);
   
@@ -895,7 +943,6 @@ async function saveChanges() {
   try {
     showPDFOverlay('⏳ جاري حفظ التعديلات...');
     
-    // ✅ التأكد من أن paymentPrice هو الإجمالي الصحيح
     editedData.paymentPrice = parseFloat(document.getElementById('displayTotal')?.textContent) || 0;
     editedData.rest = parseFloat(document.getElementById('displayRest')?.textContent) || 0;
     
@@ -952,6 +999,7 @@ async function saveChanges() {
     showAlert('خطأ: ' + error.message, '❌');
   }
 }
+
 // ============ إلغاء التعديل ============
 async function cancelEdit() {
   if (confirm('هل أنت متأكد من إلغاء التعديل؟')) {
