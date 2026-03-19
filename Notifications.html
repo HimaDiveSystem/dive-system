@@ -140,7 +140,6 @@
       transform: translateY(-2px);
     }
     
-    /* أزرار الحذف الجديدة */
     .delete-options {
       display: none;
       margin-bottom: 15px;
@@ -476,7 +475,6 @@
       <button class="btn-danger" onclick="showDeleteOptions()">🗑️ حذف</button>
     </div>
     
-    <!-- خيارات الحذف -->
     <div id="deleteOptions" class="delete-options">
       <button class="btn-danger" onclick="deleteSelected()">🗑️ حذف المحدد</button>
       <button class="btn-danger" onclick="deleteAll()">🗑️ حذف الكل</button>
@@ -489,7 +487,6 @@
   </div>
 </div>
 
-<!-- Modal for viewing full edit details -->
 <div class="modal" id="detailsModal">
   <div class="modal-content">
     <div style="font-size: 40px; margin-bottom: 15px;" id="modalIcon">✏️</div>
@@ -507,6 +504,14 @@ let currentUser = null;
 let notifications = [];
 let filteredNotifications = [];
 let deleteMode = false;
+
+// دالة لتنظيف الوقت
+function cleanTime(timeStr) {
+  if (!timeStr) return '';
+  const match = String(timeStr).match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (match) return `${match[1].padStart(2,'0')}:${match[2]}`;
+  return timeStr.toString().substring(0,5);
+}
 
 // ============ التهيئة ============
 document.addEventListener('DOMContentLoaded', () => {
@@ -543,9 +548,15 @@ async function loadNotifications() {
     
     if (data && Array.isArray(data)) {
       notifications = data.sort((a, b) => {
-        // ترتيب تنازلي حسب تاريخ التعديل (الأحدث في الأعلى)
         return new Date(b.editDate) - new Date(a.editDate);
       });
+      
+      // للتشخيص - اعرض أول تنبيه في الكونسول
+      if (notifications.length > 0) {
+        console.log('📊 أول تنبيه:', notifications[0]);
+        console.log('📊 originalData:', notifications[0].originalData);
+        console.log('📊 editedData:', notifications[0].editedData);
+      }
     } else {
       notifications = [];
     }
@@ -571,7 +582,6 @@ function applyFilters() {
   const now = new Date();
   
   filteredNotifications = notifications.filter(notif => {
-    // فلتر الفترة
     if (period !== 'all') {
       const notifDate = new Date(notif.editDate);
       const diffDays = Math.floor((now - notifDate) / (1000 * 60 * 60 * 24));
@@ -581,7 +591,6 @@ function applyFilters() {
       if (period === 'month' && diffDays > 30) return false;
     }
     
-    // فلتر حالة القراءة
     if (readFilter === 'unread' && notif.isRead) return false;
     if (readFilter === 'read' && !notif.isRead) return false;
     
@@ -626,10 +635,10 @@ function renderNotifications() {
     const currency = edited.invoiceCurrency || original.invoiceCurrency || '$';
     
     // تنظيف الوقت للعرض
-    const oldTime = original.time ? original.time.toString().substring(0,5) : '—';
-    const newTime = edited.time ? edited.time.toString().substring(0,5) : '—';
+    const oldTime = cleanTime(original.time || '');
+    const newTime = cleanTime(edited.time || '');
     
-    // تحديد نوع التعديل وأيقونته
+    // تحديد نوع التعديل
     let icon = '✏️';
     let iconClass = 'icon-edit';
     let title = 'تعديل فاتورة';
@@ -637,10 +646,6 @@ function renderNotifications() {
     if (notif.editSummary && notif.editSummary.includes('خصم')) {
       icon = '💰';
       iconClass = 'icon-price';
-    }
-    if (notif.editSummary && (notif.editSummary.includes('إلغاء') || notif.editSummary.includes('ملغي'))) {
-      icon = '❌';
-      iconClass = 'icon-cancel';
     }
     
     html += `
@@ -661,20 +666,18 @@ function renderNotifications() {
         
         <div class="notification-body">
           <p>${notif.editSummary || 'تم تعديل بيانات الفاتورة'}</p>
-          <div style="font-size:12px; color:#666; margin-top:5px;">
-            ⏰ الوقت: ${oldTime} → ${newTime}
-          </div>
+          ${oldTime || newTime ? `<div style="font-size:12px; color:#666; margin-top:5px;">⏰ الوقت: ${oldTime || '—'} → ${newTime || '—'}</div>` : ''}
         </div>
         
         <div class="invoice-details">
           <div class="detail-item">
-  <div class="detail-label">الإجمالي قبل</div>
-  <div class="detail-value">${(notif.originalData?.actualPrice || 0).toFixed(2)} <small>${notif.currency || ''}</small></div>
-</div>
-<div class="detail-item">
-  <div class="detail-label">الإجمالي بعد</div>
-  <div class="detail-value">${(notif.editedData?.actualPrice || 0).toFixed(2)} <small>${notif.currency || ''}</small></div>
-</div>
+            <div class="detail-label">إجمالي الفاتورة قبل</div>
+            <div class="detail-value">${(original.actualPrice || 0).toFixed(2)} <small>${currency}</small></div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">إجمالي الفاتورة بعد</div>
+            <div class="detail-value">${(edited.actualPrice || 0).toFixed(2)} <small>${currency}</small></div>
+          </div>
           <div class="detail-item">
             <div class="detail-label">المدفوع قبل</div>
             <div class="detail-value">${(original.paymentPrice || 0).toFixed(2)} <small>${currency}</small></div>
@@ -682,6 +685,22 @@ function renderNotifications() {
           <div class="detail-item">
             <div class="detail-label">المدفوع بعد</div>
             <div class="detail-value">${(edited.paymentPrice || 0).toFixed(2)} <small>${currency}</small></div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">الخصم قبل</div>
+            <div class="detail-value">${(original.discount || 0).toFixed(2)} <small>${currency}</small></div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">الخصم بعد</div>
+            <div class="detail-value">${(edited.discount || 0).toFixed(2)} <small>${currency}</small></div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">المتبقي قبل</div>
+            <div class="detail-value">${(original.rest || 0).toFixed(2)} <small>${currency}</small></div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">المتبقي بعد</div>
+            <div class="detail-value">${(edited.rest || 0).toFixed(2)} <small>${currency}</small></div>
           </div>
         </div>
         
@@ -702,7 +721,6 @@ function renderNotifications() {
   html += '</div>';
   container.innerHTML = html;
   
-  // إخفاء خانات الاختيار إذا لم يكن وضع الحذف مفعل
   document.querySelectorAll('.notification-checkbox').forEach(cb => {
     cb.style.display = deleteMode ? 'block' : 'none';
   });
@@ -717,7 +735,6 @@ function showDeleteOptions() {
   });
 }
 
-// ============ إخفاء خيارات الحذف ============
 function hideDeleteOptions() {
   deleteMode = false;
   document.getElementById('deleteOptions').style.display = 'none';
@@ -727,7 +744,7 @@ function hideDeleteOptions() {
   });
 }
 
-// ============ حذف التنبيهات المحددة ============
+// ============ حذف التنبيهات ============
 async function deleteSelected() {
   const selected = [];
   document.querySelectorAll('.notification-checkbox:checked').forEach(cb => {
@@ -741,11 +758,9 @@ async function deleteSelected() {
   
   if (confirm(`هل أنت متأكد من حذف ${selected.length} تنبيه؟`)) {
     try {
-      // حذف كل تنبيه على حدة
       for (const id of selected) {
         await fetch(`${GAS_URL}?action=deleteNotification&editId=${id}`);
       }
-      
       alert(`✅ تم حذف ${selected.length} تنبيه بنجاح`);
       hideDeleteOptions();
       loadNotifications();
@@ -756,7 +771,6 @@ async function deleteSelected() {
   }
 }
 
-// ============ حذف تنبيه واحد ============
 async function deleteSingle(editId) {
   if (confirm('هل أنت متأكد من حذف هذا التنبيه؟')) {
     try {
@@ -769,7 +783,6 @@ async function deleteSingle(editId) {
   }
 }
 
-// ============ حذف جميع التنبيهات ============
 async function deleteAll() {
   if (confirm('هل أنت متأكد من حذف جميع التنبيهات؟')) {
     try {
@@ -779,8 +792,6 @@ async function deleteAll() {
         alert(`✅ تم حذف جميع التنبيهات بنجاح`);
         hideDeleteOptions();
         loadNotifications();
-      } else {
-        alert('❌ فشل حذف التنبيهات: ' + result.message);
       }
     } catch (error) {
       console.error('خطأ:', error);
@@ -793,34 +804,29 @@ async function deleteAll() {
 async function markAsRead(editId) {
   try {
     await fetch(`${GAS_URL}?action=markNotificationAsRead&editId=${editId}`);
-    
     const notif = notifications.find(n => n.editId === editId);
     if (notif) notif.isRead = true;
-    
     applyFilters();
   } catch (error) {
     console.error('خطأ:', error);
   }
 }
 
-// ============ تحديد الكل كمقروء ============
 async function markAllAsRead() {
   try {
     const unreadIds = notifications.filter(n => !n.isRead).map(n => n.editId);
-    
     for (const id of unreadIds) {
       await fetch(`${GAS_URL}?action=markNotificationAsRead&editId=${id}`);
       const notif = notifications.find(n => n.editId === id);
       if (notif) notif.isRead = true;
     }
-    
     applyFilters();
   } catch (error) {
     console.error('خطأ:', error);
   }
 }
 
-// ============ عرض التفاصيل الكاملة ============
+// ============ عرض التفاصيل ============
 async function viewFullDetails(editId) {
   try {
     const response = await fetch(`${GAS_URL}?action=getInvoiceEditDetails&editId=${editId}`);
@@ -855,19 +861,15 @@ async function viewFullDetails(editId) {
   }
 }
 
-// ============ عرض التنبيه مع تحديد كمقروء ============
 async function viewNotification(editId) {
-  // إذا كان وضع الحذف مفعل، لا نفتح التنبيه
   if (deleteMode) return;
   await markAsRead(editId);
 }
 
-// ============ إغلاق المودال ============
 function closeModal() {
   document.getElementById('detailsModal').style.display = 'none';
 }
 
-// ============ الرجوع ============
 function goBack() {
   const pages = {
     Admin: 'Dashboard.html',
