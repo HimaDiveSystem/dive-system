@@ -1009,7 +1009,6 @@ function displayTripItems(){
       <tbody>${rows}</tbody>
     </table></div>`;
     
-  // ✅ هذا السطر الجديد: تأكد من ربط العناصر بعد إعادة الرسم
   setTimeout(() => {
     const total = calculateInvoiceTotal();
     updateTotalsWithTotal(total);
@@ -1051,31 +1050,23 @@ function calculateInvoiceTotal() {
 // ══════════════════════════════════════════════════════════
 // الحصول على سعر الصرف لتاريخ محدد
 // ══════════════════════════════════════════════════════════
-async function getExchangeRateForDate(dateStr, currency) {
-  if(!dateStr || !currency) return null;
+async function getExchangeRateForDate(dateStr) {
+  if(!dateStr) return null;
   
-  // استخدام cache إذا كان موجوداً
-  const cacheKey = dateStr + '_' + currency;
-  if(exchangeRatesCache[cacheKey]) {
-    return exchangeRatesCache[cacheKey];
+  if(exchangeRatesCache[dateStr]) {
+    return exchangeRatesCache[dateStr];
   }
   
   try {
-    const rate = await callGAS('getExchangeRate', { dateStr });
-    if(rate) {
-      // تخزين مؤقت
-      exchangeRatesCache[dateStr] = rate;
-      
-      // استخراج السعر المطلوب
-      if(currency === '$') return rate.cash?.USD || 1;
-      if(currency === '€') return rate.cash?.EUR || 1;
-      if(currency === '£') return rate.cash?.GBP || 1;
-      if(currency === 'LE') return 1;
+    const rates = await callGAS('getExchangeRate', { dateStr });
+    if(rates) {
+      exchangeRatesCache[dateStr] = rates;
+      return rates;
     }
   } catch(e) {
     console.warn('❌ خطأ في جلب سعر الصرف:', e);
   }
-  return 1;
+  return null;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1127,39 +1118,33 @@ async function updateTotalsWithTotal(actualPrice) {
   
   // جلب أسعار الصرف
   try {
-    let rates = exchangeRatesCache[dateStr];
-    if(!rates) {
-      console.log('📡 جلب أسعار الصرف لتاريخ:', dateStr);
-      rates = await callGAS('getExchangeRate', { dateStr });
-      if(rates) {
-        exchangeRatesCache[dateStr] = rates;
-        console.log('✅ أسعار الصرف:', rates);
-      }
-    }
+    const rates = await getExchangeRateForDate(dateStr);
     
     if(!rates) {
-      console.warn('❌ لا توجد أسعار صرف');
+      console.warn('❌ لا توجد أسعار صرف لهذا التاريخ');
       return;
     }
     
-    // تحويل جميع المدفوعات إلى العملة المحلية (LE) أولاً
+    console.log('💰 أسعار الصرف المستخدمة:', rates);
+    
+    // تحويل جميع المدفوعات إلى العملة المحلية (LE) أولاً باستخدام أسعار Bank
     let totalInLE = 0;
     
-    // تحويل النقدي
-    totalInLE += cashUSD * (rates.cash?.USD || 47.5);  // دولار → جنيه
-    totalInLE += cashEUR * (rates.cash?.EUR || 50.25); // يورو → جنيه
-    totalInLE += cashGBP * (rates.cash?.GBP || 60);    // جنيه إسترليني → جنيه
-    totalInLE += cashLE;                               // جنيه مصري مباشر
+    // تحويل النقدي - نستخدم أسعار Bank
+    totalInLE += cashUSD * (rates.cash?.USD || 47.5);
+    totalInLE += cashEUR * (rates.cash?.EUR || 50.25);
+    totalInLE += cashGBP * (rates.cash?.GBP || 60);
+    totalInLE += cashLE; // LE مباشر
     
-    // تحويل الفيزا
-    totalInLE += visaUSD * (rates.visa?.USD || 46.3125);  // دولار فيزا → جنيه
-    totalInLE += visaEUR * (rates.visa?.EUR || 48.99375); // يورو فيزا → جنيه
-    totalInLE += visaGBP * (rates.visa?.GBP || 58.5);     // جنيه فيزا → جنيه
-    totalInLE += visaLE * (rates.visa?.LE || 0.975);      // جنيه فيزا
+    // تحويل الفيزا - نستخدم أسعار Bank_Visa
+    totalInLE += visaUSD * (rates.visa?.USD || 46.3125);
+    totalInLE += visaEUR * (rates.visa?.EUR || 48.99375);
+    totalInLE += visaGBP * (rates.visa?.GBP || 58.5);
+    totalInLE += visaLE * (rates.visa?.LE || 0.975);
     
     console.log('💰 الإجمالي بـ LE:', roundToTwo(totalInLE));
     
-    // تحويل من LE إلى عملة الفاتورة
+    // تحويل من LE إلى عملة الفاتورة باستخدام أسعار Bank للعملة المطلوبة
     let paidInInvoiceCurrency = 0;
     
     if(currency === '$') {
@@ -1201,9 +1186,9 @@ async function updateAllCalc(){
 }
 
 // ══════════════════════════════════════════════════════════
-// Collect & Validate - النسخة المصححة مع تحويل العملات
+// Collect & Validate - مع استخدام أسعار الصرف من الشيت
 // ══════════════════════════════════════════════════════════
-function collectData(){
+async function collectData(){
   const phone=(document.getElementById('phoneCode').value+document.getElementById('phoneNumber').value).replace(/\s+/g,'');
   const currency=document.getElementById('invoiceCurrency')?.value||'';
   const dateStr = document.getElementById('activeDate')?.value;
@@ -1234,21 +1219,35 @@ function collectData(){
   const visaGBP = parseFloat(document.getElementById('visaGBP')?.value)||0;
   const visaLE  = parseFloat(document.getElementById('visaLE')?.value) ||0;
   
-  // تحويل جميع المدفوعات إلى العملة المحلية (LE) أولاً
-  const totalInLE = cashUSD * 47.5 + cashEUR * 50.25 + cashGBP * 60 + cashLE +
-                    visaUSD * 46.3125 + visaEUR * 48.99375 + visaGBP * 58.5 + visaLE * 0.975;
-  
-  // تحويل من LE إلى عملة الفاتورة
+  // جلب أسعار الصرف للتاريخ المحدد
+  let rates = null;
   let paidInInvoiceCurrency = 0;
   
-  if(currency === '$') {
-    paidInInvoiceCurrency = roundToTwo(totalInLE / 47.5);
-  } else if(currency === '€') {
-    paidInInvoiceCurrency = roundToTwo(totalInLE / 50.25);
-  } else if(currency === '£') {
-    paidInInvoiceCurrency = roundToTwo(totalInLE / 60);
-  } else if(currency === 'LE') {
-    paidInInvoiceCurrency = roundToTwo(totalInLE);
+  if (dateStr) {
+    rates = await getExchangeRateForDate(dateStr);
+  }
+  
+  if (rates) {
+    // تحويل جميع المدفوعات إلى LE باستخدام أسعار Bank
+    const totalInLE = cashUSD * rates.cash.USD + cashEUR * rates.cash.EUR + cashGBP * rates.cash.GBP + cashLE +
+                      visaUSD * rates.visa.USD + visaEUR * rates.visa.EUR + visaGBP * rates.visa.GBP + visaLE * rates.visa.LE;
+    
+    // تحويل إلى عملة الفاتورة
+    if(currency === '$') {
+      paidInInvoiceCurrency = roundToTwo(totalInLE / rates.cash.USD);
+    } else if(currency === '€') {
+      paidInInvoiceCurrency = roundToTwo(totalInLE / rates.cash.EUR);
+    } else if(currency === '£') {
+      paidInInvoiceCurrency = roundToTwo(totalInLE / rates.cash.GBP);
+    } else if(currency === 'LE') {
+      paidInInvoiceCurrency = roundToTwo(totalInLE);
+    }
+  } else {
+    // إذا لم توجد أسعار صرف، نستخدم الجمع المباشر (احتياطي)
+    if(currency === '$') paidInInvoiceCurrency = cashUSD + visaUSD;
+    else if(currency === '€') paidInInvoiceCurrency = cashEUR + visaEUR;
+    else if(currency === '£') paidInInvoiceCurrency = cashGBP + visaGBP;
+    else if(currency === 'LE') paidInInvoiceCurrency = cashLE + visaLE;
   }
   
   const discount = parseFloat(document.getElementById('discount')?.value)||0;
@@ -1259,18 +1258,19 @@ function collectData(){
     discount,
     paidInInvoiceCurrency,
     rest,
-    totalInLE: roundToTwo(totalInLE),
-    currency
+    currency,
+    dateStr,
+    hasRates: !!rates
   });
   
-  return{
+  return {
     salesId:currentUser?.id||'', salesName:currentUser?.name||'',
     centerName:currentUser?.centerName||'', branchName:currentUser?.branchName||'',
     guestName:document.getElementById('guestName')?.value||'',
     nationality:document.getElementById('nationality')?.value||'',
     contactNo:phone, hotel:document.getElementById('hotel')?.value||'',
     roomNo:document.getElementById('roomNo')?.value||'',
-    activeDate:document.getElementById('activeDate')?.value||'',
+    activeDate:dateStr,
     time:document.getElementById('tripTime')?.value||'',
     trip:document.getElementById('tripName')?.value||'',
     invoiceCurrency:currency,
@@ -1291,8 +1291,8 @@ function collectData(){
   };
 }
 
-function validate(){
-  const inv=collectData();
+async function validate(){
+  const inv = await collectData();
   if(!inv.guestName)       { showAlert('Please enter Guest Name','⚠️'); return null; }
   if(!inv.contactNo)       { showAlert('Please enter Phone Number','⚠️'); return null; }
   if(!inv.nationality)     { showAlert('Please enter Nationality','⚠️'); return null; }
@@ -1312,7 +1312,7 @@ function setBtns(disabled){
 // Save Invoice — JSONP
 // ══════════════════════════════════════════════════════════
 async function saveInvoice(){
-  const inv=validate(); if(!inv) return;
+  const inv = await validate(); if(!inv) return;
   setBtns(true);
   try{
     const pdfRes = await saveAndGeneratePDF(inv);
@@ -1327,7 +1327,7 @@ async function saveInvoice(){
 }
 
 async function newBooking(){
-  const inv=validate(); if(!inv) return;
+  const inv = await validate(); if(!inv) return;
   setBtns(true);
   try{
     const pdfRes = await saveAndGeneratePDF(inv);
