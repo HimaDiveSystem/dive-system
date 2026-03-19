@@ -149,6 +149,21 @@
     
     #alertModal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); align-items:center; justify-content:center; z-index:10000; }
     .alert-content { background:white; width:90%; max-width:500px; border-radius:30px; padding:30px; text-align:center; box-shadow:0 20px 40px rgba(0,0,0,0.3); }
+    
+    /* تحذير التعديل على الفواتير القديمة */
+    .warning-message {
+      background: #f8d7da;
+      color: #721c24;
+      border: 2px solid #f5c6cb;
+      border-radius: 15px;
+      padding: 15px 20px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+    }
+    .warning-message .icon { font-size: 24px; }
   </style>
 </head>
 <body>
@@ -261,9 +276,14 @@ function dateToInput(dateStr) {
 
 function timeToInput(timeStr) {
   if (!timeStr) return '';
+  // استخراج الساعة والدقائق فقط من أي تنسيق
   const match = String(timeStr).match(/(\d{1,2}):(\d{2})/);
   if (match) {
     return `${match[1].padStart(2,'0')}:${match[2]}`;
+  }
+  // إذا كان النص يحتوي على أرقام فقط، نفترض أنه وقت
+  if (timeStr.length >= 4) {
+    return timeStr.substring(0,2) + ':' + timeStr.substring(2,4);
   }
   return timeStr.substring(0,5);
 }
@@ -399,6 +419,22 @@ function renderEditForm(tripData) {
   
   const activities = parseActivities(currentInvoice.activitiesText || '');
   
+  // التحقق من تاريخ الفاتورة
+  const activeDateStr = currentInvoice.activeDate;
+  const activeDate = parseDate(activeDateStr);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  let warningHtml = '';
+  if (activeDate && activeDate < today) {
+    warningHtml = `
+      <div class="warning-message">
+        <span class="icon">⚠️</span>
+        <span>هذه الفاتورة تاريخها سابق (${activeDateStr}) ولا يمكن تعديلها لأن ذلك سيؤثر على بيانات الخزينة</span>
+      </div>
+    `;
+  }
+  
   let tripsOptions = '';
   tripsList.forEach(trip => {
     const selected = trip.name === currentInvoice.trip ? 'selected' : '';
@@ -425,7 +461,7 @@ function renderEditForm(tripData) {
       itemsRows += `
         <tr>
           <td>${itemName}</td>
-          <td><input type="number" class="item-qty" data-index="${index}" data-name="${itemName}" value="${qty}" min="0" step="1" oninput="updateItemTotal(${index}, ${price})"></td>
+          <td><input type="number" class="item-qty" data-index="${index}" data-name="${itemName}" value="${qty}" min="0" step="1" oninput="updateItemTotal(${index}, ${price})" ${activeDate && activeDate < today ? 'disabled' : ''}></td>
           <td><input type="number" class="item-price" value="${price}" readonly></td>
           <td><input type="number" class="item-total" id="total_${index}" value="${(qty * price).toFixed(2)}" readonly></td>
         </tr>
@@ -436,27 +472,28 @@ function renderEditForm(tripData) {
   }
   
   document.getElementById('mainContent').innerHTML = `
+    ${warningHtml}
     <div class="section-title">👤 بيانات العميل</div>
     <div class="form-grid">
       <div class="form-group">
         <label>رقم الهاتف</label>
-        <input type="text" class="form-control" id="contactNo" value="${currentInvoice.contactNo || ''}">
+        <input type="text" class="form-control" id="contactNo" value="${currentInvoice.contactNo || ''}" ${activeDate && activeDate < today ? 'disabled' : ''}>
       </div>
       <div class="form-group">
         <label>اسم العميل</label>
-        <input type="text" class="form-control" id="guestName" value="${currentInvoice.guestName || ''}">
+        <input type="text" class="form-control" id="guestName" value="${currentInvoice.guestName || ''}" ${activeDate && activeDate < today ? 'disabled' : ''}>
       </div>
       <div class="form-group">
         <label>الجنسية</label>
-        <input type="text" class="form-control" id="nationality" value="${currentInvoice.nationality || ''}">
+        <input type="text" class="form-control" id="nationality" value="${currentInvoice.nationality || ''}" ${activeDate && activeDate < today ? 'disabled' : ''}>
       </div>
       <div class="form-group">
         <label>الفندق</label>
-        <input type="text" class="form-control" id="hotel" value="${currentInvoice.hotel || ''}">
+        <input type="text" class="form-control" id="hotel" value="${currentInvoice.hotel || ''}" ${activeDate && activeDate < today ? 'disabled' : ''}>
       </div>
       <div class="form-group">
         <label>رقم الغرفة</label>
-        <input type="text" class="form-control" id="roomNo" value="${currentInvoice.roomNo || ''}">
+        <input type="text" class="form-control" id="roomNo" value="${currentInvoice.roomNo || ''}" ${activeDate && activeDate < today ? 'disabled' : ''}>
       </div>
     </div>
 
@@ -464,15 +501,15 @@ function renderEditForm(tripData) {
     <div class="row-flex">
       <div class="form-group" style="min-width:120px;">
         <label>التاريخ</label>
-        <input type="date" class="form-control" id="activeDate" value="${dateToInput(currentInvoice.activeDate)}" onchange="updateTotals()">
+        <input type="date" class="form-control" id="activeDate" value="${dateToInput(currentInvoice.activeDate)}" onchange="updateTotals()" ${activeDate && activeDate < today ? 'disabled' : ''}>
       </div>
       <div class="form-group" style="min-width:100px;">
         <label>الوقت</label>
-        <input type="time" class="form-control" id="time" value="${timeToInput(currentInvoice.time)}">
+        <input type="time" class="form-control" id="time" value="${timeToInput(currentInvoice.time)}" ${activeDate && activeDate < today ? 'disabled' : ''}>
       </div>
       <div class="form-group" style="min-width:120px;">
         <label>العملة</label>
-        <select class="form-control" id="invoiceCurrency" onchange="changeCurrency()">
+        <select class="form-control" id="invoiceCurrency" onchange="changeCurrency()" ${activeDate && activeDate < today ? 'disabled' : ''}>
           <option value="$" ${currentInvoice.invoiceCurrency === '$' ? 'selected' : ''}>USD ($)</option>
           <option value="€" ${currentInvoice.invoiceCurrency === '€' ? 'selected' : ''}>EUR (€)</option>
           <option value="£" ${currentInvoice.invoiceCurrency === '£' ? 'selected' : ''}>GBP (£)</option>
@@ -481,21 +518,21 @@ function renderEditForm(tripData) {
       </div>
       <div class="form-group" style="min-width:70px;">
         <label>Adult</label>
-        <input type="number" class="form-control small-input" id="adultCount" value="${currentInvoice.adultCount || 0}" min="0" onchange="updateTotals()">
+        <input type="number" class="form-control small-input" id="adultCount" value="${currentInvoice.adultCount || 0}" min="0" onchange="updateTotals()" ${activeDate && activeDate < today ? 'disabled' : ''}>
       </div>
       <div class="form-group" style="min-width:70px;">
         <label>Child</label>
-        <input type="number" class="form-control small-input" id="childCount" value="${currentInvoice.childCount || 0}" min="0" onchange="updateTotals()">
+        <input type="number" class="form-control small-input" id="childCount" value="${currentInvoice.childCount || 0}" min="0" onchange="updateTotals()" ${activeDate && activeDate < today ? 'disabled' : ''}>
       </div>
       <div class="form-group" style="min-width:70px;">
         <label>Infant</label>
-        <input type="number" class="form-control small-input" id="infantCount" value="${currentInvoice.infantCount || 0}" min="0" onchange="updateTotals()">
+        <input type="number" class="form-control small-input" id="infantCount" value="${currentInvoice.infantCount || 0}" min="0" onchange="updateTotals()" ${activeDate && activeDate < today ? 'disabled' : ''}>
       </div>
     </div>
     
     <div class="form-group">
       <label>الرحلة</label>
-      <select class="form-control" id="tripName" onchange="changeTrip()">
+      <select class="form-control" id="tripName" onchange="changeTrip()" ${activeDate && activeDate < today ? 'disabled' : ''}>
         ${tripsOptions}
       </select>
     </div>
@@ -518,21 +555,21 @@ function renderEditForm(tripData) {
 
     <div class="section-title">💰 المدفوعات</div>
     <div class="payment-grid">
-      <div class="payment-item"><label>كاش $</label><input type="number" id="cashUSD" value="${currentInvoice.cashUSD || 0}" step="0.01" oninput="updateTotals()"></div>
-      <div class="payment-item"><label>كاش €</label><input type="number" id="cashEUR" value="${currentInvoice.cashEUR || 0}" step="0.01" oninput="updateTotals()"></div>
-      <div class="payment-item"><label>كاش £</label><input type="number" id="cashGBP" value="${currentInvoice.cashGBP || 0}" step="0.01" oninput="updateTotals()"></div>
-      <div class="payment-item"><label>كاش LE</label><input type="number" id="cashLE" value="${currentInvoice.cashLE || 0}" step="0.01" oninput="updateTotals()"></div>
-      <div class="payment-item"><label>فيزا $</label><input type="number" id="visaUSD" value="${currentInvoice.visaUSD || 0}" step="0.01" oninput="updateTotals()"></div>
-      <div class="payment-item"><label>فيزا €</label><input type="number" id="visaEUR" value="${currentInvoice.visaEUR || 0}" step="0.01" oninput="updateTotals()"></div>
-      <div class="payment-item"><label>فيزا £</label><input type="number" id="visaGBP" value="${currentInvoice.visaGBP || 0}" step="0.01" oninput="updateTotals()"></div>
-      <div class="payment-item"><label>فيزا LE</label><input type="number" id="visaLE" value="${currentInvoice.visaLE || 0}" step="0.01" oninput="updateTotals()"></div>
+      <div class="payment-item"><label>كاش $</label><input type="number" id="cashUSD" value="${currentInvoice.cashUSD || 0}" step="0.01" oninput="updateTotals()" ${activeDate && activeDate < today ? 'disabled' : ''}></div>
+      <div class="payment-item"><label>كاش €</label><input type="number" id="cashEUR" value="${currentInvoice.cashEUR || 0}" step="0.01" oninput="updateTotals()" ${activeDate && activeDate < today ? 'disabled' : ''}></div>
+      <div class="payment-item"><label>كاش £</label><input type="number" id="cashGBP" value="${currentInvoice.cashGBP || 0}" step="0.01" oninput="updateTotals()" ${activeDate && activeDate < today ? 'disabled' : ''}></div>
+      <div class="payment-item"><label>كاش LE</label><input type="number" id="cashLE" value="${currentInvoice.cashLE || 0}" step="0.01" oninput="updateTotals()" ${activeDate && activeDate < today ? 'disabled' : ''}></div>
+      <div class="payment-item"><label>فيزا $</label><input type="number" id="visaUSD" value="${currentInvoice.visaUSD || 0}" step="0.01" oninput="updateTotals()" ${activeDate && activeDate < today ? 'disabled' : ''}></div>
+      <div class="payment-item"><label>فيزا €</label><input type="number" id="visaEUR" value="${currentInvoice.visaEUR || 0}" step="0.01" oninput="updateTotals()" ${activeDate && activeDate < today ? 'disabled' : ''}></div>
+      <div class="payment-item"><label>فيزا £</label><input type="number" id="visaGBP" value="${currentInvoice.visaGBP || 0}" step="0.01" oninput="updateTotals()" ${activeDate && activeDate < today ? 'disabled' : ''}></div>
+      <div class="payment-item"><label>فيزا LE</label><input type="number" id="visaLE" value="${currentInvoice.visaLE || 0}" step="0.01" oninput="updateTotals()" ${activeDate && activeDate < today ? 'disabled' : ''}></div>
     </div>
 
     <div class="section-title">📊 الإجماليات</div>
     <div class="totals-bar">
       <div class="total-item">
         <div class="label">الخصم</div>
-        <input type="number" id="discount" value="${currentInvoice.discount || 0}" step="0.01" oninput="updateTotals()">
+        <input type="number" id="discount" value="${currentInvoice.discount || 0}" step="0.01" oninput="updateTotals()" ${activeDate && activeDate < today ? 'disabled' : ''}>
       </div>
       <div class="total-item">
         <div class="label">إجمالي الفاتورة</div>
@@ -555,19 +592,19 @@ function renderEditForm(tripData) {
     <div class="form-grid">
       <div class="form-group">
         <label>المنفذ (Supplier)</label>
-        <select class="form-control" id="supplier">
+        <select class="form-control" id="supplier" ${activeDate && activeDate < today ? 'disabled' : ''}>
           ${supplierOptions}
         </select>
       </div>
       <div class="form-group">
         <label>العميل (Customer)</label>
-        <select class="form-control" id="customer">
+        <select class="form-control" id="customer" ${activeDate && activeDate < today ? 'disabled' : ''}>
           ${customerOptions}
         </select>
       </div>
       <div class="form-group">
         <label>الحالة</label>
-        <select class="form-control" id="state">
+        <select class="form-control" id="state" ${activeDate && activeDate < today ? 'disabled' : ''}>
           <option value="pending" ${currentInvoice.state === 'pending' ? 'selected' : ''}>⏳ معلق</option>
           <option value="confirmed" ${currentInvoice.state === 'confirmed' ? 'selected' : ''}>✅ مؤكد</option>
           <option value="cancel" ${currentInvoice.state === 'cancel' ? 'selected' : ''}>❌ ملغي</option>
@@ -577,11 +614,11 @@ function renderEditForm(tripData) {
 
     <div class="form-group">
       <label>ملاحظات</label>
-      <textarea class="form-control" id="notes" rows="3">${currentInvoice.notes || ''}</textarea>
+      <textarea class="form-control" id="notes" rows="3" ${activeDate && activeDate < today ? 'disabled' : ''}>${currentInvoice.notes || ''}</textarea>
     </div>
 
     <div class="action-buttons">
-      <button class="btn-primary" onclick="saveChanges()">💾 حفظ التعديلات</button>
+      <button class="btn-primary" onclick="saveChanges()" ${activeDate && activeDate < today ? 'disabled' : ''}>💾 حفظ التعديلات</button>
       <button class="btn-danger" onclick="cancelEdit()">❌ إلغاء</button>
     </div>
   `;
@@ -730,6 +767,12 @@ function updateTotals() {
 
 // ============ جمع بيانات التعديل ============
 function collectEditedData() {
+  const timeInput = document.getElementById('time')?.value || '';
+  // تنظيف الوقت من أي تنسيق غريب
+  const cleanTime = timeInput ? timeInput.toString().substring(0,5) : '';
+  
+  const stateSelect = document.getElementById('state')?.value || 'pending';
+  
   const items = [];
   const rows = document.querySelectorAll('#itemsContainer tr');
   rows.forEach(row => {
@@ -755,8 +798,6 @@ function collectEditedData() {
     const d = new Date(activeDateInput);
     activeDate = formatDate(d);
   }
-  
-  const timeInput = document.getElementById('time')?.value || '';
   
   // ActualPrice = إجمالي الفاتورة (مجموع البنود)
   let actualPrice = 0;
@@ -796,7 +837,7 @@ function collectEditedData() {
     voucherNo: currentInvoice.voucherNo,
     issueDate: currentInvoice.issueDate,
     activeDate: activeDate,
-    time: timeInput,
+    time: cleanTime,  // استخدام الوقت النظيف
     contactNo: document.getElementById('contactNo')?.value || '',
     guestName: document.getElementById('guestName')?.value || '',
     nationality: document.getElementById('nationality')?.value || '',
@@ -822,7 +863,7 @@ function collectEditedData() {
     activitiesText: items.join(' | '),
     supplier: document.getElementById('supplier')?.value || '',
     customer: document.getElementById('customer')?.value || '',
-    state: document.getElementById('state')?.value || 'pending',
+    state: stateSelect,  // استخدام القيمة من القائمة المنسدلة
     notes: document.getElementById('notes')?.value || '',
     salesId: currentInvoice.salesId,
     centerName: currentInvoice.centerName,
@@ -837,12 +878,13 @@ function collectEditedData() {
     discount: data.discount,
     paymentPrice: data.paymentPrice,
     rest: data.rest,
-    itemsTotal: actualPrice,
-    paidInInvoiceCurrency: paidInInvoiceCurrency
+    time: data.time,
+    state: data.state
   });
   
   return data;
 }
+
 // ============ إنشاء ملخص التغييرات (نسخة بسيطة ونظيفة) ============
 function createEditSummary(original, edited) {
   const changes = [];
@@ -981,6 +1023,19 @@ function createEditSummary(original, edited) {
 
 // ============ حفظ التغييرات ============
 async function saveChanges() {
+  // التحقق من تاريخ الفاتورة
+  const activeDateStr = document.getElementById('activeDate')?.value;
+  if (activeDateStr) {
+    const activeDate = new Date(activeDateStr);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    if (activeDate < today) {
+      showAlert('❌ لا يمكن تعديل فواتير سابقة التاريخ لأن ذلك سيؤثر على بيانات الخزينة', '⚠️');
+      return;
+    }
+  }
+  
   const editedData = collectEditedData();
   const editSummary = createEditSummary(originalInvoice, editedData);
   
@@ -1001,7 +1056,7 @@ async function saveChanges() {
     const copyResult = await callGAS('copyInvoiceToEdit', {
       originalData: JSON.stringify(originalInvoice),
       editedData: JSON.stringify(editedData),
-      userId: currentUser?.id || '',  // ✅ تأكد من إرسال userId
+      userId: currentUser?.id || '',
       editSummary: editSummary
     });
     
@@ -1033,6 +1088,7 @@ async function saveChanges() {
     showAlert('خطأ: ' + error.message, '❌');
   }
 }
+
 // ============ إلغاء التعديل ============
 async function cancelEdit() {
   if (confirm('هل أنت متأكد من إلغاء التعديل؟')) {
