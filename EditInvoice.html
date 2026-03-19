@@ -757,15 +757,20 @@ function calculateInvoiceTotal() {
   return total;
 }
 
-function updateTotals() {
+// ============ تحديث المجاميع مع تحويل العملات ============
+async function updateTotals() {
   const currency = document.getElementById('invoiceCurrency')?.value;
-  if (!currency) return;
+  const dateStr = document.getElementById('activeDate')?.value;
   
+  if (!currency || !dateStr) return;
+  
+  // ActualPrice = إجمالي الفاتورة (مجموع البنود)
   let actualPrice = 0;
   document.querySelectorAll('[id^="total_"]').forEach(input => {
     actualPrice += parseFloat(input.value) || 0;
   });
   
+  // قراءة المدفوعات
   const cashUSD = parseFloat(document.getElementById('cashUSD')?.value) || 0;
   const cashEUR = parseFloat(document.getElementById('cashEUR')?.value) || 0;
   const cashGBP = parseFloat(document.getElementById('cashGBP')?.value) || 0;
@@ -775,24 +780,88 @@ function updateTotals() {
   const visaGBP = parseFloat(document.getElementById('visaGBP')?.value) || 0;
   const visaLE = parseFloat(document.getElementById('visaLE')?.value) || 0;
   
+  // جلب أسعار الصرف
+  let rates = exchangeRatesCache[dateStr];
+  if (!rates) {
+    try {
+      rates = await callGAS('getExchangeRate', { dateStr });
+      if (rates) {
+        exchangeRatesCache[dateStr] = rates;
+      }
+    } catch (e) {
+      console.error('❌ خطأ في جلب أسعار الصرف:', e);
+    }
+  }
+  
+  // تحويل جميع المدفوعات إلى العملة المحلية (LE) أولاً
+  let totalInLE = 0;
+  
+  if (rates) {
+    // تحويل النقدي
+    totalInLE += cashUSD * (rates.cash?.USD || 47.5);
+    totalInLE += cashEUR * (rates.cash?.EUR || 50.25);
+    totalInLE += cashGBP * (rates.cash?.GBP || 60);
+    totalInLE += cashLE;
+    
+    // تحويل الفيزا
+    totalInLE += visaUSD * (rates.visa?.USD || 46.3125);
+    totalInLE += visaEUR * (rates.visa?.EUR || 48.99375);
+    totalInLE += visaGBP * (rates.visa?.GBP || 58.5);
+    totalInLE += visaLE * (rates.visa?.LE || 0.975);
+  } else {
+    // إذا لم توجد أسعار صرف، نستخدم أسعاراً تقريبية
+    totalInLE = cashUSD * 47.5 + cashEUR * 50.25 + cashGBP * 60 + cashLE +
+                visaUSD * 46.3125 + visaEUR * 48.99375 + visaGBP * 58.5 + visaLE * 0.975;
+  }
+  
+  // تحويل من LE إلى عملة الفاتورة
   let paidInInvoiceCurrency = 0;
-  if(currency === '$') paidInInvoiceCurrency = cashUSD + visaUSD;
-  else if(currency === '€') paidInInvoiceCurrency = cashEUR + visaEUR;
-  else if(currency === '£') paidInInvoiceCurrency = cashGBP + visaGBP;
-  else if(currency === 'LE') paidInInvoiceCurrency = cashLE + visaLE;
+  
+  if (rates) {
+    if (currency === '$') {
+      paidInInvoiceCurrency = totalInLE / (rates.cash?.USD || 47.5);
+    } else if (currency === '€') {
+      paidInInvoiceCurrency = totalInLE / (rates.cash?.EUR || 50.25);
+    } else if (currency === '£') {
+      paidInInvoiceCurrency = totalInLE / (rates.cash?.GBP || 60);
+    } else if (currency === 'LE') {
+      paidInInvoiceCurrency = totalInLE;
+    }
+  } else {
+    // أسعار تقريبية
+    if (currency === '$') paidInInvoiceCurrency = totalInLE / 47.5;
+    else if (currency === '€') paidInInvoiceCurrency = totalInLE / 50.25;
+    else if (currency === '£') paidInInvoiceCurrency = totalInLE / 60;
+    else if (currency === 'LE') paidInInvoiceCurrency = totalInLE;
+  }
   
   const discount = parseFloat(document.getElementById('discount')?.value) || 0;
+  
+  // المتبقي = إجمالي الفاتورة - الخصم - المدفوع (بعد التحويل)
   const rest = actualPrice - discount - paidInInvoiceCurrency;
   
+  // تحديث العرض
   document.getElementById('displayActualPrice').textContent = actualPrice.toFixed(2);
   document.getElementById('displayPaymentPrice').textContent = paidInInvoiceCurrency.toFixed(2);
   document.getElementById('displayRest').textContent = rest.toFixed(2);
+  
+  console.log('💰 updateTotals:', {
+    actualPrice,
+    discount,
+    paidInInvoiceCurrency,
+    rest,
+    totalInLE,
+    rates: rates ? 'موجودة' : 'غير موجودة'
+  });
 }
+  
 
 function collectEditedData() {
   const timeInput = document.getElementById('time')?.value || '';
   const cleanTime = timeInput ? timeInput.toString().substring(0,5) : '';
   const stateSelect = document.getElementById('state')?.value || 'pending';
+  const dateStr = document.getElementById('activeDate')?.value;
+  const currency = document.getElementById('invoiceCurrency')?.value;
   
   const items = [];
   const rows = document.querySelectorAll('#itemsContainer tr');
@@ -820,6 +889,7 @@ function collectEditedData() {
     activeDate = formatDate(d);
   }
   
+  // ActualPrice = إجمالي الفاتورة
   let actualPrice = 0;
   document.querySelectorAll('[id^="total_"]').forEach(input => {
     actualPrice += parseFloat(input.value) || 0;
@@ -827,6 +897,7 @@ function collectEditedData() {
   
   const discount = parseFloat(document.getElementById('discount')?.value) || 0;
   
+  // قراءة المدفوعات
   const cashUSD = parseFloat(document.getElementById('cashUSD')?.value) || 0;
   const cashEUR = parseFloat(document.getElementById('cashEUR')?.value) || 0;
   const cashGBP = parseFloat(document.getElementById('cashGBP')?.value) || 0;
@@ -836,13 +907,22 @@ function collectEditedData() {
   const visaGBP = parseFloat(document.getElementById('visaGBP')?.value) || 0;
   const visaLE = parseFloat(document.getElementById('visaLE')?.value) || 0;
   
-  const currency = document.getElementById('invoiceCurrency')?.value;
+  // تحويل جميع المدفوعات إلى العملة المحلية (LE)
+  let totalInLE = cashUSD * 47.5 + cashEUR * 50.25 + cashGBP * 60 + cashLE +
+                  visaUSD * 46.3125 + visaEUR * 48.99375 + visaGBP * 58.5 + visaLE * 0.975;
+  
+  // تحويل من LE إلى عملة الفاتورة
   let paidInInvoiceCurrency = 0;
   
-  if(currency === '$') paidInInvoiceCurrency = cashUSD + visaUSD;
-  else if(currency === '€') paidInInvoiceCurrency = cashEUR + visaEUR;
-  else if(currency === '£') paidInInvoiceCurrency = cashGBP + visaGBP;
-  else if(currency === 'LE') paidInInvoiceCurrency = cashLE + visaLE;
+  if (currency === '$') {
+    paidInInvoiceCurrency = totalInLE / 47.5;
+  } else if (currency === '€') {
+    paidInInvoiceCurrency = totalInLE / 50.25;
+  } else if (currency === '£') {
+    paidInInvoiceCurrency = totalInLE / 60;
+  } else if (currency === 'LE') {
+    paidInInvoiceCurrency = totalInLE;
+  }
   
   const rest = actualPrice - discount - paidInInvoiceCurrency;
   
@@ -885,9 +965,17 @@ function collectEditedData() {
     cost: currentInvoice.cost || ''
   };
   
+  console.log('📊 بيانات التعديل:', {
+    actualPrice,
+    discount,
+    paymentPrice: paidInInvoiceCurrency,
+    rest,
+    totalInLE,
+    currency
+  });
+  
   return data;
 }
-
 function createEditSummary(original, edited) {
   const changes = [];
   const currency = edited.invoiceCurrency || original.invoiceCurrency || '$';
