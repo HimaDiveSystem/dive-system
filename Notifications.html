@@ -140,6 +140,78 @@
       transform: translateY(-2px);
     }
     
+    /* أزرار الحذف الجديدة */
+    .delete-options {
+      display: none;
+      margin-bottom: 15px;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    
+    .btn-danger {
+      background: #e74c3c;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 40px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      transition: 0.3s;
+    }
+    
+    .btn-danger:hover {
+      background: #c0392b;
+      transform: translateY(-2px);
+    }
+    
+    .btn-secondary {
+      background: #e9f0fa;
+      color: #1e2b4f;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 40px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      transition: 0.3s;
+    }
+    
+    .btn-secondary:hover {
+      background: #d0ddeb;
+    }
+    
+    .btn-delete {
+      background: #e74c3c;
+      color: white;
+      border: none;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+    
+    .btn-delete:hover {
+      background: #c0392b;
+    }
+    
+    .notification-checkbox {
+      width: 20px;
+      height: 20px;
+      cursor: pointer;
+      accent-color: #1e2b4f;
+      display: none;
+    }
+    
+    .checkbox-column {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    
     .notifications-list {
       display: flex;
       flex-direction: column;
@@ -401,6 +473,14 @@
       </div>
       <button class="btn-filter" onclick="loadNotifications()">تصفية</button>
       <button class="btn-mark-read" onclick="markAllAsRead()">📌 تحديد الكل كمقروء</button>
+      <button class="btn-danger" onclick="showDeleteOptions()">🗑️ حذف</button>
+    </div>
+    
+    <!-- خيارات الحذف -->
+    <div id="deleteOptions" class="delete-options">
+      <button class="btn-danger" onclick="deleteSelected()">🗑️ حذف المحدد</button>
+      <button class="btn-danger" onclick="deleteAll()">🗑️ حذف الكل</button>
+      <button class="btn-secondary" onclick="hideDeleteOptions()">إلغاء</button>
     </div>
     
     <div id="notificationsContainer">
@@ -426,6 +506,7 @@ const GAS_URL = 'https://script.google.com/macros/s/AKfycbyBfwHQQoHb9E2bq0l-u6FL
 let currentUser = null;
 let notifications = [];
 let filteredNotifications = [];
+let deleteMode = false;
 
 // ============ التهيئة ============
 document.addEventListener('DOMContentLoaded', () => {
@@ -462,7 +543,7 @@ async function loadNotifications() {
     
     if (data && Array.isArray(data)) {
       notifications = data.sort((a, b) => {
-        // ترتيب تنازلي حسب تاريخ التعديل
+        // ترتيب تنازلي حسب تاريخ التعديل (الأحدث في الأعلى)
         return new Date(b.editDate) - new Date(a.editDate);
       });
     } else {
@@ -544,11 +625,11 @@ function renderNotifications() {
     let iconClass = 'icon-edit';
     let title = 'تعديل فاتورة';
     
-    if (notif.editSummary.includes('خصم')) {
+    if (notif.editSummary && notif.editSummary.includes('خصم')) {
       icon = '💰';
       iconClass = 'icon-price';
     }
-    if (notif.editSummary.includes('إلغاء') || notif.editSummary.includes('ملغي')) {
+    if (notif.editSummary && (notif.editSummary.includes('إلغاء') || notif.editSummary.includes('ملغي'))) {
       icon = '❌';
       iconClass = 'icon-cancel';
     }
@@ -556,11 +637,14 @@ function renderNotifications() {
     html += `
       <div class="notification-card ${isUnread ? 'unread' : 'read'}" onclick="viewNotification('${notif.editId}')">
         <div class="notification-header">
-          <div class="notification-title">
-            <div class="notification-icon ${iconClass}">${icon}</div>
-            <div>
-              <strong>${title}</strong>
-              <span class="voucher-badge">${notif.voucherNo}</span>
+          <div class="checkbox-column">
+            <input type="checkbox" class="notification-checkbox" data-id="${notif.editId}" onclick="event.stopPropagation()">
+            <div class="notification-title">
+              <div class="notification-icon ${iconClass}">${icon}</div>
+              <div>
+                <strong>${title}</strong>
+                <span class="voucher-badge">${notif.voucherNo}</span>
+              </div>
             </div>
           </div>
           <div class="notification-time">${timeStr}</div>
@@ -573,19 +657,19 @@ function renderNotifications() {
         <div class="invoice-details">
           <div class="detail-item">
             <div class="detail-label">الإجمالي قبل</div>
-            <div class="detail-value">${notif.oldActualPrice || 0} <small>${notif.currency || ''}</small></div>
+            <div class="detail-value">${notif.oldActualPrice?.toFixed(2) || '0.00'} <small>${notif.currency || ''}</small></div>
           </div>
           <div class="detail-item">
             <div class="detail-label">الإجمالي بعد</div>
-            <div class="detail-value">${notif.newActualPrice || 0} <small>${notif.currency || ''}</small></div>
+            <div class="detail-value">${notif.newActualPrice?.toFixed(2) || '0.00'} <small>${notif.currency || ''}</small></div>
           </div>
           <div class="detail-item">
             <div class="detail-label">المدفوع قبل</div>
-            <div class="detail-value">${notif.oldPaymentPrice || 0} <small>${notif.currency || ''}</small></div>
+            <div class="detail-value">${notif.oldPaymentPrice?.toFixed(2) || '0.00'} <small>${notif.currency || ''}</small></div>
           </div>
           <div class="detail-item">
             <div class="detail-label">المدفوع بعد</div>
-            <div class="detail-value">${notif.newPaymentPrice || 0} <small>${notif.currency || ''}</small></div>
+            <div class="detail-value">${notif.newPaymentPrice?.toFixed(2) || '0.00'} <small>${notif.currency || ''}</small></div>
           </div>
         </div>
         
@@ -596,6 +680,7 @@ function renderNotifications() {
           <div class="notification-actions">
             ${!notif.isRead ? `<button class="btn-small btn-mark" onclick="event.stopPropagation(); markAsRead('${notif.editId}')">📌 تحديد كمقروء</button>` : ''}
             <button class="btn-small btn-view" onclick="event.stopPropagation(); viewFullDetails('${notif.editId}')">🔍 عرض التفاصيل</button>
+            <button class="btn-small btn-delete" onclick="event.stopPropagation(); deleteSingle('${notif.editId}')">🗑️ حذف</button>
           </div>
         </div>
       </div>
@@ -604,6 +689,92 @@ function renderNotifications() {
   
   html += '</div>';
   container.innerHTML = html;
+  
+  // إخفاء خانات الاختيار إذا لم يكن وضع الحذف مفعل
+  document.querySelectorAll('.notification-checkbox').forEach(cb => {
+    cb.style.display = deleteMode ? 'block' : 'none';
+  });
+}
+
+// ============ إظهار خيارات الحذف ============
+function showDeleteOptions() {
+  deleteMode = true;
+  document.getElementById('deleteOptions').style.display = 'flex';
+  document.querySelectorAll('.notification-checkbox').forEach(cb => {
+    cb.style.display = 'block';
+  });
+}
+
+// ============ إخفاء خيارات الحذف ============
+function hideDeleteOptions() {
+  deleteMode = false;
+  document.getElementById('deleteOptions').style.display = 'none';
+  document.querySelectorAll('.notification-checkbox').forEach(cb => {
+    cb.style.display = 'none';
+    cb.checked = false;
+  });
+}
+
+// ============ حذف التنبيهات المحددة ============
+async function deleteSelected() {
+  const selected = [];
+  document.querySelectorAll('.notification-checkbox:checked').forEach(cb => {
+    selected.push(cb.dataset.id);
+  });
+  
+  if (selected.length === 0) {
+    alert('❌ لم تختار أي تنبيهات للحذف');
+    return;
+  }
+  
+  if (confirm(`هل أنت متأكد من حذف ${selected.length} تنبيه؟`)) {
+    try {
+      // حذف كل تنبيه على حدة
+      for (const id of selected) {
+        await fetch(`${GAS_URL}?action=deleteNotification&editId=${id}`);
+      }
+      
+      alert(`✅ تم حذف ${selected.length} تنبيه بنجاح`);
+      hideDeleteOptions();
+      loadNotifications();
+    } catch (error) {
+      console.error('خطأ في الحذف:', error);
+      alert('❌ فشل حذف التنبيهات');
+    }
+  }
+}
+
+// ============ حذف تنبيه واحد ============
+async function deleteSingle(editId) {
+  if (confirm('هل أنت متأكد من حذف هذا التنبيه؟')) {
+    try {
+      await fetch(`${GAS_URL}?action=deleteNotification&editId=${editId}`);
+      loadNotifications();
+    } catch (error) {
+      console.error('خطأ في الحذف:', error);
+      alert('❌ فشل حذف التنبيه');
+    }
+  }
+}
+
+// ============ حذف جميع التنبيهات ============
+async function deleteAll() {
+  if (confirm('هل أنت متأكد من حذف جميع التنبيهات؟')) {
+    try {
+      const response = await fetch(`${GAS_URL}?action=deleteAllNotifications`);
+      const result = await response.json();
+      if (result.success) {
+        alert(`✅ تم حذف جميع التنبيهات بنجاح`);
+        hideDeleteOptions();
+        loadNotifications();
+      } else {
+        alert('❌ فشل حذف التنبيهات: ' + result.message);
+      }
+    } catch (error) {
+      console.error('خطأ:', error);
+      alert('❌ فشل حذف التنبيهات');
+    }
+  }
 }
 
 // ============ تحديد كمقروء ============
@@ -645,14 +816,14 @@ async function viewFullDetails(editId) {
     
     let content = '<div style="text-align:right;">';
     
-    if (details.originalData) {
+    if (details.originalParsed) {
       content += '<h4 style="color:#1e2b4f; margin:15px 0 10px;">البيانات قبل التعديل</h4>';
-      content += '<pre style="background:#f8f9fa; padding:10px; border-radius:10px; font-size:12px;">' + JSON.stringify(JSON.parse(details.originalData), null, 2) + '</pre>';
+      content += '<pre style="background:#f8f9fa; padding:10px; border-radius:10px; font-size:12px;">' + JSON.stringify(details.originalParsed, null, 2) + '</pre>';
     }
     
-    if (details.editedData) {
+    if (details.editedParsed) {
       content += '<h4 style="color:#1e2b4f; margin:15px 0 10px;">البيانات بعد التعديل</h4>';
-      content += '<pre style="background:#f8f9fa; padding:10px; border-radius:10px; font-size:12px;">' + JSON.stringify(JSON.parse(details.editedData), null, 2) + '</pre>';
+      content += '<pre style="background:#f8f9fa; padding:10px; border-radius:10px; font-size:12px;">' + JSON.stringify(details.editedParsed, null, 2) + '</pre>';
     }
     
     if (details.editSummary) {
@@ -674,6 +845,8 @@ async function viewFullDetails(editId) {
 
 // ============ عرض التنبيه مع تحديد كمقروء ============
 async function viewNotification(editId) {
+  // إذا كان وضع الحذف مفعل، لا نفتح التنبيه
+  if (deleteMode) return;
   await markAsRead(editId);
 }
 
@@ -701,6 +874,11 @@ window.viewFullDetails = viewFullDetails;
 window.viewNotification = viewNotification;
 window.closeModal = closeModal;
 window.goBack = goBack;
+window.showDeleteOptions = showDeleteOptions;
+window.hideDeleteOptions = hideDeleteOptions;
+window.deleteSelected = deleteSelected;
+window.deleteAll = deleteAll;
+window.deleteSingle = deleteSingle;
 </script>
 </body>
 </html>
