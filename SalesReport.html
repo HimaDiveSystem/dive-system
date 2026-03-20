@@ -181,18 +181,30 @@ function fmtNum(n){
 // ============ تحويل التاريخ لصيغة YYYY-MM-DD لأسعار الصرف ============
 function formatDateForExchangeRate(dateStr){
   if(!dateStr) return null;
+  
+  // DD/MMM/YYYY → YYYY-MM-DD
   const match = dateStr.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
   if(match){
     const day = parseInt(match[1]);
     const month = match[2];
     const year = match[3];
-    const monthsMap = {'Jan':'01','Feb':'02','Mar':'03','Apr':'04','May':'05','Jun':'06',
-                       'Jul':'07','Aug':'08','Sep':'09','Oct':'10','Nov':'11','Dec':'12'};
-    return `${year}-${monthsMap[month]}-${String(day).padStart(2,'0')}`;
+    const monthsMap = {
+      'Jan':'01','Feb':'02','Mar':'03','Apr':'04','May':'05','Jun':'06',
+      'Jul':'07','Aug':'08','Sep':'09','Oct':'10','Nov':'11','Dec':'12'
+    };
+    const result = `${year}-${monthsMap[month]}-${String(day).padStart(2,'0')}`;
+    console.log(`📅 تحويل التاريخ: ${dateStr} → ${result}`);
+    return result;
   }
-  return dateStr;
+  
+  // إذا كانت YYYY-MM-DD بالفعل
+  if(dateStr.match(/^\d{4}-\d{2}-\d{2}$/)){
+    return dateStr;
+  }
+  
+  console.warn(`⚠️ تنسيق تاريخ غير معروف: ${dateStr}`);
+  return null;
 }
-
 // ============ جلب سعر الصرف ============
 async function getExchangeRateForDate(dateStr){
   if(!dateStr) return null;
@@ -215,7 +227,7 @@ async function getExchangeRateForDate(dateStr){
   }
 }
 
-// ============ حساب الإيرادات بالجنيه ============
+// ============ حساب الإيرادات بالجنيه (مع منطق احتياطي) ============
 async function getRevenueInEGP(inv){
   const actualPrice = parseFloat(inv.actualPrice) || 0;
   const discount = parseFloat(inv.discount) || 0;
@@ -223,9 +235,16 @@ async function getRevenueInEGP(inv){
   if(netAmount <= 0) return 0;
   
   const currency = inv.invoiceCurrency || '$';
-  const rate = await getExchangeRateForDate(inv.activeDate);
+  let rate = await getExchangeRateForDate(inv.activeDate);
   
-  if(!rate) return 0;
+  // إذا لم يوجد سعر صرف، استخدم الأسعار الافتراضية
+  if(!rate){
+    console.warn(`⚠️ لا يوجد سعر صرف للتاريخ ${inv.activeDate}، استخدام الأسعار الافتراضية`);
+    rate = {
+      cash: { USD: 47.5, EUR: 50.25, GBP: 60, LE: 1 },
+      visa: { USD: 46.3125, EUR: 48.99375, GBP: 58.5, LE: 0.975 }
+    };
+  }
   
   if(currency === '$') return netAmount * (rate.cash?.USD || 47.5);
   if(currency === '€') return netAmount * (rate.cash?.EUR || 50.25);
