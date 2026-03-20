@@ -193,18 +193,16 @@ function formatDateForExchangeRate(dateStr){
       'Jul':'07','Aug':'08','Sep':'09','Oct':'10','Nov':'11','Dec':'12'
     };
     const result = `${year}-${monthsMap[month]}-${String(day).padStart(2,'0')}`;
-    console.log(`📅 تحويل التاريخ: ${dateStr} → ${result}`);
     return result;
   }
   
-  // إذا كانت YYYY-MM-DD بالفعل
   if(dateStr.match(/^\d{4}-\d{2}-\d{2}$/)){
     return dateStr;
   }
   
-  console.warn(`⚠️ تنسيق تاريخ غير معروف: ${dateStr}`);
   return null;
 }
+
 // ============ جلب سعر الصرف ============
 async function getExchangeRateForDate(dateStr){
   if(!dateStr) return null;
@@ -227,13 +225,11 @@ async function getExchangeRateForDate(dateStr){
   }
 }
 
-// ============ حساب الإيرادات بالجنيه (مع منطق احتياطي) ============
+// ============ حساب الإيرادات بالجنيه ============
 async function getRevenueInEGP(inv){
   const actualPrice = parseFloat(inv.actualPrice) || 0;
   const discount = parseFloat(inv.discount) || 0;
   const netAmount = actualPrice - discount;
-  
-  console.log(`📊 فاتورة ${inv.voucherNo}: actualPrice=${actualPrice}, discount=${discount}, netAmount=${netAmount}`);
   
   if(netAmount <= 0) return 0;
   
@@ -241,19 +237,13 @@ async function getRevenueInEGP(inv){
   const rate = await getExchangeRateForDate(inv.activeDate);
   
   if(!rate){
-    console.warn(`⚠️ لا يوجد سعر صرف للتاريخ ${inv.activeDate}`);
     return 0;
   }
   
-  let result = 0;
-  if(currency === '$') result = netAmount * (rate.cash?.USD || 47.5);
-  else if(currency === '€') result = netAmount * (rate.cash?.EUR || 50.25);
-  else if(currency === '£') result = netAmount * (rate.cash?.GBP || 60);
-  else result = netAmount;
-  
-  console.log(`✅ فاتورة ${inv.voucherNo}: ${netAmount} ${currency} = ${result} EGP`);
-  
-  return result;
+  if(currency === '$') return netAmount * (rate.cash?.USD || 47.5);
+  if(currency === '€') return netAmount * (rate.cash?.EUR || 50.25);
+  if(currency === '£') return netAmount * (rate.cash?.GBP || 60);
+  return netAmount;
 }
 
 // ============ تحميل البيانات ============
@@ -263,9 +253,21 @@ async function loadData(){
     const data=await res.json();
     allInvoices=Array.isArray(data)?data:[];
     
-    if(currentUser?.type!=='Admin' && currentUser?.type!=='Owner'){
-      allInvoices=allInvoices.filter(i=>i.salesId===currentUser?.id);
+    // ✅ تصفية الفواتير حسب صلاحية المستخدم
+    if(currentUser?.type === 'Admin'){
+      // المدير يرى كل الفواتير
+      // no filter
+    } 
+    else if(currentUser?.type === 'Owner'){
+      // صاحب المركز يرى فقط فواتير مركزه
+      allInvoices = allInvoices.filter(i => i.centerName === currentUser.centerName);
+    } 
+    else {
+      // الموظف العادي يرى فقط فواتيره الشخصية
+      allInvoices = allInvoices.filter(i => i.salesId === currentUser?.id);
     }
+    
+    console.log(`✅ تم تحميل ${allInvoices.length} فاتورة للمستخدم ${currentUser?.type}`);
     
     // تعبئة الفلاتر
     const branchSet=new Set(),salesSet=new Set(),tripSet=new Set(),hotelSet=new Set(),natSet=new Set();
@@ -345,6 +347,8 @@ function applyFilters(){
     if(state && (inv.state||'').toLowerCase()!==state.toLowerCase()) return false;
     return true;
   });
+  
+  console.log(`📊 بعد التصفية: ${filteredInvoices.length} فاتورة`);
 }
 
 // ============ عرض التقرير ============
