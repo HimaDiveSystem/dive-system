@@ -169,17 +169,28 @@ let activeChart=null;
 // ============ دوال مساعدة أساسية ============
 function parseDate(str){
   if(!str) return null;
-  const parts=str.split('/');
-  if(parts.length===3){
-    const day=parseInt(parts[0]);
-    const monthIndex=MONTHS.findIndex(m=>m.toLowerCase()===parts[1].toLowerCase());
-    const year=parseInt(parts[2]);
-    if(!isNaN(day) && monthIndex!==-1 && !isNaN(year)) return new Date(year,monthIndex,day);
+  
+  // DD/MMM/YYYY
+  const match = str.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
+  if(match){
+    const day = parseInt(match[1]);
+    const monthStr = match[2];
+    const year = parseInt(match[3]);
+    const monthIndex = MONTHS.findIndex(m => m.toLowerCase() === monthStr.toLowerCase());
+    if(monthIndex !== -1){
+      return new Date(year, monthIndex, day);
+    }
   }
-  const d=new Date(str);
-  return isNaN(d)?null:d;
+  
+  // YYYY-MM-DD
+  const match2 = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(match2){
+    return new Date(parseInt(match2[1]), parseInt(match2[2])-1, parseInt(match2[3]));
+  }
+  
+  const d = new Date(str);
+  return isNaN(d) ? null : d;
 }
-
 function formatDateForDisplay(date){
   return `${String(date.getDate()).padStart(2,'0')}/${MONTHS[date.getMonth()]}/${date.getFullYear()}`;
 }
@@ -215,46 +226,166 @@ function fmtNum(n){
   return n.toFixed(2);
 }
 
-// ============ أسعار الصرف ============
+// ============ الحصول على سعر الصرف لتاريخ محدد ============
 async function getExchangeRateForDate(dateStr){
   if(!dateStr) return null;
-  if(exchangeRatesCache[dateStr]) return exchangeRatesCache[dateStr];
+  
+  // تنسيق التاريخ بشكل صحيح
+  const formattedDate = formatDateForExchangeRate(dateStr);
+  if(!formattedDate) return null;
+  
+  if(exchangeRatesCache[formattedDate]) {
+    console.log(`✅ سعر الصرف من cache للتاريخ ${formattedDate}:`, exchangeRatesCache[formattedDate]);
+    return exchangeRatesCache[formattedDate];
+  }
+  
   try{
-    const res=await fetch(`${GAS_URL}?action=getExchangeRate&dateStr=${dateStr}`);
-    const rate=await res.json();
-    if(rate){
-      exchangeRatesCache[dateStr]=rate;
+    console.log(`📡 جلب سعر الصرف للتاريخ: ${formattedDate}`);
+    const res = await fetch(`${GAS_URL}?action=getExchangeRate&dateStr=${formattedDate}`);
+    const rate = await res.json();
+    console.log(`✅ سعر الصرف المستلم:`, rate);
+    if(rate && rate.cash){
+      exchangeRatesCache[formattedDate] = rate;
       return rate;
     }
     return null;
   }catch(e){
-    console.error('خطأ في جلب سعر الصرف:',e);
+    console.error('❌ خطأ في جلب سعر الصرف:', e);
     return null;
   }
 }
 
+
 // ============ حساب الإيرادات بالجنيه المصري ============
-async function calculateRevenueInEGP(inv){
-  const actualPrice=parseFloat(inv.actualPrice)||0;
-  const discount=parseFloat(inv.discount)||0;
-  const netAmount=actualPrice-discount;
-  if(netAmount<=0) return 0;
+async function getRevenueForInvoice(inv){
+  const actualPrice = parseFloat(inv.actualPrice) || 0;
+  const discount = parseFloat(inv.discount) || 0;
+  const netAmount = actualPrice - discount;
   
-  const currency=inv.invoiceCurrency||'$';
-  const dateStr=inv.activeDate;
-  const rate=await getExchangeRateForDate(dateStr);
+  console.log(`📊 فاتورة ${inv.voucherNo}: actualPrice=${actualPrice}, discount=${discount}, netAmount=${netAmount}`);
   
-  if(!rate) return 0;
+  if(netAmount <= 0) return 0;
   
-  let amountInEGP=0;
-  if(currency==='$') amountInEGP=netAmount*(rate.cash?.USD||47.5);
-  else if(currency==='€') amountInEGP=netAmount*(rate.cash?.EUR||50.25);
-  else if(currency==='£') amountInEGP=netAmount*(rate.cash?.GBP||60);
-  else if(currency==='LE') amountInEGP=netAmount;
+  const currency = inv.invoiceCurrency || '$';
+  const dateStr = inv.activeDate;
+  
+  if(!dateStr){
+    console.warn(`⚠️ فاتورة ${inv.voucherNo} لا يوجد بها تاريخ`);
+    return 0;
+  }
+  
+  console.log(`📊 فاتورة ${inv.voucherNo}: تاريخ=${dateStr}, عملة=${currency}, صافي=${netAmount}`);
+  
+  const rate = await getExchangeRateForDate(dateStr);
+  
+  if(!rate){
+    console.warn(`⚠️ لا يوجد سعر صرف للتاريخ ${dateStr}`);
+    return 0;
+  }
+  
+  let amountInEGP = 0;
+  if(currency === '$') amountInEGP = netAmount * (rate.cash?.USD || 47.5);
+  else if(currency === '€') amountInEGP = netAmount * (rate.cash?.EUR || 50.25);
+  else if(currency === '£') amountInEGP = netAmount * (rate.cash?.GBP || 60);
+  else if(currency === 'LE') amountInEGP = netAmount;
+  else amountInEGP = netAmount * (rate.cash?.USD || 47.5);
+  
+  console.log(`✅ فاتورة ${inv.voucherNo}: ${netAmount} ${currency} = ${amountInEGP.toFixed(2)} EGP`);
   
   return amountInEGP;
 }
+// ============ دالة مساعدة لاختبار التحويل ============
+async function testRevenueCalculation(){
+  if(!filteredInvoices.length){
+    console.log('لا توجد فواتير للاختبار');
+    return;
+  }
+  
+  console.log('========== اختبار حساب الإيرادات ==========');
+  for(const inv of filteredInvoices.slice(0,5)){
+    const revenue = await getRevenueForInvoice(inv);
+    console.log(`فاتورة ${inv.voucherNo}: ${inv.actualPrice} ${inv.invoiceCurrency} -> ${revenue.toFixed(2)} EGP`);
+  }
+  console.log('==========================================');
+}
 
+// ============ دالة لتحويل تاريخ الفاتورة إلى الصيغة المطلوبة لأسعار الصرف ============
+function formatDateForExchangeRate(dateStr){
+  if(!dateStr) return null;
+  
+  console.log('🔄 تحويل التاريخ:', dateStr);
+  
+  // إذا كان التاريخ بصيغة DD/MMM/YYYY (مثل 15/Mar/2026)
+  const match = dateStr.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
+  if(match){
+    const day = parseInt(match[1]);
+    const month = match[2];
+    const year = match[3];
+    const months = {
+      'Jan':'01','Feb':'02','Mar':'03','Apr':'04','May':'05','Jun':'06',
+      'Jul':'07','Aug':'08','Sep':'09','Oct':'10','Nov':'11','Dec':'12'
+    };
+    const result = `${year}-${months[month]}-${String(day).padStart(2,'0')}`;
+    console.log('✅ تم التحويل إلى:', result);
+    return result;
+  }
+  
+  // إذا كانت الصيغة YYYY-MM-DD
+  const match2 = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(match2){
+    console.log('✅ التاريخ بصيغة YYYY-MM-DD:', dateStr);
+    return dateStr;
+  }
+  
+  // محاولة تحويل عام
+  const d = new Date(dateStr);
+  if(!isNaN(d)){
+    const result = d.toISOString().split('T')[0];
+    console.log('✅ تم التحويل عبر Date إلى:', result);
+    return result;
+  }
+  
+  console.warn('⚠️ لم نتمكن من تحويل التاريخ:', dateStr);
+  return dateStr;
+}
+
+
+// ============ حساب الإيرادات بالجنيه المصري ============
+async function getRevenueForInvoice(inv){
+  const actualPrice = parseFloat(inv.actualPrice) || 0;
+  const discount = parseFloat(inv.discount) || 0;
+  const netAmount = actualPrice - discount;
+  if(netAmount <= 0) return 0;
+  
+  const currency = inv.invoiceCurrency || '$';
+  
+  // تنسيق التاريخ بشكل صحيح لأسعار الصرف
+  let dateStr = inv.activeDate;
+  if(dateStr){
+    // تحويل من DD/MMM/YYYY إلى YYYY-MM-DD
+    const formatted = formatDateForExchangeRate(dateStr);
+    if(formatted) dateStr = formatted;
+  }
+  
+  console.log(`📊 حساب إيرادات: فاتورة ${inv.voucherNo}, تاريخ=${dateStr}, عملة=${currency}, صافي=${netAmount}`);
+  
+  const rate = await getExchangeRateForDate(dateStr);
+  
+  if(!rate){
+    console.warn(`⚠️ لا يوجد سعر صرف للتاريخ ${dateStr}`);
+    return 0;
+  }
+  
+  let amountInEGP = 0;
+  if(currency === '$') amountInEGP = netAmount * (rate.cash?.USD || 47.5);
+  else if(currency === '€') amountInEGP = netAmount * (rate.cash?.EUR || 50.25);
+  else if(currency === '£') amountInEGP = netAmount * (rate.cash?.GBP || 60);
+  else if(currency === 'LE') amountInEGP = netAmount;
+  
+  console.log(`✅ فاتورة ${inv.voucherNo}: ${netAmount} ${currency} = ${amountInEGP.toFixed(2)} EGP`);
+  
+  return amountInEGP;
+}
 // ============ حساب قيمة الفاتورة بالجنيه (للإيرادات) ============
 async function getRevenueForInvoice(inv){
   const netAmount=(parseFloat(inv.actualPrice)||0)-(parseFloat(inv.discount)||0);
