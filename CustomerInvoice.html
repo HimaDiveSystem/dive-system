@@ -393,21 +393,6 @@ async function loadData(){
     allTrips = Array.isArray(tripsRes) ? tripsRes : [];
     allCustomers = Array.isArray(customersRes) ? customersRes : [];
     
-    renderForm();
-  }catch(e){
-    document.getElementById('mainContent').innerHTML=`<div class="loader-big">Error: ${e.message}</div>`;
-  }
-}
-async function loadData(){
-  try{
-    const [tripsRes, customersRes] = await Promise.all([
-      callGAS('getUniqueTrips'),
-      callGAS('getAllCustomers')
-    ]);
-    
-    allTrips = Array.isArray(tripsRes) ? tripsRes : [];
-    allCustomers = Array.isArray(customersRes) ? customersRes : [];
-    
     // تعبئة datalist للعملاء
     const customersList = document.getElementById('customersList');
     if(customersList){
@@ -419,6 +404,18 @@ async function loadData(){
     document.getElementById('mainContent').innerHTML=`<div class="loader-big">Error: ${e.message}</div>`;
   }
 }
+
+/* ═══════════════════════════════════════
+   UPDATE TOTAL PERSONS (عدد المشاركين)
+═══════════════════════════════════════ */
+function updateTotalPersons(){
+  const adult = parseInt(document.getElementById('adultCount')?.value) || 0;
+  const child = parseInt(document.getElementById('childCount')?.value) || 0;
+  const infant = parseInt(document.getElementById('infantCount')?.value) || 0;
+  const totalPersons = adult + child + infant;
+  document.getElementById('displayTotalPersons').textContent = totalPersons;
+}
+
 /* ═══════════════════════════════════════
    TRIP SELECTION
 ═══════════════════════════════════════ */
@@ -454,8 +451,8 @@ function renderTripTable(){
   let rows = '';
   currentTripItems.forEach((item, i) => {
     rows += `<tr><td style="font-weight:600">${item}</td>
-      <td><input type="number" id="qty_${i}" min="0" placeholder="0" value="0" oninput="updateTotal()" onfocus="this.select()" class="fc"></td>
-     </tr>`;
+      <td><input type="number" id="qty_${i}" min="0" placeholder="0" value="0" oninput="updateActivitiesTotal()" onfocus="this.select()" class="fc"></td>
+      </tr>`;
   });
   
   document.getElementById('tripItemsContainer').innerHTML = `
@@ -470,13 +467,14 @@ function renderTripTable(){
   `;
 }
 
-function updateTotal(){
+function updateActivitiesTotal(){
+  // فقط لتحديث الأنشطة - لا يوجد عرض لهذا الرقم
   let total = 0;
   currentTripItems.forEach((item, i)=>{
     const qty = parseFloat(document.getElementById(`qty_${i}`)?.value) || 0;
     total += qty;
   });
-  document.getElementById('displayTotalPersons').textContent = total;
+  // لا نعرض هذا الرقم لأنه للـ ActivitiesText فقط
 }
 
 /* ═══════════════════════════════════════
@@ -504,7 +502,7 @@ async function saveInvoice(){
   if(!tripName){showAlert('الرجاء اختيار الرحلة','⚠️');return;}
   if(totalPrice <= 0){showAlert('الرجاء إدخال المبلغ الإجمالي','⚠️');return;}
   
-  // جمع الكميات
+  // جمع الكميات للأنشطة (ActivitiesText)
   const quantities = [];
   currentTripItems.forEach((item,i)=>{
     quantities[i] = parseFloat(document.getElementById(`qty_${i}`)?.value) || 0;
@@ -514,6 +512,11 @@ async function saveInvoice(){
   
   const today = new Date();
   const issueDate = formatDate(today);
+  
+  // حساب عدد المشاركين (بالغين + أطفال + رضع)
+  const adultCount = parseInt(document.getElementById('adultCount')?.value) || 0;
+  const childCount = parseInt(document.getElementById('childCount')?.value) || 0;
+  const infantCount = parseInt(document.getElementById('infantCount')?.value) || 0;
   
   const invoiceData = {
     issueDate: issueDate,
@@ -527,9 +530,9 @@ async function saveInvoice(){
     hotel: hotel,
     roomNo: document.getElementById('roomNo')?.value || '',
     contactNo: contactNo,
-    adultCount: parseInt(document.getElementById('adultCount')?.value) || 0,
-    childCount: parseInt(document.getElementById('childCount')?.value) || 0,
-    infantCount: parseInt(document.getElementById('infantCount')?.value) || 0,
+    adultCount: adultCount,
+    childCount: childCount,
+    infantCount: infantCount,
     activitiesText: activitiesText,
     actualPrice: totalPrice,
     paymentPrice: 0,
@@ -551,7 +554,7 @@ async function saveInvoice(){
     if(result?.success){
       hidePDFOv();
       showAlert(
-        `✅ تم حفظ الفاتورة بنجاح\nرقم الفاتورة: ${result.voucherNo}\nالعميل: ${customer}\nالمبلغ: ${totalPrice} ${invoiceData.invoiceCurrency}`,
+        `✅ تم حفظ الفاتورة بنجاح\nرقم الفاتورة: ${result.voucherNo}\nالعميل: ${customer}\nالمبلغ المتبقي: ${totalPrice} ${invoiceData.invoiceCurrency}`,
         '✅',
         `<button class="btn btn-save" onclick="location.reload()">فاتورة جديدة</button>
          <button class="btn btn-save" onclick="goBack()">رجوع للوحة</button>`
@@ -586,7 +589,7 @@ function clearForm(){
   document.getElementById('tripItemsContainer').innerHTML = '';
   currentTripItems = [];
   currentTripPrices = [];
-  updateTotal();
+  updateTotalPersons();
 }
 
 /* ═══════════════════════════════════════
@@ -617,9 +620,9 @@ function renderForm(){
         <div class="hotel-row">
           <div class="fgroup"><label class="req">الفندق</label><input type="text" class="fc" id="hotel" placeholder="اسم الفندق" onfocus="this.select()"></div>
           <div class="fgroup"><label>رقم الغرفة</label><input type="text" class="compact-num" id="roomNo" placeholder="000" onfocus="this.select()"></div>
-          <div class="fgroup"><label>بالغين</label><input type="number" class="compact-num" id="adultCount" min="0" placeholder="0" onfocus="this.select()"></div>
-          <div class="fgroup"><label>أطفال</label><input type="number" class="compact-num" id="childCount" min="0" placeholder="0" onfocus="this.select()"></div>
-          <div class="fgroup"><label>رضع</label><input type="number" class="compact-num" id="infantCount" min="0" placeholder="0" onfocus="this.select()"></div>
+          <div class="fgroup"><label>بالغين</label><input type="number" class="compact-num" id="adultCount" min="0" placeholder="0" oninput="updateTotalPersons()" onfocus="this.select()"></div>
+          <div class="fgroup"><label>أطفال</label><input type="number" class="compact-num" id="childCount" min="0" placeholder="0" oninput="updateTotalPersons()" onfocus="this.select()"></div>
+          <div class="fgroup"><label>رضع</label><input type="number" class="compact-num" id="infantCount" min="0" placeholder="0" oninput="updateTotalPersons()" onfocus="this.select()"></div>
         </div>
       </div>
     </div>
@@ -637,7 +640,7 @@ function renderForm(){
     </div>
     
     <div class="card total-card">
-      <div class="card-head"><span class="ch-icon">💰</span><h3>المبلغ الإجمالي</h3></div>
+      <div class="card-head"><span class="ch-icon">💰</span><h3>المبلغ الإجمالي (المتبقي على الزبون)</h3></div>
       <div class="total-strip">
         <div class="total-tile"><div class="tl">عدد المشاركين</div><div class="tv" id="displayTotalPersons">0</div></div>
         <div class="total-tile"><div class="tl">العملة</div><select class="fc" id="invoiceCurrency" style="width:100px;background:white;color:var(--navy);font-weight:700"><option value="$">USD $</option><option value="€">EUR €</option><option value="£">GBP £</option><option value="LE">EGP LE</option></select></div>
@@ -668,6 +671,9 @@ function renderForm(){
   // تعيين التاريخ الافتراضي
   const today = new Date();
   document.getElementById('activeDate').value = today.toISOString().split('T')[0];
+  
+  // تحديث عدد المشاركين
+  updateTotalPersons();
 }
 
 /* ═══════════════════════════════════════
@@ -689,7 +695,8 @@ document.addEventListener('DOMContentLoaded',async()=>{
 });
 
 window.onTripChange=onTripChange;
-window.updateTotal=updateTotal;
+window.updateTotalPersons=updateTotalPersons;
+window.updateActivitiesTotal=updateActivitiesTotal;
 window.saveInvoice=saveInvoice;
 window.clearForm=clearForm;
 window.goBack=goBack;
