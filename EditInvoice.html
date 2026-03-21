@@ -738,6 +738,323 @@ document.addEventListener('DOMContentLoaded',()=>{
   catch(e){window.location.href='index.html';return;}
   loadInvoice();
 });
+  /* ═══════════════════════════════════════
+   COLLECTION MODAL & FUNCTIONS
+═══════════════════════════════════════ */
+
+// متغيرات لتخزين بيانات التحصيل
+let collectionModalOpen = false;
+let currentCollectionData = null;
+
+// فتح نافذة التحصيل
+function openCollectionModal() {
+  if (!currentInvoice) {
+    showAlert('لا توجد فاتورة مفتوحة', '⚠️');
+    return;
+  }
+  
+  // التحقق من وجود مبلغ متبقي
+  const rest = parseFloat(currentInvoice.rest) || 0;
+  if (rest <= 0) {
+    showAlert('لا يوجد مبلغ متبقي للتحصيل من هذه الفاتورة', 'ℹ️');
+    return;
+  }
+  
+  // إنشاء نافذة التحصيل
+  const modalHtml = `
+    <div id="collectionModal" class="modal" style="display:flex">
+      <div class="modal-box" style="max-width:500px;max-height:80vh;overflow-y:auto">
+        <div class="modal-icon">💰</div>
+        <div class="modal-msg">تحصيل دفعة من العميل</div>
+        
+        <div style="text-align:right;margin-bottom:16px;background:#f0f4f8;padding:12px;border-radius:12px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+            <span style="font-weight:700">رقم الفاتورة:</span>
+            <span>${currentInvoice.voucherNo || ''}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+            <span style="font-weight:700">العميل:</span>
+            <span>${currentInvoice.customer || '—'}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+            <span style="font-weight:700">الرحلة:</span>
+            <span>${currentInvoice.trip || '—'}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+            <span style="font-weight:700">تاريخ التنفيذ:</span>
+            <span>${currentInvoice.activeDate || '—'}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+            <span style="font-weight:700">الفندق:</span>
+            <span>${currentInvoice.hotel || '—'}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:6px;border-top:1px solid var(--border);padding-top:6px;margin-top:6px">
+            <span style="font-weight:700;color:var(--green)">المبلغ المتبقي:</span>
+            <span style="font-weight:900;color:var(--green)">${rest.toFixed(2)} ${currentInvoice.invoiceCurrency || ''}</span>
+          </div>
+        </div>
+        
+        <div class="pay-grp-lbl" style="text-align:right">💵 المبلغ المحصل (بنفس عملة الفاتورة)</div>
+        <div style="display:grid;grid-template-columns:1fr;gap:8px;margin-bottom:16px">
+          <div class="pay-cell">
+            <label style="font-size:14px;font-weight:800">المبلغ المحصل (${currentInvoice.invoiceCurrency || 'EGP'})</label>
+            <input type="number" id="collectionAmount" min="0" max="${rest}" step="0.01" placeholder="0.00" value="${rest}" style="font-size:18px;font-weight:900;text-align:center;width:100%">
+          </div>
+        </div>
+        
+        <div class="pay-grp-lbl" style="text-align:right">💰 تفاصيل المبلغ المحصل (بالعملات المستلمة)</div>
+        <div class="pay-grid" style="grid-template-columns:repeat(2,1fr);margin-bottom:16px">
+          <div class="pay-cell"><label>USD $</label><input type="number" id="collUSD" min="0" step="0.01" placeholder="0" oninput="updateCollectionTotal()"></div>
+          <div class="pay-cell"><label>EUR €</label><input type="number" id="collEUR" min="0" step="0.01" placeholder="0" oninput="updateCollectionTotal()"></div>
+          <div class="pay-cell"><label>GBP £</label><input type="number" id="collGBP" min="0" step="0.01" placeholder="0" oninput="updateCollectionTotal()"></div>
+          <div class="pay-cell"><label>EGP LE</label><input type="number" id="collLE" min="0" step="0.01" placeholder="0" oninput="updateCollectionTotal()"></div>
+          <div class="pay-cell"><label>Visa $</label><input type="number" id="collVisaUSD" min="0" step="0.01" placeholder="0" oninput="updateCollectionTotal()"></div>
+          <div class="pay-cell"><label>Visa €</label><input type="number" id="collVisaEUR" min="0" step="0.01" placeholder="0" oninput="updateCollectionTotal()"></div>
+          <div class="pay-cell"><label>Visa £</label><input type="number" id="collVisaGBP" min="0" step="0.01" placeholder="0" oninput="updateCollectionTotal()"></div>
+          <div class="pay-cell"><label>Visa LE</label><input type="number" id="collVisaLE" min="0" step="0.01" placeholder="0" oninput="updateCollectionTotal()"></div>
+        </div>
+        
+        <div style="background:#f0f4f8;padding:12px;border-radius:12px;margin-bottom:16px;text-align:center">
+          <span style="font-weight:700">إجمالي المبلغ المحصل (${currentInvoice.invoiceCurrency || 'EGP'}): </span>
+          <span id="collectionTotalDisplay" style="font-size:18px;font-weight:900;color:var(--green)">0.00</span>
+        </div>
+        
+        <div class="fgroup" style="margin-bottom:16px">
+          <label>ملاحظات التحصيل</label>
+          <textarea id="collectionNotes" rows="2" class="fc" placeholder="ملاحظات إضافية..."></textarea>
+        </div>
+        
+        <div class="modal-btns">
+          <button class="btn btn-save" onclick="submitCollection()">💾 تأكيد التحصيل</button>
+          <button class="btn btn-cancel" onclick="closeCollectionModal()">إلغاء</button>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // إضافة النافذة إلى الصفحة
+  let modalContainer = document.getElementById('collectionModalContainer');
+  if (!modalContainer) {
+    modalContainer = document.createElement('div');
+    modalContainer.id = 'collectionModalContainer';
+    document.body.appendChild(modalContainer);
+  }
+  modalContainer.innerHTML = modalHtml;
+  
+  // حساب سعر الصرف الحالي
+  updateCollectionTotal();
+}
+
+// حساب إجمالي التحصيل
+async function updateCollectionTotal() {
+  const currency = currentInvoice?.invoiceCurrency || '$';
+  const activeDate = currentInvoice?.activeDate;
+  
+  const cU = parseFloat(document.getElementById('collUSD')?.value) || 0;
+  const cE = parseFloat(document.getElementById('collEUR')?.value) || 0;
+  const cG = parseFloat(document.getElementById('collGBP')?.value) || 0;
+  const cL = parseFloat(document.getElementById('collLE')?.value) || 0;
+  const vU = parseFloat(document.getElementById('collVisaUSD')?.value) || 0;
+  const vE = parseFloat(document.getElementById('collVisaEUR')?.value) || 0;
+  const vG = parseFloat(document.getElementById('collVisaGBP')?.value) || 0;
+  const vL = parseFloat(document.getElementById('collVisaLE')?.value) || 0;
+  
+  let totalInEGP = 0;
+  let totalInInvoiceCurrency = 0;
+  
+  if (activeDate) {
+    const rate = await getExRate(activeDate);
+    if (rate) {
+      totalInEGP = cU * (rate.cash?.USD || 47.5) +
+                   cE * (rate.cash?.EUR || 50.25) +
+                   cG * (rate.cash?.GBP || 60) +
+                   cL +
+                   vU * (rate.visa?.USD || 46.3) +
+                   vE * (rate.visa?.EUR || 49) +
+                   vG * (rate.visa?.GBP || 58.5) +
+                   vL * (rate.visa?.LE || 0.975);
+      
+      if (currency === '$') totalInInvoiceCurrency = totalInEGP / (rate.cash?.USD || 47.5);
+      else if (currency === '€') totalInInvoiceCurrency = totalInEGP / (rate.cash?.EUR || 50.25);
+      else if (currency === '£') totalInInvoiceCurrency = totalInEGP / (rate.cash?.GBP || 60);
+      else totalInInvoiceCurrency = totalInEGP;
+    } else {
+      totalInInvoiceCurrency = cU + cE + cG + cL + vU + vE + vG + vL;
+    }
+  } else {
+    totalInInvoiceCurrency = cU + cE + cG + cL + vU + vE + vG + vL;
+  }
+  
+  document.getElementById('collectionTotalDisplay').textContent = totalInInvoiceCurrency.toFixed(2);
+}
+
+// إغلاق نافذة التحصيل
+function closeCollectionModal() {
+  const modalContainer = document.getElementById('collectionModalContainer');
+  if (modalContainer) modalContainer.innerHTML = '';
+}
+
+// تأكيد التحصيل وحفظه
+async function submitCollection() {
+  const amount = parseFloat(document.getElementById('collectionAmount')?.value) || 0;
+  const rest = parseFloat(currentInvoice.rest) || 0;
+  
+  if (amount <= 0) {
+    showAlert('الرجاء إدخال مبلغ التحصيل', '⚠️');
+    return;
+  }
+  
+  if (amount > rest) {
+    showAlert(`المبلغ المحصل (${amount}) يتجاوز المبلغ المتبقي (${rest.toFixed(2)})`, '⚠️');
+    return;
+  }
+  
+  const cU = parseFloat(document.getElementById('collUSD')?.value) || 0;
+  const cE = parseFloat(document.getElementById('collEUR')?.value) || 0;
+  const cG = parseFloat(document.getElementById('collGBP')?.value) || 0;
+  const cL = parseFloat(document.getElementById('collLE')?.value) || 0;
+  const vU = parseFloat(document.getElementById('collVisaUSD')?.value) || 0;
+  const vE = parseFloat(document.getElementById('collVisaEUR')?.value) || 0;
+  const vG = parseFloat(document.getElementById('collVisaGBP')?.value) || 0;
+  const vL = parseFloat(document.getElementById('collVisaLE')?.value) || 0;
+  
+  const notes = document.getElementById('collectionNotes')?.value || '';
+  
+  // بناء Details
+  const details = `تحصيل من زبائن رحلة ${currentInvoice.trip || ''} بفندق ${currentInvoice.hotel || ''} بتاريخ ${currentInvoice.activeDate || ''} لصالح العميل ${currentInvoice.customer || ''}`;
+  
+  const today = new Date();
+  const dateStr = formatDate(today);
+  const month = MONTHS[today.getMonth()];
+  const year = today.getFullYear();
+  
+  const collectionData = {
+    date: dateStr,
+    details: details,
+    USD: cU,
+    EUR: cE,
+    GBP: cG,
+    LE: cL,
+    VisaUSD: vU,
+    VisaEUR: vE,
+    VisaGBP: vG,
+    VisaLE: vL,
+    account: currentInvoice.customer || '',
+    accountName: getAccountType(currentInvoice.customer),
+    month: month,
+    year: year,
+    centerName: currentUser?.centerName || '',
+    branchName: currentUser?.branchName || '',
+    userId: currentUser?.id || '',
+    voucherNo: currentInvoice.voucherNo,
+    notes: notes,
+    amount: amount,
+    currency: currentInvoice.invoiceCurrency
+  };
+  
+  showPDFOv('جاري حفظ التحصيل...');
+  
+  try {
+    // حفظ التحصيل في Other_Revenues
+    const saveResult = await callGAS('addExpenseRevenue', {
+      type: 'revenue',
+      date: dateStr,
+      details: details,
+      USD: cU,
+      EUR: cE,
+      GBP: cG,
+      LE: cL,
+      VisaUSD: vU,
+      VisaEUR: vE,
+      VisaGBP: vG,
+      VisaLE: vL,
+      account: currentInvoice.customer || '',
+      accountName: getAccountType(currentInvoice.customer),
+      month: month,
+      year: year,
+      centerName: currentUser?.centerName || '',
+      branchName: currentUser?.branchName || '',
+      userId: currentUser?.id || ''
+    });
+    
+    if (!saveResult.success) throw new Error(saveResult.message || 'فشل حفظ التحصيل');
+    
+    // تحديث الفاتورة (خصم المبلغ المحصل)
+    const updatedInvoice = { ...currentInvoice };
+    const currentPaid = parseFloat(updatedInvoice.paymentPrice) || 0;
+    const currentRest = parseFloat(updatedInvoice.rest) || 0;
+    
+    updatedInvoice.paymentPrice = currentPaid + amount;
+    updatedInvoice.rest = currentRest - amount;
+    
+    // تحديث تفاصيل الدفع في الفاتورة
+    updatedInvoice.cashUSD = (parseFloat(updatedInvoice.cashUSD) || 0) + cU;
+    updatedInvoice.cashEUR = (parseFloat(updatedInvoice.cashEUR) || 0) + cE;
+    updatedInvoice.cashGBP = (parseFloat(updatedInvoice.cashGBP) || 0) + cG;
+    updatedInvoice.cashLE = (parseFloat(updatedInvoice.cashLE) || 0) + cL;
+    updatedInvoice.visaUSD = (parseFloat(updatedInvoice.visaUSD) || 0) + vU;
+    updatedInvoice.visaEUR = (parseFloat(updatedInvoice.visaEUR) || 0) + vE;
+    updatedInvoice.visaGBP = (parseFloat(updatedInvoice.visaGBP) || 0) + vG;
+    updatedInvoice.visaLE = (parseFloat(updatedInvoice.visaLE) || 0) + vL;
+    
+    // حفظ التحديث في الفاتورة
+    const updateResult = await callGAS('updateInvoice', updatedInvoice);
+    if (!updateResult.success) throw new Error(updateResult.message || 'فشل تحديث الفاتورة');
+    
+    hidePDFOv();
+    closeCollectionModal();
+    
+    showAlert(
+      `✅ تم تحصيل ${amount.toFixed(2)} ${currentInvoice.invoiceCurrency || ''}\n` +
+      `المبلغ المتبقي: ${updatedInvoice.rest.toFixed(2)} ${currentInvoice.invoiceCurrency || ''}`,
+      '✅',
+      `<button class="btn btn-save" onclick="location.reload()">تحديث الصفحة</button>
+       <button class="btn btn-save" onclick="goBack()">رجوع</button>`
+    );
+    
+  } catch (err) {
+    hidePDFOv();
+    showAlert('خطأ: ' + err.message, '❌');
+  }
+}
+
+// تحديد نوع الحساب المحاسبي بناءً على اسم العميل
+function getAccountType(customerName) {
+  const customerLower = (customerName || '').toLowerCase();
+  
+  if (customerLower.includes('water') || customerLower.includes('sport') || customerLower.includes('قوارب'))
+    return 'Water Sport Customer';
+  if (customerLower.includes('safari') || customerLower.includes('صحراء'))
+    return 'Safari Customer';
+  if (customerLower.includes('diving') || customerLower.includes('غوص'))
+    return 'Diving Customer';
+  if (customerLower.includes('hotel') || customerLower.includes('فندق'))
+    return 'Hotel Customer';
+  
+  return 'General Customer';
+}
+
+// إضافة زر التحصيل إلى الصفحة
+function addCollectionButton() {
+  const actionRow = document.querySelector('.action-row');
+  if (actionRow && !document.getElementById('collectionBtn')) {
+    const collectionBtn = document.createElement('button');
+    collectionBtn.id = 'collectionBtn';
+    collectionBtn.className = 'btn btn-green';
+    collectionBtn.innerHTML = '💰 تحصيل دفعة';
+    collectionBtn.onclick = openCollectionModal;
+    collectionBtn.style.background = 'linear-gradient(135deg, #16a34a, #15803d)';
+    collectionBtn.style.color = 'white';
+    actionRow.insertBefore(collectionBtn, actionRow.firstChild);
+  }
+}
+
+// تعديل دالة renderForm لإضافة الزر بعد التحميل
+const originalRenderForm = renderForm;
+renderForm = function(tripData, trips, suppliers, customers) {
+  originalRenderForm(tripData, trips, suppliers, customers);
+  setTimeout(addCollectionButton, 100);
+};
 </script>
 </body>
 </html>
