@@ -21,6 +21,7 @@
     .header h2{color:var(--gold);font-size:18px;font-weight:900;display:flex;align-items:center;gap:8px;}
     .header-right{display:flex;align-items:center;gap:8px;}
     .user-chip{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:40px;padding:4px 13px;color:white;font-size:12px;font-weight:600;}
+    .branch-chip{background:rgba(245,200,66,.2);border:1px solid rgba(245,200,66,.4);border-radius:40px;padding:4px 13px;color:var(--gold);font-size:12px;font-weight:700;}
     .back-btn{background:transparent;border:2px solid rgba(255,255,255,.3);color:white;padding:4px 13px;border-radius:40px;cursor:pointer;font-weight:700;font-size:12px;font-family:'Cairo',sans-serif;transition:all .2s;}
     .back-btn:hover{border-color:var(--gold);color:var(--gold);}
 
@@ -102,6 +103,7 @@
   <h2>📈 Sales Report</h2>
   <div class="header-right">
     <span class="user-chip" id="userNameDisplay"></span>
+    <span class="branch-chip" id="branchDisplay" style="display:none"></span>
     <button class="back-btn" onclick="goBack()">← Back</button>
   </div>
 </div>
@@ -112,7 +114,7 @@
     <div class="fgrid">
       <div class="fg"><label>From Date</label><input type="date" class="fc" id="filterDateFrom"></div>
       <div class="fg"><label>To Date</label><input type="date" class="fc" id="filterDateTo"></div>
-      <div class="fg"><label>Branch</label><select class="fc" id="fBranch"><option value="">All Branches</option></select></div>
+      <div class="fg" id="branchFilterWrap"><label>Branch</label><select class="fc" id="fBranch"><option value="">All Branches</option></select></div>
       <div class="fg"><label>Sales Person</label><select class="fc" id="fSales"><option value="">All Sales</option></select></div>
       <div class="fg"><label>Trip</label><select class="fc" id="fTrip"><option value="">All Trips</option></select></div>
       <div class="fg"><label>Hotel</label><select class="fc" id="fHotel"><option value="">All Hotels</option></select></div>
@@ -178,11 +180,9 @@ function fmtNum(n){
   return n.toFixed(2);
 }
 
-// ============ تحويل التاريخ لصيغة YYYY-MM-DD لأسعار الصرف ============
+// ============ تحويل التاريخ لصيغة YYYY-MM-DD ============
 function formatDateForExchangeRate(dateStr){
   if(!dateStr) return null;
-  
-  // DD/MMM/YYYY → YYYY-MM-DD
   const match = dateStr.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
   if(match){
     const day = parseInt(match[1]);
@@ -192,14 +192,9 @@ function formatDateForExchangeRate(dateStr){
       'Jan':'01','Feb':'02','Mar':'03','Apr':'04','May':'05','Jun':'06',
       'Jul':'07','Aug':'08','Sep':'09','Oct':'10','Nov':'11','Dec':'12'
     };
-    const result = `${year}-${monthsMap[month]}-${String(day).padStart(2,'0')}`;
-    return result;
+    return `${year}-${monthsMap[month]}-${String(day).padStart(2,'0')}`;
   }
-  
-  if(dateStr.match(/^\d{4}-\d{2}-\d{2}$/)){
-    return dateStr;
-  }
-  
+  if(dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) return dateStr;
   return null;
 }
 
@@ -208,9 +203,7 @@ async function getExchangeRateForDate(dateStr){
   if(!dateStr) return null;
   const formatted = formatDateForExchangeRate(dateStr);
   if(!formatted) return null;
-  
   if(exchangeRatesCache[formatted]) return exchangeRatesCache[formatted];
-  
   try{
     const res = await fetch(`${GAS_URL}?action=getExchangeRate&dateStr=${formatted}`);
     const rate = await res.json();
@@ -230,16 +223,10 @@ async function getRevenueInEGP(inv){
   const actualPrice = parseFloat(inv.actualPrice) || 0;
   const discount = parseFloat(inv.discount) || 0;
   const netAmount = actualPrice - discount;
-  
   if(netAmount <= 0) return 0;
-  
   const currency = inv.invoiceCurrency || '$';
   const rate = await getExchangeRateForDate(inv.activeDate);
-  
-  if(!rate){
-    return 0;
-  }
-  
+  if(!rate) return 0;
   if(currency === '$') return netAmount * (rate.cash?.USD || 47.5);
   if(currency === '€') return netAmount * (rate.cash?.EUR || 50.25);
   if(currency === '£') return netAmount * (rate.cash?.GBP || 60);
@@ -251,23 +238,44 @@ async function loadData(){
   try{
     const res=await fetch(`${GAS_URL}?action=getAllInvoices`);
     const data=await res.json();
-    allInvoices=Array.isArray(data)?data:[];
+    let invoices=Array.isArray(data)?data:[];
     
     // ✅ تصفية الفواتير حسب صلاحية المستخدم
     if(currentUser?.type === 'Admin'){
       // المدير يرى كل الفواتير
-      // no filter
+      console.log('👑 Admin: عرض جميع الفواتير');
     } 
     else if(currentUser?.type === 'Owner'){
       // صاحب المركز يرى فقط فواتير مركزه
-      allInvoices = allInvoices.filter(i => i.centerName === currentUser.centerName);
+      invoices = invoices.filter(i => i.centerName === currentUser.centerName);
+      console.log(`🏢 Owner: عرض فواتير المركز ${currentUser.centerName} - ${invoices.length} فاتورة`);
+    } 
+    else if(currentUser?.type === 'Accountant'){
+      // المحاسب يرى فقط فواتير الفرع الذي يعمل به
+      if(currentUser.branchName){
+        invoices = invoices.filter(i => i.branchName === currentUser.branchName);
+        console.log(`📊 Accountant: عرض فواتير الفرع ${currentUser.branchName} - ${invoices.length} فاتورة`);
+        // إخفاء فلتر الفرع للمحاسب (لأنه مقيد بفرعه فقط)
+        const branchFilterWrap = document.getElementById('branchFilterWrap');
+        if(branchFilterWrap) branchFilterWrap.style.display = 'none';
+        // عرض اسم الفرع في الشريط العلوي
+        const branchDisplay = document.getElementById('branchDisplay');
+        if(branchDisplay){
+          branchDisplay.textContent = `📍 ${currentUser.branchName}`;
+          branchDisplay.style.display = 'inline-flex';
+        }
+      } else {
+        console.log('⚠️ Accountant: لا يوجد فرع محدد للمستخدم');
+        invoices = [];
+      }
     } 
     else {
       // الموظف العادي يرى فقط فواتيره الشخصية
-      allInvoices = allInvoices.filter(i => i.salesId === currentUser?.id);
+      invoices = invoices.filter(i => i.salesId === currentUser?.id);
+      console.log(`👤 Sales: عرض فواتير ${currentUser?.name} - ${invoices.length} فاتورة`);
     }
     
-    console.log(`✅ تم تحميل ${allInvoices.length} فاتورة للمستخدم ${currentUser?.type}`);
+    allInvoices = invoices;
     
     // تعبئة الفلاتر
     const branchSet=new Set(),salesSet=new Set(),tripSet=new Set(),hotelSet=new Set(),natSet=new Set();
@@ -278,11 +286,38 @@ async function loadData(){
       if(i.hotel) hotelSet.add(i.hotel);
       if(i.nationality) natSet.add(i.nationality);
     });
-    document.getElementById('fBranch').innerHTML='<option value="">All Branches</option>'+Array.from(branchSet).sort().map(v=>`<option value="${v}">${v}</option>`).join('');
-    document.getElementById('fSales').innerHTML='<option value="">All Sales</option>'+Array.from(salesSet).sort().map(v=>`<option value="${v}">${v}</option>`).join('');
-    document.getElementById('fTrip').innerHTML='<option value="">All Trips</option>'+Array.from(tripSet).sort().map(v=>`<option value="${v}">${v}</option>`).join('');
-    document.getElementById('fHotel').innerHTML='<option value="">All Hotels</option>'+Array.from(hotelSet).sort().map(v=>`<option value="${v}">${v}</option>`).join('');
-    document.getElementById('fNat').innerHTML='<option value="">All</option>'+Array.from(natSet).sort().map(v=>`<option value="${v}">${v}</option>`).join('');
+    
+    const branchSelect = document.getElementById('fBranch');
+    if(branchSelect){
+      branchSelect.innerHTML='<option value="">All Branches</option>'+Array.from(branchSet).sort().map(v=>`<option value="${v}">${v}</option>`).join('');
+      // للمحاسب: تحديد الفرع الخاص به تلقائياً وتعطيله
+      if(currentUser?.type === 'Accountant' && currentUser.branchName){
+        branchSelect.value = currentUser.branchName;
+        branchSelect.disabled = true;
+        branchSelect.style.opacity = '0.7';
+        branchSelect.style.cursor = 'not-allowed';
+      }
+    }
+    
+    const salesSelect = document.getElementById('fSales');
+    if(salesSelect){
+      salesSelect.innerHTML='<option value="">All Sales</option>'+Array.from(salesSet).sort().map(v=>`<option value="${v}">${v}</option>`).join('');
+    }
+    
+    const tripSelect = document.getElementById('fTrip');
+    if(tripSelect){
+      tripSelect.innerHTML='<option value="">All Trips</option>'+Array.from(tripSet).sort().map(v=>`<option value="${v}">${v}</option>`).join('');
+    }
+    
+    const hotelSelect = document.getElementById('fHotel');
+    if(hotelSelect){
+      hotelSelect.innerHTML='<option value="">All Hotels</option>'+Array.from(hotelSet).sort().map(v=>`<option value="${v}">${v}</option>`).join('');
+    }
+    
+    const natSelect = document.getElementById('fNat');
+    if(natSelect){
+      natSelect.innerHTML='<option value="">All</option>'+Array.from(natSet).sort().map(v=>`<option value="${v}">${v}</option>`).join('');
+    }
     
     setDefaultDates();
     runReport();
@@ -292,10 +327,14 @@ async function loadData(){
 }
 
 function setDefaultDates(){
-  const today=new Date();
-  const firstDay=new Date(today.getFullYear(),today.getMonth(),1);
-  document.getElementById('filterDateFrom').value=firstDay.toISOString().split('T')[0];
-  document.getElementById('filterDateTo').value=today.toISOString().split('T')[0];
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  const todayStr = `${year}-${month}-${day}`;
+  
+  document.getElementById('filterDateFrom').value = todayStr;
+  document.getElementById('filterDateTo').value = todayStr;
 }
 
 function setFullYear(){
@@ -307,10 +346,18 @@ function setFullYear(){
 
 function resetFilters(){
   setFullYear();
-  ['fBranch','fSales','fTrip','fHotel','fNat','fState'].forEach(id=>{
-    const e=document.getElementById(id);
-    if(e) e.value='';
-  });
+  const fBranch = document.getElementById('fBranch');
+  if(fBranch && !fBranch.disabled) fBranch.value='';
+  const fSales = document.getElementById('fSales');
+  if(fSales) fSales.value='';
+  const fTrip = document.getElementById('fTrip');
+  if(fTrip) fTrip.value='';
+  const fHotel = document.getElementById('fHotel');
+  if(fHotel) fHotel.value='';
+  const fNat = document.getElementById('fNat');
+  if(fNat) fNat.value='';
+  const fState = document.getElementById('fState');
+  if(fState) fState.value='';
   runReport();
 }
 
@@ -355,7 +402,7 @@ function applyFilters(){
 async function runReport(){
   applyFilters();
   if(!filteredInvoices.length){
-    document.getElementById('reportContent').innerHTML='<div class="no-data">No data matches your filters</div>';
+    document.getElementById('reportContent').innerHTML='<div class="no-data">📭 لا توجد بيانات تطابق معايير البحث</div>';
     return;
   }
   
@@ -366,7 +413,7 @@ async function runReport(){
   const rest=filteredInvoices.reduce((s,i)=>s+(parseFloat(i.rest)||0),0);
   const confirmed=filteredInvoices.filter(i=>(i.state||'').toLowerCase()==='confirmed').length;
   
-  // تجميع البيانات حسب الشهر (بالإيرادات المحولة)
+  // تجميع البيانات حسب الشهر
   const monthlyMap={};
   for(const inv of filteredInvoices){
     const dt=parseDate(inv.activeDate);
@@ -385,7 +432,7 @@ async function runReport(){
   const cntData=sortedMonths.map(k=>monthlyMap[k].count);
   const totalRevenue=revData.reduce((a,b)=>a+b,0);
   
-  // تجميع البيانات حسب الرحلات
+  // تجميع حسب الرحلات
   const tripMap={};
   for(const inv of filteredInvoices){
     const trip=inv.trip||'أخرى';
