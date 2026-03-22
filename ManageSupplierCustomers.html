@@ -417,14 +417,27 @@ function updateButtonsState() {
 }
 
 // ============ فتح نافذة الإضافة ============
+// ============ فتح نافذة الإضافة ============
 function openAddModal() {
   isEditMode = false;
   selectedAccount = null;
   currentPricesData = {};
   document.getElementById('modalTitle').textContent = '➕ إضافة حساب جديد';
   document.getElementById('modalIcon').textContent = '➕';
-  renderModalForm();
+  
+  // إظهار مؤشر تحميل داخل النافذة
+  const modalForm = document.getElementById('modalForm');
+  modalForm.innerHTML = '<div style="text-align:center;padding:40px;"><div class="spinner"></div>جاري تحميل النموذج...</div>';
+  
   document.getElementById('customerModal').classList.add('open');
+  
+  // تحميل النموذج
+  renderModalForm().then(() => {
+    // بعد التحميل، تأكد من أن النموذج جاهز
+  }).catch(err => {
+    console.error('Error loading form:', err);
+    modalForm.innerHTML = '<div style="text-align:center;padding:20px;color:red;">حدث خطأ في تحميل النموذج</div>';
+  });
 }
 
 function openEditModal() {
@@ -433,10 +446,17 @@ function openEditModal() {
   currentPricesData = {};
   document.getElementById('modalTitle').textContent = '✏️ تعديل حساب';
   document.getElementById('modalIcon').textContent = '✏️';
-  renderModalForm(true);
+  
+  const modalForm = document.getElementById('modalForm');
+  modalForm.innerHTML = '<div style="text-align:center;padding:40px;"><div class="spinner"></div>جاري تحميل البيانات...</div>';
+  
   document.getElementById('customerModal').classList.add('open');
+  
+  renderModalForm(true).catch(err => {
+    console.error('Error loading form:', err);
+    modalForm.innerHTML = '<div style="text-align:center;padding:20px;color:red;">حدث خطأ في تحميل البيانات</div>';
+  });
 }
-
 function closeModal() {
   document.getElementById('customerModal').classList.remove('open');
   selectedAccount = null;
@@ -647,78 +667,100 @@ async function renderModalForm(isEdit = false) {
 }
 
 // ============ حفظ الحساب ============
+// ============ حفظ الحساب ============
 async function saveAccount() {
-  const category = document.getElementById('category')?.value;
-  const isSubmarine = (category === 'Submarine');
+  const saveBtn = document.querySelector('#customerModal .btn-primary');
+  const originalText = saveBtn.innerHTML;
   
-  const data = {
-    customerName: document.getElementById('customerName')?.value,
-    customerType: document.getElementById('customerType')?.value,
-    category: category,
-    parentCenter: document.getElementById('parentCenter')?.value,
-    contactPerson: document.getElementById('contactPerson')?.value,
-    phone: document.getElementById('phone')?.value,
-    email: document.getElementById('email')?.value,
-    address: document.getElementById('address')?.value,
-    creditLimit: parseFloat(document.getElementById('creditLimit')?.value) || 0,
-    paymentTerms: document.getElementById('paymentTerms')?.value,
-    startDate: document.getElementById('startDate')?.value,
-    endDate: document.getElementById('endDate')?.value,
-    status: document.getElementById('status')?.value === 'true',
-    notes: document.getElementById('notes')?.value,
-    hasSystemAccess: document.getElementById('hasSystemAccess')?.checked || false,
-    loginEmail: document.getElementById('loginEmail')?.value || '',
-    loginPassword: document.getElementById('loginPassword')?.value || ''
-  };
-  
-  // جمع الرحلات المختارة (لغير Submarine)
-  const assignedTrips = [];
-  if (!isSubmarine && document.getElementById('tripsGrid')) {
-    document.querySelectorAll('#tripsGrid input[type="checkbox"]:checked').forEach(cb => {
-      assignedTrips.push(cb.value);
-    });
-  }
-  data.assignedTrips = assignedTrips;
-  
-  // جمع أسعار البنود
-  let pricesData = {};
-  if (isSubmarine) {
-    pricesData = collectSubmarinePricesData();
-    console.log('📊 أسعار Submarine المجمعة:', pricesData);
-  } else {
-    pricesData = collectPricesData();
-    console.log('📊 أسعار الرحلات المجمعة:', pricesData);
-  }
-  data.pricesData = pricesData;
-  
-  // التحقق من الحقول المطلوبة
-  if (!data.customerName) { showAlert('الرجاء إدخال اسم العميل/المنفذ'); return; }
-  if (!data.category) { showAlert('الرجاء اختيار نوع النشاط'); return; }
-  
-  // التحقق من وجود أسعار لـ Submarine
-  if (isSubmarine) {
-    let hasPrices = false;
-    for (const key in pricesData) {
-      if (pricesData[key].PAX > 0 || pricesData[key].CHILD > 0 || pricesData[key].INF > 0) {
-        hasPrices = true;
-        break;
-      }
-    }
-    if (!hasPrices) {
-      showAlert('الرجاء إدخال أسعار رحلات Submarine');
-      return;
-    }
-  } else if (assignedTrips.length === 0) {
-    showAlert('الرجاء اختيار رحلة واحدة على الأقل');
-    return;
-  }
-  
-  if (data.customerType === 'Customer' && data.hasSystemAccess && (!data.loginEmail || !data.loginPassword)) {
-    showAlert('الرجاء إدخال البريد وكلمة المرور للدخول');
-    return;
-  }
+  // تعطيل الزر وإظهار حالة انتظار
+  saveBtn.disabled = true;
+  saveBtn.innerHTML = '⏳ جاري الحفظ...';
   
   try {
+    const category = document.getElementById('category')?.value;
+    const isSubmarine = (category === 'Submarine');
+    
+    const data = {
+      customerName: document.getElementById('customerName')?.value,
+      customerType: document.getElementById('customerType')?.value,
+      category: category,
+      parentCenter: document.getElementById('parentCenter')?.value,
+      contactPerson: document.getElementById('contactPerson')?.value,
+      phone: document.getElementById('phone')?.value,
+      email: document.getElementById('email')?.value,
+      address: document.getElementById('address')?.value,
+      creditLimit: parseFloat(document.getElementById('creditLimit')?.value) || 0,
+      paymentTerms: document.getElementById('paymentTerms')?.value,
+      startDate: document.getElementById('startDate')?.value,
+      endDate: document.getElementById('endDate')?.value,
+      status: document.getElementById('status')?.value === 'true',
+      notes: document.getElementById('notes')?.value,
+      hasSystemAccess: document.getElementById('hasSystemAccess')?.checked || false,
+      loginEmail: document.getElementById('loginEmail')?.value || '',
+      loginPassword: document.getElementById('loginPassword')?.value || ''
+    };
+    
+    // جمع الرحلات المختارة (لغير Submarine)
+    const assignedTrips = [];
+    if (!isSubmarine && document.getElementById('tripsGrid')) {
+      document.querySelectorAll('#tripsGrid input[type="checkbox"]:checked').forEach(cb => {
+        assignedTrips.push(cb.value);
+      });
+    }
+    data.assignedTrips = assignedTrips;
+    
+    // جمع أسعار البنود
+    let pricesData = {};
+    if (isSubmarine) {
+      pricesData = collectSubmarinePricesData();
+    } else {
+      pricesData = collectPricesData();
+    }
+    data.pricesData = pricesData;
+    
+    // التحقق من الحقول المطلوبة
+    if (!data.customerName) { 
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = originalText;
+      showAlert('الرجاء إدخال اسم العميل/المنفذ');
+      return;
+    }
+    if (!data.category) { 
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = originalText;
+      showAlert('الرجاء اختيار نوع النشاط');
+      return;
+    }
+    
+    // التحقق من وجود أسعار لـ Submarine
+    if (isSubmarine) {
+      let hasPrices = false;
+      for (const key in pricesData) {
+        if (pricesData[key].PAX > 0 || pricesData[key].CHILD > 0 || pricesData[key].INF > 0) {
+          hasPrices = true;
+          break;
+        }
+      }
+      if (!hasPrices) {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = originalText;
+        showAlert('الرجاء إدخال أسعار رحلات Submarine');
+        return;
+      }
+    } else if (assignedTrips.length === 0) {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = originalText;
+      showAlert('الرجاء اختيار رحلة واحدة على الأقل');
+      return;
+    }
+    
+    if (data.customerType === 'Customer' && data.hasSystemAccess && (!data.loginEmail || !data.loginPassword)) {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = originalText;
+      showAlert('الرجاء إدخال البريد وكلمة المرور للدخول');
+      return;
+    }
+    
     let result;
     if (isEditMode && selectedAccount) {
       data.customerId = selectedAccount.customerId;
@@ -727,37 +769,56 @@ async function saveAccount() {
       result = await callGAS('addSupplierCustomer', data);
     }
     
+    // إعادة تمكين الزر
+    saveBtn.disabled = false;
+    saveBtn.innerHTML = originalText;
+    
     if (result?.success) {
       closeModal();
       await loadAccounts();
-      showAlert(result.message || 'تم الحفظ بنجاح');
+      showAlert(result.message || '✅ تم الحفظ بنجاح');
     } else {
-      showAlert(result?.message || 'فشل الحفظ');
+      showAlert(result?.message || '❌ فشل الحفظ');
     }
   } catch(e) {
-    showAlert('خطأ: ' + e.message);
+    saveBtn.disabled = false;
+    saveBtn.innerHTML = originalText;
+    showAlert('❌ خطأ: ' + e.message);
   }
 }
-
+// ============ حذف الحساب ============
 // ============ حذف الحساب ============
 async function deleteAccount() {
   if (!selectedAccount) return;
-  if (!confirm(`هل أنت متأكد من حذف حساب ${selectedAccount.customerName}؟`)) return;
+  
+  // تأكيد الحذف
+  if (!confirm(`⚠️ هل أنت متأكد من حذف حساب ${selectedAccount.customerName}؟\n\nهذا الإجراء لا يمكن التراجع عنه.`)) return;
+  
+  const deleteBtn = document.getElementById('deleteBtn');
+  const originalText = deleteBtn.innerHTML;
+  
+  deleteBtn.disabled = true;
+  deleteBtn.innerHTML = '⏳ جاري الحذف...';
   
   try {
     const result = await callGAS('deleteSupplierCustomer', { customerId: selectedAccount.customerId });
+    
+    deleteBtn.disabled = false;
+    deleteBtn.innerHTML = originalText;
+    
     if (result?.success) {
       selectedAccount = null;
       await loadAccounts();
-      showAlert('تم الحذف بنجاح');
+      showAlert('✅ تم الحذف بنجاح');
     } else {
-      showAlert(result?.message || 'فشل الحذف');
+      showAlert(result?.message || '❌ فشل الحذف');
     }
   } catch(e) {
-    showAlert('خطأ: ' + e.message);
+    deleteBtn.disabled = false;
+    deleteBtn.innerHTML = originalText;
+    showAlert('❌ خطأ: ' + e.message);
   }
 }
-
 // ============ تهيئة الصفحة ============
 document.addEventListener('DOMContentLoaded', async () => {
   let ud = sessionStorage.getItem('currentUser');
