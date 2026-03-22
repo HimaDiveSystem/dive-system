@@ -74,7 +74,7 @@
     /* Modal */
     .modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);align-items:center;justify-content:center;z-index:9999;backdrop-filter:blur(4px);}
     .modal.open{display:flex;}
-    .modal-box{background:white;width:90%;max-width:800px;max-height:85vh;overflow-y:auto;border-radius:22px;padding:24px;box-shadow:0 25px 50px rgba(0,0,0,.3);animation:pop .25s ease;}
+    .modal-box{background:white;width:90%;max-width:900px;max-height:85vh;overflow-y:auto;border-radius:22px;padding:24px;box-shadow:0 25px 50px rgba(0,0,0,.3);animation:pop .25s ease;}
     .modal-icon{font-size:44px;margin-bottom:10px;text-align:center;}
     .modal-msg{color:var(--navy);font-size:15px;font-weight:700;margin-bottom:18px;text-align:center;}
     .modal-btns{display:flex;gap:10px;justify-content:center;margin-top:20px;}
@@ -93,6 +93,10 @@
     @keyframes spin{to{transform:rotate(360deg)}}
     .no-data{text-align:center;padding:40px;color:var(--text-lt);}
 
+    /* Price Section */
+    .price-card{background:#f8fafc;border-radius:12px;padding:12px;margin-top:12px;}
+    .price-card h4{color:var(--navy);font-weight:800;margin-bottom:12px;border-right:3px solid var(--gold);padding-right:8px;}
+    
     @media(max-width:680px){.fgrid{grid-template-columns:1fr;}}
   </style>
 </head>
@@ -142,6 +146,7 @@ let categoriesList = [];
 let tripsList = [];
 let selectedAccount = null;
 let isEditMode = false;
+let currentPricesData = {};
 
 // ============ دوال أساسية ============
 function showAlert(msg) {
@@ -183,6 +188,76 @@ async function loadAccounts() {
     allAccounts = Array.isArray(res) ? res : [];
     renderTable();
   } catch(e) { showAlert('خطأ في تحميل البيانات: ' + e.message); }
+}
+
+// ============ جلب بنود الرحلة ============
+async function getTripItemsByName(tripName) {
+  try {
+    const res = await callGAS('getTripItemsByName', { tripName });
+    return Array.isArray(res) ? res : [];
+  } catch(e) { return []; }
+}
+
+// ============ عرض أسعار البنود ============
+async function renderPricesSection(selectedTrips, existingPrices = null) {
+  const container = document.getElementById('pricesContainer');
+  if (!container) return;
+  
+  if (!selectedTrips || selectedTrips.length === 0) {
+    container.innerHTML = '<div style="text-align:center;padding:20px;color:#94a3b8">اختر الرحلات أولاً</div>';
+    return;
+  }
+  
+  let html = '';
+  for (const tripName of selectedTrips) {
+    const items = await getTripItemsByName(tripName);
+    if (items && items.length) {
+      html += `<div class="price-card" style="margin-bottom:16px">
+        <h4>📍 ${tripName}</h4>
+        <div class="fgrid">`;
+      
+      for (const item of items) {
+        const key = `${tripName}_${item}`;
+        const existingPrice = existingPrices?.[key]?.price || '';
+        const existingCurrency = existingPrices?.[key]?.currency || 'USD';
+        html += `
+          <div class="fgroup">
+            <label>${item}</label>
+            <div style="display:flex;gap:5px;">
+              <input type="number" class="fc" id="price_${key.replace(/[^a-zA-Z0-9]/g, '_')}" placeholder="السعر" value="${existingPrice}" style="flex:2">
+              <select class="fc" id="curr_${key.replace(/[^a-zA-Z0-9]/g, '_')}" style="flex:1;width:80px">
+                <option value="USD" ${existingCurrency === 'USD' ? 'selected' : ''}>USD</option>
+                <option value="EUR" ${existingCurrency === 'EUR' ? 'selected' : ''}>EUR</option>
+                <option value="GBP" ${existingCurrency === 'GBP' ? 'selected' : ''}>GBP</option>
+                <option value="LE" ${existingCurrency === 'LE' ? 'selected' : ''}>LE</option>
+              </select>
+            </div>
+          </div>
+        `;
+      }
+      html += `</div></div>`;
+    }
+  }
+  container.innerHTML = html;
+}
+
+// ============ جمع أسعار البنود ============
+function collectPricesData() {
+  const prices = {};
+  const container = document.getElementById('pricesContainer');
+  if (!container) return prices;
+  
+  document.querySelectorAll('#pricesContainer input[type="number"]').forEach(input => {
+    const key = input.id.replace('price_', '');
+    const currSelect = document.getElementById(`curr_${key}`);
+    if (currSelect) {
+      prices[key] = {
+        price: parseFloat(input.value) || 0,
+        currency: currSelect.value
+      };
+    }
+  });
+  return prices;
 }
 
 // ============ عرض الجدول ============
@@ -228,7 +303,7 @@ function renderTable() {
         <div class="table-wrapper">
           <table class="data-table">
             <thead>
-              <tr><th>المعرف</th><th>الاسم</th><th>النوع</th><th>النشاط</th><th>شخص التواصل</th><th>الهاتف</th><th>الحالة</th><th>الرصيد</th></tr>
+              <tr><th>المعرف</th><th>الاسم</th><th>النوع</th><th>النشاط</th><th>شخص التواصل</th><th>الهاتف</th><th>الحالة</th><th>الرصيد</th>〈/th〉
             </thead>
             <tbody>
               ${filtered.length ? filtered.map(acc => `
@@ -269,6 +344,7 @@ function updateButtonsState() {
 function openAddModal() {
   isEditMode = false;
   selectedAccount = null;
+  currentPricesData = {};
   document.getElementById('modalTitle').textContent = '➕ إضافة حساب جديد';
   document.getElementById('modalIcon').textContent = '➕';
   renderModalForm();
@@ -278,6 +354,7 @@ function openAddModal() {
 function openEditModal() {
   if (!selectedAccount) return;
   isEditMode = true;
+  currentPricesData = {};
   document.getElementById('modalTitle').textContent = '✏️ تعديل حساب';
   document.getElementById('modalIcon').textContent = '✏️';
   renderModalForm(true);
@@ -288,6 +365,26 @@ function closeModal() {
   document.getElementById('customerModal').classList.remove('open');
   selectedAccount = null;
   isEditMode = false;
+  currentPricesData = {};
+}
+
+// ============ تحديث قسم الأسعار ============
+async function updatePricesSection() {
+  const selectedTrips = [];
+  document.querySelectorAll('#tripsGrid input[type="checkbox"]:checked').forEach(cb => {
+    selectedTrips.push(cb.value);
+  });
+  
+  if (selectedTrips.length > 0) {
+    await renderPricesSection(selectedTrips, currentPricesData);
+    const pricesCard = document.getElementById('pricesCard');
+    if (pricesCard) pricesCard.style.display = 'block';
+  } else {
+    const pricesCard = document.getElementById('pricesCard');
+    if (pricesCard) pricesCard.style.display = 'none';
+    const container = document.getElementById('pricesContainer');
+    if (container) container.innerHTML = '';
+  }
 }
 
 // ============ عرض نموذج الإضافة/التعديل ============
@@ -296,16 +393,18 @@ async function renderModalForm(isEdit = false) {
   
   // جلب قائمة الرحلات حسب النشاط المختار
   let tripsHtml = '';
+  let selectedTrips = [];
   if (data.category) {
     const trips = await loadTripsByCategory(data.category);
     const assignedTrips = data.assignedTrips ? data.assignedTrips.split('|') : [];
+    selectedTrips = assignedTrips;
     tripsHtml = `
       <div class="fgroup">
         <label>الرحلات المخصصة</label>
         <div class="trips-grid" id="tripsGrid">
           ${trips.map(trip => `
             <div class="trip-check">
-              <input type="checkbox" id="trip_${trip.replace(/\s/g, '_')}" value="${trip}" ${assignedTrips.includes(trip) ? 'checked' : ''}>
+              <input type="checkbox" id="trip_${trip.replace(/\s/g, '_')}" value="${trip}" ${assignedTrips.includes(trip) ? 'checked' : ''} onchange="updatePricesSection()">
               <label for="trip_${trip.replace(/\s/g, '_')}">${trip}</label>
             </div>
           `).join('')}
@@ -361,12 +460,32 @@ async function renderModalForm(isEdit = false) {
       <div class="fgroup"><label>ملاحظات</label><textarea class="fc" id="notes" rows="2">${data.notes || ''}</textarea></div>
     </div>
     ${tripsHtml}
+    <div id="pricesCard" style="display:${selectedTrips.length > 0 ? 'block' : 'none'}; margin-top:12px">
+      <div class="card">
+        <div class="card-head"><span class="ch-icon">💰</span><h3>أسعار البنود (لكل عميل)</h3></div>
+        <div class="card-body" id="pricesContainer"></div>
+      </div>
+    </div>
     ${systemAccessHtml}
   `;
   
   document.getElementById('modalForm').innerHTML = formHtml;
   
-  // إضافة event listeners للدوال المساعدة
+  // إذا كان هناك رحلات مختارة، عرض أسعارها
+  if (selectedTrips.length > 0) {
+    // إذا كان تعديل، جلب الأسعار الموجودة
+    if (isEdit && data.customerId) {
+      try {
+        const priceRes = await callGAS('getAccountPrices', { customerId: data.customerId });
+        if (priceRes && priceRes.prices) {
+          currentPricesData = priceRes.prices;
+        }
+      } catch(e) { console.warn('load prices error:', e); }
+    }
+    await renderPricesSection(selectedTrips, currentPricesData);
+  }
+  
+  // إضافة event listeners
   window.onCustomerTypeChange = function() {
     const type = document.getElementById('customerType').value;
     const systemFields = document.getElementById('systemFields');
@@ -388,11 +507,15 @@ async function renderModalForm(isEdit = false) {
       if (tripsGrid) {
         tripsGrid.innerHTML = trips.map(trip => `
           <div class="trip-check">
-            <input type="checkbox" id="trip_${trip.replace(/\s/g, '_')}" value="${trip}">
+            <input type="checkbox" id="trip_${trip.replace(/\s/g, '_')}" value="${trip}" onchange="updatePricesSection()">
             <label for="trip_${trip.replace(/\s/g, '_')}">${trip}</label>
           </div>
         `).join('');
       }
+      // إخفاء قسم الأسعار عند تغيير النشاط
+      const pricesCard = document.getElementById('pricesCard');
+      if (pricesCard) pricesCard.style.display = 'none';
+      currentPricesData = {};
     }
   };
   
@@ -403,6 +526,8 @@ async function renderModalForm(isEdit = false) {
       systemFields.style.display = checked ? 'grid' : 'none';
     }
   };
+  
+  window.updatePricesSection = updatePricesSection;
 }
 
 // ============ حفظ الحساب ============
@@ -435,6 +560,10 @@ async function saveAccount() {
     });
   }
   data.assignedTrips = assignedTrips;
+  
+  // جمع أسعار البنود
+  const pricesData = collectPricesData();
+  data.pricesData = pricesData;
   
   // التحقق من الحقول المطلوبة
   if (!data.customerName) { showAlert('الرجاء إدخال اسم العميل/المنفذ'); return; }
@@ -509,6 +638,7 @@ window.closeModal = closeModal;
 window.closeAlert = closeAlert;
 window.goBack = goBack;
 window.selectAccount = selectAccount;
+window.updatePricesSection = updatePricesSection;
 window.onCategoryChange = onCategoryChange;
 window.onCustomerTypeChange = onCustomerTypeChange;
 window.toggleSystemFields = toggleSystemFields;
