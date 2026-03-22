@@ -314,26 +314,49 @@ function collectSubmarinePricesData() {
 function collectPricesData() {
   const prices = {};
   const container = document.getElementById('pricesContainer');
-  console.log('🔍 pricesContainer:', container);
-  if (!container) return prices;
+  console.log('🔍 جمع الأسعار من:', container);
   
-  console.log('🔍 عدد inputs:', container.querySelectorAll('input[type="number"]').length);
+  if (!container) {
+    console.log('⚠️ pricesContainer غير موجود');
+    return prices;
+  }
   
-  container.querySelectorAll('input[type="number"]').forEach(input => {
+  // البحث عن جميع حقول الأسعار
+  const priceInputs = container.querySelectorAll('input[type="number"]');
+  console.log(`🔍 عدد حقول الأسعار: ${priceInputs.length}`);
+  
+  priceInputs.forEach(input => {
     const key = input.id.replace('price_', '');
     const currSelect = document.getElementById(`curr_${key}`);
+    
     if (currSelect) {
-      const price = parseFloat(input.value) || 0;
+      const priceValue = parseFloat(input.value) || 0;
       const currency = currSelect.value;
-      if (price > 0) {
-        prices[key] = {
-          price: price,
-          currency: currency
-        };
-        console.log(`✅ جمع السعر: ${key} = ${price} ${currency}`);
+      
+      if (priceValue > 0) {
+        // التحقق من نوع البيانات (Submarine أم عادي)
+        if (key.includes('_PAX') || key.includes('_CHILD') || key.includes('_INF')) {
+          // بيانات Submarine
+          const baseKey = key.replace('_PAX', '').replace('_CHILD', '').replace('_INF', '');
+          if (!prices[baseKey]) {
+            prices[baseKey] = { PAX: 0, CHILD: 0, INF: 0, currency: currency };
+          }
+          if (key.endsWith('_PAX')) prices[baseKey].PAX = priceValue;
+          if (key.endsWith('_CHILD')) prices[baseKey].CHILD = priceValue;
+          if (key.endsWith('_INF')) prices[baseKey].INF = priceValue;
+        } else {
+          // بيانات الرحلات العادية
+          prices[key] = {
+            price: priceValue,
+            currency: currency
+          };
+        }
+        console.log(`✅ جمع: ${key} = ${priceValue} ${currency}`);
       }
     }
   });
+  
+  console.log('📦 الأسعار المجمعة:', prices);
   return prices;
 }
 // ============ عرض الجدول ============
@@ -465,32 +488,41 @@ function closeModal() {
 }
 
 // ============ تحديث قسم الأسعار حسب نوع النشاط ============
+// ============ تحديث قسم الأسعار حسب نوع النشاط ============
 async function updatePricesSection() {
   const category = document.getElementById('category')?.value;
   const isSubmarine = (category === 'Submarine');
+  
+  console.log('🔄 تحديث قسم الأسعار - النشاط:', category, 'isSubmarine:', isSubmarine);
   
   if (isSubmarine) {
     await renderSubmarinePricesSection(currentPricesData);
     const pricesCard = document.getElementById('pricesCard');
     if (pricesCard) pricesCard.style.display = 'block';
+    console.log('✅ تم عرض أسعار Submarine');
   } else {
     const selectedTrips = [];
     document.querySelectorAll('#tripsGrid input[type="checkbox"]:checked').forEach(cb => {
       selectedTrips.push(cb.value);
     });
     
+    console.log('📋 الرحلات المختارة:', selectedTrips);
+    
     if (selectedTrips.length > 0) {
       await renderPricesSection(selectedTrips, currentPricesData);
       const pricesCard = document.getElementById('pricesCard');
       if (pricesCard) pricesCard.style.display = 'block';
+      console.log('✅ تم عرض أسعار الرحلات المختارة');
     } else {
       const pricesCard = document.getElementById('pricesCard');
       if (pricesCard) pricesCard.style.display = 'none';
       const container = document.getElementById('pricesContainer');
-      if (container) container.innerHTML = '';
+      if (container) container.innerHTML = '<div style="text-align:center;padding:20px;color:#94a3b8">اختر الرحلات أولاً</div>';
+      console.log('⚠️ لا توجد رحلات مختارة');
     }
   }
 }
+
 
 // ============ عرض نموذج الإضافة/التعديل ============
 async function renderModalForm(isEdit = false) {
@@ -620,40 +652,44 @@ async function renderModalForm(isEdit = false) {
   };
   
   window.onCategoryChange = async function() {
-  const category = document.getElementById('category').value;
-  const isSubmarineCat = (category === 'Submarine');
-  
-  if (category) {
-    if (!isSubmarineCat) {
-      const trips = await loadTripsByCategory(category);
-      const tripsGrid = document.getElementById('tripsGrid');
-      if (tripsGrid) {
-        if (trips && trips.length > 0) {
-          tripsGrid.innerHTML = trips.map(trip => `
-            <div class="trip-check">
-              <input type="checkbox" id="trip_${trip.replace(/\s/g, '_')}" value="${trip}" onchange="updatePricesSection()">
-              <label for="trip_${trip.replace(/\s/g, '_')}">${trip}</label>
-            </div>
-          `).join('');
-        } else {
-          tripsGrid.innerHTML = '<div style="text-align:center;padding:12px;">⚠️ لا توجد رحلات متاحة لهذا النشاط</div>';
+    const category = document.getElementById('category').value;
+    const isSubmarineCat = (category === 'Submarine');
+    
+    console.log('🔄 تغيير النشاط إلى:', category, 'isSubmarine:', isSubmarineCat);
+    
+    if (category) {
+      if (!isSubmarineCat) {
+        const trips = await loadTripsByCategory(category);
+        const tripsGrid = document.getElementById('tripsGrid');
+        if (tripsGrid) {
+          if (trips && trips.length > 0) {
+            tripsGrid.innerHTML = trips.map(trip => `
+              <div class="trip-check">
+                <input type="checkbox" id="trip_${trip.replace(/\s/g, '_')}" value="${trip}" onchange="updatePricesSection()">
+                <label for="trip_${trip.replace(/\s/g, '_')}">${trip}</label>
+              </div>
+            `).join('');
+          } else {
+            tripsGrid.innerHTML = '<div style="text-align:center;padding:12px;">⚠️ لا توجد رحلات متاحة لهذا النشاط</div>';
+          }
         }
+        const pricesCard = document.getElementById('pricesCard');
+        if (pricesCard) pricesCard.style.display = 'none';
+        currentPricesData = {};
+        const container = document.getElementById('pricesContainer');
+        if (container) container.innerHTML = '';
+      } else {
+        // حالة Submarine
+        const tripsGrid = document.getElementById('tripsGrid');
+        if (tripsGrid) {
+          tripsGrid.innerHTML = `<div style="background:#f0f4f8;text-align:center;padding:12px;">⚠️ يتم استخدام قالب Master_Submarine لهذا النشاط</div>`;
+        }
+        const pricesCard = document.getElementById('pricesCard');
+        if (pricesCard) pricesCard.style.display = 'block';
+        await renderSubmarinePricesSection(currentPricesData);
       }
-      const pricesCard = document.getElementById('pricesCard');
-      if (pricesCard) pricesCard.style.display = 'none';
-      currentPricesData = {};
-    } else {
-      // حالة Submarine
-      const tripsGrid = document.getElementById('tripsGrid');
-      if (tripsGrid) {
-        tripsGrid.innerHTML = `<div style="background:#f0f4f8;text-align:center;padding:12px;">⚠️ يتم استخدام قالب Master_Submarine لهذا النشاط</div>`;
-      }
-      const pricesCard = document.getElementById('pricesCard');
-      if (pricesCard) pricesCard.style.display = 'block';
-      await renderSubmarinePricesSection(currentPricesData);
     }
-  }
-};
+  };
   
   window.toggleSystemFields = function() {
     const checked = document.getElementById('hasSystemAccess').checked;
@@ -664,8 +700,14 @@ async function renderModalForm(isEdit = false) {
   };
   
   window.updatePricesSection = updatePricesSection;
+  
+  // تأخير صغير للتأكد من اكتمال عرض العناصر
+  setTimeout(() => {
+    if (selectedTrips.length > 0 && !isSubmarine) {
+      updatePricesSection();
+    }
+  }, 100);
 }
-
 // ============ حفظ الحساب ============
 // ============ حفظ الحساب ============
 async function saveAccount() {
