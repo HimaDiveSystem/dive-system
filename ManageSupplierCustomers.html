@@ -505,67 +505,12 @@ async function updatePricesSection() {
 }
 
 // ============ عرض نموذج الإضافة/التعديل ============
+// ============ عرض نموذج الإضافة/التعديل ============
 async function renderModalForm(isEdit = false) {
   const data = isEdit ? selectedAccount : {};
   const isSubmarine = (data.category === 'Submarine');
   
-  // جلب قائمة الرحلات حسب النشاط المختار (لغير Submarine)
-  let tripsHtml = '';
-  let selectedTrips = [];
-  if (data.category && !isSubmarine) {
-    const trips = await loadTripsByCategory(data.category);
-    const assignedTrips = data.assignedTrips ? data.assignedTrips.split('|') : [];
-    selectedTrips = assignedTrips;
-    
-    if (trips && trips.length > 0) {
-      tripsHtml = `
-        <div class="fgroup">
-          <label>الرحلات المخصصة</label>
-          <div class="trips-grid" id="tripsGrid">
-            ${trips.map(trip => `
-              <div class="trip-check">
-                <input type="checkbox" id="trip_${trip.replace(/\s/g, '_')}" value="${trip}" ${assignedTrips.includes(trip) ? 'checked' : ''} onchange="updatePricesSection()">
-                <label for="trip_${trip.replace(/\s/g, '_')}">${trip}</label>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      `;
-    } else {
-      tripsHtml = `
-        <div class="fgroup">
-          <label>الرحلات المخصصة</label>
-          <div class="trips-grid" style="background:#f0f4f8;text-align:center;padding:12px;">
-            ⚠️ لا توجد رحلات متاحة لهذا النشاط
-          </div>
-        </div>
-      `;
-    }
-  } else if (isSubmarine) {
-    tripsHtml = `
-      <div class="fgroup">
-        <label>⚠️ رحلات Submarine</label>
-        <div class="trips-grid" style="background:#f0f4f8;text-align:center;padding:12px;">
-          يتم استخدام قالب Master_Submarine لهذا النشاط
-        </div>
-      </div>
-    `;
-  }
-  
-  const systemAccessHtml = `
-    <div class="fgroup">
-      <label>🔐 الوصول للنظام</label>
-      <label style="display:flex;align-items:center;gap:8px;">
-        <input type="checkbox" id="hasSystemAccess" ${data.hasSystemAccess ? 'checked' : ''} onchange="toggleSystemFields()">
-        <span>يسمح له باستخدام النظام (للعملاء فقط)</span>
-      </label>
-    </div>
-    <div id="systemFields" style="display:${data.hasSystemAccess ? 'grid' : 'none'}; grid-template-columns:repeat(2,1fr); gap:12px;">
-      <div class="fgroup"><label>البريد للدخول</label><input type="email" class="fc" id="loginEmail" value="${data.loginEmail || ''}"></div>
-      <div class="fgroup"><label>كلمة المرور</label><input type="password" class="fc" id="loginPassword" value="${data.loginPassword || ''}"></div>
-    </div>
-  `;
-  
+  // إنشاء هيكل النموذج الأساسي
   const formHtml = `
     <div class="fgrid">
       <div class="fgroup"><label class="req">اسم العميل/المنفذ</label><input type="text" class="fc" id="customerName" value="${data.customerName || ''}" required></div>
@@ -598,26 +543,56 @@ async function renderModalForm(isEdit = false) {
       </div>
       <div class="fgroup"><label>ملاحظات</label><textarea class="fc" id="notes" rows="2">${data.notes || ''}</textarea></div>
     </div>
-    ${tripsHtml}
-    <div id="pricesCard" style="display:${(selectedTrips.length > 0 || isSubmarine) ? 'block' : 'none'}; margin-top:12px">
+    
+    <div class="fgroup">
+      <label>الرحلات المخصصة</label>
+      <div class="trips-grid" id="tripsGrid" style="min-height:100px;">
+        ${isSubmarine ? '<div style="text-align:center;padding:20px;">⚠️ يتم استخدام قالب Master_Submarine لهذا النشاط</div>' : '<div style="text-align:center;padding:20px;color:#94a3b8">اختر نوع النشاط أولاً</div>'}
+      </div>
+    </div>
+    
+    <div id="pricesCard" style="display:none; margin-top:12px">
       <div class="card">
         <div class="card-head"><span class="ch-icon">💰</span><h3>أسعار البنود (لكل عميل)</h3></div>
         <div class="card-body" id="pricesContainer"></div>
       </div>
     </div>
-    ${systemAccessHtml}
+    
+    <div class="fgroup">
+      <label>🔐 الوصول للنظام</label>
+      <label style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" id="hasSystemAccess" ${data.hasSystemAccess ? 'checked' : ''} onchange="toggleSystemFields()">
+        <span>يسمح له باستخدام النظام (للعملاء فقط)</span>
+      </label>
+    </div>
+    <div id="systemFields" style="display:${data.hasSystemAccess ? 'grid' : 'none'}; grid-template-columns:repeat(2,1fr); gap:12px;">
+      <div class="fgroup"><label>البريد للدخول</label><input type="email" class="fc" id="loginEmail" value="${data.loginEmail || ''}"></div>
+      <div class="fgroup"><label>كلمة المرور</label><input type="password" class="fc" id="loginPassword" value="${data.loginPassword || ''}"></div>
+    </div>
   `;
   
   document.getElementById('modalForm').innerHTML = formHtml;
   
-  // عرض الأسعار حسب النوع
+  // إذا كان هناك رحلات مختارة مسبقاً (في حالة التعديل) أو كان Submarine
   if (isSubmarine) {
     await renderSubmarinePricesSection(currentPricesData);
-  } else if (selectedTrips.length > 0) {
-    await renderPricesSection(selectedTrips, currentPricesData);
+    const pricesCard = document.getElementById('pricesCard');
+    if (pricesCard) pricesCard.style.display = 'block';
+  } else if (data.category && data.assignedTrips) {
+    const trips = await loadTripsByCategory(data.category);
+    const assignedTrips = data.assignedTrips.split('|');
+    const tripsGrid = document.getElementById('tripsGrid');
+    if (tripsGrid && trips.length > 0) {
+      tripsGrid.innerHTML = trips.map(trip => `
+        <div class="trip-check">
+          <input type="checkbox" id="trip_${trip.replace(/\s/g, '_')}" value="${trip}" ${assignedTrips.includes(trip) ? 'checked' : ''} onchange="updatePricesSection()">
+          <label for="trip_${trip.replace(/\s/g, '_')}">${trip}</label>
+        </div>
+      `).join('');
+    }
   }
   
-  // إضافة event listeners
+  // تعريف الدوال في النطاق العام
   window.onCustomerTypeChange = function() {
     const type = document.getElementById('customerType').value;
     const systemFields = document.getElementById('systemFields');
@@ -634,40 +609,41 @@ async function renderModalForm(isEdit = false) {
   window.onCategoryChange = async function() {
     const category = document.getElementById('category').value;
     const isSubmarineCat = (category === 'Submarine');
+    const tripsGrid = document.getElementById('tripsGrid');
+    const pricesCard = document.getElementById('pricesCard');
+    const pricesContainer = document.getElementById('pricesContainer');
     
     console.log('🔄 تغيير النشاط إلى:', category, 'isSubmarine:', isSubmarineCat);
     
-    if (category) {
-      if (!isSubmarineCat) {
-        const trips = await loadTripsByCategory(category);
-        const tripsGrid = document.getElementById('tripsGrid');
-        if (tripsGrid) {
-          if (trips && trips.length > 0) {
-            tripsGrid.innerHTML = trips.map(trip => `
-              <div class="trip-check">
-                <input type="checkbox" id="trip_${trip.replace(/\s/g, '_')}" value="${trip}" onchange="updatePricesSection()">
-                <label for="trip_${trip.replace(/\s/g, '_')}">${trip}</label>
-              </div>
-            `).join('');
-          } else {
-            tripsGrid.innerHTML = '<div style="text-align:center;padding:12px;">⚠️ لا توجد رحلات متاحة لهذا النشاط</div>';
-          }
+    if (!category) {
+      if (tripsGrid) tripsGrid.innerHTML = '<div style="text-align:center;padding:20px;color:#94a3b8">اختر نوع النشاط أولاً</div>';
+      if (pricesCard) pricesCard.style.display = 'none';
+      return;
+    }
+    
+    if (isSubmarineCat) {
+      // حالة Submarine
+      if (tripsGrid) tripsGrid.innerHTML = '<div style="text-align:center;padding:20px;">⚠️ يتم استخدام قالب Master_Submarine لهذا النشاط</div>';
+      if (pricesCard) pricesCard.style.display = 'block';
+      await renderSubmarinePricesSection(currentPricesData);
+    } else {
+      // حالة الرحلات العادية
+      const trips = await loadTripsByCategory(category);
+      if (tripsGrid) {
+        if (trips && trips.length > 0) {
+          tripsGrid.innerHTML = trips.map(trip => `
+            <div class="trip-check">
+              <input type="checkbox" id="trip_${trip.replace(/\s/g, '_')}" value="${trip}" onchange="updatePricesSection()">
+              <label for="trip_${trip.replace(/\s/g, '_')}">${trip}</label>
+            </div>
+          `).join('');
+        } else {
+          tripsGrid.innerHTML = '<div style="text-align:center;padding:20px;">⚠️ لا توجد رحلات متاحة لهذا النشاط</div>';
         }
-        const pricesCard = document.getElementById('pricesCard');
-        if (pricesCard) pricesCard.style.display = 'none';
-        currentPricesData = {};
-        const container = document.getElementById('pricesContainer');
-        if (container) container.innerHTML = '';
-      } else {
-        // حالة Submarine
-        const tripsGrid = document.getElementById('tripsGrid');
-        if (tripsGrid) {
-          tripsGrid.innerHTML = `<div style="background:#f0f4f8;text-align:center;padding:12px;">⚠️ يتم استخدام قالب Master_Submarine لهذا النشاط</div>`;
-        }
-        const pricesCard = document.getElementById('pricesCard');
-        if (pricesCard) pricesCard.style.display = 'block';
-        await renderSubmarinePricesSection(currentPricesData);
       }
+      if (pricesCard) pricesCard.style.display = 'none';
+      if (pricesContainer) pricesContainer.innerHTML = '';
+      currentPricesData = {};
     }
   };
   
@@ -679,15 +655,49 @@ async function renderModalForm(isEdit = false) {
     }
   };
   
-  window.updatePricesSection = updatePricesSection;
-  
-  // تأخير صغير للتأكد من اكتمال عرض العناصر
-  setTimeout(() => {
-    if (selectedTrips.length > 0 && !isSubmarine) {
-      updatePricesSection();
+  window.updatePricesSection = async function() {
+    const category = document.getElementById('category')?.value;
+    const isSubmarine = (category === 'Submarine');
+    const pricesCard = document.getElementById('pricesCard');
+    const pricesContainer = document.getElementById('pricesContainer');
+    
+    console.log('🔄 تحديث الأسعار - النشاط:', category);
+    
+    if (isSubmarine) {
+      await renderSubmarinePricesSection(currentPricesData);
+      if (pricesCard) pricesCard.style.display = 'block';
+    } else {
+      const selectedTrips = [];
+      document.querySelectorAll('#tripsGrid input[type="checkbox"]:checked').forEach(cb => {
+        selectedTrips.push(cb.value);
+      });
+      
+      console.log('📋 الرحلات المختارة:', selectedTrips);
+      
+      if (selectedTrips.length > 0) {
+        await renderPricesSection(selectedTrips, currentPricesData);
+        if (pricesCard) pricesCard.style.display = 'block';
+      } else {
+        if (pricesCard) pricesCard.style.display = 'none';
+        if (pricesContainer) pricesContainer.innerHTML = '<div style="text-align:center;padding:20px;color:#94a3b8">اختر الرحلات أولاً</div>';
+      }
     }
-  }, 100);
+  };
+  
+  // إذا كان هناك رحلات مختارة مسبقاً في حالة التعديل
+  if (!isSubmarine && data.category && data.assignedTrips) {
+    setTimeout(() => {
+      const trips = data.assignedTrips.split('|');
+      trips.forEach(trip => {
+        const cb = document.getElementById(`trip_${trip.replace(/\s/g, '_')}`);
+        if (cb) cb.checked = true;
+      });
+      window.updatePricesSection();
+    }, 100);
+  }
 }
+
+  
 
 // ============ حفظ الحساب ============
 async function saveAccount() {
