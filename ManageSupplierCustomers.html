@@ -478,7 +478,6 @@ async function openEdit() {
     });
     if (datesRes?.success) {
       _editSheetDates = datesRes;
-      // تعيين التواريخ المحفوظة في الكائن
       selectedAccount._sheetFirstDate = datesRes.firstDate;
       selectedAccount._sheetLastDate = datesRes.lastDate;
       selectedAccount._sheetFirstDateISO = datesRes.firstDateISO;
@@ -495,6 +494,36 @@ async function openEdit() {
     } else {
       selectedAccount._sheetInfo = '⚠️ لم يتم العثور على شيت للحساب';
     }
+    
+    // جلب الرحلات والبنود الموجودة في الشيت (للأنشطة غير Submarine)
+    const category = selectedAccount.category;
+    if (category !== 'Submarine') {
+      const tripsRes = await gasPost({
+        action: 'getExistingTripsAndPrices',
+        customerId: selectedAccount.customerId
+      });
+      if (tripsRes?.success && tripsRes.tripsData) {
+        selectedAccount._existingTripsData = tripsRes.tripsData;
+        selectedAccount._existingPricesData = tripsRes.pricesData;
+        selectedAccount._existingTripsList = tripsRes.tripsData.map(t => t.name);
+        
+        // تحميل بنود الرحلات الموجودة في tripItems
+        for (const trip of tripsRes.tripsData) {
+          if (!tripItems[trip.name]) {
+            tripItems[trip.name] = trip.items;
+          }
+        }
+        
+        console.log('الرحلات الموجودة في الشيت:', selectedAccount._existingTripsList);
+        console.log('أسعار الرحلات الموجودة:', selectedAccount._existingPricesData);
+        
+        // عرض رسالة للمستخدم
+        if (selectedAccount._existingTripsList.length > 0) {
+          selectedAccount._sheetInfo += `<br>📋 الرحلات الموجودة: ${selectedAccount._existingTripsList.join(', ')}`;
+        }
+      }
+    }
+    
   } catch(e) {
     console.warn('getAccountSheetDates error:', e);
     selectedAccount._sheetInfo = '❌ فشل جلب تواريخ الشيت';
@@ -502,7 +531,32 @@ async function openEdit() {
 
   renderStep1(selectedAccount);
 }
-
+async function fetchExistingTripsAndPrices() {
+  try {
+    // جلب بيانات الشيت الحالية
+    const res = await gasPost({
+      action: 'getExistingTripsAndPrices',
+      customerId: selectedAccount.customerId
+    });
+    
+    if (res?.success) {
+      // تعيين الرحلات والبنود الموجودة
+      selectedAccount._existingTripsData = res.tripsData;
+      selectedAccount._existingPricesData = res.pricesData;
+      selectedAccount._existingTripsList = res.tripsData.map(t => t.name);
+      
+      console.log('الرحلات الموجودة في الشيت:', selectedAccount._existingTripsList);
+      console.log('بيانات الأسعار الموجودة:', selectedAccount._existingPricesData);
+      
+      return true;
+    }
+    return false;
+  } catch(e) {
+    console.error('fetchExistingTripsAndPrices error:', e);
+    return false;
+  }
+}
+  
 // ====================== الخطوة 2: الرحلات والأسعار ======================
 async function goStep2() {
   const name  = document.getElementById('f_name')?.value.trim();
@@ -561,32 +615,47 @@ function renderStep2(cat) {
       <div class="sec-title">🚢 أسعار رحلات Submarine</div>
       <div style="overflow-x:auto;">
         <table class="sub-price-table">
-          <thead>汽水<th>الفئة</th><th>PAX</th><th>CHILD</th><th>INF</th><th>العملة</th> </thead>
+          <thead>
+            <tr><th>الفئة</th><th>PAX</th><th>CHILD</th><th>INF</th><th>العملة</th></tr>
+          </thead>
           <tbody>
             ${['F','Aarab','Arab48','EGY'].map(c => `
               <tr>
-                <td><strong>${c}</strong>                  
-                  <td><input type="number" id="sp_${c}_PAX" placeholder="0" min="0" value="0"></td>
-                  <td><input type="number" id="sp_${c}_CHILD" placeholder="0" min="0" value="0"></td>
-                  <td><input type="number" id="sp_${c}_INF" placeholder="0" min="0" value="0"></td>
-                  <td><select id="sc_${c}">
+                <td><strong>${c}</strong></td>
+                <td><input type="number" id="sp_${c}_PAX" placeholder="0" min="0" value="0"></td>
+                <td><input type="number" id="sp_${c}_CHILD" placeholder="0" min="0" value="0"></td>
+                <td><input type="number" id="sp_${c}_INF" placeholder="0" min="0" value="0"></td>
+                <td><select id="sc_${c}">
                   <option value="USD">USD $</option>
                   <option value="EUR">EUR €</option>
                   <option value="GBP">GBP £</option>
                   <option value="LE">LE ج</option>
                 </select></td>
-               </tr>`).join('')}
+              </tr>`).join('')}
           </tbody>
-         </table>
+        </table>
       </div>`;
   } else {
+    // بناء قائمة الرحلات المتاحة
+    const availableTrips = tripsForCategory;
+    
+    // دمج الرحلات الموجودة في الشيت مع الرحلات المتاحة
+    let existingTripsList = [];
+    if (isEdit && selectedAccount && selectedAccount._existingTripsList) {
+      existingTripsList = selectedAccount._existingTripsList;
+    }
+    
+    // دمج القائمتين وإزالة المكررات
+    const allTrips = [...new Set([...availableTrips, ...existingTripsList])].sort();
+    
     html = `
       <div class="sec-title">📋 اختر الرحلات المخصصة لهذا الحساب</div>
       <div class="trips-box" id="tripsBox">
-        ${tripsForCategory.length ?
-          tripsForCategory.map(t => `
-            <div class="trip-item" id="ti_${safeid(t)}">
+        ${allTrips.length ?
+          allTrips.map(t => `
+            <div class="trip-item ${existingTripsList.includes(t) ? 'checked' : ''}" id="ti_${safeid(t)}">
               <input type="checkbox" id="tc_${safeid(t)}" value="${esc(t)}"
+                ${existingTripsList.includes(t) ? 'checked' : ''}
                 onchange="handleTripToggle(this,'${esc(t)}')">
               <label for="tc_${safeid(t)}" style="cursor:pointer">${esc(t)}</label>
             </div>`).join('') :
@@ -603,28 +672,42 @@ function renderStep2(cat) {
     <button class="btn btn-gray" onclick="goBackStep1()">← رجوع</button>
     <button class="btn btn-gray" onclick="closeModal()">إلغاء</button>`;
 
-  if (!isSubmarine && isEdit && selectedAccount?.assignedTrips) {
-    const prev = selectedAccount.assignedTrips.split('|').filter(Boolean);
+  // إذا كان تعديل وليس Submarine
+  if (!isSubmarine && isEdit && selectedAccount) {
+    // جلب الرحلات الموجودة في الشيت
+    let prevTrips = [];
     let savedPrices = {};
-    try {
-      if (selectedAccount.pricesData) {
-        savedPrices = JSON.parse(selectedAccount.pricesData);
-      }
-    } catch(e) {}
-
-    setTimeout(() => {
-      prev.forEach(t => {
+    
+    if (selectedAccount._existingTripsList && selectedAccount._existingTripsList.length > 0) {
+      prevTrips = selectedAccount._existingTripsList;
+      savedPrices = selectedAccount._existingPricesData || {};
+      console.log('الرحلات الموجودة في الشيت:', prevTrips);
+    } else if (selectedAccount.assignedTrips) {
+      prevTrips = selectedAccount.assignedTrips.split('|').filter(Boolean);
+      try {
+        if (selectedAccount.pricesData) {
+          savedPrices = JSON.parse(selectedAccount.pricesData);
+        }
+      } catch(e) {}
+    }
+    
+    // تحميل الأسعار بعد تأخير قصير لضمان وجود DOM
+    setTimeout(async () => {
+      // التأكد من تحديد الـ checkboxes
+      for (const t of prevTrips) {
         const el = document.getElementById(`ti_${safeid(t)}`);
         if (el) {
           el.classList.add('checked');
           const cb = el.querySelector('input[type=checkbox]');
           if (cb) cb.checked = true;
         }
-      });
-      loadPriceInputsWithValues(prev, savedPrices);
-    }, 100);
+      }
+      // تحميل الأسعار
+      await loadPriceInputsWithValues(prevTrips, savedPrices);
+    }, 200);
   }
 
+  // إذا كان تعديل و Submarine
   if (isSubmarine && isEdit && selectedAccount?.pricesData) {
     try {
       const savedPrices = JSON.parse(selectedAccount.pricesData);
@@ -640,7 +723,9 @@ function renderStep2(cat) {
         if (infEl   && p.INF)   infEl.value   = p.INF;
         if (curEl   && p.currency) curEl.value = p.currency;
       });
-    } catch(e) {}
+    } catch(e) {
+      console.error('استعادة أسعار Submarine:', e);
+    }
   }
 }
 
