@@ -165,7 +165,7 @@
 </div>
 
 <script>
-const GAS = 'https://script.google.com/macros/s/AKfycbyBfwHQQoHb9E2bq0l-u6FLMD2XFKu_d8rZuJLnIq5iko82Bn93Emki6-cvDF_XOyRp/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyBfwHQQoHb9E2bq0l-u6FLMD2XFKu_d8rZuJLnIq5iko82Bn93Emki6-cvDF_XOyRp/exec';
 const DASH = {Admin:'Dashboard.html',Owner:'OwnerDashboard.html',Sales:'SalesDashboard.html',Accountant:'AccountantDashboard.html'};
 
 let currentUser = null;
@@ -180,11 +180,24 @@ let _editSheetDates   = null; // تواريخ الشيت عند التعديل
 let _formStep1Data   = {}; // بيانات الخطوة 1 (محفوظة عند الانتقال للخطوة 2)
 
 // ── GAS call ──
+// أضف معلمة عشوائية لتجاوز الكاش
 function gas(action, params = {}) {
-  const u = new URL(GAS);
+  const u = new URL(GAS_URL);
   u.searchParams.set('action', action);
   Object.entries(params).forEach(([k, v]) => u.searchParams.set(k, String(v ?? '')));
-  return fetch(u.toString(), { redirect: 'follow' }).then(r => r.json());
+  
+  return fetch(u.toString(), { 
+    method: 'GET',
+    mode: 'cors',
+    credentials: 'omit',
+    redirect: 'follow'
+  }).then(async r => {
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  }).catch(e => {
+    console.error('Gas error:', e);
+    throw e;
+  });
 }
 
 // ── جلب بنود رحلة واحدة (يستخدم getTripDefinition المسجّلة في doGet) ──
@@ -202,7 +215,7 @@ async function fetchTripItems(tripName) {
   }
 }
 function gasPost(data) {
-  return fetch(GAS, {
+  return fetch(GAS_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify(data),
@@ -223,6 +236,25 @@ function closeAlert() { document.getElementById('alertModal').classList.remove('
 
 // ── Init ──
 document.addEventListener('DOMContentLoaded', async () => {
+  console.log('=== اختبار الاتصال ===');
+  console.log('GAS_URL:', GAS_URL);
+  
+  try {
+    const test = await fetch(GAS_URL + '?action=testConnection&_t=' + Date.now());
+    const testResult = await test.json();
+    console.log('✅ الاتصال ناجح:', testResult);
+  } catch(e) {
+    console.error('❌ فشل الاتصال:', e);
+    document.getElementById('mainContent').innerHTML = `
+      <div class="card">
+        <div class="card-body" style="text-align:center;color:red;padding:40px;">
+          ❌ فشل الاتصال بالخادم<br>
+          الرابط: ${GAS_URL}<br>
+          الخطأ: ${e.message}
+        </div>
+      </div>`;
+    return;
+  }
   let ud = sessionStorage.getItem('currentUser');
   if (!ud) { const p = new URLSearchParams(location.search).get('user'); if (p) { ud = decodeURIComponent(p); sessionStorage.setItem('currentUser', ud); } }
   if (!ud) { location.href = 'index.html'; return; }
