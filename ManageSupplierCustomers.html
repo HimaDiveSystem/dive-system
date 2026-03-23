@@ -7,7 +7,7 @@
   <title>إدارة العملاء والمنفذين</title>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
   <style>
-    /* كل الستايلات كما هي */
+    /* كل الستايلات كما هي - لم يتم التغيير */
     :root{
       --navy:#0f1f3d;--navy2:#1a3260;--gold:#f5c842;
       --blue:#2563eb;--green:#16a34a;--red:#dc2626;--orange:#ea580c;
@@ -156,7 +156,8 @@
 </div>
 
 <script>
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbyBfwHQQoHb9E2bq0l-u6FLMD2XFKu_d8rZuJLnIq5iko82Bn93Emki6-cvDF_XOyRp/exec';
+// ====================== الرابط الصحيح للـ API ======================
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbwe1Q9pjAJRk9CfWsK5YGjD5uVAbJkMhAVgw6akKkFIR9sz15V78C88Vs5dumKE-SwF/exec';
 const DASH = {Admin:'Dashboard.html',Owner:'OwnerDashboard.html',Sales:'SalesDashboard.html',Accountant:'AccountantDashboard.html'};
 
 let currentUser = null;
@@ -170,56 +171,57 @@ let _currentCategory = '';
 let _editSheetDates = null;
 let _formStep1Data = {};
 
-// ====================== دوال الاتصال ======================
-async function gas(action, params = {}) {
-  const url = new URL(GAS_URL);
-  url.searchParams.set('action', action);
-  url.searchParams.set('_t', Date.now());
-  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v ?? '')));
-  
-  try {
-    const response = await fetch(url.toString(), { 
-      method: 'GET',
-      mode: 'cors',
-      headers: {
-        'Accept': 'application/json',
+// ====================== دوال الاتصال باستخدام JSONP (لحل مشكلة CORS) ======================
+function gas(action, params = {}) {
+  return new Promise((resolve, reject) => {
+    const callbackName = 'jsonp_callback_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
+    const url = new URL(GAS_URL);
+    url.searchParams.set('action', action);
+    url.searchParams.set('callback', callbackName);
+    url.searchParams.set('_t', Date.now());
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v ?? '')));
+    
+    window[callbackName] = function(data) {
+      delete window[callbackName];
+      if (document.body.contains(script)) {
+        document.body.removeChild(script);
       }
-    });
+      resolve(data);
+    };
     
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
+    const script = document.createElement('script');
+    script.src = url.toString();
+    script.onerror = () => {
+      delete window[callbackName];
+      if (document.body.contains(script)) {
+        document.body.removeChild(script);
+      }
+      reject(new Error('فشل الاتصال بالخادم'));
+    };
+    document.body.appendChild(script);
     
-    const text = await response.text();
-    return JSON.parse(text);
-  } catch(e) {
-    console.error('gas error:', e);
-    throw new Error('فشل الاتصال بالخادم: ' + e.message);
-  }
+    // مهلة 30 ثانية
+    setTimeout(() => {
+      if (window[callbackName]) {
+        delete window[callbackName];
+        if (document.body.contains(script)) {
+          document.body.removeChild(script);
+        }
+        reject(new Error('انتهى وقت الاتصال'));
+      }
+    }, 30000);
+  });
 }
 
 async function gasPost(data) {
-  try {
-    const response = await fetch(GAS_URL, {
-      method: 'POST',
-      mode: 'cors',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify(data)
-    });
-    
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+  // تحويل POST إلى GET مع JSONP
+  const params = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== undefined && value !== null) {
+      params[key] = typeof value === 'object' ? JSON.stringify(value) : String(value);
     }
-    
-    const text = await response.text();
-    return JSON.parse(text);
-  } catch(e) {
-    console.error('gasPost error:', e);
-    throw new Error('فشل الاتصال بالخادم: ' + e.message);
   }
+  return gas(data.action, params);
 }
 
 // ====================== دوال مساعدة ======================
@@ -264,11 +266,9 @@ function closeModal() {
 function formatDateForInput(dateStr) {
   if (!dateStr) return '';
   try {
-    // إذا كان التاريخ بصيغة ISO
     if (dateStr.match(/^\d{4}-\d{2}-\d{2}/)) {
       return dateStr.split('T')[0];
     }
-    // إذا كان التاريخ بصيغة dd/MMM/yyyy
     const match = dateStr.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
     if (match) {
       const months = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
@@ -353,23 +353,20 @@ function renderTable() {
         <div class="table-wrap">
           <table class="data-table">
             <thead>
-              <tr><th>المعرف</th><th>الاسم</th><th>النوع</th><th>النشاط</th><th>التواصل</th><th>الهاتف</th><th>البداية</th><th>النهاية</th><th>الحالة</th></tr>
-            </thead>
+              <tr><th>المعرف</th><th>الاسم</th><th>النوع</th><th>النشاط</th><th>التواصل</th><th>الهاتف</th><th>البداية</th><th>النهاية</th><th>الحالة</th>               </thead>
             <tbody>
               ${filtered.length ? filtered.map(a => `
                 <tr class="${selectedAccount?.customerId===a.customerId?'sel':''}" onclick="selectRow('${a.customerId}')">
-                  <td>${a.customerId||''}</td>
-                  <td><strong>${(a.customerName||'').replace(/</g,'&lt;')}</strong></td>
-                  <td><span class="badge ${a.customerType==='Customer'?'badge-blue':'badge-orange'}">${a.customerType==='Customer'?'عميل':'منفذ'}</span></td>
-                  <td>${a.category||'-'}</td>
+                  <td>${a.customerId||''}                   <td><strong>${(a.customerName||'').replace(/</g,'&lt;')}</strong></td>
+                  <td><span class="badge ${a.customerType==='Customer'?'badge-blue':'badge-orange'}">${a.customerType==='Customer'?'عميل':'منفذ'}</span>                   <td>${a.category||'-'}</td>
                   <td>${a.contactPerson||'-'}</td>
                   <td>${a.phone||'-'}</td>
                   <td>${a.startDate||'-'}</td>
                   <td>${a.endDate||'-'}</td>
                   <td><span class="badge ${a.status?'badge-green':'badge-red'}">${a.status?'نشط':'متوقف'}</span></td>
-                </tr>`).join('') : `<tr><td colspan="9" class="no-data">لا توجد بيانات</td></tr>`}
+                 </tr>`).join('') : `<tr><td colspan="9" class="no-data">لا توجد بيانات</td></tr>`}
             </tbody>
-          </table>
+           </table>
         </div>
       </div>
     </div>`;
@@ -385,7 +382,6 @@ function renderStep1(data) {
   setStepUI(1);
   const CATEGORIES = ['Submarine','Safari','Water Sports','Diving','Tourism Company','Excursions'];
 
-  // تنسيق التواريخ
   const startDate = formatDateForInput(data._sheetFirstDateISO || data.startDate || '');
   const endDate = formatDateForInput(data._sheetLastDateISO || data.endDate || '');
 
@@ -550,23 +546,23 @@ function renderStep2(cat) {
       <div class="sec-title">🚢 أسعار رحلات Submarine</div>
       <div style="overflow-x:auto;">
         <table class="sub-price-table">
-          <thead><tr><th>الفئة</th><th>PAX</th><th>CHILD</th><th>INF</th><th>العملة</th></tr></thead>
+          <thead>汽水<th>الفئة</th><th>PAX</th><th>CHILD</th><th>INF</th><th>العملة</th> </thead>
           <tbody>
             ${['F','Aarab','Arab48','EGY'].map(c => `
               <tr>
-                <td><strong>${c}</strong></td>
-                <td><input type="number" id="sp_${c}_PAX" placeholder="0" min="0" value="0"></td>
-                <td><input type="number" id="sp_${c}_CHILD" placeholder="0" min="0" value="0"></td>
-                <td><input type="number" id="sp_${c}_INF" placeholder="0" min="0" value="0"></td>
-                <td><select id="sc_${c}">
+                <td><strong>${c}</strong>                  
+                  <td><input type="number" id="sp_${c}_PAX" placeholder="0" min="0" value="0"></td>
+                  <td><input type="number" id="sp_${c}_CHILD" placeholder="0" min="0" value="0"></td>
+                  <td><input type="number" id="sp_${c}_INF" placeholder="0" min="0" value="0"></td>
+                  <td><select id="sc_${c}">
                   <option value="USD">USD $</option>
                   <option value="EUR">EUR €</option>
                   <option value="GBP">GBP £</option>
                   <option value="LE">LE ج</option>
                 </select></td>
-              </tr>`).join('')}
+               </tr>`).join('')}
           </tbody>
-        </table>
+         </table>
       </div>`;
   } else {
     html = `
