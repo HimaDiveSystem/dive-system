@@ -175,7 +175,8 @@ let isEdit = false;
 let formStep = 1;
 let tripItems = {}; // {tripName → [items]}
 let tripsForCategory = []; // قائمة الرحلات حسب النشاط
-let _currentCategory = ''; // النشاط المختار (محفوظ عبر الخطوتين)
+let _currentCategory  = ''; // النشاط المختار (محفوظ عبر الخطوتين)
+let _editSheetDates   = null; // تواريخ الشيت عند التعديل
 let _formStep1Data   = {}; // بيانات الخطوة 1 (محفوظة عند الانتقال للخطوة 2)
 
 // ── GAS call ──
@@ -325,13 +326,35 @@ function openAdd() {
   renderStep1({});
 }
 
-function openEdit() {
+async function openEdit() {
   if (!selectedAccount) return;
   isEdit = true;
   formStep = 1;
   tripItems = {};
+  _editSheetDates = null; // سيُجلب تلقائياً
   document.getElementById('formTitle').textContent = '✏️ تعديل حساب';
   document.getElementById('formModal').classList.add('open');
+
+  // عرض شاشة تحميل مؤقتة
+  document.getElementById('formContent').innerHTML =
+    '<div class="loader"><div class="spinner"></div>جاري جلب بيانات الشيت...</div>';
+  document.getElementById('formFooter').innerHTML = '';
+
+  // جلب تواريخ الشيت تلقائياً
+  try {
+    const datesRes = await gasPost({
+      action: 'getAccountSheetDates',
+      customerId: selectedAccount.customerId
+    });
+    if (datesRes?.success) {
+      _editSheetDates = datesRes;
+      // تعيين التواريخ على الـ selectedAccount مؤقتاً للعرض
+      selectedAccount._sheetFirstDateISO = datesRes.firstDateISO;
+      selectedAccount._sheetLastDateISO  = datesRes.lastDateISO;
+      selectedAccount._sheetInfo = `📅 الشيت: ${datesRes.firstDate} → ${datesRes.lastDate} (${datesRes.totalDays} يوم)`;
+    }
+  } catch(e) { /* يكمل بدون تواريخ */ }
+
   renderStep1(selectedAccount);
 }
 
@@ -372,8 +395,14 @@ function renderStep1(data) {
       <div class="fgroup"><label>الهاتف</label><input type="tel" class="fc" id="f_phone" value="${data.phone||''}"></div>
       <div class="fgroup"><label>البريد الإلكتروني</label><input type="email" class="fc" id="f_email" value="${data.email||''}"></div>
       <div class="fgroup"><label>العنوان</label><input type="text" class="fc" id="f_address" value="${data.address||''}"></div>
-      <div class="fgroup"><label class="req">تاريخ البداية</label><input type="date" class="fc" id="f_start" value="${data.startDate||''}"></div>
-      <div class="fgroup"><label class="req">تاريخ النهاية</label><input type="date" class="fc" id="f_end" value="${data.endDate||''}"></div>
+      <div class="fgroup">
+        <label class="req">تاريخ البداية ${isEdit ? '<span style="font-size:10px;color:#7c3aed">(بداية تحديث الأسعار)</span>' : ''}</label>
+        <input type="date" class="fc" id="f_start" value="${data._sheetFirstDateISO || data.startDate || ''}">
+      </div>
+      <div class="fgroup">
+        <label class="req">تاريخ النهاية ${isEdit ? '<span style="font-size:10px;color:#7c3aed">(نهاية تحديث الأسعار)</span>' : ''}</label>
+        <input type="date" class="fc" id="f_end" value="${data._sheetLastDateISO || data.endDate || ''}">
+      </div>
       <div class="fgroup"><label>شروط الدفع</label><input type="text" class="fc" id="f_terms" value="${data.paymentTerms||''}"></div>
       <div class="fgroup"><label>الحالة</label>
         <select class="fc" id="f_status">
@@ -384,12 +413,13 @@ function renderStep1(data) {
       <div class="fgroup" style="grid-column:1/-1"><label>ملاحظات</label><textarea class="fc" id="f_notes" rows="2">${data.notes||''}</textarea></div>
     </div>`;
 
+  const sheetInfoText = data._sheetInfo || '';
   const editHint = isEdit ? `
-    <div id="editHint" style="background:#fff8e1;border:1px solid #f5c842;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#7a5800;">
-      <strong>⚡ وضع التعديل:</strong> تاريخ البداية = بداية التحديث، تاريخ النهاية = نهاية التحديث<br>
+    <div id="editHint" style="background:#f0fdf4;border:1px solid #16a34a;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#14532d;">
+      <strong>✏️ وضع التعديل</strong><br>
+      ${sheetInfoText ? `<span style="color:#15803d">${sheetInfoText}</span><br>` : ''}
+      تاريخ البداية والنهاية يحددان <strong>نطاق تحديث الأسعار</strong> في شيت الحساب.<br>
       إذا كان تاريخ النهاية أكبر من آخر تاريخ في الشيت، سيتم إضافة أيام جديدة تلقائياً.
-      <button class="btn btn-gray" onclick="loadSheetDates()" style="margin-top:6px;padding:4px 12px;font-size:11px;">📅 جلب تواريخ الشيت الحالية</button>
-      <span id="sheetDatesInfo" style="font-size:11px;color:#5a6a8a;margin-right:8px;"></span>
     </div>` : '';
   const existingEditHint = document.getElementById('editHintWrap');
   if (!existingEditHint) {
@@ -505,9 +535,18 @@ function renderStep2(cat) {
     <button class="btn btn-gray" onclick="goBackStep1()">← رجوع</button>
     <button class="btn btn-gray" onclick="closeModal()">إلغاء</button>`;
 
-  // إذا كان تعديل وكان هناك رحلات مسبقة
+  // إذا كان تعديل — تحديد الرحلات المسبقة + جلب أسعارها من pricesData المسجّل
   if (!isSubmarine && isEdit && selectedAccount?.assignedTrips) {
     const prev = selectedAccount.assignedTrips.split('|').filter(Boolean);
+    // تحليل الأسعار المحفوظة
+    let savedPrices = {};
+    try {
+      if (selectedAccount.pricesData) {
+        savedPrices = JSON.parse(selectedAccount.pricesData);
+      }
+    } catch(e) {}
+
+    // تحديد الـ checkboxes
     prev.forEach(t => {
       const el = document.getElementById(`ti_${safeid(t)}`);
       if (el) {
@@ -516,7 +555,28 @@ function renderStep2(cat) {
         if (cb) cb.checked = true;
       }
     });
-    loadPriceInputs();
+
+    // جلب البنود وعرض الأسعار المحفوظة
+    await loadPriceInputsWithValues(prev, savedPrices);
+  }
+
+  // Submarine عند التعديل: استعادة الأسعار المحفوظة
+  if (isSubmarine && isEdit && selectedAccount?.pricesData) {
+    try {
+      const savedPrices = JSON.parse(selectedAccount.pricesData);
+      ['F','Aarab','Arab48','EGY'].forEach(c => {
+        const p = savedPrices['Submarine_' + c];
+        if (!p) return;
+        const paxEl   = document.getElementById(`sp_${c}_PAX`);
+        const childEl = document.getElementById(`sp_${c}_CHILD`);
+        const infEl   = document.getElementById(`sp_${c}_INF`);
+        const curEl   = document.getElementById(`sc_${c}`);
+        if (paxEl   && p.PAX   > 0) paxEl.value   = p.PAX;
+        if (childEl && p.CHILD > 0) childEl.value = p.CHILD;
+        if (infEl   && p.INF   > 0) infEl.value   = p.INF;
+        if (curEl   && p.currency)  curEl.value    = p.currency;
+      });
+    } catch(e) {}
   }
 }
 
@@ -531,6 +591,58 @@ function goBackStep1() {
 }
 
 function safeid(s) { return (s||'').replace(/[^a-zA-Z0-9]/g,'_'); }
+
+// ── عرض حقول الأسعار مع قيم محفوظة مسبقاً (للتعديل) ──
+async function loadPriceInputsWithValues(tripNames, savedPrices) {
+  const priceTitle = document.getElementById('priceTitle');
+  const priceArea  = document.getElementById('priceArea');
+  if (!priceArea) return;
+
+  if (!tripNames || tripNames.length === 0) {
+    if (priceTitle) priceTitle.style.display = 'none';
+    priceArea.innerHTML = '';
+    return;
+  }
+
+  // جلب البنود لجميع الرحلات المختارة
+  await Promise.all(tripNames.map(t => fetchTripItems(t)));
+
+  if (priceTitle) priceTitle.style.display = 'flex';
+
+  let html = '<div class="trip-price-grid">';
+  for (const tripName of tripNames) {
+    const items = tripItems[tripName] || [];
+    if (items.length === 0) {
+      html += `<div class="price-item"><div class="pi-trip">${tripName}</div><div style="color:#94a3b8;font-size:12px">لا توجد بنود</div></div>`;
+      continue;
+    }
+    for (const item of items) {
+      const key = safeid(tripName + '_' + item);
+      // محاولة استرجاع السعر المحفوظ
+      const rawKey  = tripName + '_' + item;
+      const saved   = savedPrices?.[rawKey] || savedPrices?.[key] || null;
+      const prevPrice = saved?.price   || '';
+      const prevCur   = saved?.currency || 'LE';
+      html += `
+        <div class="price-item">
+          <div class="pi-trip">${tripName}</div>
+          <div class="pi-label">${item}</div>
+          <div class="pi-row">
+            <input type="number" id="pp_${key}" placeholder="0" min="0" value="${prevPrice}"
+              style="${prevPrice ? 'border-color:#16a34a;background:#f0fdf4' : ''}">
+            <select id="pc_${key}">
+              <option value="LE"  ${prevCur==='LE' ?'selected':''}>LE ج</option>
+              <option value="USD" ${prevCur==='USD'?'selected':''}>USD $</option>
+              <option value="EUR" ${prevCur==='EUR'?'selected':''}>EUR €</option>
+              <option value="GBP" ${prevCur==='GBP'?'selected':''}>GBP £</option>
+            </select>
+          </div>
+        </div>`;
+    }
+  }
+  html += '</div>';
+  priceArea.innerHTML = html;
+}
 function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 // ── تفعيل/إلغاء رحلة (يُستدعى من onchange الـ checkbox) ──
@@ -601,7 +713,7 @@ async function loadPriceInputs() {
     for (const item of items) {
       const key = safeid(tripName + '_' + item);
       const prevPrice = prevValues['pp_' + key] || '';
-      const prevCur   = prevValues['pc_' + key] || 'USD';
+      const prevCur   = prevValues['pc_' + key] || 'LE';
       html += `
         <div class="price-item">
           <div class="pi-trip">${tripName}</div>
@@ -609,10 +721,10 @@ async function loadPriceInputs() {
           <div class="pi-row">
             <input type="number" id="pp_${key}" placeholder="0" min="0" value="${prevPrice}">
             <select id="pc_${key}">
+              <option value="LE"  ${prevCur==='LE' ?'selected':''}>LE ج</option>
               <option value="USD" ${prevCur==='USD'?'selected':''}>USD $</option>
               <option value="EUR" ${prevCur==='EUR'?'selected':''}>EUR €</option>
               <option value="GBP" ${prevCur==='GBP'?'selected':''}>GBP £</option>
-              <option value="LE"  ${prevCur==='LE' ?'selected':''}>LE ج</option>
             </select>
           </div>
         </div>`;
@@ -672,16 +784,14 @@ async function doSave() {
         btn.disabled = false; btn.textContent = '💾 حفظ وإنشاء الشيت';
         return;
       }
-      // أسعار البنود
+      // أسعار البنود (نحفظ جميعها حتى الصفرية لضمان الترحيل الكامل)
       for (const tripName of assignedTrips) {
         const items = tripItems[tripName] || [];
         for (const item of items) {
           const key = safeid(tripName + '_' + item);
-          const price = parseFloat(document.getElementById(`pp_${key}`)?.value) || 0;
-          const currency = document.getElementById(`pc_${key}`)?.value || 'USD';
-          if (price > 0) {
-            pricesData[tripName + '_' + item] = { price, currency };
-          }
+          const price    = parseFloat(document.getElementById(`pp_${key}`)?.value) || 0;
+          const currency = document.getElementById(`pc_${key}`)?.value || 'LE';
+          pricesData[tripName + '_' + item] = { price, currency };
         }
       }
     }
@@ -775,6 +885,7 @@ window.toggleTrip=toggleTrip; window.handleTripToggle=handleTripToggle;
 window.doSave=doSave; window.doDelete=doDelete;
 window.confirmDelete=confirmDelete; window.loadPriceInputs=loadPriceInputs;
 window.loadSheetDates=loadSheetDates;
+window.loadPriceInputsWithValues=loadPriceInputsWithValues;
 </script>
 </body>
 </html>
