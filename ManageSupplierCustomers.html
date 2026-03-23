@@ -476,6 +476,8 @@ async function openEdit() {
       action: 'getAccountSheetDates',
       customerId: selectedAccount.customerId
     });
+    console.log('نتيجة getAccountSheetDates:', datesRes);
+    
     if (datesRes?.success) {
       _editSheetDates = datesRes;
       selectedAccount._sheetFirstDate = datesRes.firstDate;
@@ -484,27 +486,25 @@ async function openEdit() {
       selectedAccount._sheetLastDateISO = datesRes.lastDateISO;
       selectedAccount._sheetTotalDays = datesRes.totalDays;
       selectedAccount._sheetInfo = `📅 الشيت الحالي: ${datesRes.firstDate} → ${datesRes.lastDate} (${datesRes.totalDays} يوم)`;
-      
-      console.log('تواريخ الشيت:', {
-        first: datesRes.firstDate,
-        last: datesRes.lastDate,
-        firstISO: datesRes.firstDateISO,
-        lastISO: datesRes.lastDateISO
-      });
     } else {
       selectedAccount._sheetInfo = '⚠️ لم يتم العثور على شيت للحساب';
     }
     
     // جلب الرحلات والبنود الموجودة في الشيت (للأنشطة غير Submarine)
     const category = selectedAccount.category;
+    console.log('نوع النشاط:', category);
+    
     if (category !== 'Submarine') {
+      console.log('جلب الرحلات والبنود للأنشطة العادية...');
       const tripsRes = await gasPost({
         action: 'getExistingTripsAndPrices',
         customerId: selectedAccount.customerId
       });
+      console.log('نتيجة getExistingTripsAndPrices:', tripsRes);
+      
       if (tripsRes?.success && tripsRes.tripsData) {
         selectedAccount._existingTripsData = tripsRes.tripsData;
-        selectedAccount._existingPricesData = tripsRes.pricesData;
+        selectedAccount._existingPricesData = tripsRes.pricesData || {};
         selectedAccount._existingTripsList = tripsRes.tripsData.map(t => t.name);
         
         // تحميل بنود الرحلات الموجودة في tripItems
@@ -515,38 +515,62 @@ async function openEdit() {
         }
         
         console.log('الرحلات الموجودة في الشيت:', selectedAccount._existingTripsList);
-        console.log('أسعار الرحلات الموجودة:', selectedAccount._existingPricesData);
+        console.log('أسعار الرحلات الموجودة:', Object.keys(selectedAccount._existingPricesData).length);
         
         // عرض رسالة للمستخدم
         if (selectedAccount._existingTripsList.length > 0) {
           selectedAccount._sheetInfo += `<br>📋 الرحلات الموجودة: ${selectedAccount._existingTripsList.join(', ')}`;
         }
+      } else {
+        console.log('لم يتم العثور على رحلات في الشيت أو فشل الجلب');
+        selectedAccount._existingTripsList = [];
+        selectedAccount._existingPricesData = {};
       }
     }
     
   } catch(e) {
-    console.warn('getAccountSheetDates error:', e);
-    selectedAccount._sheetInfo = '❌ فشل جلب تواريخ الشيت';
+    console.error('خطأ في openEdit:', e);
+    selectedAccount._sheetInfo = '❌ فشل جلب بيانات الشيت: ' + e.message;
   }
 
   renderStep1(selectedAccount);
 }
-async function fetchExistingTripsAndPrices() {
+}async function fetchExistingTripsAndPrices() {
   try {
+    console.log('=== جلب الرحلات والبنود الموجودة ===');
+    console.log('selectedAccount.customerId:', selectedAccount?.customerId);
+    console.log('selectedAccount.category:', selectedAccount?.category);
+    
     // جلب بيانات الشيت الحالية
     const res = await gasPost({
       action: 'getExistingTripsAndPrices',
       customerId: selectedAccount.customerId
     });
     
+    console.log('نتيجة getExistingTripsAndPrices:', res);
+    
     if (res?.success) {
       // تعيين الرحلات والبنود الموجودة
-      selectedAccount._existingTripsData = res.tripsData;
-      selectedAccount._existingPricesData = res.pricesData;
-      selectedAccount._existingTripsList = res.tripsData.map(t => t.name);
+      if (res.tripsData) {
+        selectedAccount._existingTripsData = res.tripsData;
+        selectedAccount._existingTripsList = res.tripsData.map(t => t.name);
+        console.log('الرحلات الموجودة في الشيت:', selectedAccount._existingTripsList);
+      }
       
-      console.log('الرحلات الموجودة في الشيت:', selectedAccount._existingTripsList);
-      console.log('بيانات الأسعار الموجودة:', selectedAccount._existingPricesData);
+      if (res.pricesData) {
+        selectedAccount._existingPricesData = res.pricesData;
+        console.log('بيانات الأسعار الموجودة:', Object.keys(selectedAccount._existingPricesData));
+      }
+      
+      // تحميل بنود الرحلات الموجودة في tripItems
+      if (res.tripsData) {
+        for (const trip of res.tripsData) {
+          if (!tripItems[trip.name]) {
+            tripItems[trip.name] = trip.items;
+            console.log('تم تحميل بنود الرحلة:', trip.name, trip.items);
+          }
+        }
+      }
       
       return true;
     }
