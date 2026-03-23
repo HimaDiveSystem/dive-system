@@ -282,11 +282,17 @@ function formatDateForInput(dateStr) {
 
 // ====================== جلب بيانات الرحلات ======================
 async function fetchTripItems(tripName) {
-  if (tripItems[tripName]) return tripItems[tripName];
+  if (tripItems[tripName] && tripItems[tripName].length > 0) {
+    console.log('بنود الرحلة موجودة في الكاش:', tripName, tripItems[tripName]);
+    return tripItems[tripName];
+  }
   try {
+    console.log('جلب بنود الرحلة من الخادم:', tripName);
     const res = await gas('getTripDefinition', { tripName: tripName });
+    console.log('نتيجة getTripDefinition:', res);
     const items = Array.isArray(res?.items) ? res.items.filter(Boolean) : [];
     tripItems[tripName] = items;
+    console.log('بنود الرحلة:', tripName, items);
     return items;
   } catch(e) {
     console.error('fetchTripItems error:', e);
@@ -640,7 +646,7 @@ function renderStep2(cat) {
       <div style="overflow-x:auto;">
         <table class="sub-price-table">
           <thead>
-            <tr><th>الفئة</th><th>PAX</th><th>CHILD</th><th>INF</th><th>العملة</th></tr>
+            <tr><th>الفئة</th><th>PAX</th><th>CHILD</th><th>INF</th><th>العملة</th> </>
           </thead>
           <tbody>
             ${['F','Aarab','Arab48','EGY'].map(c => `
@@ -655,22 +661,27 @@ function renderStep2(cat) {
                   <option value="GBP">GBP £</option>
                   <option value="LE">LE ج</option>
                 </select></td>
-              </tr>`).join('')}
+               </tr>`).join('')}
           </tbody>
-        </table>
+         </table>
       </div>`;
   } else {
     // بناء قائمة الرحلات المتاحة
-    const availableTrips = tripsForCategory;
+    let availableTrips = [...tripsForCategory];
     
     // دمج الرحلات الموجودة في الشيت مع الرحلات المتاحة
     let existingTripsList = [];
     if (isEdit && selectedAccount && selectedAccount._existingTripsList) {
       existingTripsList = selectedAccount._existingTripsList;
+      console.log('الرحلات الموجودة في الشيت:', existingTripsList);
+    } else if (isEdit && selectedAccount && selectedAccount.assignedTrips) {
+      existingTripsList = selectedAccount.assignedTrips.split('|').filter(Boolean);
+      console.log('الرحلات من assignedTrips:', existingTripsList);
     }
     
     // دمج القائمتين وإزالة المكررات
     const allTrips = [...new Set([...availableTrips, ...existingTripsList])].sort();
+    console.log('كل الرحلات:', allTrips);
     
     html = `
       <div class="sec-title">📋 اختر الرحلات المخصصة لهذا الحساب</div>
@@ -705,7 +716,7 @@ function renderStep2(cat) {
     if (selectedAccount._existingTripsList && selectedAccount._existingTripsList.length > 0) {
       prevTrips = selectedAccount._existingTripsList;
       savedPrices = selectedAccount._existingPricesData || {};
-      console.log('الرحلات الموجودة في الشيت:', prevTrips);
+      console.log('الرحلات الموجودة في الشيت (prevTrips):', prevTrips);
     } else if (selectedAccount.assignedTrips) {
       prevTrips = selectedAccount.assignedTrips.split('|').filter(Boolean);
       try {
@@ -713,6 +724,7 @@ function renderStep2(cat) {
           savedPrices = JSON.parse(selectedAccount.pricesData);
         }
       } catch(e) {}
+      console.log('الرحلات من assignedTrips (prevTrips):', prevTrips);
     }
     
     // تحميل الأسعار بعد تأخير قصير لضمان وجود DOM
@@ -726,7 +738,20 @@ function renderStep2(cat) {
           if (cb) cb.checked = true;
         }
       }
+      
+      // تحميل بنود الرحلات أولاً
+      console.log('جاري تحميل بنود الرحلات...');
+      for (const tripName of prevTrips) {
+        if (!tripItems[tripName]) {
+          console.log('جلب بنود الرحلة:', tripName);
+          await fetchTripItems(tripName);
+        } else {
+          console.log('بنود الرحلة موجودة مسبقاً:', tripName, tripItems[tripName]);
+        }
+      }
+      
       // تحميل الأسعار
+      console.log('جاري تحميل الأسعار...');
       await loadPriceInputsWithValues(prevTrips, savedPrices);
     }, 200);
   }
@@ -761,37 +786,63 @@ function goBackStep1() {
 async function loadPriceInputsWithValues(tripNames, savedPrices) {
   const priceTitle = document.getElementById('priceTitle');
   const priceArea  = document.getElementById('priceArea');
-  if (!priceArea) return;
+  if (!priceArea) {
+    console.error('priceArea غير موجود');
+    return;
+  }
 
   if (!tripNames || tripNames.length === 0) {
     if (priceTitle) priceTitle.style.display = 'none';
     priceArea.innerHTML = '';
+    console.log('لا توجد رحلات محددة');
     return;
   }
 
-  await Promise.all(tripNames.map(t => fetchTripItems(t)));
+  console.log('تحميل الأسعار للرحلات:', tripNames);
+  console.log('savedPrices:', savedPrices);
+
+  // جلب البنود لجميع الرحلات المختارة
+  for (const tripName of tripNames) {
+    if (!tripItems[tripName]) {
+      console.log('جلب بنود الرحلة:', tripName);
+      await fetchTripItems(tripName);
+    }
+  }
 
   if (priceTitle) priceTitle.style.display = 'flex';
 
   let html = '<div class="trip-price-grid">';
+  let hasItems = false;
+  
   for (const tripName of tripNames) {
     const items = tripItems[tripName] || [];
+    console.log(`رحلة ${tripName} - عدد البنود:`, items.length);
+    
     if (items.length === 0) {
-      html += `<div class="price-item"><div class="pi-trip">${esc(tripName)}</div><div style="color:#94a3b8;font-size:12px">لا توجد بنود</div></div>`;
+      html += `<div class="price-item">
+        <div class="pi-trip">⚠️ ${esc(tripName)}</div>
+        <div style="color:#dc2626;font-size:12px">لا توجد بنود لهذه الرحلة في قاعدة البيانات</div>
+      </div>`;
       continue;
     }
+    
+    hasItems = true;
     for (const item of items) {
       const key = safeid(tripName + '_' + item);
       const rawKey  = tripName + '_' + item;
       const saved   = savedPrices?.[rawKey] || savedPrices?.[key] || null;
       const prevPrice = saved?.price   || '';
       const prevCur   = saved?.currency || 'LE';
+      
+      console.log(`بند: ${tripName} - ${item}, السعر المحفوظ:`, saved);
+      
       html += `
         <div class="price-item">
           <div class="pi-trip">${esc(tripName)}</div>
           <div class="pi-label">${esc(item)}</div>
           <div class="pi-row">
-            <input type="number" id="pp_${key}" placeholder="0" min="0" value="${prevPrice}">
+            <input type="number" id="pp_${key}" placeholder="0" min="0" value="${prevPrice}"
+              style="${prevPrice ? 'border-color:#16a34a;background:#f0fdf4' : ''}">
             <select id="pc_${key}">
               <option value="LE"  ${prevCur==='LE' ?'selected':''}>LE ج</option>
               <option value="USD" ${prevCur==='USD'?'selected':''}>USD $</option>
@@ -802,10 +853,17 @@ async function loadPriceInputsWithValues(tripNames, savedPrices) {
         </div>`;
     }
   }
+  
   html += '</div>';
-  priceArea.innerHTML = html;
+  
+  if (!hasItems) {
+    priceArea.innerHTML = '<div style="padding:20px;text-align:center;color:#94a3b8;">لا توجد بنود للرحلات المحددة</div>';
+  } else {
+    priceArea.innerHTML = html;
+  }
+  
+  console.log('تم تحميل الأسعار بنجاح');
 }
-
 async function handleTripToggle(cb, tripName) {
   const div = cb.closest('.trip-item');
   if (div) div.classList.toggle('checked', cb.checked);
