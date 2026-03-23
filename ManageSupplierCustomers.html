@@ -185,6 +185,21 @@ function gas(action, params = {}) {
   Object.entries(params).forEach(([k, v]) => u.searchParams.set(k, String(v ?? '')));
   return fetch(u.toString(), { redirect: 'follow' }).then(r => r.json());
 }
+
+// ── جلب بنود رحلة واحدة (يستخدم getTripDefinition المسجّلة في doGet) ──
+async function fetchTripItems(tripName) {
+  if (tripItems[tripName]) return tripItems[tripName]; // cache
+  try {
+    // getTripDefinition موجودة في doGet وتُعيد {name, category, items, totalItems}
+    const res = await gas('getTripDefinition', { tripName });
+    const items = Array.isArray(res?.items) ? res.items.filter(Boolean) : [];
+    tripItems[tripName] = items;
+    return items;
+  } catch(e) {
+    tripItems[tripName] = [];
+    return [];
+  }
+}
 function gasPost(data) {
   return fetch(GAS, {
     method: 'POST',
@@ -369,6 +384,21 @@ function renderStep1(data) {
       <div class="fgroup" style="grid-column:1/-1"><label>ملاحظات</label><textarea class="fc" id="f_notes" rows="2">${data.notes||''}</textarea></div>
     </div>`;
 
+  const editHint = isEdit ? `
+    <div id="editHint" style="background:#fff8e1;border:1px solid #f5c842;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#7a5800;">
+      <strong>⚡ وضع التعديل:</strong> تاريخ البداية = بداية التحديث، تاريخ النهاية = نهاية التحديث<br>
+      إذا كان تاريخ النهاية أكبر من آخر تاريخ في الشيت، سيتم إضافة أيام جديدة تلقائياً.
+      <button class="btn btn-gray" onclick="loadSheetDates()" style="margin-top:6px;padding:4px 12px;font-size:11px;">📅 جلب تواريخ الشيت الحالية</button>
+      <span id="sheetDatesInfo" style="font-size:11px;color:#5a6a8a;margin-right:8px;"></span>
+    </div>` : '';
+  const existingEditHint = document.getElementById('editHintWrap');
+  if (!existingEditHint) {
+    const wrap = document.createElement('div');
+    wrap.id = 'editHintWrap';
+    wrap.innerHTML = editHint;
+    document.getElementById('formContent').prepend(wrap);
+  }
+
   document.getElementById('formFooter').innerHTML = `
     <button class="btn btn-navy" onclick="goStep2()">التالي ← الرحلات والأسعار</button>
     <button class="btn btn-gray" onclick="closeModal()">إلغاء</button>`;
@@ -513,8 +543,7 @@ async function handleTripToggle(cb, tripName) {
   if (cb.checked && !tripItems[tripName]) {
     cb.disabled = true; // منع التكرار أثناء التحميل
     try {
-      const res = await gas('getTripItemsByName', { tripName });
-      tripItems[tripName] = Array.isArray(res) ? res : [];
+      tripItems[tripName] = await fetchTripItems(tripName);
     } catch(e) { tripItems[tripName] = []; }
     cb.disabled = false;
   }
@@ -549,8 +578,7 @@ async function loadPriceInputs() {
   await Promise.all(checked.map(async tripName => {
     if (!tripItems[tripName]) {
       try {
-        const res = await gas('getTripItemsByName', { tripName });
-        tripItems[tripName] = Array.isArray(res) ? res : [];
+        tripItems[tripName] = await fetchTripItems(tripName);
       } catch(e) { tripItems[tripName] = []; }
     }
   }));
@@ -664,6 +692,8 @@ async function doSave() {
     let result;
     if (isEdit && selectedAccount) {
       formData.customerId = selectedAccount.customerId;
+      // عند التعديل: إرسال action مخصص لتحديث الأسعار في الشيت
+      formData.updatePricesInSheet = 'true';
       result = await gasPost({ action: 'updateSupplierCustomer', ...formData });
     } else {
       result = await gasPost({ action: 'addSupplierCustomer', ...formData });
@@ -712,6 +742,31 @@ async function confirmDelete() {
   } catch(e) { showAlert('❌ خطأ: ' + e.message, '❌'); }
 }
 
+// ── جلب تواريخ الشيت الحالية لعرضها (للتعديل) ──
+async function loadSheetDates() {
+  if (!selectedAccount) return;
+  const infoEl = document.getElementById('sheetDatesInfo');
+  if (infoEl) infoEl.textContent = '⏳ جاري الجلب...';
+  try {
+    const res = await gasPost({
+      action: 'getAccountSheetDates',
+      customerId: selectedAccount.customerId
+    });
+    if (res?.success && infoEl) {
+      infoEl.textContent = `📅 من: ${res.firstDate} — إلى: ${res.lastDate} (${res.totalDays} يوم)`;
+      // تعيين التواريخ تلقائياً في الحقول
+      const startEl = document.getElementById('f_start');
+      const endEl   = document.getElementById('f_end');
+      if (startEl && !startEl.value && res.firstDateISO) startEl.value = res.firstDateISO;
+      if (endEl   && !endEl.value   && res.lastDateISO)  endEl.value   = res.lastDateISO;
+    } else if (infoEl) {
+      infoEl.textContent = res?.message || 'لم يتم العثور على الشيت';
+    }
+  } catch(e) {
+    if (infoEl) infoEl.textContent = '❌ خطأ في الجلب';
+  }
+}
+
 // ── expose globals ──
 window.goBack=goBack; window.openAdd=openAdd; window.openEdit=openEdit;
 window.selectRow=selectRow; window.renderTable=renderTable; window.closeModal=closeModal;
@@ -719,6 +774,7 @@ window.closeAlert=closeAlert; window.goStep2=goStep2; window.goBackStep1=goBackS
 window.toggleTrip=toggleTrip; window.handleTripToggle=handleTripToggle;
 window.doSave=doSave; window.doDelete=doDelete;
 window.confirmDelete=confirmDelete; window.loadPriceInputs=loadPriceInputs;
+window.loadSheetDates=loadSheetDates;
 </script>
 </body>
 </html>
