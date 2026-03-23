@@ -175,6 +175,8 @@ let isEdit = false;
 let formStep = 1;
 let tripItems = {}; // {tripName → [items]}
 let tripsForCategory = []; // قائمة الرحلات حسب النشاط
+let _currentCategory = ''; // النشاط المختار (محفوظ عبر الخطوتين)
+let _formStep1Data   = {}; // بيانات الخطوة 1 (محفوظة عند الانتقال للخطوة 2)
 
 // ── GAS call ──
 function gas(action, params = {}) {
@@ -379,6 +381,24 @@ async function goStep2() {
   const cat   = document.getElementById('f_cat')?.value;
   const start = document.getElementById('f_start')?.value;
   const end   = document.getElementById('f_end')?.value;
+  _currentCategory = cat; // حفظ النشاط للاستخدام في doSave
+
+  // حفظ كل بيانات الخطوة 1 قبل تغيير الـ DOM
+  _formStep1Data = {
+    customerName:  document.getElementById('f_name')?.value?.trim()  || '',
+    customerType:  document.getElementById('f_type')?.value          || 'Supplier',
+    category:      cat,
+    parentCenter:  document.getElementById('f_parent')?.value?.trim() || '',
+    contactPerson: document.getElementById('f_contact')?.value?.trim()|| '',
+    phone:         document.getElementById('f_phone')?.value?.trim()  || '',
+    email:         document.getElementById('f_email')?.value?.trim()  || '',
+    address:       document.getElementById('f_address')?.value?.trim()|| '',
+    startDate:     start,
+    endDate:       end,
+    paymentTerms:  document.getElementById('f_terms')?.value?.trim()  || '',
+    status:        document.getElementById('f_status')?.value         || 'true',
+    notes:         document.getElementById('f_notes')?.value?.trim()  || '',
+  };
   if (!name)  { showAlert('أدخل اسم العميل/المنفذ','⚠️'); return; }
   if (!cat)   { showAlert('اختر نوع النشاط','⚠️'); return; }
   if (!start) { showAlert('أدخل تاريخ البداية','⚠️'); return; }
@@ -437,9 +457,10 @@ function renderStep2(cat) {
       <div class="trips-box" id="tripsBox">
         ${tripsForCategory.length ?
           tripsForCategory.map(t => `
-            <div class="trip-item" id="ti_${safeid(t)}" onclick="toggleTrip(this,'${esc(t)}')">
-              <input type="checkbox" id="tc_${safeid(t)}" value="${esc(t)}">
-              <label for="tc_${safeid(t)}">${esc(t)}</label>
+            <div class="trip-item" id="ti_${safeid(t)}">
+              <input type="checkbox" id="tc_${safeid(t)}" value="${esc(t)}"
+                onchange="handleTripToggle(this,'${esc(t)}')">
+              <label for="tc_${safeid(t)}" style="cursor:pointer">${esc(t)}</label>
             </div>`).join('') :
           '<div style="padding:20px;color:#94a3b8;text-align:center;">لا توجد رحلات لهذا النشاط</div>'
         }
@@ -482,25 +503,33 @@ function goBackStep1() {
 function safeid(s) { return (s||'').replace(/[^a-zA-Z0-9]/g,'_'); }
 function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-// ── تفعيل/إلغاء رحلة ──
-async function toggleTrip(el, tripName) {
-  el.classList.toggle('checked');
-  const cb = el.querySelector('input[type=checkbox]');
-  if (cb) cb.checked = el.classList.contains('checked');
+// ── تفعيل/إلغاء رحلة (يُستدعى من onchange الـ checkbox) ──
+async function handleTripToggle(cb, tripName) {
+  // تحديث CSS class على الـ div الأب
+  const div = cb.closest('.trip-item');
+  if (div) div.classList.toggle('checked', cb.checked);
 
-  // جلب بنود الرحلة إن لم تكن محملة
-  if (el.classList.contains('checked') && !tripItems[tripName]) {
+  // جلب بنود الرحلة إن لم تكن محملة بعد
+  if (cb.checked && !tripItems[tripName]) {
+    cb.disabled = true; // منع التكرار أثناء التحميل
     try {
       const res = await gas('getTripItemsByName', { tripName });
       tripItems[tripName] = Array.isArray(res) ? res : [];
     } catch(e) { tripItems[tripName] = []; }
+    cb.disabled = false;
   }
 
-  loadPriceInputs();
+  await loadPriceInputs();
 }
 
-// ── تحديث حقول الأسعار ──
-function loadPriceInputs() {
+// ── alias للتوافق مع الكود القديم ──
+async function toggleTrip(el, tripName) {
+  const cb = el.querySelector && el.querySelector('input[type=checkbox]');
+  if (cb) await handleTripToggle(cb, tripName);
+}
+
+// ── تحديث حقول الأسعار (async لضمان اكتمال جلب البنود) ──
+async function loadPriceInputs() {
   const checked = [];
   document.querySelectorAll('#tripsBox input[type=checkbox]:checked').forEach(cb => {
     checked.push(cb.value);
@@ -516,24 +545,46 @@ function loadPriceInputs() {
     return;
   }
 
+  // جلب بنود أي رحلة لم تُحمَّل بعد
+  await Promise.all(checked.map(async tripName => {
+    if (!tripItems[tripName]) {
+      try {
+        const res = await gas('getTripItemsByName', { tripName });
+        tripItems[tripName] = Array.isArray(res) ? res : [];
+      } catch(e) { tripItems[tripName] = []; }
+    }
+  }));
+
   if (priceTitle) priceTitle.style.display = 'flex';
+
+  // الحفاظ على القيم المُدخلة مسبقاً
+  const prevValues = {};
+  priceArea.querySelectorAll('input[type=number], select').forEach(el => {
+    if (el.id) prevValues[el.id] = el.value;
+  });
 
   let html = '<div class="trip-price-grid">';
   for (const tripName of checked) {
     const items = tripItems[tripName] || [];
+    if (items.length === 0) {
+      html += `<div class="price-item"><div class="pi-trip">${tripName}</div><div style="color:#94a3b8;font-size:12px">لا توجد بنود</div></div>`;
+      continue;
+    }
     for (const item of items) {
       const key = safeid(tripName + '_' + item);
+      const prevPrice = prevValues['pp_' + key] || '';
+      const prevCur   = prevValues['pc_' + key] || 'USD';
       html += `
         <div class="price-item">
           <div class="pi-trip">${tripName}</div>
           <div class="pi-label">${item}</div>
           <div class="pi-row">
-            <input type="number" id="pp_${key}" placeholder="0" min="0">
+            <input type="number" id="pp_${key}" placeholder="0" min="0" value="${prevPrice}">
             <select id="pc_${key}">
-              <option value="USD">USD $</option>
-              <option value="EUR">EUR €</option>
-              <option value="GBP">GBP £</option>
-              <option value="LE">LE ج</option>
+              <option value="USD" ${prevCur==='USD'?'selected':''}>USD $</option>
+              <option value="EUR" ${prevCur==='EUR'?'selected':''}>EUR €</option>
+              <option value="GBP" ${prevCur==='GBP'?'selected':''}>GBP £</option>
+              <option value="LE"  ${prevCur==='LE' ?'selected':''}>LE ج</option>
             </select>
           </div>
         </div>`;
@@ -550,25 +601,16 @@ async function doSave() {
   btn.textContent = '⏳ جاري الحفظ والإنشاء...';
 
   try {
-    const cat = document.getElementById('f_cat')?.value ||
+    // النشاط محفوظ في متغير عام عند الانتقال للخطوة 2
+    const cat = _currentCategory || document.getElementById('f_cat')?.value ||
                 (isEdit ? selectedAccount?.category : '');
     const isSubmarine = (cat === 'Submarine');
 
-    // جمع البيانات الأساسية
+    // قراءة البيانات من _formStep1Data (محفوظة عند الانتقال للخطوة 2)
     const formData = {
-      customerName:  document.getElementById('f_name')?.value?.trim() || '',
-      customerType:  document.getElementById('f_type')?.value || 'Supplier',
-      category:      cat,
-      parentCenter:  document.getElementById('f_parent')?.value?.trim() || '',
-      contactPerson: document.getElementById('f_contact')?.value?.trim() || '',
-      phone:         document.getElementById('f_phone')?.value?.trim() || '',
-      email:         document.getElementById('f_email')?.value?.trim() || '',
-      address:       document.getElementById('f_address')?.value?.trim() || '',
-      startDate:     document.getElementById('f_start')?.value || '',
-      endDate:       document.getElementById('f_end')?.value || '',
-      paymentTerms:  document.getElementById('f_terms')?.value?.trim() || '',
-      status:        document.getElementById('f_status')?.value === 'true',
-      notes:         document.getElementById('f_notes')?.value?.trim() || '',
+      ..._formStep1Data,
+      category: cat,
+      status: _formStep1Data.status === 'true' || _formStep1Data.status === true,
     };
 
     // ── جمع الرحلات والأسعار ──
@@ -674,7 +716,8 @@ async function confirmDelete() {
 window.goBack=goBack; window.openAdd=openAdd; window.openEdit=openEdit;
 window.selectRow=selectRow; window.renderTable=renderTable; window.closeModal=closeModal;
 window.closeAlert=closeAlert; window.goStep2=goStep2; window.goBackStep1=goBackStep1;
-window.toggleTrip=toggleTrip; window.doSave=doSave; window.doDelete=doDelete;
+window.toggleTrip=toggleTrip; window.handleTripToggle=handleTripToggle;
+window.doSave=doSave; window.doDelete=doDelete;
 window.confirmDelete=confirmDelete; window.loadPriceInputs=loadPriceInputs;
 </script>
 </body>
