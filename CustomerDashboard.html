@@ -97,13 +97,13 @@
       padding: 20px 16px 50px;
     }
 
-    /* Tabs */
     .tabs {
       display: flex;
       gap: 8px;
       margin-bottom: 20px;
       border-bottom: 2px solid var(--border);
       padding-bottom: 8px;
+      flex-wrap: wrap;
     }
 
     .tab-btn {
@@ -251,14 +251,23 @@
       font-size: 12px;
     }
 
-    .data-table thead th {
-      background: #f0f4f8;
-      color: var(--text-lt);
+    .data-table thead tr:first-child th {
+      background: linear-gradient(90deg, var(--navy), var(--navy2));
+      color: var(--gold);
       padding: 10px 8px;
       font-weight: 700;
       text-align: center;
-      border-bottom: 2px solid var(--border);
+      border-bottom: 1px solid var(--border);
       white-space: nowrap;
+    }
+
+    .data-table thead tr:second-child th {
+      background: #f0f4f8;
+      color: var(--text-lt);
+      padding: 8px;
+      font-weight: 600;
+      text-align: center;
+      font-size: 11px;
     }
 
     .data-table tbody td {
@@ -277,25 +286,9 @@
       font-weight: 600;
     }
 
-    .currency-table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-
-    .currency-table td {
-      padding: 10px;
-      border: 1px solid var(--border);
-    }
-
-    .currency-table td:first-child {
+    .total-row {
+      background: #e6f0ff;
       font-weight: 700;
-      background: #f8faff;
-    }
-
-    .total-amount {
-      font-size: 20px;
-      font-weight: 900;
-      color: var(--green);
     }
 
     .loader {
@@ -425,9 +418,9 @@ const DASH = { Admin: 'Dashboard.html', Owner: 'OwnerDashboard.html', Sales: 'Sa
 let currentUser = null;
 let customerAccount = null;
 let accountSheetData = null;
-let priceColumns = []; // أسماء الأعمدة (رحلة|بند)
-let priceHeaders = []; // رؤوس الأعمدة للعرض
-let dailyTotalsByCurrency = {}; // إجماليات اليوم حسب العملة
+let priceColumns = []; // { col, trip, item }
+let tripGroups = []; // تجميع البنود حسب الرحلة
+let userInvoices = []; // فواتير العميل (للحصول على الكميات)
 
 // ====================== دوال الاتصال ======================
 function gas(action, params = {}) {
@@ -557,6 +550,26 @@ async function loadCustomerAccount() {
   }
 }
 
+// ====================== جلب فواتير العميل ======================
+async function loadUserInvoices() {
+  try {
+    const allInvoices = await gas('getAllInvoices');
+    const invoices = Array.isArray(allInvoices) ? allInvoices : [];
+    
+    // فلترة فواتير العميل الحالي
+    userInvoices = invoices.filter(inv => 
+      inv.customer === customerAccount.customerName || 
+      inv.guestName === currentUser?.name
+    );
+    
+    console.log('فواتير العميل:', userInvoices.length);
+    return true;
+  } catch (e) {
+    console.error('loadUserInvoices error:', e);
+    return false;
+  }
+}
+
 // ====================== جلب بيانات الشيت ======================
 async function loadAccountSheet(startDateISO, endDateISO) {
   try {
@@ -573,7 +586,9 @@ async function loadAccountSheet(startDateISO, endDateISO) {
     
     accountSheetData = sheetData.data;
     
-    extractHeaders();
+    extractPriceColumns();
+    
+    await loadUserInvoices();
     
     renderTabs(startDateISO, endDateISO);
     
@@ -588,29 +603,65 @@ async function loadAccountSheet(startDateISO, endDateISO) {
   }
 }
 
-function extractHeaders() {
+function extractPriceColumns() {
   if (!accountSheetData || accountSheetData.length < 4) return;
   
   const row2 = accountSheetData[1] || []; // الصف 2: أسماء الرحلات
   const row3 = accountSheetData[2] || []; // الصف 3: أسماء البنود
   
   priceColumns = [];
-  priceHeaders = [];
+  tripGroups = [];
   
-  for (let i = 81; i < row2.length; i++) { // أعمدة الأسعار تبدأ من 81 (CC)
+  let currentTrip = null;
+  
+  for (let i = 81; i < row2.length; i++) {
     const tripName = row2[i]?.toString().trim();
     const itemName = row3[i]?.toString().trim();
-    if (tripName && itemName && tripName !== '' && itemName !== '') {
+    
+    if (tripName && tripName !== '' && tripName !== 'Date' && tripName !== 'Total') {
+      // بداية رحلة جديدة
+      if (currentTrip) {
+        tripGroups.push(currentTrip);
+      }
+      currentTrip = { name: tripName, items: [] };
+    }
+    
+    if (itemName && itemName !== '' && currentTrip) {
+      currentTrip.items.push({ col: i, name: itemName });
       priceColumns.push({ col: i, trip: tripName, item: itemName });
-      priceHeaders.push(`${tripName} - ${itemName}`);
     }
   }
   
+  if (currentTrip) {
+    tripGroups.push(currentTrip);
+  }
+  
+  console.log('مجموعات الرحلات:', tripGroups);
   console.log('أعمدة الأسعار:', priceColumns);
 }
 
-function calculateTotals(startRow, endRow) {
-  const totalsByCurrency = { USD: 0, EUR: 0, GBP: 0, LE: 0 };
+function calculateDailyTotalsFromInvoices(startRow, endRow) {
+  // إنشاء خريطة: التاريخ + اسم البند → الكمية الإجمالية
+  const quantities = {};
+  
+  userInvoices.forEach(inv => {
+    const activeDate = inv.activeDate;
+    const activitiesText = inv.activitiesText || '';
+    
+    // تحويل activitiesText إلى كائن { "Moto Sgl": 1, "Moto Dbl": 2, ... }
+    const parts = activitiesText.split('|');
+    parts.forEach(part => {
+      const match = part.trim().match(/^(.+?)×(\d+)$/);
+      if (match) {
+        const itemName = match[1].trim();
+        const qty = parseInt(match[2]) || 0;
+        const key = activeDate + '|' + itemName;
+        quantities[key] = (quantities[key] || 0) + qty;
+      }
+    });
+  });
+  
+  // حساب الإجماليات لكل يوم وبند
   const dailyTotals = {};
   
   for (let i = startRow; i <= endRow; i++) {
@@ -618,29 +669,27 @@ function calculateTotals(startRow, endRow) {
     if (!row || !row[0]) continue;
     
     const dateStr = formatDateDisplay(row[0]?.toString() || '');
-    dailyTotals[dateStr] = { USD: 0, EUR: 0, GBP: 0, LE: 0 };
+    dailyTotals[dateStr] = {};
+    let rowTotalLE = 0;
     
     for (const col of priceColumns) {
       const priceCell = row[col.col]?.toString() || '0';
       const { price, currency } = extractPriceAndCurrency(priceCell);
+      const key = dateStr + '|' + col.item;
+      const qty = quantities[key] || 0;
+      const totalPrice = price * qty;
       
-      if (currency === 'USD') {
-        totalsByCurrency.USD += price;
-        dailyTotals[dateStr].USD += price;
-      } else if (currency === 'EUR') {
-        totalsByCurrency.EUR += price;
-        dailyTotals[dateStr].EUR += price;
-      } else if (currency === 'GBP') {
-        totalsByCurrency.GBP += price;
-        dailyTotals[dateStr].GBP += price;
-      } else {
-        totalsByCurrency.LE += price;
-        dailyTotals[dateStr].LE += price;
+      dailyTotals[dateStr][col.item] = { qty, totalPrice, currency };
+      
+      if (currency === 'LE') {
+        rowTotalLE += totalPrice;
       }
     }
+    
+    dailyTotals[dateStr]['_rowTotalLE'] = rowTotalLE;
   }
   
-  return { totalsByCurrency, dailyTotals };
+  return dailyTotals;
 }
 
 function renderTabs(startDateISO, endDateISO) {
@@ -680,10 +729,10 @@ function renderTabs(startDateISO, endDateISO) {
     }
   }
   
-  // حساب الإجماليات
-  const { totalsByCurrency, dailyTotals } = calculateTotals(startRow, endRow);
+  // حساب الإجماليات اليومية من الفواتير
+  const dailyTotals = calculateDailyTotalsFromInvoices(startRow, endRow);
   
-  // بناء HTML مع تبويبات
+  // بناء HTML
   const html = `
     <div class="card">
       <div class="card-head">
@@ -706,8 +755,8 @@ function renderTabs(startDateISO, endDateISO) {
     
     <div class="tabs">
       <button class="tab-btn active" onclick="switchTab('prices')">📊 جدول الأسعار</button>
-      <button class="tab-btn" onclick="switchTab('total')">💰 الإجماليات الكلية</button>
-      <button class="tab-btn" onclick="switchTab('daily')">📅 الإجماليات اليومية</button>
+      <button class="tab-btn" onclick="switchTab('totals')">💰 الإجماليات اليومية</button>
+      <button class="tab-btn" onclick="switchTab('summary')">📈 إجمالي العملات</button>
     </div>
     
     <!-- تبويب جدول الأسعار -->
@@ -721,53 +770,73 @@ function renderTabs(startDateISO, endDateISO) {
           <div class="table-wrap">
             <table class="data-table">
               <thead>
-                <tr><th>التاريخ</th>${priceHeaders.map(h => `<th>${h}</th>`).join('')}</tr>
+                ${buildPricesHeader()}
               </thead>
-              <tbody>${buildPricesRows(startRow, endRow)}</tbody>
+              <tbody>
+                ${buildPricesRows(startRow, endRow)}
+              </tbody>
             </table>
           </div>
         </div>
       </div>
     </div>
     
-    <!-- تبويب الإجماليات الكلية -->
-    <div id="tabTotal" class="tab-content">
+    <!-- تبويب الإجماليات اليومية (الكميات × الأسعار) -->
+    <div id="tabTotals" class="tab-content">
       <div class="card">
         <div class="card-head">
           <span class="ch-icon">💰</span>
-          <h3>الإجماليات الكلية حسب العملة</h3>
-        </div>
-        <div class="card-body">
-          <table class="currency-table">
-            <tr><td style="width:120px"><strong>🇺🇸 USD</strong></td><td><span class="total-amount">${totalsByCurrency.USD.toFixed(2)} USD</span></td></tr>
-            <tr><td><strong>🇪🇺 EUR</strong></td><td><span class="total-amount">${totalsByCurrency.EUR.toFixed(2)} EUR</span></td></tr>
-            <tr><td><strong>🇬🇧 GBP</strong></td><td><span class="total-amount">${totalsByCurrency.GBP.toFixed(2)} GBP</span></td></tr>
-            <tr><td><strong>🇪🇬 LE</strong></td><td><span class="total-amount">${totalsByCurrency.LE.toFixed(2)} LE</span></td></tr>
-          </table>
-        </div>
-      </div>
-    </div>
-    
-    <!-- تبويب الإجماليات اليومية -->
-    <div id="tabDaily" class="tab-content">
-      <div class="card">
-        <div class="card-head">
-          <span class="ch-icon">📅</span>
-          <h3>الإجماليات اليومية حسب العملة</h3>
+          <h3>الإجماليات اليومية (الكميات × الأسعار)</h3>
         </div>
         <div class="card-body">
           <div class="table-wrap">
             <table class="data-table">
-              <thead><tr><th>التاريخ</th><th>USD</th><th>EUR</th><th>GBP</th><th>LE</th></tr></thead>
-              <tbody>${buildDailyRows(dailyTotals)}</tbody>
+              <thead>
+                ${buildTotalsHeader()}
+              </thead>
+              <tbody>
+                ${buildTotalsRows(startRow, endRow, dailyTotals)}
+              </tbody>
             </table>
           </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- تبويب إجمالي العملات -->
+    <div id="tabSummary" class="tab-content">
+      <div class="card">
+        <div class="card-head">
+          <span class="ch-icon">📊</span>
+          <h3>إجمالي العملات</h3>
+        </div>
+        <div class="card-body">
+          ${buildCurrencySummary(startRow, endRow)}
         </div>
       </div>
     </div>
   `;
   
   document.getElementById('mainContent').innerHTML = html;
+}
+
+function buildPricesHeader() {
+  let header = '<tr>';
+  header += '<th rowspan="2">التاريخ</th>';
+  
+  for (const trip of tripGroups) {
+    header += `<th colspan="${trip.items.length}">${trip.name}</th>`;
+  }
+  header += '</tr><tr>';
+  
+  for (const trip of tripGroups) {
+    for (const item of trip.items) {
+      header += `<th style="font-size:11px;background:#f0f4f8">${item.name}</th>`;
+    }
+  }
+  header += '</tr>';
+  
+  return header;
 }
 
 function buildPricesRows(startRow, endRow) {
@@ -788,18 +857,88 @@ function buildPricesRows(startRow, endRow) {
   return rows || '<tr><td colspan="100" class="no-data">لا توجد بيانات</td></tr>';
 }
 
-function buildDailyRows(dailyTotals) {
-  let rows = '';
-  for (const [date, totals] of Object.entries(dailyTotals)) {
-    rows += `<tr>
-      <td style="font-weight:600">${date}</td>
-      <td>${totals.USD.toFixed(2)} USD</td>
-      <td>${totals.EUR.toFixed(2)} EUR</td>
-      <td>${totals.GBP.toFixed(2)} GBP</td>
-      <td>${totals.LE.toFixed(2)} LE</td>
-    </tr>`;
+function buildTotalsHeader() {
+  let header = '<tr>';
+  header += '<th rowspan="2">التاريخ</th>';
+  
+  for (const trip of tripGroups) {
+    header += `<th colspan="${trip.items.length}">${trip.name}</th>`;
   }
-  return rows || '<tr><td colspan="5" class="no-data">لا توجد بيانات</td></tr>';
+  header += '<th rowspan="2">المجموع LE</th>';
+  header += '</tr><tr>';
+  
+  for (const trip of tripGroups) {
+    for (const item of trip.items) {
+      header += `<th style="font-size:11px;background:#f0f4f8">${item.name}</th>`;
+    }
+  }
+  header += '</tr>';
+  
+  return header;
+}
+
+function buildTotalsRows(startRow, endRow, dailyTotals) {
+  let rows = '';
+  for (let i = startRow; i <= endRow; i++) {
+    const row = accountSheetData[i];
+    if (!row || !row[0]) continue;
+    
+    const dateStr = formatDateDisplay(row[0]?.toString() || '');
+    const dayData = dailyTotals[dateStr] || {};
+    const rowTotalLE = dayData['_rowTotalLE'] || 0;
+    
+    rows += `<tr><td style="font-weight:600">${dateStr}</td>`;
+    
+    for (const col of priceColumns) {
+      const itemData = dayData[col.item];
+      if (itemData && itemData.qty > 0) {
+        rows += `<td style="background:#e6f0ff">${itemData.qty}</td>`;
+      } else {
+        rows += `<td>-</td>`;
+      }
+    }
+    
+    rows += `<td style="font-weight:700;background:#e6f0ff">${rowTotalLE.toFixed(2)} LE</td></tr>`;
+  }
+  return rows || '<tr><td colspan="100" class="no-data">لا توجد بيانات</td></tr>';
+}
+
+function buildCurrencySummary(startRow, endRow) {
+  // حساب إجمالي العملات من جميع الفواتير
+  const totals = { USD: 0, EUR: 0, GBP: 0, LE: 0 };
+  
+  userInvoices.forEach(inv => {
+    // إضافة من paymentPrice و rest
+    const currency = inv.invoiceCurrency || 'LE';
+    const rest = parseFloat(inv.rest) || 0;
+    
+    if (currency === 'USD') totals.USD += rest;
+    else if (currency === 'EUR') totals.EUR += rest;
+    else if (currency === 'GBP') totals.GBP += rest;
+    else totals.LE += rest;
+    
+    // إضافة من الدفعات النقدية والفيزا
+    totals.USD += parseFloat(inv.cashUSD) || 0;
+    totals.USD += parseFloat(inv.visaUSD) || 0;
+    totals.EUR += parseFloat(inv.cashEUR) || 0;
+    totals.EUR += parseFloat(inv.visaEUR) || 0;
+    totals.GBP += parseFloat(inv.cashGBP) || 0;
+    totals.GBP += parseFloat(inv.visaGBP) || 0;
+    totals.LE += parseFloat(inv.cashLE) || 0;
+    totals.LE += parseFloat(inv.visaLE) || 0;
+  });
+  
+  return `
+    <table class="data-table">
+      <thead><tr><th>العملة</th><th>الإجمالي</th></tr></thead>
+      <tbody>
+        <tr><td>🇺🇸 USD</td><td class="total-amount">${totals.USD.toFixed(2)} USD</td></tr>
+        <tr><td>🇪🇺 EUR</td><td class="total-amount">${totals.EUR.toFixed(2)} EUR</td></tr>
+        <tr><td>🇬🇧 GBP</td><td class="total-amount">${totals.GBP.toFixed(2)} GBP</td></tr>
+        <tr><td>🇪🇬 LE</td><td class="total-amount">${totals.LE.toFixed(2)} LE</td></tr>
+      </tbody>
+    </table>
+  `;
 }
 
 function showLoading(show) {
@@ -829,21 +968,19 @@ function openInvoicePage() {
 }
 
 function switchTab(tab) {
-  // تحديث الأزرار
   document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
   event.target.classList.add('active');
   
-  // تحديث المحتوى
   document.getElementById('tabPrices').classList.remove('active');
-  document.getElementById('tabTotal').classList.remove('active');
-  document.getElementById('tabDaily').classList.remove('active');
+  document.getElementById('tabTotals').classList.remove('active');
+  document.getElementById('tabSummary').classList.remove('active');
   
   if (tab === 'prices') {
     document.getElementById('tabPrices').classList.add('active');
-  } else if (tab === 'total') {
-    document.getElementById('tabTotal').classList.add('active');
-  } else if (tab === 'daily') {
-    document.getElementById('tabDaily').classList.add('active');
+  } else if (tab === 'totals') {
+    document.getElementById('tabTotals').classList.add('active');
+  } else if (tab === 'summary') {
+    document.getElementById('tabSummary').classList.add('active');
   }
 }
 
