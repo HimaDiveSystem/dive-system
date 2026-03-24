@@ -7,7 +7,6 @@
   <title>إدارة العملاء والمنفذين</title>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
   <style>
-    /* كل الستايلات كما هي */
     :root{
       --navy:#0f1f3d;--navy2:#1a3260;--gold:#f5c842;
       --blue:#2563eb;--green:#16a34a;--red:#dc2626;--orange:#ea580c;
@@ -95,6 +94,10 @@
     .step{padding:5px 16px;border-radius:20px;font-size:12px;font-weight:700;background:#f0f4f8;color:var(--text-lt);}
     .step.active{background:var(--navy);color:var(--gold);}
     .step.done{background:#dcfce7;color:#166534;}
+    .login-fields{background:#f8fafc;border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:10px;}
+    .password-wrapper{position:relative;display:flex;align-items:center;}
+    .password-wrapper .fc{padding-left:40px;}
+    .toggle-password{position:absolute;left:12px;top:50%;transform:translateY(-50%);cursor:pointer;color:var(--text-lt);font-size:14px;background:none;border:none;}
     @media(max-width:640px){
       .fgrid{grid-template-columns:1fr;}
       .trip-price-grid{grid-template-columns:1fr;}
@@ -143,7 +146,7 @@
 <script>
 // ====================== الرابط الصحيح للـ API ======================
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbwe1Q9pjAJRk9CfWsK5YGjD5uVAbJkMhAVgw6akKkFIR9sz15V78C88Vs5dumKE-SwF/exec';
-const DASH = {Admin:'Dashboard.html',Owner:'OwnerDashboard.html',Sales:'SalesDashboard.html',Accountant:'AccountantDashboard.html'};
+const DASH = {Admin:'Dashboard.html',Owner:'OwnerDashboard.html',Sales:'SalesDashboard.html',Accountant:'AccountantDashboard.html',Customer:'CustomerDashboard.html'};
 
 let currentUser = null;
 let allAccounts = [];
@@ -262,6 +265,50 @@ function formatDateForInput(dateStr) {
   }
 }
 
+// توليد إيميل تلقائي
+function generateAutoEmail(name) {
+  if (!name) return '';
+  const cleanName = name.trim().toLowerCase().replace(/\s+/g, '.');
+  return `${cleanName}@system.com`;
+}
+
+// إظهار/إخفاء حقول تسجيل الدخول
+function toggleSystemAccess(show) {
+  const loginFields = document.getElementById('loginFields');
+  if (loginFields) {
+    loginFields.style.display = show ? 'block' : 'none';
+  }
+  if (show && document.getElementById('f_loginEmail') && document.getElementById('f_name')) {
+    const name = document.getElementById('f_name').value.trim();
+    if (name && !document.getElementById('f_loginEmail').value) {
+      document.getElementById('f_loginEmail').value = generateAutoEmail(name);
+    }
+  }
+}
+
+// تبديل إظهار كلمة المرور
+function togglePasswordVisibility() {
+  const pwdField = document.getElementById('f_loginPassword');
+  const icon = document.getElementById('togglePwdIcon');
+  if (pwdField.type === 'password') {
+    pwdField.type = 'text';
+    icon.textContent = '🔒';
+  } else {
+    pwdField.type = 'password';
+    icon.textContent = '👁️';
+  }
+}
+
+// تحديث الإيميل تلقائياً عند تغيير الاسم
+function updateAutoEmail() {
+  const name = document.getElementById('f_name')?.value.trim();
+  const emailField = document.getElementById('f_loginEmail');
+  const systemAccessCheck = document.getElementById('f_hasSystemAccess');
+  if (name && systemAccessCheck && systemAccessCheck.checked && emailField && !emailField.value) {
+    emailField.value = generateAutoEmail(name);
+  }
+}
+
 // ====================== جلب بيانات الرحلات ======================
 async function fetchTripItems(tripName) {
   if (tripItems[tripName] && tripItems[tripName].length > 0) {
@@ -335,7 +382,7 @@ function renderTable() {
         </div>
         <div class="table-wrap">
           <table class="data-table">
-            <thead><tr><th>المعرف</th><th>الاسم</th><th>النوع</th><th>النشاط</th><th>التواصل</th><th>الهاتف</th><th>البداية</th><th>النهاية</th><th>الحالة</th></tr></thead>
+            <thead><th>المعرف</th><th>الاسم</th><th>النوع</th><th>النشاط</th><th>التواصل</th><th>الهاتف</th><th>البداية</th><th>النهاية</th><th>الحالة</th></thead>
             <tbody>
               ${filtered.length ? filtered.map(a => `
                 <tr class="${selectedAccount?.customerId===a.customerId?'sel':''}" onclick="selectRow('${a.customerId}')">
@@ -367,12 +414,16 @@ function renderStep1(data) {
   const CATEGORIES = ['Submarine','Safari','Water Sports','Diving','Tourism Company','Excursions'];
   const startDate = formatDateForInput(data._sheetFirstDateISO || data.startDate || '');
   const endDate = formatDateForInput(data._sheetLastDateISO || data.endDate || '');
+  const isCustomer = data.customerType === 'Customer';
+  const hasSystemAccess = data.hasSystemAccess === true || data.hasSystemAccess === 'true';
+  const loginEmail = data.loginEmail || (isCustomer && data.customerName ? generateAutoEmail(data.customerName) : '');
+  const loginPassword = data.loginPassword || '';
 
   document.getElementById('formContent').innerHTML = `
     <div class="fgrid">
-      <div class="fgroup"><label class="req">اسم العميل/المنفذ</label><input type="text" class="fc" id="f_name" value="${(data.customerName||'').replace(/"/g, '&quot;')}"></div>
+      <div class="fgroup"><label class="req">اسم العميل/المنفذ</label><input type="text" class="fc" id="f_name" value="${(data.customerName||'').replace(/"/g, '&quot;')}" oninput="updateAutoEmail()"></div>
       <div class="fgroup"><label class="req">نوع الحساب</label>
-        <select class="fc" id="f_type">
+        <select class="fc" id="f_type" onchange="toggleSystemAccess(this.value === 'Customer' && document.getElementById('f_hasSystemAccess')?.checked)">
           <option value="Customer" ${data.customerType==='Customer'?'selected':''}>عميل</option>
           <option value="Supplier" ${data.customerType==='Supplier'?'selected':''}>منفذ</option>
         </select>
@@ -400,9 +451,34 @@ function renderStep1(data) {
           <option value="true" ${data.status!==false?'selected':''}>نشط</option>
           <option value="false" ${data.status===false?'selected':''}>متوقف</option>
         </select>
+      </div>`;
+
+  // إضافة Checkbox وصول النظام للعملاء فقط
+  if (data.customerType === 'Customer' || !data.customerType) {
+    document.getElementById('formContent').innerHTML += `
+      <div class="fgroup" style="grid-column:1/-1">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="f_hasSystemAccess" onchange="toggleSystemAccess(this.checked)" ${hasSystemAccess ? 'checked' : ''}>
+          <span style="font-size:13px;">🔐 منح العميل صلاحية الدخول للنظام</span>
+        </label>
+      </div>`;
+  }
+
+  document.getElementById('formContent').innerHTML += `
+    <div class="fgroup" style="grid-column:1/-1"><label>ملاحظات</label><textarea class="fc" id="f_notes" rows="2">${(data.notes||'').replace(/</g,'&lt;')}</textarea></div>
+    <div id="loginFields" class="login-fields" style="grid-column:1/-1; display: ${hasSystemAccess && isCustomer ? 'block' : 'none'}">
+      <div style="margin-bottom:12px;"><strong>🔐 بيانات تسجيل الدخول</strong></div>
+      <div class="fgrid">
+        <div class="fgroup"><label>البريد الإلكتروني</label><input type="email" class="fc" id="f_loginEmail" value="${(loginEmail||'').replace(/"/g, '&quot;')}" placeholder="auto@system.com"></div>
+        <div class="fgroup"><label>كلمة المرور</label>
+          <div class="password-wrapper">
+            <input type="password" class="fc" id="f_loginPassword" value="${(loginPassword||'').replace(/"/g, '&quot;')}" placeholder="أدخل كلمة المرور">
+            <button type="button" class="toggle-password" onclick="togglePasswordVisibility()">👁️</button>
+          </div>
+        </div>
       </div>
-      <div class="fgroup" style="grid-column:1/-1"><label>ملاحظات</label><textarea class="fc" id="f_notes" rows="2">${(data.notes||'').replace(/</g,'&lt;')}</textarea></div>
-    </div>`;
+    </div>
+  </div>`;
 
   const sheetInfoText = data._sheetInfo || '';
   const editHint = isEdit ? `<div id="editHintWrap" style="background:#f0fdf4;border:1px solid #16a34a;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#14532d;">
@@ -435,7 +511,7 @@ function openAdd() {
   _formStep1Data = {};
   document.getElementById('formTitle').textContent = '➕ إضافة حساب جديد';
   document.getElementById('formModal').classList.add('open');
-  renderStep1({});
+  renderStep1({ customerType: 'Customer' });
 }
 
 async function openEdit() {
@@ -497,6 +573,14 @@ async function openEdit() {
         selectedAccount._existingPricesData = {};
       }
     }
+    
+    // إضافة معلومات حساب المستخدم
+    if (selectedAccount.loginEmail) {
+      selectedAccount.hasSystemAccess = true;
+      selectedAccount.loginEmail = selectedAccount.loginEmail;
+      selectedAccount.loginPassword = selectedAccount.loginPassword || '';
+    }
+    
   } catch(e) {
     console.error('خطأ في openEdit:', e);
     selectedAccount._sheetInfo = '❌ فشل جلب بيانات الشيت: ' + e.message;
@@ -514,9 +598,14 @@ async function goStep2() {
   const end   = document.getElementById('f_end')?.value;
   _currentCategory = cat;
 
+  // جمع بيانات تسجيل الدخول
+  const hasSystemAccess = type === 'Customer' && document.getElementById('f_hasSystemAccess')?.checked === true;
+  const loginEmail = hasSystemAccess ? (document.getElementById('f_loginEmail')?.value.trim() || generateAutoEmail(name)) : '';
+  const loginPassword = hasSystemAccess ? (document.getElementById('f_loginPassword')?.value.trim() || '123456') : '';
+
   _formStep1Data = {
-    customerName:  document.getElementById('f_name')?.value?.trim()  || '',
-    customerType:  document.getElementById('f_type')?.value          || 'Supplier',
+    customerName:  name || '',
+    customerType:  type || 'Supplier',
     category:      cat,
     parentCenter:  document.getElementById('f_parent')?.value?.trim() || '',
     contactPerson: document.getElementById('f_contact')?.value?.trim()|| '',
@@ -528,6 +617,9 @@ async function goStep2() {
     paymentTerms:  document.getElementById('f_terms')?.value?.trim()  || '',
     status:        document.getElementById('f_status')?.value         || 'true',
     notes:         document.getElementById('f_notes')?.value?.trim()  || '',
+    hasSystemAccess: hasSystemAccess ? 'true' : 'false',
+    loginEmail:    loginEmail,
+    loginPassword: loginPassword,
   };
   
   if (!name)  { showAlert('أدخل اسم العميل/المنفذ','⚠️'); return; }
@@ -576,9 +668,9 @@ function renderStep2(cat) {
                   <option value="GBP">GBP £</option>
                   <option value="LE">LE ج</option>
                 </select></td>
-              </tr>`).join('')}
+               </tr>`).join('')}
           </tbody>
-        </table>
+         </table>
       </div>`;
   } else {
     let availableTrips = [...tripsForCategory];
@@ -948,6 +1040,9 @@ window.doSave = doSave;
 window.doDelete = doDelete;
 window.confirmDelete = confirmDelete;
 window.loadPriceInputs = loadPriceInputs;
+window.toggleSystemAccess = toggleSystemAccess;
+window.togglePasswordVisibility = togglePasswordVisibility;
+window.updateAutoEmail = updateAutoEmail;
 </script>
 </body>
 </html>
