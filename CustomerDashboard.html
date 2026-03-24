@@ -177,77 +177,66 @@ function parseCell(cell) {
 function curClass(c){ return 'badge-cur cur-'+(c||'LE'); }
 
 // ====================== تحليل هيكل الشيت ======================
+// ====================== تحليل هيكل الشيت ======================
 function parseSheetStructure() {
   if(!sheetData||sheetData.length<4) return;
-  const row2=sheetData[1]||[];
-  const row3=sheetData[2]||[];
-  const lastCol=row2.length;
+  const row2 = sheetData[1] || [];  // الصف الثاني (الرؤوس الرئيسية)
+  const row3 = sheetData[2] || [];  // الصف الثالث (البنود)
+  const lastCol = row2.length;
 
-  tripGroups=[]; priceGroups=[]; sumCurrencies=[];
+  tripGroups = [];
+  priceGroups = [];
+  sumCurrencies = [];
 
-  // ── 1. الجدول الأول: B(1) → ابحث عن أول عمود "مجموع" أو CA(78) ──
-  // الرؤوس: الصف 2 = اسم الرحلة (مدمج)، الصف 3 = اسم البند
-  let jFirst=1; // العمود B (index 1)
-  let jEnd=78;  // قبل CA (index 78)
-  // ابحث عن عمود المجاميع في الجدول الأول
-  for(let j=jFirst;j<Math.min(jEnd,lastCol);j++){
-    const v2=(row2[j]||'').toString().trim();
-    const v3=(row3[j]||'').toString().trim();
-    if(v2.startsWith('المجموع')||v2.startsWith('Total')){
-      // احفظ عملة المجموع
-      const cur=v2.replace('المجموع ','').replace('Total ','').trim();
-      if(cur) sumCurrencies.push({col:j,currency:cur});
-      jEnd=j; break;
+  // ── 1. الجدول الأول: من B(1) إلى CA(78) ──
+  let jFirst = 1;  // العمود B (index 1)
+  let jEnd = 78;   // قبل CA (index 78)
+
+  // ابحث عن أعمدة المجاميع (المجموع LE, المجموع $, ...)
+  for (let j = jFirst; j < Math.min(jEnd, lastCol); j++) {
+    const v2 = (row2[j] || '').toString().trim();
+    if (v2.startsWith('المجموع') || v2.startsWith('Total')) {
+      const cur = v2.replace('المجموع ', '').replace('Total ', '').trim();
+      if (cur) sumCurrencies.push({ col: j, currency: cur });
+      // لا نجعل jEnd هنا، لأن هناك أكثر من عمود مجموع (LE و USD)
     }
   }
 
   // تحليل الرحلات والبنود في الجدول الأول
-  let curTrip=null;
-  for(let j=jFirst;j<jEnd;j++){
-    const v2=(row2[j]||'').toString().trim();
-    const v3=(row3[j]||'').toString().trim();
-    if(v2&&v2!==''){ // اسم رحلة جديد
-      curTrip={name:v2,items:[]};
+  let curTrip = null;
+  for (let j = jFirst; j < jEnd; j++) {
+    const v2 = (row2[j] || '').toString().trim();
+    const v3 = (row3[j] || '').toString().trim();
+    if (v2 && v2 !== '' && !v2.startsWith('المجموع') && !v2.startsWith('Total')) {
+      curTrip = { name: v2, items: [] };
       tripGroups.push(curTrip);
     }
-    if(v3&&v3!==''&&curTrip){
-      curTrip.items.push({name:v3,col:j});
+    if (v3 && v3 !== '' && curTrip) {
+      curTrip.items.push({ name: v3, col: j });
     }
   }
-  // إذا لم يتم إيجاد أي عمود مجاميع، ابحث عنها بعد آخر بند
-  if(sumCurrencies.length===0){
-    for(let j=jFirst;j<Math.min(78,lastCol);j++){
-      const v2=(row2[j]||'').toString().trim();
-      if(v2.startsWith('المجموع')||v2.startsWith('Total')){
-        const cur=v2.replace('المجموع ','').replace('Total ','').trim();
-        if(cur) sumCurrencies.push({col:j,currency:cur});
-      }
-    }
-  }
+
+  console.log('sumCurrencies found:', sumCurrencies);
+  console.log('tripGroups:', tripGroups);
 
   // ── 2. الجدول الثاني: CC(80) فصاعداً ──
-  // الصف 2 = اسم رحلة (مدمج)، الصف 3 = اسم البند
-  let curPriceTrip=null;
-  for(let j=80;j<lastCol;j++){
-    const v2=(row2[j]||'').toString().trim();
-    const v3=(row3[j]||'').toString().trim();
-    if(v2&&v2!==''){ // اسم رحلة
-      curPriceTrip={name:v2,items:[]};
+  let curPriceTrip = null;
+  for (let j = 80; j < lastCol; j++) {
+    const v2 = (row2[j] || '').toString().trim();
+    const v3 = (row3[j] || '').toString().trim();
+    if (v2 && v2 !== '') {
+      curPriceTrip = { name: v2, items: [] };
       priceGroups.push(curPriceTrip);
     }
-    if(v3&&v3!==''&&curPriceTrip){
-      // قراءة سعر من أول صف بيانات (الصف 4 = index 3) لتحديد العملة
-      const sampleCell=(sheetData[3]||[])[j];
-      const {currency}=parseCell(sampleCell);
-      curPriceTrip.items.push({name:v3,col:j,currency});
+    if (v3 && v3 !== '' && curPriceTrip) {
+      const sampleCell = (sheetData[3] || [])[j];
+      const { currency } = parseCell(sampleCell);
+      curPriceTrip.items.push({ name: v3, col: j, currency });
     }
   }
 
-  console.log('tripGroups:',tripGroups);
-  console.log('priceGroups:',priceGroups);
-  console.log('sumCurrencies:',sumCurrencies);
+  console.log('priceGroups:', priceGroups);
 }
-
 // ====================== تصيير جدول الأسعار (CC+) ======================
 function renderPricesTab(rows) {
   if(!priceGroups.length) return '<div class="no-data">لا توجد بيانات أسعار</div>';
