@@ -7,6 +7,7 @@
   <title>لوحة العميل</title>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
   <style>
+    /* نفس الستايلات السابقة */
     :root{
       --navy:#0f1f3d;--navy2:#1a3260;--gold:#f5c842;
       --blue:#2563eb;--green:#16a34a;--red:#dc2626;--orange:#ea580c;
@@ -123,8 +124,7 @@
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbwe1Q9pjAJRk9CfWsK5YGjD5uVAbJkMhAVgw6akKkFIR9sz15V78C88Vs5dumKE-SwF/exec';
 
 let currentUser = null;
-let customerAccount = null;
-let sheetData = [];
+let dashboardData = null;
 
 // ====================== الاتصال ======================
 function gas(action, params = {}) {
@@ -166,55 +166,25 @@ function doLogout() { sessionStorage.removeItem('currentUser'); location.href = 
 function showAlert(msg, icon) { document.getElementById('alertIcon').textContent = icon || 'ℹ️'; document.getElementById('alertMsg').textContent = msg; document.getElementById('alertModal').classList.add('open'); }
 function closeAlert() { document.getElementById('alertModal').classList.remove('open'); }
 
-function fmtDate(v) {
-  if (!v) return '';
-  const s = v.toString().trim();
-  if (s.match(/^\d{1,2}\/[A-Za-z]{3}\/\d{4}$/)) return s;
-  try { const d = new Date(s); if (!isNaN(d)) { const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return String(d.getDate()).padStart(2,'0') + '/' + MN[d.getMonth()] + '/' + d.getFullYear(); } } catch(e) {}
-  return s;
-}
-
-function extractPriceAndCurrency(priceStr) {
-  const s = (priceStr || '').toString().trim();
-  if (!s || s === '0') return { price: 0, currency: 'LE' };
-  const m = s.match(/^([\d.]+)([A-Za-z]+)$/);
-  if (m) return { price: parseFloat(m[1]) || 0, currency: m[2] };
-  const n = parseFloat(s);
-  return { price: isNaN(n) ? 0 : n, currency: 'LE' };
-}
-
-// ====================== جدول الأسعار ======================
-function renderPricesTab(rows) {
-  if (!sheetData || sheetData.length < 4) return '<div class="no-data">لا توجد بيانات</div>';
-  
-  const row2 = sheetData[1] || [];
-  const row3 = sheetData[2] || [];
-  
-  let startPriceCol = 80;
-  for (let i = 0; i < row2.length; i++) {
-    if (row2[i] === 'السنة' || row2[i] === 'Year') startPriceCol = i + 1;
-  }
+// ====================== تصيير الجداول ======================
+function renderPricesTab() {
+  if (!dashboardData || !dashboardData.rows || !dashboardData.priceHeaders) return '<div class="no-data">لا توجد بيانات</div>';
   
   let header = '<thead><tr class="row-trip"><th class="th-date" rowspan="2">التاريخ</th>';
-  for (let i = startPriceCol; i < row2.length; i++) {
-    const tripName = (row2[i] || '').toString().trim();
-    if (tripName) header += `<th>${tripName}</th>`;
+  for (const h of dashboardData.priceHeaders) {
+    header += `<th>${h.trip}</th>`;
   }
-  header += '</tr><tr class="row-item">';
-  for (let i = startPriceCol; i < row3.length; i++) {
-    const itemName = (row3[i] || '').toString().trim();
-    if (itemName) header += `<th>${itemName}</th>`;
+  header += '发展<tr class="row-item">';
+  for (const h of dashboardData.priceHeaders) {
+    header += `<th>${h.item}</th>`;
   }
   header += '</tr></thead>';
   
   let tbody = '';
-  for (const row of rows) {
-    const dateStr = fmtDate(row[0]);
-    if (!dateStr) continue;
-    tbody += `<tr><td style="font-weight:600">${dateStr}</td>`;
-    for (let i = startPriceCol; i < row.length; i++) {
-      const val = (row[i] || '').toString().trim();
-      tbody += `<td>${val || '-'}</td>`;
+  for (const row of dashboardData.rows) {
+    tbody += `<tr><td style="font-weight:600">${row.date}</td>`;
+    for (const price of row.prices) {
+      tbody += `<td>${price > 0 ? price : '-'}</td>`;
     }
     tbody += '</tr>';
   }
@@ -222,154 +192,45 @@ function renderPricesTab(rows) {
   return `<div class="table-wrap"><table class="dt">${header}<tbody>${tbody || '<tr><td colspan="100" class="no-data">لا توجد بيانات</td></tr>'}</tbody></table></div>`;
 }
 
-// ====================== جدول الإجماليات ======================
-function renderTotalsTab(rows) {
-  if (!sheetData || sheetData.length < 4) return '<div class="no-data">لا توجد بيانات</div>';
+function renderTotalsTab() {
+  if (!dashboardData || !dashboardData.rows || !dashboardData.qtyHeaders) return '<div class="no-data">لا توجد بيانات</div>';
   
-  const row2 = sheetData[1] || [];
-  const row3 = sheetData[2] || [];
-  
-  // 1. البحث عن أعمدة المجاميع
-  const sumColumns = [];
-  for (let i = 0; i < row2.length; i++) {
-    const val = (row2[i] || '').toString().trim();
-    if (val === 'Total LE' || val === 'المجموع LE') sumColumns.push({ col: i, name: 'المجموع LE', currency: 'LE' });
-    if (val === 'Total USD' || val === 'المجموع $') sumColumns.push({ col: i, name: 'المجموع USD', currency: 'USD' });
-    if (val === 'Total EUR' || val === 'المجموع €') sumColumns.push({ col: i, name: 'المجموع EUR', currency: 'EUR' });
-    if (val === 'Total GBP' || val === 'المجموع £') sumColumns.push({ col: i, name: 'المجموع GBP', currency: 'GBP' });
-  }
-  
-  // 2. تحديد بداية أعمدة الأسعار
-  let priceStart = 80;
-  for (let i = 0; i < row2.length; i++) {
-    if (row2[i] === 'السنة' || row2[i] === 'Year') priceStart = i + 1;
-  }
-  
-  // 3. بناء رأس الجدول
   let header = '<thead><tr class="row-trip"><th class="th-date" rowspan="2">التاريخ</th>';
-  for (let i = 1; i < priceStart; i++) {
-    const tripName = (row2[i] || '').toString().trim();
-    if (tripName && tripName !== 'المجموع' && !tripName.startsWith('Total')) {
-      let span = 1;
-      for (let j = i + 1; j < priceStart; j++) {
-        if ((row2[j] || '').toString().trim() === '') span++;
-        else break;
-      }
-      header += `<th colspan="${span}">${tripName}</th>`;
-    }
+  for (const h of dashboardData.qtyHeaders) {
+    header += `<th colspan="?">${h.trip || h.item}</th>`;
   }
-  for (const col of sumColumns) {
-    header += `<th rowspan="2">${col.name}</th>`;
+  for (const col of dashboardData.sumColumns) {
+    header += `<th rowspan="2">المجموع ${col.currency}</th>`;
   }
   header += '</tr><tr class="row-item">';
-  for (let i = 1; i < priceStart; i++) {
-    const itemName = (row3[i] || '').toString().trim();
-    if (itemName && itemName !== 'المجموع' && !itemName.startsWith('Total')) {
-      header += `<th>${itemName}</th>`;
-    }
+  for (const h of dashboardData.qtyHeaders) {
+    header += `<th>${h.item}</th>`;
   }
   header += '</tr></thead>';
   
-  // 4. حساب البيانات لكل صف
   let tbody = '';
-  for (const row of rows) {
-    const dateStr = fmtDate(row[0]);
-    if (!dateStr) continue;
-    
-    const totals = { USD: 0, EUR: 0, GBP: 0, LE: 0 };
-    
-    // جمع البيانات من أعمدة الأسعار
-    for (let i = priceStart; i < row.length; i++) {
-      const priceCell = (row[i] || '').toString().trim();
-      if (!priceCell || priceCell === '0') continue;
-      
-      const { price, currency } = extractPriceAndCurrency(priceCell);
-      const qtyCol = i - priceStart + 1; // العمود المقابل في جدول الكميات
-      const qty = parseInt(row[qtyCol]) || 0;
-      
-      if (qty > 0) {
-        totals[currency] = (totals[currency] || 0) + (price * qty);
-      }
+  for (const row of dashboardData.rows) {
+    tbody += `<tr><td style="font-weight:600">${row.date}</td>`;
+    for (const qty of row.quantities) {
+      tbody += `<td style="${qty > 0 ? 'background:#e6f0ff;font-weight:600' : ''}">${qty > 0 ? qty : '-'}</td>`;
     }
-    
-    // بناء صف البيانات
-    let tds = '';
-    for (let i = 1; i < priceStart; i++) {
-      const val = (row[i] || '').toString().trim();
-      tds += `<td>${val && val !== '0' ? val : '-'}</td>`;
+    for (const col of dashboardData.sumColumns) {
+      const val = row.totals[col.currency] || 0;
+      tbody += `<td style="font-weight:700;background:#e6f0ff">${val.toLocaleString()} ${col.currency}</td>`;
     }
-    for (const col of sumColumns) {
-      const val = totals[col.currency] || 0;
-      tds += `<td style="font-weight:700;background:#e6f0ff">${val.toLocaleString()} ${col.currency}</td>`;
-    }
-    
-    tbody += `<tr><td style="font-weight:600">${dateStr}</td>${tds}</tr>`;
+    tbody += '</tr>';
   }
   
   return `<div class="table-wrap"><table class="dt">${header}<tbody>${tbody || '<tr><td colspan="100" class="no-data">لا توجد بيانات</td></tr>'}</tbody></table></div>`;
 }
 
-// ====================== إجمالي العملات ======================
-function renderSummaryTab(rows) {
-  if (!sheetData || sheetData.length < 4) return '<div class="no-data">لا توجد بيانات</div>';
+function renderSummaryTab() {
+  if (!dashboardData || !dashboardData.rows) return '<div class="no-data">لا توجد بيانات</div>';
   
-  const row2 = sheetData[1] || [];
-  
-  // البحث عن أعمدة المجاميع
-  const sumColumns = [];
-  for (let i = 0; i < row2.length; i++) {
-    const val = (row2[i] || '').toString().trim();
-    if (val === 'Total LE' || val === 'المجموع LE') sumColumns.push({ currency: 'LE' });
-    if (val === 'Total USD' || val === 'المجموع $') sumColumns.push({ currency: 'USD' });
-    if (val === 'Total EUR' || val === 'المجموع €') sumColumns.push({ currency: 'EUR' });
-    if (val === 'Total GBP' || val === 'المجموع £') sumColumns.push({ currency: 'GBP' });
-  }
-  
-  // إذا لم يتم العثور على أعمدة مجاميع، استخدم العملات الموجودة في الأسعار
-  if (sumColumns.length === 0) {
-    const priceStart = 80;
-    const currencies = new Set();
-    for (const row of rows) {
-      for (let i = priceStart; i < row.length; i++) {
-        const { currency } = extractPriceAndCurrency(row[i]);
-        if (currency) currencies.add(currency);
-      }
-    }
-    currencies.forEach(c => sumColumns.push({ currency: c }));
-  }
-  
-  let totals = {};
-  sumColumns.forEach(c => totals[c.currency] = 0);
-  
-  // حساب الإجمالي من أعمدة المجاميع إن وجدت
-  for (const row of rows) {
-    for (const col of sumColumns) {
-      for (let i = 0; i < row2.length; i++) {
-        const val = (row2[i] || '').toString().trim();
-        if (val === `Total ${col.currency}` || val === `المجموع ${col.currency}`) {
-          totals[col.currency] += parseFloat(row[i]) || 0;
-          break;
-        }
-      }
-    }
-  }
-  
-  // إذا كانت المجاميع صفر، احسب من الأسعار والكميات
-  let allZero = true;
-  for (const cur in totals) if (totals[cur] > 0) allZero = false;
-  
-  if (allZero) {
-    totals = { USD: 0, EUR: 0, GBP: 0, LE: 0 };
-    const priceStart = 80;
-    for (const row of rows) {
-      for (let i = priceStart; i < row.length; i++) {
-        const { price, currency } = extractPriceAndCurrency(row[i]);
-        const qtyCol = i - priceStart + 1;
-        const qty = parseInt(row[qtyCol]) || 0;
-        if (qty > 0) {
-          totals[currency] = (totals[currency] || 0) + (price * qty);
-        }
-      }
+  const totals = { USD: 0, EUR: 0, GBP: 0, LE: 0 };
+  for (const row of dashboardData.rows) {
+    for (const [cur, val] of Object.entries(row.totals)) {
+      totals[cur] = (totals[cur] || 0) + val;
     }
   }
   
@@ -390,110 +251,104 @@ function renderSummaryTab(rows) {
 // ====================== تحميل البيانات ======================
 async function loadAll() {
   try {
-    document.getElementById('mainContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري جلب الحساب...</div>';
+    document.getElementById('mainContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري جلب البيانات...</div>';
     
+    // 1. جلب حساب العميل
     const allAcc = await gas('getAllSuppliersCustomers');
     const accounts = Array.isArray(allAcc) ? allAcc : [];
     
-    customerAccount = accounts.find(a => 
+    const customer = accounts.find(a => 
       a.customerType === 'Customer' && 
       (a.loginEmail === currentUser?.email || a.customerName === currentUser?.name)
     );
     
-    if (!customerAccount) {
+    if (!customer) {
       document.getElementById('mainContent').innerHTML = '<div class="card"><div class="card-body no-data">⚠️ لا يوجد حساب مرتبط بهذا المستخدم</div></div>';
       return;
     }
     
-    const sheetName = customerAccount.customerName + '_' + customerAccount.category + '_' + customerAccount.customerType;
-    document.getElementById('mainContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري جلب شيت الحساب...</div>';
+    // 2. جلب بيانات لوحة التحكم
+    const res = await gas('getCustomerDashboardData', { customerId: customer.customerId });
     
-    const res = await gas('getAccountSheetData', { sheetName });
-    
-    if (!res?.success || !Array.isArray(res.data) || res.data.length < 4) {
-      document.getElementById('mainContent').innerHTML = '<div class="card"><div class="card-body no-data">⚠️ لا توجد بيانات في الشيت</div></div>';
+    if (!res?.success) {
+      document.getElementById('mainContent').innerHTML = `<div class="card"><div class="card-body no-data">⚠️ ${res?.message || 'فشل تحميل البيانات'}</div></div>`;
       return;
     }
     
-    sheetData = res.data;
-    renderPage();
+    dashboardData = res;
+    
+    const infoBar = `<div class="info-bar">🏢 <strong>${dashboardData.customer.name}</strong> | 🏄 ${dashboardData.customer.category} | 📅 ${dashboardData.customer.startDate || '-'} → ${dashboardData.customer.endDate || '-'} | ${dashboardData.rows.length} يوم</div>`;
+    
+    document.getElementById('mainContent').innerHTML = `
+      ${infoBar}
+      <div class="card">
+        <div class="card-head"><span class="ch-icon">🔍</span><h3>فلترة حسب التاريخ</h3></div>
+        <div class="card-body">
+          <div class="fgrid" style="align-items:flex-end;">
+            <div class="fgroup"><label>من تاريخ</label><input type="date" class="fc" id="fStart"></div>
+            <div class="fgroup"><label>إلى تاريخ</label><input type="date" class="fc" id="fEnd"></div>
+            <div><button class="btn btn-navy" onclick="applyFilter()">🔍 تطبيق</button>
+            <button class="btn btn-gray" style="margin-right:8px" onclick="resetFilter()">↺ إعادة</button></div>
+          </div>
+        </div>
+      </div>
+      <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('prices',event)">📋 جدول الأسعار</button>
+        <button class="tab-btn" onclick="switchTab('totals',event)">💰 الإجماليات اليومية</button>
+        <button class="tab-btn" onclick="switchTab('summary',event)">📊 إجمالي العملات</button>
+      </div>
+      <div id="tabPrices" class="tab-pane active"><div class="card"><div class="card-head"><span class="ch-icon">📋</span><h3>جدول الأسعار</h3></div><div class="card-body">${renderPricesTab()}</div></div></div>
+      <div id="tabTotals" class="tab-pane"><div class="card"><div class="card-head"><span class="ch-icon">💰</span><h3>الإجماليات اليومية (الكميات × الأسعار)</h3></div><div class="card-body">${renderTotalsTab()}</div></div></div>
+      <div id="tabSummary" class="tab-pane"><div class="card"><div class="card-head"><span class="ch-icon">📊</span><h3>إجمالي العملات</h3></div><div class="card-body">${renderSummaryTab()}</div></div></div>
+    `;
     
   } catch (e) {
     console.error('loadAll error:', e);
     showAlert('خطأ في التحميل: ' + e.message, '❌');
-    document.getElementById('mainContent').innerHTML = '<div class="card"><div class="card-body no-data">❌ فشل التحميل: ' + e.message + '</div></div>';
   }
 }
 
-function renderPage() {
-  const rows = sheetData.slice(3).filter(r => r[0]);
-  
-  const infoBar = `<div class="info-bar">🏢 <strong>${customerAccount.customerName}</strong> | 🏄 ${customerAccount.category} | 📅 ${customerAccount.startDate || '-'} → ${customerAccount.endDate || '-'} | ${rows.length} يوم</div>`;
-  
-  document.getElementById('mainContent').innerHTML = `
-    ${infoBar}
-    <div class="card">
-      <div class="card-head"><span class="ch-icon">🔍</span><h3>فلترة حسب التاريخ</h3></div>
-      <div class="card-body">
-        <div class="fgrid" style="align-items:flex-end;">
-          <div class="fgroup"><label>من تاريخ</label><input type="date" class="fc" id="fStart"></div>
-          <div class="fgroup"><label>إلى تاريخ</label><input type="date" class="fc" id="fEnd"></div>
-          <div><button class="btn btn-navy" onclick="applyFilter()">🔍 تطبيق</button>
-          <button class="btn btn-gray" style="margin-right:8px" onclick="resetFilter()">↺ إعادة</button></div>
-        </div>
-      </div>
-    </div>
-    <div class="tabs">
-      <button class="tab-btn active" onclick="switchTab('prices',event)">📋 جدول الأسعار</button>
-      <button class="tab-btn" onclick="switchTab('totals',event)">💰 الإجماليات اليومية</button>
-      <button class="tab-btn" onclick="switchTab('summary',event)">📊 إجمالي العملات</button>
-    </div>
-    <div id="tabPrices" class="tab-pane active"><div class="card"><div class="card-head"><span class="ch-icon">📋</span><h3>جدول الأسعار</h3></div><div class="card-body">${renderPricesTab(rows)}</div></div></div>
-    <div id="tabTotals" class="tab-pane"><div class="card"><div class="card-head"><span class="ch-icon">💰</span><h3>الإجماليات اليومية (الكميات × الأسعار)</h3></div><div class="card-body">${renderTotalsTab(rows)}</div></div></div>
-    <div id="tabSummary" class="tab-pane"><div class="card"><div class="card-head"><span class="ch-icon">📊</span><h3>إجمالي العملات</h3></div><div class="card-body">${renderSummaryTab(rows)}</div></div></div>
-  `;
-}
-
 function applyFilter() {
+  if (!dashboardData || !dashboardData.rows) return;
+  
   const start = document.getElementById('fStart')?.value;
   const end = document.getElementById('fEnd')?.value;
-  if (!sheetData || sheetData.length < 4) return;
   
-  let rows = sheetData.slice(3).filter(r => r[0]);
+  let filteredRows = dashboardData.rows;
   
   if (start || end) {
     const s = start ? new Date(start) : null;
     const e = end ? new Date(end) : null;
     if (s) s.setHours(0,0,0,0);
     if (e) e.setHours(23,59,59,999);
-    rows = rows.filter(r => {
-      const d = parseDateObj(r[0]);
-      if (!d) return true;
+    
+    filteredRows = dashboardData.rows.filter(row => {
+      const parts = row.date.split('/');
+      if (parts.length !== 3) return true;
+      const months = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
+      const d = new Date(parseInt(parts[2]), months[parts[1]], parseInt(parts[0]));
+      d.setHours(0,0,0,0);
       if (s && d < s) return false;
       if (e && d > e) return false;
       return true;
     });
   }
   
-  document.getElementById('tabPrices').innerHTML = `<div class="card"><div class="card-head"><span class="ch-icon">📋</span><h3>جدول الأسعار</h3></div><div class="card-body">${renderPricesTab(rows)}</div></div>`;
-  document.getElementById('tabTotals').innerHTML = `<div class="card"><div class="card-head"><span class="ch-icon">💰</span><h3>الإجماليات اليومية (الكميات × الأسعار)</h3></div><div class="card-body">${renderTotalsTab(rows)}</div></div>`;
-  document.getElementById('tabSummary').innerHTML = `<div class="card"><div class="card-head"><span class="ch-icon">📊</span><h3>إجمالي العملات</h3></div><div class="card-body">${renderSummaryTab(rows)}</div></div>`;
+  const tempData = { ...dashboardData, rows: filteredRows };
+  const oldData = dashboardData;
+  dashboardData = tempData;
+  
+  document.getElementById('tabPrices').innerHTML = `<div class="card"><div class="card-head"><span class="ch-icon">📋</span><h3>جدول الأسعار</h3></div><div class="card-body">${renderPricesTab()}</div></div>`;
+  document.getElementById('tabTotals').innerHTML = `<div class="card"><div class="card-head"><span class="ch-icon">💰</span><h3>الإجماليات اليومية (الكميات × الأسعار)</h3></div><div class="card-body">${renderTotalsTab()}</div></div>`;
+  document.getElementById('tabSummary').innerHTML = `<div class="card"><div class="card-head"><span class="ch-icon">📊</span><h3>إجمالي العملات</h3></div><div class="card-body">${renderSummaryTab()}</div></div>`;
+  
+  dashboardData = oldData;
 }
 
 function resetFilter() {
   document.getElementById('fStart').value = '';
   document.getElementById('fEnd').value = '';
   applyFilter();
-}
-
-function parseDateObj(v) {
-  if (!v) return null;
-  const s = v.toString().trim();
-  const MN = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
-  const m = s.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
-  if (m) { const d = new Date(+m[3], MN[m[2]], +m[1]); d.setHours(0,0,0,0); return d; }
-  try { const d = new Date(s); if (!isNaN(d)) return d; } catch(e) {}
-  return null;
 }
 
 function switchTab(name, event) {
