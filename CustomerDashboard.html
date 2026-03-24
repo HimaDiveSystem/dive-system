@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html dir="rtl">
 <head>
   <base target="_top">
@@ -95,6 +95,41 @@
       max-width: 1400px;
       margin: 0 auto;
       padding: 20px 16px 50px;
+    }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+      border-bottom: 2px solid var(--border);
+      padding-bottom: 8px;
+    }
+
+    .tab-btn {
+      padding: 10px 24px;
+      background: transparent;
+      border: none;
+      border-radius: 40px;
+      font-size: 14px;
+      font-weight: 700;
+      font-family: 'Cairo', sans-serif;
+      cursor: pointer;
+      color: var(--text-lt);
+      transition: all 0.2s;
+    }
+
+    .tab-btn.active {
+      background: linear-gradient(135deg, var(--navy), var(--navy2));
+      color: var(--gold);
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
     }
 
     .card {
@@ -199,11 +234,6 @@
       color: white;
     }
 
-    .btn-warning {
-      background: var(--orange);
-      color: white;
-    }
-
     .action-btns {
       display: flex;
       gap: 12px;
@@ -247,9 +277,25 @@
       font-weight: 600;
     }
 
-    .total-row {
-      background: #e6f0ff;
+    .currency-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .currency-table td {
+      padding: 10px;
+      border: 1px solid var(--border);
+    }
+
+    .currency-table td:first-child {
       font-weight: 700;
+      background: #f8faff;
+    }
+
+    .total-amount {
+      font-size: 20px;
+      font-weight: 900;
+      color: var(--green);
     }
 
     .loader {
@@ -272,12 +318,6 @@
       to {
         transform: rotate(360deg);
       }
-    }
-
-    .no-data {
-      text-align: center;
-      padding: 40px;
-      color: var(--text-lt);
     }
 
     .modal {
@@ -340,6 +380,10 @@
       .data-table th {
         padding: 6px 4px;
       }
+      .tab-btn {
+        padding: 6px 16px;
+        font-size: 12px;
+      }
     }
   </style>
 </head>
@@ -381,9 +425,9 @@ const DASH = { Admin: 'Dashboard.html', Owner: 'OwnerDashboard.html', Sales: 'Sa
 let currentUser = null;
 let customerAccount = null;
 let accountSheetData = null;
-let tripsHeaders = []; // أسماء الرحلات والبنود
-let priceColumns = []; // أعمدة الأسعار
-let dailyTotals = {}; // إجمالي كل يوم
+let priceColumns = []; // أسماء الأعمدة (رحلة|بند)
+let priceHeaders = []; // رؤوس الأعمدة للعرض
+let dailyTotalsByCurrency = {}; // إجماليات اليوم حسب العملة
 
 // ====================== دوال الاتصال ======================
 function gas(action, params = {}) {
@@ -454,7 +498,6 @@ function closeAlert() {
 
 function formatDateDisplay(dateStr) {
   if (!dateStr) return '';
-  // إذا كان بصيغة dd/MMM/yyyy
   const match = dateStr.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
   if (match) {
     return `${match[1].padStart(2, '0')}/${match[2]}/${match[3]}`;
@@ -472,14 +515,20 @@ function parseDateFromDDMMMYYYY(dateStr) {
   return new Date(dateStr);
 }
 
+function extractPriceAndCurrency(priceStr) {
+  const match = priceStr.match(/^([\d.]+)([A-Za-z]+)$/);
+  if (match) {
+    return { price: parseFloat(match[1]) || 0, currency: match[2] };
+  }
+  return { price: 0, currency: 'LE' };
+}
+
 // ====================== جلب بيانات العميل ======================
 async function loadCustomerAccount() {
   try {
-    // جلب جميع الحسابات والعثور على حساب العميل الحالي
     const allAccounts = await gas('getAllSuppliersCustomers');
     const accounts = Array.isArray(allAccounts) ? allAccounts : [];
     
-    // البحث عن حساب العميل باستخدام البريد الإلكتروني أو الاسم
     customerAccount = accounts.find(acc => 
       acc.customerType === 'Customer' && 
       (acc.loginEmail === currentUser?.email || acc.customerName === currentUser?.name)
@@ -513,19 +562,8 @@ async function loadAccountSheet(startDateISO, endDateISO) {
   try {
     showLoading(true);
     
-    // جلب تواريخ الشيت
-    const datesRes = await gasPost({
-      action: 'getAccountSheetDates',
-      customerId: customerAccount.customerId
-    });
-    
-    if (!datesRes?.success) {
-      showAlert('لا يوجد شيت للحساب', '⚠️');
-      return false;
-    }
-    
-    // جلب بيانات الشيت بالكامل
     const sheetName = customerAccount.customerName + '_' + customerAccount.category + '_' + customerAccount.customerType;
+    
     const sheetData = await gas('getAccountSheetData', { sheetName });
     
     if (!sheetData?.success || !sheetData.data) {
@@ -535,11 +573,9 @@ async function loadAccountSheet(startDateISO, endDateISO) {
     
     accountSheetData = sheetData.data;
     
-    // تحليل البيانات
-    parseSheetData();
+    extractHeaders();
     
-    // عرض الجدول
-    renderPriceTable(startDateISO, endDateISO);
+    renderTabs(startDateISO, endDateISO);
     
     return true;
     
@@ -552,35 +588,62 @@ async function loadAccountSheet(startDateISO, endDateISO) {
   }
 }
 
-function parseSheetData() {
+function extractHeaders() {
   if (!accountSheetData || accountSheetData.length < 4) return;
   
-  // الصف 2: أسماء الرحلات
-  const row2 = accountSheetData[1] || [];
-  // الصف 3: أسماء البنود
-  const row3 = accountSheetData[2] || [];
+  const row2 = accountSheetData[1] || []; // الصف 2: أسماء الرحلات
+  const row3 = accountSheetData[2] || []; // الصف 3: أسماء البنود
   
-  // بناء هيكل الرحلات والبنود
-  tripsHeaders = [];
-  let currentTrip = null;
+  priceColumns = [];
+  priceHeaders = [];
   
-  for (let i = 1; i < row2.length; i++) {
+  for (let i = 81; i < row2.length; i++) { // أعمدة الأسعار تبدأ من 81 (CC)
     const tripName = row2[i]?.toString().trim();
     const itemName = row3[i]?.toString().trim();
-    
-    if (tripName && tripName !== '') {
-      currentTrip = { name: tripName, items: [], colStart: i };
-      tripsHeaders.push(currentTrip);
-    }
-    if (currentTrip && itemName && itemName !== '') {
-      currentTrip.items.push({ name: itemName, col: i });
+    if (tripName && itemName && tripName !== '' && itemName !== '') {
+      priceColumns.push({ col: i, trip: tripName, item: itemName });
+      priceHeaders.push(`${tripName} - ${itemName}`);
     }
   }
   
-  console.log('الرحلات والبنود:', tripsHeaders);
+  console.log('أعمدة الأسعار:', priceColumns);
 }
 
-function renderPriceTable(startDateISO, endDateISO) {
+function calculateTotals(startRow, endRow) {
+  const totalsByCurrency = { USD: 0, EUR: 0, GBP: 0, LE: 0 };
+  const dailyTotals = {};
+  
+  for (let i = startRow; i <= endRow; i++) {
+    const row = accountSheetData[i];
+    if (!row || !row[0]) continue;
+    
+    const dateStr = formatDateDisplay(row[0]?.toString() || '');
+    dailyTotals[dateStr] = { USD: 0, EUR: 0, GBP: 0, LE: 0 };
+    
+    for (const col of priceColumns) {
+      const priceCell = row[col.col]?.toString() || '0';
+      const { price, currency } = extractPriceAndCurrency(priceCell);
+      
+      if (currency === 'USD') {
+        totalsByCurrency.USD += price;
+        dailyTotals[dateStr].USD += price;
+      } else if (currency === 'EUR') {
+        totalsByCurrency.EUR += price;
+        dailyTotals[dateStr].EUR += price;
+      } else if (currency === 'GBP') {
+        totalsByCurrency.GBP += price;
+        dailyTotals[dateStr].GBP += price;
+      } else {
+        totalsByCurrency.LE += price;
+        dailyTotals[dateStr].LE += price;
+      }
+    }
+  }
+  
+  return { totalsByCurrency, dailyTotals };
+}
+
+function renderTabs(startDateISO, endDateISO) {
   if (!accountSheetData || accountSheetData.length < 4) {
     document.getElementById('mainContent').innerHTML = `
       <div class="card">
@@ -589,7 +652,7 @@ function renderPriceTable(startDateISO, endDateISO) {
     return;
   }
   
-  // تحديد نطاق التواريخ
+  // تحديد نطاق الصفوف
   let startRow = 3;
   let endRow = accountSheetData.length - 1;
   
@@ -617,100 +680,126 @@ function renderPriceTable(startDateISO, endDateISO) {
     }
   }
   
-  // بناء جدول HTML
-  let html = `
+  // حساب الإجماليات
+  const { totalsByCurrency, dailyTotals } = calculateTotals(startRow, endRow);
+  
+  // بناء HTML مع تبويبات
+  const html = `
     <div class="card">
       <div class="card-head">
-        <span class="ch-icon">💰</span>
-        <h3>قائمة الأسعار</h3>
+        <span class="ch-icon">📅</span>
+        <h3>فلترة النتائج</h3>
       </div>
       <div class="card-body">
-        <div class="action-btns">
-          <button class="btn btn-primary" onclick="openInvoicePage()">➕ فاتورة جديدة</button>
-          <button class="btn btn-success" onclick="refreshData()">🔄 تحديث</button>
+        <div class="fgrid">
+          <div class="fgroup"><label>من تاريخ</label><input type="date" class="fc" id="filterStartDate" value="${startDateISO || ''}"></div>
+          <div class="fgroup"><label>إلى تاريخ</label><input type="date" class="fc" id="filterEndDate" value="${endDateISO || ''}"></div>
+          <div class="fgroup"><label style="visibility:hidden">.</label><button class="btn btn-primary" onclick="applyDateFilter()">تطبيق الفلتر</button></div>
         </div>
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr><th>التاريخ</th>`;
+      </div>
+    </div>
+    
+    <div class="action-btns">
+      <button class="btn btn-primary" onclick="openInvoicePage()">➕ فاتورة جديدة</button>
+      <button class="btn btn-success" onclick="refreshData()">🔄 تحديث</button>
+    </div>
+    
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('prices')">📊 جدول الأسعار</button>
+      <button class="tab-btn" onclick="switchTab('total')">💰 الإجماليات الكلية</button>
+      <button class="tab-btn" onclick="switchTab('daily')">📅 الإجماليات اليومية</button>
+    </div>
+    
+    <!-- تبويب جدول الأسعار -->
+    <div id="tabPrices" class="tab-content active">
+      <div class="card">
+        <div class="card-head">
+          <span class="ch-icon">📋</span>
+          <h3>قائمة الأسعار</h3>
+        </div>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr><th>التاريخ</th>${priceHeaders.map(h => `<th>${h}</th>`).join('')}</tr>
+              </thead>
+              <tbody>${buildPricesRows(startRow, endRow)}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- تبويب الإجماليات الكلية -->
+    <div id="tabTotal" class="tab-content">
+      <div class="card">
+        <div class="card-head">
+          <span class="ch-icon">💰</span>
+          <h3>الإجماليات الكلية حسب العملة</h3>
+        </div>
+        <div class="card-body">
+          <table class="currency-table">
+            <tr><td style="width:120px"><strong>🇺🇸 USD</strong></td><td><span class="total-amount">${totalsByCurrency.USD.toFixed(2)} USD</span></td></tr>
+            <tr><td><strong>🇪🇺 EUR</strong></td><td><span class="total-amount">${totalsByCurrency.EUR.toFixed(2)} EUR</span></td></tr>
+            <tr><td><strong>🇬🇧 GBP</strong></td><td><span class="total-amount">${totalsByCurrency.GBP.toFixed(2)} GBP</span></td></tr>
+            <tr><td><strong>🇪🇬 LE</strong></td><td><span class="total-amount">${totalsByCurrency.LE.toFixed(2)} LE</span></td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+    
+    <!-- تبويب الإجماليات اليومية -->
+    <div id="tabDaily" class="tab-content">
+      <div class="card">
+        <div class="card-head">
+          <span class="ch-icon">📅</span>
+          <h3>الإجماليات اليومية حسب العملة</h3>
+        </div>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>التاريخ</th><th>USD</th><th>EUR</th><th>GBP</th><th>LE</th></tr></thead>
+              <tbody>${buildDailyRows(dailyTotals)}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
   
-  // إضافة رؤوس الأعمدة
-  for (const trip of tripsHeaders) {
-    if (trip.items.length === 1) {
-      html += `<th>${trip.name}<br><span style="font-size:10px;color:#94a3b8">${trip.items[0].name}</span></th>`;
-    } else {
-      html += `<th colspan="${trip.items.length}">${trip.name}</th>`;
-    }
-  }
-  html += `<th>الإجمالي</th></tr><tr><th></th>`;
-  
-  // إضافة أسماء البنود الفرعية
-  for (const trip of tripsHeaders) {
-    for (const item of trip.items) {
-      html += `<th style="font-size:10px;color:#94a3b8">${item.name}</th>`;
-    }
-  }
-  html += `<th></th></tr></thead><tbody>`;
-  
-  // إضافة الصفوف
-  dailyTotals = {};
-  let grandTotal = 0;
-  
+  document.getElementById('mainContent').innerHTML = html;
+}
+
+function buildPricesRows(startRow, endRow) {
+  let rows = '';
   for (let i = startRow; i <= endRow; i++) {
     const row = accountSheetData[i];
     if (!row || !row[0]) continue;
     
     const dateStr = formatDateDisplay(row[0]?.toString() || '');
-    let rowTotal = 0;
+    rows += `<tr><td style="font-weight:600">${dateStr}</td>`;
     
-    html += `<tr><td style="font-weight:600">${dateStr}</td>`;
-    
-    let colIndex = 1;
-    for (const trip of tripsHeaders) {
-      for (const item of trip.items) {
-        const priceCell = row[item.col]?.toString() || '0';
-        // استخراج الرقم من النص (مثل "500LE" أو "500 USD")
-        const priceMatch = priceCell.match(/^([\d.]+)/);
-        const price = priceMatch ? parseFloat(priceMatch[1]) : 0;
-        rowTotal += price;
-        html += `<td>${priceCell}</td>`;
-        colIndex++;
-      }
+    for (const col of priceColumns) {
+      const priceCell = row[col.col]?.toString() || '0';
+      rows += `<td>${priceCell}</td>`;
     }
-    
-    dailyTotals[dateStr] = rowTotal;
-    grandTotal += rowTotal;
-    html += `<td style="font-weight:700;background:#e6f0ff">${rowTotal.toFixed(2)}</td>`;
-    html += `</tr>`;
+    rows += `</tr>`;
   }
-  
-  // إضافة صف المجموع الكلي
-  html += `<tr class="total-row"><td style="font-weight:700">المجموع الكلي</td>`;
-  const itemCount = tripsHeaders.reduce((sum, t) => sum + t.items.length, 0);
-  for (let i = 0; i < itemCount; i++) {
-    html += `<td></td>`;
+  return rows || '<tr><td colspan="100" class="no-data">لا توجد بيانات</td></tr>';
+}
+
+function buildDailyRows(dailyTotals) {
+  let rows = '';
+  for (const [date, totals] of Object.entries(dailyTotals)) {
+    rows += `<tr>
+      <td style="font-weight:600">${date}</td>
+      <td>${totals.USD.toFixed(2)} USD</td>
+      <td>${totals.EUR.toFixed(2)} EUR</td>
+      <td>${totals.GBP.toFixed(2)} GBP</td>
+      <td>${totals.LE.toFixed(2)} LE</td>
+    </tr>`;
   }
-  html += `<td style="font-weight:700;font-size:14px">${grandTotal.toFixed(2)}</td></tr>`;
-  
-  html += `</tbody></table></div></div></div>`;
-  
-  // إضافة إحصائيات سريعة
-  html += `
-    <div class="card">
-      <div class="card-head">
-        <span class="ch-icon">📊</span>
-        <h3>إحصائيات سريعة</h3>
-      </div>
-      <div class="card-body">
-        <div class="fgrid">
-          <div class="fgroup"><label>إجمالي الأيام</label><div class="fc" style="background:#f8faff;font-weight:700">${endRow - startRow + 1}</div></div>
-          <div class="fgroup"><label>أعلى يوم</label><div class="fc" style="background:#f8faff;font-weight:700;color:var(--green)">${Object.entries(dailyTotals).sort((a,b)=>b[1]-a[1])[0]?.[0] || '-'}</div></div>
-          <div class="fgroup"><label>أعلى قيمة</label><div class="fc" style="background:#f8faff;font-weight:700;color:var(--green)">${Math.max(...Object.values(dailyTotals), 0).toFixed(2)}</div></div>
-        </div>
-      </div>
-    </div>`;
-  
-  document.getElementById('mainContent').innerHTML = html;
+  return rows || '<tr><td colspan="5" class="no-data">لا توجد بيانات</td></tr>';
 }
 
 function showLoading(show) {
@@ -724,65 +813,38 @@ function showLoading(show) {
 }
 
 function refreshData() {
-  loadAccountSheet(null, null);
-}
-
-function openInvoicePage() {
-  // فتح صفحة إدخال الفاتورة في نافذة جديدة
-  window.open('CustomerInvoice.html', '_blank');
-}
-
-// ====================== دالة جلب بيانات الشيت من الخادم ======================
-async function getAccountSheetData(params) {
-  try {
-    const sheetName = params.sheetName;
-    if (!sheetName) return { success: false, message: 'sheetName مطلوب' };
-    
-    const ss = SpreadsheetApp.openById(SHEET_ID);
-    const sh = ss.getSheetByName(sheetName);
-    if (!sh) return { success: false, message: 'شيت غير موجود' };
-    
-    const data = sh.getDataRange().getValues();
-    return { success: true, data: data };
-  } catch(e) {
-    return { success: false, message: e.toString() };
-  }
-}
-
-// إضافة الدالة إلى doGet
-// يجب إضافة هذا السطر في doGet في Code.gs:
-// else if (action==='getAccountSheetData') result=getAccountSheetData(e.parameter);
-
-// ====================== إضافة عناصر تحكم التاريخ ======================
-function addDateFilterControls() {
-  const filterHtml = `
-    <div class="card">
-      <div class="card-head">
-        <span class="ch-icon">📅</span>
-        <h3>فلترة النتائج</h3>
-      </div>
-      <div class="card-body">
-        <div class="fgrid">
-          <div class="fgroup"><label>من تاريخ</label><input type="date" class="fc" id="filterStartDate"></div>
-          <div class="fgroup"><label>إلى تاريخ</label><input type="date" class="fc" id="filterEndDate"></div>
-          <div class="fgroup"><label style="visibility:hidden">.</label><button class="btn btn-primary" onclick="applyDateFilter()">تطبيق الفلتر</button></div>
-        </div>
-      </div>
-    </div>`;
-  
-  const mainContent = document.getElementById('mainContent');
-  const existingCard = mainContent.querySelector('.card:first-child');
-  if (existingCard && existingCard.querySelector('#filterStartDate')) {
-    // الفلتر موجود بالفعل
-  } else {
-    // يمكن إضافة الفلتر لاحقاً
-  }
+  const startDate = document.getElementById('filterStartDate')?.value;
+  const endDate = document.getElementById('filterEndDate')?.value;
+  loadAccountSheet(startDate, endDate);
 }
 
 function applyDateFilter() {
   const startDate = document.getElementById('filterStartDate')?.value;
   const endDate = document.getElementById('filterEndDate')?.value;
   loadAccountSheet(startDate, endDate);
+}
+
+function openInvoicePage() {
+  window.open('CustomerInvoice.html', '_blank');
+}
+
+function switchTab(tab) {
+  // تحديث الأزرار
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+  event.target.classList.add('active');
+  
+  // تحديث المحتوى
+  document.getElementById('tabPrices').classList.remove('active');
+  document.getElementById('tabTotal').classList.remove('active');
+  document.getElementById('tabDaily').classList.remove('active');
+  
+  if (tab === 'prices') {
+    document.getElementById('tabPrices').classList.add('active');
+  } else if (tab === 'total') {
+    document.getElementById('tabTotal').classList.add('active');
+  } else if (tab === 'daily') {
+    document.getElementById('tabDaily').classList.add('active');
+  }
 }
 
 // ====================== تهيئة الصفحة ======================
@@ -820,12 +882,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   console.log('=== انتهى التحميل ===');
 });
 
-// ====================== دوال عامة ======================
 window.goBack = goBack;
 window.closeAlert = closeAlert;
 window.refreshData = refreshData;
 window.openInvoicePage = openInvoicePage;
 window.applyDateFilter = applyDateFilter;
+window.switchTab = switchTab;
 </script>
 </body>
 </html>
