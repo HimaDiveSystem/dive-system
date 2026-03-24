@@ -301,13 +301,12 @@ function renderPricesTab(rows) {
 }
 
 // ====================== تصيير جدول الإجماليات (B+) ======================
+// ====================== تصيير جدول الإجماليات (B+) ======================
 function renderTotalsTab(rows) {
   if(!tripGroups.length) return '<div class="no-data">لا توجد بيانات بنود</div>';
 
-  // العملات الفعلية من الجدول الثاني (الأسعار)
-  const curSet=new Set();
-  for(const g of priceGroups) for(const it of g.items) if(it.currency) curSet.add(it.currency);
-  const currencies=[...curSet];
+  // العملات من أعمدة المجاميع
+  const currencies = sumCurrencies.map(s => s.currency);
   if(!currencies.length) currencies.push('LE');
 
   // ── الصف 1: التاريخ(rowspan=2) + أسماء الرحلات مدمجة + أعمدة المجاميع(rowspan=2) ──
@@ -328,56 +327,55 @@ function renderTotalsTab(rows) {
   }
 
   // ── صفوف البيانات ──
-  const grandTotals={};
-  currencies.forEach(c=>grandTotals[c]=0);
-
-  let tbody='';
+  let tbody = '';
   for(const row of rows){
-    const dateStr=fmtDate(row[0]);
+    const dateStr = fmtDate(row[0]);
     if(!dateStr) continue;
 
-    const dayTotals={};
-    currencies.forEach(c=>dayTotals[c]=0);
+    // قراءة المجاميع من الشيت مباشرة (من أعمدة sumCurrencies)
+    const dayTotals = {};
+    for(const col of sumCurrencies){
+      const val = parseFloat(row[col.col]) || 0;
+      dayTotals[col.currency] = val;
+    }
 
-    let tds='';
+    // عرض الكميات
+    let tds = '';
     for(const g of tripGroups){
       for(const it of g.items){
-        const qty=parseInt(row[it.col])||0;
-        tds+=`<td style="${qty>0?'background:#f0fdf4;font-weight:700;color:#166534':'color:#cbd5e1'}">${qty>0?qty:'-'}</td>`;
-
-        if(qty>0){
-          for(const pg of priceGroups){
-            for(const pi of pg.items){
-              if(pi.name===it.name&&pg.name===g.name){
-                const {price,currency}=parseCell((row[pi.col]??''));
-                dayTotals[currency]=(dayTotals[currency]||0)+price*qty;
-                grandTotals[currency]=(grandTotals[currency]||0)+price*qty;
-              }
-            }
-          }
-        }
+        const qty = parseInt(row[it.col]) || 0;
+        tds += `<td style="${qty>0?'background:#f0fdf4;font-weight:700;color:#166534':'color:#cbd5e1'}">${qty>0?qty:'-'}</td>`;
       }
     }
 
-    // خلايا المجاميع اليومية
-    let sumTds='';
+    // عرض المجاميع
+    let sumTds = '';
     for(const cur of currencies){
-      const val=dayTotals[cur]||0;
-      sumTds+=`<td style="background:#e6f0ff;font-weight:700">${val>0?`${val.toLocaleString()} <span class="${curClass(cur)}">${cur}</span>`:'-'}</td>`;
+      const val = dayTotals[cur] || 0;
+      sumTds += `<td style="background:#e6f0ff;font-weight:700">${val>0?`${val.toLocaleString()} <span class="${curClass(cur)}">${cur}</span>`:'-'}</td>`;
     }
 
-    tbody+=`<tr><td>${dateStr}</td>${tds}${sumTds}</tr>`;
+    tbody += `<tr><td style="font-weight:600">${dateStr}</td>${tds}${sumTds}</tr>`;
   }
 
-  // صف الإجمالي الكلي
-  const totalCols=tripGroups.reduce((s,g)=>s+g.items.length,0);
-  let grandTds='';
-  for(const cur of currencies){
-    const v=grandTotals[cur]||0;
-    grandTds+=`<td style="background:#1a3260;color:var(--gold);font-size:13px"><strong>${v.toLocaleString()} ${cur}</strong></td>`;
+  // صف الإجمالي الكلي (اختياري)
+  const grandTotals = {};
+  for(const cur of currencies) grandTotals[cur] = 0;
+  for(const row of rows){
+    for(const col of sumCurrencies){
+      const val = parseFloat(row[col.col]) || 0;
+      grandTotals[col.currency] += val;
+    }
   }
-  const emptyCell='<td style="color:#94a3b8">-</td>';
-  tbody+=`<tr class="total-row"><td>الإجمالي الكلي</td>${emptyCell.repeat(totalCols)}${grandTds}</tr>`;
+
+  const totalCols = tripGroups.reduce((s,g)=>s+g.items.length,0);
+  let grandTds = '';
+  for(const cur of currencies){
+    const v = grandTotals[cur] || 0;
+    grandTds += `<td style="background:#1a3260;color:var(--gold);font-size:13px"><strong>${v.toLocaleString()} ${cur}</strong></td>`;
+  }
+  const emptyCell = '<td style="color:#94a3b8">-</td>';
+  tbody += `<tr class="total-row"><td>الإجمالي الكلي</td>${emptyCell.repeat(totalCols)}${grandTds}</tr>`;
 
   return `
     <div class="table-wrap">
@@ -392,45 +390,49 @@ function renderTotalsTab(rows) {
 }
 
 // ====================== تصيير إجمالي العملات ======================
+// ====================== تصيير إجمالي العملات ======================
 function renderSummaryTab(rows) {
-  const totals={};
+  // استخدام sumCurrencies مباشرة
+  if(!sumCurrencies.length) return '<div class="no-data">لا توجد بيانات كافية</div>';
+  
+  const totals = {};
+  for(const col of sumCurrencies){
+    totals[col.currency] = 0;
+  }
+  
+  // جمع الإجماليات من كل صف
   for(const row of rows){
-    if(!row[0]) continue;
-    for(const g of tripGroups){
-      for(const it of g.items){
-        const qty=parseInt(row[it.col])||0;
-        if(!qty) continue;
-        for(const pg of priceGroups){
-          for(const pi of pg.items){
-            if(pi.name===it.name&&pg.name===g.name){
-              const {price,currency}=parseCell((row[pi.col]??''));
-              totals[currency]=(totals[currency]||0)+price*qty;
-            }
-          }
-        }
-      }
+    for(const col of sumCurrencies){
+      const val = parseFloat(row[col.col]) || 0;
+      totals[col.currency] += val;
     }
   }
-
-  if(!Object.keys(totals).length){
-    return '<div class="no-data">لا توجد بيانات كافية</div>';
-  }
-
-  let html='<div class="summary-wrap">';
-  for(const [cur,val] of Object.entries(totals)){
-    if(val===0) continue;
-    html+=`<div class="total-card">
+  
+  // إزالة العملات التي قيمتها صفر
+  const activeCurrencies = Object.keys(totals).filter(cur => totals[cur] > 0);
+  if(activeCurrencies.length === 0) return '<div class="no-data">لا توجد بيانات كافية</div>';
+  
+  let html = '<div class="summary-wrap">';
+  for(const cur of activeCurrencies){
+    const val = totals[cur];
+    let curName = cur;
+    let symbol = '';
+    if(cur === 'USD') { curName = 'دولار أمريكي'; symbol = '$'; }
+    else if(cur === 'EUR') { curName = 'يورو'; symbol = '€'; }
+    else if(cur === 'GBP') { curName = 'جنيه إسترليني'; symbol = '£'; }
+    else if(cur === 'LE') { curName = 'جنيه مصري'; symbol = 'ج.م'; }
+    
+    html += `<div class="total-card">
       <div>
-        <div class="tc-cur">${cur}</div>
-        <div class="tc-val">${val.toLocaleString()}</div>
+        <div class="tc-cur">${curName}</div>
+        <div class="tc-val">${val.toLocaleString()} ${symbol || cur}</div>
       </div>
-      <span class="${curClass(cur)}" style="font-size:20px;padding:6px 12px;">${cur}</span>
+      <span class="badge-cur cur-${cur}" style="font-size:20px;padding:6px 12px;">${cur}</span>
     </div>`;
   }
-  html+='</div>';
+  html += '</div>';
   return html;
 }
-
 // ====================== تصيير الصفحة الكاملة ======================
 function renderPage(startISO, endISO) {
   if(!sheetData||sheetData.length<4){
