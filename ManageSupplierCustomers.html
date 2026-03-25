@@ -414,6 +414,7 @@ function selectRow(id) {
 
 // ====================== التحقق من وجود أسعار ======================
 function hasAnyPrice() {
+  // لل Submarine
   if (document.getElementById('f_cat')?.value === 'Submarine') {
     const hasPrice = ['F','Aarab','Arab48','EGY'].some(c => {
       const pax = parseFloat(document.getElementById(`sp_${c}_PAX`)?.value) || 0;
@@ -422,20 +423,35 @@ function hasAnyPrice() {
       return pax > 0 || child > 0 || inf > 0;
     });
     return hasPrice;
-  } else {
-    // للأنشطة العادية، تحقق من وجود أسعار للرحلات المختارة
-    let hasAny = false;
-    document.querySelectorAll('#tripsBox input[type=checkbox]:checked').forEach(cb => {
-      const tripName = cb.value;
-      const items = tripItems[tripName] || [];
-      items.forEach((item, idx) => {
-        const key = safeid(tripName + '_' + item);
-        const price = parseFloat(document.getElementById(`pp_${key}`)?.value) || 0;
-        if (price > 0) hasAny = true;
-      });
-    });
-    return hasAny;
   }
+  
+  // للأنشطة العادية (Safari, Water Sports, etc.)
+  // التحقق من وجود أسعار في الـ priceArea
+  const priceArea = document.getElementById('priceArea');
+  if (priceArea) {
+    const priceInputs = priceArea.querySelectorAll('input[type="number"]');
+    for (const input of priceInputs) {
+      const val = parseFloat(input.value) || 0;
+      if (val > 0) return true;
+    }
+  }
+  
+  // إذا لم يتم تحميل priceArea بعد (في بداية التعديل)
+  // نتحقق من الأسعار المحفوظة في selectedAccount
+  if (isEdit && selectedAccount && selectedAccount._existingPricesData) {
+    const prices = selectedAccount._existingPricesData;
+    for (const key in prices) {
+      const price = parseFloat(prices[key]?.price) || 0;
+      if (price > 0) return true;
+    }
+  }
+  
+  // إذا كانت هناك رحلات مختارة ولم يتم تحميل الأسعار بعد، نعتبر أن هناك أسعار
+  if (isEdit && selectedAccount && selectedAccount._existingTripsList && selectedAccount._existingTripsList.length > 0) {
+    return true;
+  }
+  
+  return false;
 }
 
 // ====================== تحديث حالة زر الحفظ ======================
@@ -447,6 +463,25 @@ function updateSaveButtonState() {
   if (!cat) {
     saveBtn.disabled = true;
     return;
+  }
+  
+  // في وضع التعديل، إذا كان هناك أسعار محفوظة، لا نعطل الزر
+  if (isEdit && selectedAccount) {
+    // التحقق من وجود أسعار محفوظة
+    if (selectedAccount.pricesData) {
+      try {
+        const savedPrices = JSON.parse(selectedAccount.pricesData);
+        if (Object.keys(savedPrices).length > 0) {
+          saveBtn.disabled = false;
+          return;
+        }
+      } catch(e) {}
+    }
+    // إذا كانت هناك رحلات محفوظة، نعتبر أن هناك أسعار
+    if (selectedAccount.assignedTrips && selectedAccount.assignedTrips.length > 0) {
+      saveBtn.disabled = false;
+      return;
+    }
   }
   
   const hasPrice = hasAnyPrice();
@@ -763,48 +798,51 @@ function renderStep2(cat) {
       } catch(e) {}
     }
     
-    setTimeout(function() {
-      for (const t of prevTrips) {
-        const el = document.getElementById(`ti_${safeid(t)}`);
-        if (el) {
-          el.classList.add('checked');
-          const cb = el.querySelector('input[type=checkbox]');
-          if (cb) cb.checked = true;
-        }
+     setTimeout(function() {
+    for (const t of prevTrips) {
+      const el = document.getElementById(`ti_${safeid(t)}`);
+      if (el) {
+        el.classList.add('checked');
+        const cb = el.querySelector('input[type=checkbox]');
+        if (cb) cb.checked = true;
       }
-      Promise.all(prevTrips.map(async function(tripName) {
-        if (!tripItems[tripName]) {
-          await fetchTripItems(tripName);
-        }
-      })).then(function() {
-        return loadPriceInputsWithValues(prevTrips, savedPrices);
-      }).then(function() {
-        updateSaveButtonState();
-      }).catch(function(err) {
-        console.error('خطأ في تحميل الأسعار:', err);
-      });
-    }, 200);
-  }
-
-  if (isSubmarine && isEdit && selectedAccount?.pricesData) {
-    try {
-      const savedPrices = JSON.parse(selectedAccount.pricesData);
-      ['F','Aarab','Arab48','EGY'].forEach(c => {
-        const p = savedPrices['Submarine_' + c];
-        if (!p) return;
-        const paxEl = document.getElementById(`sp_${c}_PAX`);
-        const childEl = document.getElementById(`sp_${c}_CHILD`);
-        const infEl = document.getElementById(`sp_${c}_INF`);
-        const curEl = document.getElementById(`sc_${c}`);
-        if (paxEl && p.PAX) paxEl.value = p.PAX;
-        if (childEl && p.CHILD) childEl.value = p.CHILD;
-        if (infEl && p.INF) infEl.value = p.INF;
-        if (curEl && p.currency) curEl.value = p.currency;
-      });
-      updateSaveButtonState();
-    } catch(e) {}
-  }
+    }
+    Promise.all(prevTrips.map(async function(tripName) {
+      if (!tripItems[tripName]) {
+        await fetchTripItems(tripName);
+      }
+    })).then(function() {
+      return loadPriceInputsWithValues(prevTrips, savedPrices);
+    }).then(function() {
+      // بعد تحميل الأسعار، تحديث حالة الزر
+      setTimeout(updateSaveButtonState, 100);
+    }).catch(function(err) {
+      console.error('خطأ في تحميل الأسعار:', err);
+    });
+  }, 200);
 }
+
+ if (isSubmarine && isEdit && selectedAccount?.pricesData) {
+  try {
+    const savedPrices = JSON.parse(selectedAccount.pricesData);
+    ['F','Aarab','Arab48','EGY'].forEach(c => {
+      const p = savedPrices['Submarine_' + c];
+      if (!p) return;
+      const paxEl = document.getElementById(`sp_${c}_PAX`);
+      const childEl = document.getElementById(`sp_${c}_CHILD`);
+      const infEl = document.getElementById(`sp_${c}_INF`);
+      const curEl = document.getElementById(`sc_${c}`);
+      if (paxEl && p.PAX) paxEl.value = p.PAX;
+      if (childEl && p.CHILD) childEl.value = p.CHILD;
+      if (infEl && p.INF) infEl.value = p.INF;
+      if (curEl && p.currency) curEl.value = p.currency;
+    });
+    // تحديث حالة الزر بعد تحميل الأسعار
+    setTimeout(updateSaveButtonState, 100);
+  } catch(e) {}
+}
+  
+
 
 function goBackStep1() {
   const data = isEdit ? selectedAccount : {};
