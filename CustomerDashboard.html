@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes">
-  <title>لوحة العميل</title>
+  <title>لوحة العميل / المنفذ</title>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
   <style>
     :root{
@@ -45,13 +45,11 @@
     .btn-navy{background:linear-gradient(135deg,var(--navy),var(--navy2));color:var(--gold);}
     .btn-green{background:var(--green);color:white;}
     .btn-gray{background:#f1f5f9;color:var(--text);}
-    /* Tabs */
     .tabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;border-bottom:2px solid var(--border);padding-bottom:10px;}
     .tab-btn{padding:8px 20px;background:#f0f4f8;border:none;border-radius:40px;font-size:13px;font-weight:700;
       font-family:'Cairo',sans-serif;cursor:pointer;color:var(--text-lt);transition:all .2s;}
     .tab-btn.active{background:linear-gradient(135deg,var(--navy),var(--navy2));color:var(--gold);}
     .tab-pane{display:none;} .tab-pane.active{display:block;}
-    /* Tables */
     .table-wrap{overflow-x:auto;max-height:70vh;}
     table.dt{width:100%;border-collapse:collapse;font-size:12px;}
     table.dt thead{position:sticky;top:0;z-index:10;}
@@ -92,6 +90,7 @@
     .alert-msg{color:var(--navy);font-size:14px;font-weight:700;margin-bottom:18px;white-space:pre-wrap;}
     .info-bar{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px 14px;
       font-size:12px;color:#166534;margin-bottom:14px;}
+    .customer-badge{background:linear-gradient(135deg,#7c3aed,#a855f7);color:white;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;}
     @media(max-width:640px){
       table.dt{font-size:10px;}
       table.dt thead tr.row-trip th,table.dt thead tr.row-item th,table.dt tbody td{padding:5px 4px;}
@@ -102,7 +101,7 @@
 <body>
 
 <div class="header">
-  <h2>🏢 لوحة العميل</h2>
+  <h2>🏢 لوحة العميل / المنفذ</h2>
   <div class="header-right">
     <span class="user-chip" id="userChip">...</span>
     <button class="back-btn" onclick="doLogout()">← خروج</button>
@@ -127,13 +126,13 @@
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbwe1Q9pjAJRk9CfWsK5YGjD5uVAbJkMhAVgw6akKkFIR9sz15V78C88Vs5dumKE-SwF/exec';
 
 let currentUser = null;
-let customerAccount = null;
-let sheetData = [];     // كل بيانات الشيت كـ 2D array
-let tripGroups  = [];   // [{name, startCol, items:[{name,col}]}] — من الجدول الأول B+
-let priceGroups = [];   // [{name, startCol, items:[{name,col,currency}]}] — من CC+
-let sumCurrencies = []; // ['LE','USD',...] من أعمدة المجاميع
+let selectedCustomer = null;
+let sheetData = [];
+let tripGroups = [];
+let priceGroups = [];
+let sumCurrencies = [];
 
-// ====================== اتصال JSONP ======================
+// ====================== JSONP ======================
 function gas(action, params={}) {
   return new Promise((resolve,reject) => {
     const cb = 'cb_'+Date.now()+'_'+Math.random().toString(36).slice(2,8);
@@ -151,9 +150,16 @@ function gas(action, params={}) {
   });
 }
 
-// ====================== مساعدات ======================
-function doLogout(){ sessionStorage.removeItem('currentUser'); location.href='index.html'; }
-function showAlert(msg,icon){ document.getElementById('alertIcon').textContent=icon||'ℹ️'; document.getElementById('alertMsg').textContent=msg; document.getElementById('alertModal').classList.add('open'); }
+// ====================== Helpers ======================
+function doLogout() {
+  sessionStorage.removeItem('currentUser');
+  location.href = 'index.html';
+}
+function showAlert(msg,icon){
+  document.getElementById('alertIcon').textContent=icon||'ℹ️';
+  document.getElementById('alertMsg').textContent=msg;
+  document.getElementById('alertModal').classList.add('open');
+}
 function closeAlert(){ document.getElementById('alertModal').classList.remove('open'); }
 
 function fmtDate(v) {
@@ -165,7 +171,6 @@ function fmtDate(v) {
 }
 
 function parseCell(cell) {
-  // "500LE" → {price:500, currency:'LE'}
   const s=(cell??'').toString().trim();
   if(!s||s==='0'||s==='') return {price:0,currency:'LE'};
   const m=s.match(/^([\d.]+)([A-Za-z]+)$/);
@@ -176,28 +181,34 @@ function parseCell(cell) {
 
 function curClass(c){ return 'badge-cur cur-'+(c||'LE'); }
 
-// ====================== تحليل هيكل الشيت ======================
-// ====================== تحليل هيكل الشيت ======================
+function parseDateToObj(v){
+  if(!v) return null;
+  const s=v.toString().trim();
+  const MN={Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+  const m=s.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
+  if(m){ const d=new Date(+m[3],MN[m[2]],+m[1]); d.setHours(0,0,0,0); return d; }
+  try{ const d=new Date(s); if(!isNaN(d)) return d; }catch(e){}
+  return null;
+}
+
+// ====================== Parse Sheet Structure ======================
 function parseSheetStructure() {
   if(!sheetData||sheetData.length<4) return;
-  const row2 = sheetData[1] || [];  // الصف الثاني (الرؤوس الرئيسية)
-  const row3 = sheetData[2] || [];  // الصف الثالث (البنود)
+  const row2 = sheetData[1] || [];
+  const row3 = sheetData[2] || [];
   const lastCol = row2.length;
 
   tripGroups = [];
   priceGroups = [];
   sumCurrencies = [];
 
-  // ── 1. الجدول الأول: من B(1) إلى CA(78) ──
-  let jFirst = 1;  // العمود B (index 1)
-  let jEnd = 78;   // قبل CA (index 78)
+  let jFirst = 1;
+  let jEnd = 78;
 
-  // ابحث عن أعمدة المجاميع (المجموع LE, المجموع $, ...)
   for (let j = jFirst; j < Math.min(jEnd, lastCol); j++) {
     const v2 = (row2[j] || '').toString().trim();
     if (v2.startsWith('المجموع') || v2.startsWith('Total')) {
       let cur = v2.replace('المجموع ', '').replace('Total ', '').trim();
-      // تحويل الرموز إلى أسماء العملات
       if (cur === '$') cur = 'USD';
       if (cur === '€') cur = 'EUR';
       if (cur === '£') cur = 'GBP';
@@ -205,7 +216,6 @@ function parseSheetStructure() {
     }
   }
 
-  // إذا لم يتم العثور على أعمدة مجاميع، ابحث مرة أخرى
   if(sumCurrencies.length === 0){
     for(let j=jFirst; j<Math.min(78,lastCol); j++){
       const v2 = (row2[j] || '').toString().trim();
@@ -219,12 +229,10 @@ function parseSheetStructure() {
     }
   }
 
-  // تحليل الرحلات والبنود في الجدول الأول (تجاهل أعمدة المجاميع)
   let curTrip = null;
   for (let j = jFirst; j < jEnd; j++) {
     const v2 = (row2[j] || '').toString().trim();
     const v3 = (row3[j] || '').toString().trim();
-    // تجاهل أعمدة المجاميع
     if (v2 && v2 !== '' && !v2.startsWith('المجموع') && !v2.startsWith('Total')) {
       curTrip = { name: v2, items: [] };
       tripGroups.push(curTrip);
@@ -234,10 +242,6 @@ function parseSheetStructure() {
     }
   }
 
-  console.log('sumCurrencies found:', sumCurrencies);
-  console.log('tripGroups:', tripGroups);
-
-  // ── 2. الجدول الثاني: CC(80) فصاعداً ──
   let curPriceTrip = null;
   for (let j = 80; j < lastCol; j++) {
     const v2 = (row2[j] || '').toString().trim();
@@ -252,16 +256,13 @@ function parseSheetStructure() {
       curPriceTrip.items.push({ name: v3, col: j, currency });
     }
   }
-
-  console.log('priceGroups:', priceGroups);
 }
-// ====================== تصيير جدول الأسعار (CC+) ======================
+
+// ====================== Render Functions ======================
 function renderPricesTab(rows) {
   if(!priceGroups.length) return '<div class="no-data">لا توجد بيانات أسعار</div>';
 
-  // ── الصف 1: التاريخ (rowspan=2) + أسماء الرحلات مدمجة ──
   let trTrip = '<th class="th-date" rowspan="2">التاريخ</th>';
-  // ── الصف 2: أسماء البنود ──
   let trItem = '';
 
   for(const g of priceGroups){
@@ -272,7 +273,6 @@ function renderPricesTab(rows) {
     }
   }
 
-  // ── صفوف البيانات ──
   let tbody='';
   for(const row of rows){
     const dateStr=fmtDate(row[0]);
@@ -300,18 +300,13 @@ function renderPricesTab(rows) {
     </div>`;
 }
 
-// ====================== تصيير جدول الإجماليات (B+) ======================
-// ====================== تصيير جدول الإجماليات (B+) ======================
 function renderTotalsTab(rows) {
   if(!tripGroups.length) return '<div class="no-data">لا توجد بيانات بنود</div>';
 
-  // العملات من أعمدة المجاميع
   const currencies = sumCurrencies.map(s => s.currency);
   if(!currencies.length) currencies.push('LE');
 
-  // ── الصف 1: التاريخ(rowspan=2) + أسماء الرحلات مدمجة + أعمدة المجاميع(rowspan=2) ──
   let trTrip = '<th class="th-date" rowspan="2">التاريخ</th>';
-  // ── الصف 2: أسماء البنود ──
   let trItem = '';
 
   for(const g of tripGroups){
@@ -321,25 +316,21 @@ function renderTotalsTab(rows) {
       trItem += `<th>${it.name}</th>`;
     }
   }
-  // أعمدة المجاميع بعد البنود (rowspan=2 → تمتد للصفين)
   for(const cur of currencies){
     trTrip += `<th class="th-sum" rowspan="2">المجموع<br><span class="${curClass(cur)}">${cur}</span></th>`;
   }
 
-  // ── صفوف البيانات ──
   let tbody = '';
   for(const row of rows){
     const dateStr = fmtDate(row[0]);
     if(!dateStr) continue;
 
-    // قراءة المجاميع من الشيت مباشرة (من أعمدة sumCurrencies)
     const dayTotals = {};
     for(const col of sumCurrencies){
       const val = parseFloat(row[col.col]) || 0;
       dayTotals[col.currency] = val;
     }
 
-    // عرض الكميات
     let tds = '';
     for(const g of tripGroups){
       for(const it of g.items){
@@ -348,7 +339,6 @@ function renderTotalsTab(rows) {
       }
     }
 
-    // عرض المجاميع
     let sumTds = '';
     for(const cur of currencies){
       const val = dayTotals[cur] || 0;
@@ -358,7 +348,6 @@ function renderTotalsTab(rows) {
     tbody += `<tr><td style="font-weight:600">${dateStr}</td>${tds}${sumTds}</tr>`;
   }
 
-  // صف الإجمالي الكلي (اختياري)
   const grandTotals = {};
   for(const cur of currencies) grandTotals[cur] = 0;
   for(const row of rows){
@@ -389,10 +378,7 @@ function renderTotalsTab(rows) {
     </div>`;
 }
 
-// ====================== تصيير إجمالي العملات ======================
-// ====================== تصيير إجمالي العملات ======================
 function renderSummaryTab(rows) {
-  // استخدام sumCurrencies مباشرة
   if(!sumCurrencies.length) return '<div class="no-data">لا توجد بيانات كافية</div>';
   
   const totals = {};
@@ -400,7 +386,6 @@ function renderSummaryTab(rows) {
     totals[col.currency] = 0;
   }
   
-  // جمع الإجماليات من كل صف
   for(const row of rows){
     for(const col of sumCurrencies){
       const val = parseFloat(row[col.col]) || 0;
@@ -408,7 +393,6 @@ function renderSummaryTab(rows) {
     }
   }
   
-  // إزالة العملات التي قيمتها صفر
   const activeCurrencies = Object.keys(totals).filter(cur => totals[cur] > 0);
   if(activeCurrencies.length === 0) return '<div class="no-data">لا توجد بيانات كافية</div>';
   
@@ -433,7 +417,7 @@ function renderSummaryTab(rows) {
   html += '</div>';
   return html;
 }
-// ====================== تصيير الصفحة الكاملة ======================
+
 function renderPage(startISO, endISO) {
   if(!sheetData||sheetData.length<4){
     document.getElementById('mainContent').innerHTML='<div class="no-data">لا توجد بيانات في الشيت</div>';
@@ -442,7 +426,6 @@ function renderPage(startISO, endISO) {
 
   parseSheetStructure();
 
-  // تصفية الصفوف حسب التاريخ (من الصف 4 = index 3)
   let rows=sheetData.slice(3).filter(r=>r[0]);
 
   if(startISO||endISO){
@@ -459,13 +442,15 @@ function renderPage(startISO, endISO) {
     });
   }
 
-  const acc=customerAccount;
-  const infoBar=acc?`<div class="info-bar">
-    🏢 <strong>${acc.customerName}</strong> | 
-    🏄 ${acc.category} | 
-    📅 ${acc.startDate} ← ${acc.endDate} | 
-    ${rows.length} يوم
-  </div>`:'';
+  const infoBar = selectedCustomer ? `
+    <div class="info-bar">
+      🏢 <strong>${selectedCustomer.customerName}</strong> | 
+      🏄 ${selectedCustomer.category} | 
+      📋 ${selectedCustomer.customerType === 'Customer' ? 'عميل' : 'منفذ'} | 
+      📅 ${selectedCustomer.startDate || '—'} ← ${selectedCustomer.endDate || '—'} | 
+      ${rows.length} يوم
+    </div>
+  ` : '';
 
   document.getElementById('mainContent').innerHTML=`
     ${infoBar}
@@ -489,7 +474,7 @@ function renderPage(startISO, endISO) {
       </div>
       <div style="display:flex;gap:8px;">
         <button class="btn btn-green" onclick="openInvoicePage()">➕ فاتورة جديدة</button>
-        <button class="btn btn-gray" onclick="loadAll()">🔄 تحديث</button>
+        <button class="btn btn-gray" onclick="loadSheetData()">🔄 تحديث</button>
       </div>
     </div>
     <hr style="border:none;border-top:2px solid var(--border);margin-bottom:16px;">
@@ -516,16 +501,6 @@ function renderPage(startISO, endISO) {
     </div>`;
 }
 
-function parseDateToObj(v){
-  if(!v) return null;
-  const s=v.toString().trim();
-  const MN={Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
-  const m=s.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
-  if(m){ const d=new Date(+m[3],MN[m[2]],+m[1]); d.setHours(0,0,0,0); return d; }
-  try{ const d=new Date(s); if(!isNaN(d)) return d; }catch(e){}
-  return null;
-}
-
 function switchTab(name,event){
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
   if(event?.target) event.target.classList.add('active');
@@ -542,65 +517,85 @@ function applyFilter(){
 }
 function resetFilter(){ renderPage('',''); }
 
-// ====================== تحميل البيانات ======================
-async function loadAll(){
-  document.getElementById('mainContent').innerHTML='<div class="loader"><div class="spinner"></div>جاري جلب الحساب...</div>';
-  try{
-    // 1. جلب حساب العميل
-    const allAcc=await gas('getAllSuppliersCustomers');
-    const accounts=Array.isArray(allAcc)?allAcc:[];
-    customerAccount=accounts.find(a=>
-      a.customerType==='Customer'&&
-      (a.loginEmail===currentUser?.email||a.customerName===currentUser?.name)
-    );
-    if(!customerAccount){
-      document.getElementById('mainContent').innerHTML=`<div class="card"><div class="card-body no-data">⚠️ لا يوجد حساب مرتبط بهذا المستخدم</div></div>`;
-      return;
-    }
+// ====================== Load Data ======================
+async function loadSheetData() {
+  if(!selectedCustomer) return;
+  
+  const sheetName = selectedCustomer.customerName + '_' + selectedCustomer.category + '_' + selectedCustomer.customerType;
+  document.getElementById('mainContent').innerHTML = `<div class="loader"><div class="spinner"></div>جاري جلب شيت "${sheetName}"...</div>`;
 
-    // 2. جلب بيانات شيت الحساب
-    const sheetName=customerAccount.customerName+'_'+customerAccount.category+'_'+customerAccount.customerType;
-    document.getElementById('mainContent').innerHTML=`<div class="loader"><div class="spinner"></div>جاري جلب شيت "${sheetName}"...</div>`;
-
-    const res=await gas('getAccountSheetData',{sheetName});
+  try {
+    const res = await gas('getAccountSheetData', {sheetName});
     if(!res?.success||!Array.isArray(res.data)||res.data.length<4){
-      document.getElementById('mainContent').innerHTML=`<div class="card"><div class="card-body no-data">⚠️ ${res?.message||'لا توجد بيانات في الشيت'}</div></div>`;
+      document.getElementById('mainContent').innerHTML = `<div class="card"><div class="card-body no-data">⚠️ ${res?.message||'لا توجد بيانات في الشيت'}</div></div>`;
       return;
     }
-    sheetData=res.data;
+    sheetData = res.data;
 
-    // 3. كتابة الإجماليات في الشيت (background)
-    gas('writeDailyTotalsToSheet', {customerId: customerAccount.customerId})
+    gas('writeDailyTotalsToSheet', {customerId: selectedCustomer.customerId})
       .then(r => console.log('writeDailyTotals:', r?.updated, 'rows'))
       .catch(e => console.warn('writeDailyTotals:', e.message));
 
-    // 4. تصيير
     renderPage('','');
-
-  } catch(e){
-    console.error('loadAll error:',e);
+  } catch(e) {
+    console.error('loadSheetData error:', e);
     showAlert('خطأ في التحميل: '+e.message,'❌');
   }
 }
 
-// ====================== تهيئة ======================
-document.addEventListener('DOMContentLoaded',async()=>{
-  let ud=sessionStorage.getItem('currentUser');
-  if(!ud){ const p=new URLSearchParams(location.search).get('user'); if(p){ud=decodeURIComponent(p);sessionStorage.setItem('currentUser',ud);} }
-  if(!ud){ location.href='index.html'; return; }
-  try{ currentUser=JSON.parse(ud); }catch(e){ location.href='index.html'; return; }
-  document.getElementById('userChip').textContent=currentUser.name||'User';
-  await loadAll();
+async function loadCustomerData() {
+  try {
+    const result = await gas('getAllSuppliersCustomers');
+    const accounts = Array.isArray(result) ? result : [];
+    
+    if(currentUser.customerId) {
+      selectedCustomer = accounts.find(a => a.customerId === currentUser.customerId);
+    }
+    
+    if(!selectedCustomer && currentUser.isCustomerView) {
+      showAlert('لم يتم العثور على بيانات العميل','⚠️');
+      setTimeout(() => { location.href = 'AccountantDashboard.html'; }, 2000);
+      return;
+    }
+    
+    document.getElementById('userChip').textContent = selectedCustomer?.customerName || currentUser.name || 'User';
+    await loadSheetData();
+  } catch(e) {
+    console.error('loadCustomerData error:', e);
+    showAlert('خطأ في تحميل بيانات العميل: '+e.message,'❌');
+  }
+}
+
+// ====================== Initialization ======================
+document.addEventListener('DOMContentLoaded', async () => {
+  let ud = sessionStorage.getItem('currentUser');
+  if(!ud){ 
+    const p = new URLSearchParams(location.search).get('user'); 
+    if(p){ ud = decodeURIComponent(p); sessionStorage.setItem('currentUser', ud); } 
+  }
+  if(!ud){ location.href = 'index.html'; return; }
+  
+  try { 
+    currentUser = JSON.parse(ud);
+    await loadCustomerData();
+  } catch(e){ 
+    location.href = 'index.html'; 
+    return; 
+  }
 });
 
 function openInvoicePage(){
-  const user=encodeURIComponent(JSON.stringify(currentUser));
+  const user = encodeURIComponent(JSON.stringify(currentUser));
   window.open('CustomerInvoice.html?user='+user,'_blank');
 }
 
-window.doLogout=doLogout; window.closeAlert=closeAlert;
-window.switchTab=switchTab; window.applyFilter=applyFilter; window.resetFilter=resetFilter;
-window.openInvoicePage=openInvoicePage; window.loadAll=loadAll;
+window.doLogout = doLogout;
+window.closeAlert = closeAlert;
+window.switchTab = switchTab;
+window.applyFilter = applyFilter;
+window.resetFilter = resetFilter;
+window.openInvoicePage = openInvoicePage;
+window.loadSheetData = loadSheetData;
 </script>
 </body>
 </html>
