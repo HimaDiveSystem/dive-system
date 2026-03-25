@@ -98,6 +98,7 @@
     .password-wrapper{position:relative;display:flex;align-items:center;}
     .password-wrapper .fc{padding-left:40px;}
     .toggle-password{position:absolute;left:12px;top:50%;transform:translateY(-50%);cursor:pointer;color:var(--text-lt);font-size:14px;background:none;border:none;}
+    .edit-badge{background:#f59e0b;color:white;padding:2px 8px;border-radius:12px;font-size:10px;margin-right:8px;}
     @media(max-width:640px){
       .fgrid{grid-template-columns:1fr;}
       .trip-price-grid{grid-template-columns:1fr;}
@@ -157,6 +158,7 @@ let tripsForCategory = [];
 let _currentCategory = '';
 let _editSheetDates = null;
 let _formStep1Data = {};
+let editCustomerIdFromUrl = null;
 
 // ====================== دوال الاتصال ======================
 function gas(action, params = {}) {
@@ -211,7 +213,12 @@ async function gasPost(data) {
 
 // ====================== دوال مساعدة ======================
 function goBack() { 
-  location.href = DASH[currentUser?.type] || 'Dashboard.html'; 
+  const fromPage = new URLSearchParams(window.location.search).get('from');
+  if (fromPage === 'CustomerDashboard' && currentUser?.isCustomerView) {
+    location.href = 'CustomerDashboard.html';
+  } else {
+    location.href = DASH[currentUser?.type] || 'Dashboard.html';
+  }
 }
 
 function showAlert(msg, icon, btns) {
@@ -328,6 +335,19 @@ async function loadAccounts() {
     const res = await gas('getAllSuppliersCustomers');
     allAccounts = Array.isArray(res) ? res : [];
     renderTable();
+    
+    // إذا كان هناك editCustomerId من URL، افتح التعديل تلقائياً
+    if (editCustomerIdFromUrl) {
+      const targetAccount = allAccounts.find(a => a.customerId === editCustomerIdFromUrl);
+      if (targetAccount) {
+        selectedAccount = targetAccount;
+        renderTable();
+        setTimeout(() => openEdit(), 500);
+      } else {
+        console.warn('لم يتم العثور على العميل: ' + editCustomerIdFromUrl);
+      }
+      editCustomerIdFromUrl = null;
+    }
   } catch(e) {
     console.error('loadAccounts error:', e);
     allAccounts = [];
@@ -382,8 +402,8 @@ function renderTable() {
             <tbody>
               ${filtered.length ? filtered.map(a => `
                 <tr class="${selectedAccount?.customerId===a.customerId?'sel':''}" onclick="selectRow('${a.customerId}')">
-                  <td>${a.customerId||''}</td>
-                  <td><strong>${(a.customerName||'').replace(/</g,'&lt;')}</strong></td>
+                  <td>${a.customerId||''}                  </td>
+                  <td><strong>${(a.customerName||'').replace(/</g,'&lt;')}</strong> ${editCustomerIdFromUrl === a.customerId ? '<span class="edit-badge">✏️ جاري التعديل</span>' : ''}</td>
                   <td><span class="badge ${a.customerType==='Customer'?'badge-blue':'badge-orange'}">${a.customerType==='Customer'?'عميل':'منفذ'}</span></td>
                   <td>${a.category||'-'}</td>
                   <td>${a.contactPerson||'-'}</td>
@@ -391,7 +411,7 @@ function renderTable() {
                   <td>${formatDateDisplay(a.startDate)||'-'}</td>
                   <td>${formatDateDisplay(a.endDate)||'-'}</td>
                   <td><span class="badge ${a.status?'badge-green':'badge-red'}">${a.status?'نشط':'متوقف'}</span></td>
-                 </tr>`).join('') : `<tr><td colspan="9" class="no-data">لا توجد بيانات</td></tr>`}
+                  </tr>`).join('') : `<tr><td colspan="9" class="no-data">لا توجد بيانات</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -406,7 +426,6 @@ function selectRow(id) {
 
 // ====================== التحقق من وجود أسعار ======================
 function hasAnyPrice() {
-  // لل Submarine
   if (_currentCategory === 'Submarine') {
     const hasPrice = ['F','Aarab','Arab48','EGY'].some(c => {
       const pax = parseFloat(document.getElementById(`sp_${c}_PAX`)?.value) || 0;
@@ -417,7 +436,6 @@ function hasAnyPrice() {
     return hasPrice;
   }
   
-  // للأنشطة العادية (Safari, Water Sports, etc.)
   const priceArea = document.getElementById('priceArea');
   if (priceArea) {
     const priceInputs = priceArea.querySelectorAll('input[type="number"]');
@@ -442,26 +460,21 @@ function hasAnyPrice() {
   return false;
 }
 
-
-// ====================== تحديث حالة زر الحفظ ======================
 function updateSaveButtonState() {
   const saveBtn = document.getElementById('saveBtn');
   if (!saveBtn) return;
   
-  // في الخطوة 2، استخدم _currentCategory بدلاً من f_cat
   const cat = _currentCategory || document.getElementById('f_cat')?.value;
   if (!cat) {
     saveBtn.disabled = true;
     return;
   }
   
-  // في وضع التعديل، يجب أن يكون الزر مفعلاً دائماً
   if (isEdit && selectedAccount) {
     saveBtn.disabled = false;
     return;
   }
   
-  // في وضع الإضافة، تحقق من وجود أسعار
   const hasPrice = hasAnyPrice();
   saveBtn.disabled = !hasPrice;
 }
@@ -644,12 +657,12 @@ async function openEdit() {
 
   renderStep1(selectedAccount);
   
-  // أضف هذا السطر لتفعيل زر الحفظ بعد تحميل البيانات
   setTimeout(function() {
     updateSaveButtonState();
     console.log('تم استدعاء updateSaveButtonState بعد التحميل');
   }, 500);
 }
+
 // ====================== الخطوة 2: الرحلات والأسعار ======================
 async function goStep2() {
   const name  = document.getElementById('f_name')?.value.trim();
@@ -725,20 +738,20 @@ function renderStep2(cat) {
           <thead><th>الفئة</th><th>PAX</th><th>CHILD</th><th>INF</th><th>العملة</th></thead>
           <tbody>
             ${['F','Aarab','Arab48','EGY'].map(c => `
-              <tr>
-                <td><strong>${c}</strong>                  
-                  <td><input type="number" id="sp_${c}_PAX" placeholder="0" min="0" value="0" oninput="updateSaveButtonState()">                  
-                  <td><input type="number" id="sp_${c}_CHILD" placeholder="0" min="0" value="0" oninput="updateSaveButtonState()">                  
-                  <td><input type="number" id="sp_${c}_INF" placeholder="0" min="0" value="0" oninput="updateSaveButtonState()">                  
-                  <td><select id="sc_${c}" onchange="updateSaveButtonState()">
+               <tr>
+                <td><strong>${c}</strong></td>
+                <td><input type="number" id="sp_${c}_PAX" placeholder="0" min="0" value="0" oninput="updateSaveButtonState()"></td>
+                <td><input type="number" id="sp_${c}_CHILD" placeholder="0" min="0" value="0" oninput="updateSaveButtonState()"></td>
+                <td><input type="number" id="sp_${c}_INF" placeholder="0" min="0" value="0" oninput="updateSaveButtonState()"></td>
+                <td><select id="sc_${c}" onchange="updateSaveButtonState()">
                   <option value="USD">USD $</option>
                   <option value="EUR">EUR €</option>
                   <option value="GBP">GBP £</option>
                   <option value="LE">LE ج</option>
-                </select>                  
-                </tr>`).join('')}
+                </select></td>
+              </tr>`).join('')}
           </tbody>
-        能有
+        </table>
       </div>`;
   } else {
     let availableTrips = [...tripsForCategory];
@@ -764,7 +777,7 @@ function renderStep2(cat) {
   }
 
   document.getElementById('formContent').innerHTML = html;
- document.getElementById('formFooter').innerHTML = `
+  document.getElementById('formFooter').innerHTML = `
     <button class="btn btn-green" id="saveBtn" onclick="doSave()" disabled>💾 ${isEdit ? 'تحديث البيانات' : 'حفظ وإنشاء الشيت'}</button>
     <button class="btn btn-gray" onclick="goBackStep1()">← رجوع</button>
     <button class="btn btn-gray" onclick="closeModal()">إلغاء</button>`;
@@ -772,10 +785,6 @@ function renderStep2(cat) {
   console.log('بعد إنشاء الزر، saveBtn موجود:', document.getElementById('saveBtn'));
   updateSaveButtonState();
   console.log('بعد updateSaveButtonState، saveBtn.disabled:', document.getElementById('saveBtn')?.disabled);
-
-
-  // تحديث حالة الزر بعد إنشائه مباشرة
-  updateSaveButtonState();
 
   if (!isSubmarine && isEdit && selectedAccount) {
     let prevTrips = [];
@@ -809,7 +818,6 @@ function renderStep2(cat) {
       })).then(function() {
         return loadPriceInputsWithValues(prevTrips, savedPrices);
       }).then(function() {
-        // بعد تحميل الأسعار، تحديث حالة الزر
         setTimeout(updateSaveButtonState, 100);
       }).catch(function(err) {
         console.error('خطأ في تحميل الأسعار:', err);
@@ -832,7 +840,6 @@ function renderStep2(cat) {
         if (infEl && p.INF) infEl.value = p.INF;
         if (curEl && p.currency) curEl.value = p.currency;
       });
-      // تحديث حالة الزر بعد تحميل الأسعار
       setTimeout(updateSaveButtonState, 100);
     } catch(e) {}
   }
@@ -1012,7 +1019,6 @@ async function doSave() {
       userBranchName: currentUser?.branchName || ''
     };
     
-    // فقط في حالة التعديل، أضف customerId
     if (isEdit && selectedAccount) {
       formData.customerId = selectedAccount.customerId;
       console.log('💾 adding customerId to formData:', formData.customerId);
@@ -1091,6 +1097,7 @@ async function doSave() {
     showAlert('❌ خطأ: ' + e.message, '❌');
   }
 }
+
 function updateAutoEmail() {
   const name = document.getElementById('f_name')?.value.trim();
   const emailField = document.getElementById('f_loginEmail');
@@ -1099,6 +1106,7 @@ function updateAutoEmail() {
     emailField.value = generateAutoEmail(name);
   }
 }
+
 // ====================== حذف ======================
 async function doDelete() {
   if (!selectedAccount) return;
@@ -1150,6 +1158,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (!ud) { location.href = 'index.html'; return; }
   try { currentUser = JSON.parse(ud); } catch(e) { location.href = 'index.html'; return; }
   document.getElementById('userChip').textContent = currentUser.name || 'User';
+  
+  // قراءة editCustomerId من URL (للوصول من CustomerDashboard)
+  const urlParams = new URLSearchParams(window.location.search);
+  editCustomerIdFromUrl = urlParams.get('editCustomerId');
+  
   await loadAccounts();
 });
 
