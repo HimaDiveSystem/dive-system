@@ -194,7 +194,13 @@
    CONFIG
 ─────────────────────────────────────────────────────────── */
 const GAS='https://script.google.com/macros/s/AKfycbwe1Q9pjAJRk9CfWsK5YGjD5uVAbJkMhAVgw6akKkFIR9sz15V78C88Vs5dumKE-SwF/exec';
-
+const DASH = {
+  Admin: 'Dashboard.html',
+  Owner: 'OwnerDashboard.html',
+  Sales: 'SalesDashboard.html',
+  Accountant: 'AccountantDashboard.html',
+  Customer: 'CustomerDashboard.html'
+};
 /* ───────────────────────────────────────────────────────────
    STATE
 ─────────────────────────────────────────────────────────── */
@@ -327,9 +333,14 @@ function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace
 function fmtDateKey(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function goBack() { 
   // العودة إلى الصفحة التي فتح منها المستخدم
-  const userType = currentUser?.type || 'Admin';
-  const dashboardPage = DASH[userType] || 'Dashboard.html';
-  location.href = dashboardPage;
+  const returnUrl = sessionStorage.getItem('returnUrl');
+  if (returnUrl) {
+    location.href = returnUrl;
+  } else {
+    const userType = currentUser?.type || 'Admin';
+    const dashboardPage = DASH[userType] || 'Dashboard.html';
+    location.href = dashboardPage;
+  }
 }
   function showPDFOv(m){document.getElementById('pdfMsg').textContent=m;document.getElementById('pdfOverlay').classList.add('show');}
 function hidePDFOv(){document.getElementById('pdfOverlay').classList.remove('show');}
@@ -599,12 +610,21 @@ async function validate(){
    Signature upload runs IN PARALLEL with PDF generation
 ─────────────────────────────────────────────────────────── */
 async function saveAndGeneratePDF(inv){
-  // التوقيع يُرسل مدمجاً في saveInvoice (signatureData موجود في inv)
-  // لا يوجد طلب HTTP منفصل لرفع التوقيع → يوفر 5-15 ثانية
   showPDFOv('💾 Saving invoice...');
   const save=await gas('saveInvoice',inv);
   if(!save?.success)throw new Error(save?.message||'Save failed');
   const voucherNo=save.voucherNo;
+  
+  // حفظ نسخة من الفاتورة في Invoices_Edit للتتبع (بدون تعديل)
+  try {
+    await gas('copyInvoiceToEdit', {
+      originalData: JSON.stringify({}),
+      editedData: JSON.stringify(inv),
+      userId: currentUser?.id || '',
+      editSummary: 'New invoice created'
+    });
+  } catch(e) { console.warn('Edit copy failed:', e); }
+  
   showPDFOv('📄 Generating PDF...');
   const pdf=await gas('saveAndGenerateSinglePDF',{voucherNo});
   hidePDFOv();
