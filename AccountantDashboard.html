@@ -68,6 +68,17 @@
     /* تذييل */
     .footer-note{margin-top:32px;text-align:center;padding:16px;background:#f8fafc;border-radius:var(--radius);color:var(--text-lt);font-size:12px;}
     
+    /* مودال */
+    .modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);align-items:center;justify-content:center;z-index:9999;}
+    .modal.open{display:flex;}
+    .modal-box{background:white;width:90%;max-width:380px;border-radius:22px;padding:26px;text-align:center;box-shadow:0 20px 40px rgba(0,0,0,.3);}
+    .modal-icon{font-size:44px;margin-bottom:12px;}
+    .modal-msg{color:var(--navy);font-size:15px;font-weight:700;margin-bottom:18px;}
+    .modal-btns{display:flex;gap:10px;justify-content:center;}
+    .no-data{text-align:center;padding:40px;color:var(--text-lt);}
+    .loader{text-align:center;padding:40px;color:var(--text-lt);}
+    .spinner{width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 12px;}
+    @keyframes spin{to{transform:rotate(360deg)}}
     @media(max-width:600px){.action-grid{grid-template-columns:1fr;}}
   </style>
 </head>
@@ -97,24 +108,100 @@
   </div>
 </div>
 
-<style>
-.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);align-items:center;justify-content:center;z-index:9999;}
-.modal.open{display:flex;}
-.modal-box{background:white;width:90%;max-width:380px;border-radius:22px;padding:26px;text-align:center;box-shadow:0 20px 40px rgba(0,0,0,.3);}
-.modal-icon{font-size:44px;margin-bottom:12px;}
-.modal-msg{color:var(--navy);font-size:15px;font-weight:700;margin-bottom:18px;}
-.modal-btns{display:flex;gap:10px;justify-content:center;}
-</style>
+<!-- Modal اختيار العميل -->
+<div id="customerListModal" class="modal">
+  <div class="modal-box" style="max-width:600px;max-height:80vh;overflow-y:auto;">
+    <div class="modal-title">📊 اختيار عميل لعرض كشف الحساب</div>
+    <div id="customerListContent" style="max-height:60vh;overflow-y:auto;">
+      <div class="loader"><div class="spinner"></div>جاري تحميل العملاء...</div>
+    </div>
+    <div class="modal-footer" style="margin-top:16px;">
+      <button class="action-btn btn-gray" onclick="closeCustomerList()">إغلاق</button>
+    </div>
+  </div>
+</div>
 
 <script>
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbwe1Q9pjAJRk9CfWsK5YGjD5uVAbJkMhAVgw6akKkFIR9sz15V78C88Vs5dumKE-SwF/exec';
+
 let currentUser=null;
-function showAlert(m){document.getElementById('alertMsg').textContent=m;document.getElementById('alertModal').classList.add('open');}
-function closeAlert(){document.getElementById('alertModal').classList.remove('open');}
-function showConfirm(m,onOk){document.getElementById('confirmMsg').textContent=m;document.getElementById('confirmModal').classList.add('open');const ok=document.getElementById('confirmOk'),ca=document.getElementById('confirmCancel');const oh=()=>{document.getElementById('confirmModal').classList.remove('open');onOk();ok.removeEventListener('click',oh);ca.removeEventListener('click',ch);};const ch=()=>{document.getElementById('confirmModal').classList.remove('open');ok.removeEventListener('click',oh);ca.removeEventListener('click',ch);};ok.addEventListener('click',oh);ca.addEventListener('click',ch);}
+let allCustomersList = [];
+
+// ====================== دوال الاتصال ======================
+function gas(action, params = {}) {
+  return new Promise((resolve, reject) => {
+    const callbackName = 'jsonp_callback_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
+    const url = new URL(GAS_URL);
+    url.searchParams.set('action', action);
+    url.searchParams.set('callback', callbackName);
+    url.searchParams.set('_t', Date.now());
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v ?? '')));
+    
+    window[callbackName] = function(data) {
+      delete window[callbackName];
+      if (document.body.contains(script)) {
+        document.body.removeChild(script);
+      }
+      resolve(data);
+    };
+    
+    const script = document.createElement('script');
+    script.src = url.toString();
+    script.onerror = () => {
+      delete window[callbackName];
+      if (document.body.contains(script)) {
+        document.body.removeChild(script);
+      }
+      reject(new Error('فشل الاتصال بالخادم'));
+    };
+    document.body.appendChild(script);
+    
+    setTimeout(() => {
+      if (window[callbackName]) {
+        delete window[callbackName];
+        if (document.body.contains(script)) {
+          document.body.removeChild(script);
+        }
+        reject(new Error('انتهى وقت الاتصال'));
+      }
+    }, 30000);
+  });
+}
+
+// ====================== دوال مساعدة ======================
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function showAlert(m){
+  document.getElementById('alertMsg').textContent=m;
+  document.getElementById('alertModal').classList.add('open');
+}
+function closeAlert(){
+  document.getElementById('alertModal').classList.remove('open');
+}
+function showConfirm(m,onOk){
+  document.getElementById('confirmMsg').textContent=m;
+  document.getElementById('confirmModal').classList.add('open');
+  const ok=document.getElementById('confirmOk'),ca=document.getElementById('confirmCancel');
+  const oh=()=>{
+    document.getElementById('confirmModal').classList.remove('open');
+    onOk();
+    ok.removeEventListener('click',oh);
+    ca.removeEventListener('click',ch);
+  };
+  const ch=()=>{
+    document.getElementById('confirmModal').classList.remove('open');
+    ok.removeEventListener('click',oh);
+    ca.removeEventListener('click',ch);
+  };
+  ok.addEventListener('click',oh);
+  ca.addEventListener('click',ch);
+}
 function logout(){
   showConfirm('هل أنت متأكد من تسجيل الخروج؟',()=>{
     sessionStorage.removeItem('currentUser');
-    // العودة إلى صفحة تسجيل الدخول
     location.href='index.html';
   });
 }
@@ -123,6 +210,51 @@ function go(url){
   location.href=url;
 }
 
+// ====================== دوال قائمة العملاء ======================
+async function openCustomerList() {
+  document.getElementById('customerListModal').classList.add('open');
+  document.getElementById('customerListContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري تحميل العملاء...</div>';
+  
+  try {
+    const res = await gas('getAllSuppliersCustomers');
+    const accounts = Array.isArray(res) ? res : [];
+    allCustomersList = accounts.filter(a => a.customerType === 'Customer' && a.status === true);
+    
+    if (allCustomersList.length === 0) {
+      document.getElementById('customerListContent').innerHTML = '<div class="no-data" style="padding:40px;">لا يوجد عملاء نشطاء</div>';
+      return;
+    }
+    
+    let html = '<div style="display:flex;flex-direction:column;gap:8px;">';
+    allCustomersList.forEach(cust => {
+      html += `
+        <div onclick="openCustomerDashboard('${cust.customerId}')" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border:1px solid var(--border);border-radius:12px;cursor:pointer;background:white;transition:all .2s;" onmouseover="this.style.backgroundColor='#f0f4ff'" onmouseout="this.style.backgroundColor='white'">
+          <div>
+            <strong style="font-size:14px;color:var(--navy)">${esc(cust.customerName)}</strong>
+            <div style="font-size:11px;color:var(--text-lt);margin-top:4px;">${cust.category || ''} | ${cust.phone || ''}</div>
+          </div>
+          <div style="font-size:12px;color:var(--gold);background:var(--navy);padding:4px 12px;border-radius:20px;">عرض</div>
+        </div>
+      `;
+    });
+    html += '</div>';
+    document.getElementById('customerListContent').innerHTML = html;
+  } catch(e) {
+    document.getElementById('customerListContent').innerHTML = '<div class="no-data" style="padding:40px;">خطأ في التحميل: ' + e.message + '</div>';
+  }
+}
+
+function closeCustomerList() {
+  document.getElementById('customerListModal').classList.remove('open');
+}
+
+function openCustomerDashboard(customerId) {
+  closeCustomerList();
+  const userParam = encodeURIComponent(JSON.stringify(currentUser));
+  location.href = `CustomerDashboard.html?customerId=${customerId}&user=${userParam}`;
+}
+
+// ====================== عرض لوحة التحكم ======================
 function showDashboard(){
   document.getElementById('userNameDisplay').textContent=currentUser.name||'محاسب';
   document.getElementById('mainContent').innerHTML=`
@@ -188,88 +320,59 @@ function showDashboard(){
     </div>
 
     <!-- 🏢 مجموعة فواتير العملاء (المراكز والفروع) -->
-<div class="section-group">
-  <div class="section-title">
-    <span class="icon">🏢</span>
-    <h3>فواتير العملاء (المراكز والفروع)</h3>
-  </div>
-  <div class="action-grid">
-    <button class="action-btn" style="background:linear-gradient(135deg,#0f1f3d,#1e3a5f);color:var(--gold)" onclick="go('CustomerInvoice.html')">📋 فاتورة عميل</button>
-    <button class="action-btn btn-teal" onclick="openCustomerList()">📊 كشف حساب العملاء</button>
-    <button class="action-btn btn-gray" onclick="showAlert('مديونيات العملاء - قيد التطوير')">💰 مديونيات العملاء</button>
-  </div>
-</div>
-<!-- Modal اختيار العميل -->
-<div id="customerListModal" class="modal">
-  <div class="modal-box" style="max-width:600px;max-height:80vh;overflow-y:auto;">
-    <div class="modal-title">📊 اختيار عميل لعرض كشف الحساب</div>
-    <div id="customerListContent" style="max-height:60vh;overflow-y:auto;">
-      <div class="loader"><div class="spinner"></div>جاري تحميل العملاء...</div>
+    <div class="section-group">
+      <div class="section-title">
+        <span class="icon">🏢</span>
+        <h3>فواتير العملاء (المراكز والفروع)</h3>
+      </div>
+      <div class="action-grid">
+        <button class="action-btn" style="background:linear-gradient(135deg,#0f1f3d,#1e3a5f);color:var(--gold)" onclick="go('CustomerInvoice.html')">📋 فاتورة عميل</button>
+        <button class="action-btn btn-teal" onclick="openCustomerList()">📊 كشف حساب العملاء</button>
+        <button class="action-btn btn-gray" onclick="showAlert('مديونيات العملاء - قيد التطوير')">💰 مديونيات العملاء</button>
+      </div>
     </div>
-    <div class="modal-footer" style="margin-top:16px;">
-      <button class="action-btn btn-gray" onclick="closeCustomerList()">إغلاق</button>
-    </div>
-  </div>
-</div>
+
     <div class="footer-note">
       ⚡ النظام المحاسبي المتكامل | آخر تحديث: ${new Date().toLocaleDateString('ar-EG')}
     </div>
   `;
 }
-  // دوال قائمة العملاء
-let allCustomersList = [];
 
-async function openCustomerList() {
-  document.getElementById('customerListModal').classList.add('open');
-  document.getElementById('customerListContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري تحميل العملاء...</div>';
-  
-  try {
-    const res = await gas('getAllSuppliersCustomers');
-    const accounts = Array.isArray(res) ? res : [];
-    allCustomersList = accounts.filter(a => a.customerType === 'Customer' && a.status === true);
-    
-    if (allCustomersList.length === 0) {
-      document.getElementById('customerListContent').innerHTML = '<div class="no-data" style="padding:40px;">لا يوجد عملاء نشطاء</div>';
-      return;
-    }
-    
-    let html = '<div style="display:flex;flex-direction:column;gap:8px;">';
-    allCustomersList.forEach(cust => {
-      html += `
-        <div onclick="openCustomerDashboard('${cust.customerId}')" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border:1px solid var(--border);border-radius:12px;cursor:pointer;background:white;transition:all .2s;" onmouseover="this.style.backgroundColor='#f0f4ff'" onmouseout="this.style.backgroundColor='white'">
-          <div>
-            <strong style="font-size:14px;color:var(--navy)">${esc(cust.customerName)}</strong>
-            <div style="font-size:11px;color:var(--text-lt);margin-top:4px;">${cust.category || ''} | ${cust.phone || ''}</div>
-          </div>
-          <div style="font-size:12px;color:var(--gold);background:var(--navy);padding:4px 12px;border-radius:20px;">عرض</div>
-        </div>
-      `;
-    });
-    html += '</div>';
-    document.getElementById('customerListContent').innerHTML = html;
-  } catch(e) {
-    document.getElementById('customerListContent').innerHTML = '<div class="no-data" style="padding:40px;">خطأ في التحميل: ' + e.message + '</div>';
-  }
-}
-
-function closeCustomerList() {
-  document.getElementById('customerListModal').classList.remove('open');
-}
-
-function openCustomerDashboard(customerId) {
-  closeCustomerList();
-  const userParam = encodeURIComponent(JSON.stringify(currentUser));
-  location.href = `CustomerDashboard.html?customerId=${customerId}&user=${userParam}`;
-}
-  
+// ====================== تهيئة الصفحة ======================
 document.addEventListener('DOMContentLoaded',()=>{
   let ud=sessionStorage.getItem('currentUser');
-  if(!ud){const p=new URLSearchParams(location.search).get('user');if(p){ud=decodeURIComponent(p);sessionStorage.setItem('currentUser',ud);}}
-  if(!ud){location.href='index.html';return;}
-  try{currentUser=JSON.parse(ud);}catch{location.href='index.html';return;}
-  if(currentUser.type!=='Accountant'&&currentUser.type!=='Admin'){location.href='index.html';return;}
+  if(!ud){
+    const p=new URLSearchParams(location.search).get('user');
+    if(p){
+      ud=decodeURIComponent(p);
+      sessionStorage.setItem('currentUser',ud);
+    }
+  }
+  if(!ud){
+    location.href='index.html';
+    return;
+  }
+  try{
+    currentUser=JSON.parse(ud);
+  }catch{
+    location.href='index.html';
+    return;
+  }
+  if(currentUser.type!=='Accountant'&&currentUser.type!=='Admin'){
+    location.href='index.html';
+    return;
+  }
   showDashboard();
 });
+
+// ====================== دوال عامة ======================
+window.go = go;
+window.logout = logout;
+window.showAlert = showAlert;
+window.closeAlert = closeAlert;
+window.openCustomerList = openCustomerList;
+window.closeCustomerList = closeCustomerList;
+window.openCustomerDashboard = openCustomerDashboard;
 </script>
 </body>
 </html>
