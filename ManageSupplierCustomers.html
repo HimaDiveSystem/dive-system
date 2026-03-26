@@ -159,7 +159,7 @@ let _currentCategory = '';
 let _editSheetDates = null;
 let _formStep1Data = {};
 let editCustomerIdFromUrl = null;
-let returnToPage = null;  // الصفحة التي يجب العودة إليها
+let returnToUrl = null;  // عنوان الصفحة التي يجب العودة إليها
 
 // ====================== دوال الاتصال ======================
 function gas(action, params = {}) {
@@ -214,29 +214,28 @@ async function gasPost(data) {
 
 // ====================== دوال مساعدة ======================
 function goBack() { 
-  console.log('🔙 goBack called, returnToPage:', returnToPage);
-  console.log('🔙 currentUser?.type:', currentUser?.type);
-  console.log('🔙 editCustomerIdFromUrl:', editCustomerIdFromUrl);
+  console.log('🔙 goBack called, returnToUrl:', returnToUrl);
   
-  // إذا كان هناك صفحة محددة للعودة، استخدمها
-  if (returnToPage) {
-    location.href = returnToPage;
+  // إذا كان هناك عنوان محدد للعودة، استخدمه
+  if (returnToUrl) {
+    window.location.href = returnToUrl;
     return;
   }
   
   // إذا أتينا من CustomerDashboard (يوجد editCustomerId في URL)
   if (editCustomerIdFromUrl) {
-    location.href = 'CustomerDashboard.html';
+    window.location.href = 'CustomerDashboard.html';
     return;
   }
   
   // العودة إلى لوحة التحكم حسب نوع المستخدم
-  const defaultPage = DASH[currentUser?.type];
-  if (defaultPage) {
-    location.href = defaultPage;
-  } else {
-    location.href = 'index.html';
+  if (currentUser && currentUser.type && DASH[currentUser.type]) {
+    window.location.href = DASH[currentUser.type];
+    return;
   }
+  
+  // في حالة عدم وجود أي معلومات، العودة إلى الصفحة الرئيسية
+  window.location.href = 'index.html';
 }
 
 function showAlert(msg, icon, btns) {
@@ -364,7 +363,6 @@ async function loadAccounts() {
       } else {
         console.warn('لم يتم العثور على العميل: ' + editCustomerIdFromUrl);
       }
-      // لا نمسح editCustomerIdFromUrl هنا حتى يتم استخدامه في goBack
     }
   } catch(e) {
     console.error('loadAccounts error:', e);
@@ -420,18 +418,18 @@ function renderTable() {
             <tbody>
               ${filtered.length ? filtered.map(a => `
                 <tr class="${selectedAccount?.customerId===a.customerId?'sel':''}" onclick="selectRow('${a.customerId}')">
-                  <td>${a.customerId||''}                   </td>
-                  <td><strong>${(a.customerName||'').replace(/</g,'&lt;')}</strong> ${editCustomerIdFromUrl === a.customerId ? '<span class="edit-badge">✏️ جاري التعديل</span>' : ''}</td>
-                  <td><span class="badge ${a.customerType==='Customer'?'badge-blue':'badge-orange'}">${a.customerType==='Customer'?'عميل':'منفذ'}</span></td>
-                  <td>${a.category||'-'}</td>
-                  <td>${a.contactPerson||'-'}</td>
-                  <td>${a.phone||'-'}</td>
-                  <td>${formatDateDisplay(a.startDate)||'-'}</td>
-                  <td>${formatDateDisplay(a.endDate)||'-'}</td>
-                  <td><span class="badge ${a.status?'badge-green':'badge-red'}">${a.status?'نشط':'متوقف'}</span></td>
-                  </tr>`).join('') : `<tr><td colspan="9" class="no-data">لا توجد بيانات</td></tr>`}
+                  <td>${a.customerId||''}                   
+                  <td><strong>${(a.customerName||'').replace(/</g,'&lt;')}</strong> ${editCustomerIdFromUrl === a.customerId ? '<span class="edit-badge">✏️ جاري التعديل</span>' : ''}                   </td>
+                  <td><span class="badge ${a.customerType==='Customer'?'badge-blue':'badge-orange'}">${a.customerType==='Customer'?'عميل':'منفذ'}</span>                   </td>
+                  <td>${a.category||'-'}                   </td>
+                  <td>${a.contactPerson||'-'}                   </td>
+                  <td>${a.phone||'-'}                   </td>
+                  <td>${formatDateDisplay(a.startDate)||'-'}                   </td>
+                  <td>${formatDateDisplay(a.endDate)||'-'}                   </td>
+                  <td><span class="badge ${a.status?'badge-green':'badge-red'}">${a.status?'نشط':'متوقف'}</span>                   </td>
+                 </tr>`).join('') : `<tr><td colspan="9" class="no-data">لا توجد بيانات</td></tr>`}
             </tbody>
-          </table>
+           </table>
         </div>
       </div>
     </div>`;
@@ -1165,34 +1163,41 @@ async function confirmDelete() {
 
 // ====================== تهيئة الصفحة ======================
 document.addEventListener('DOMContentLoaded', async () => {
-  let ud = sessionStorage.getItem('currentUser');
-  if (!ud) { 
-    const p = new URLSearchParams(location.search).get('user'); 
-    if (p) { 
-      ud = decodeURIComponent(p); 
-      sessionStorage.setItem('currentUser', ud); 
-    } 
-  }
-  if (!ud) { location.href = 'index.html'; return; }
-  try { currentUser = JSON.parse(ud); } catch(e) { location.href = 'index.html'; return; }
-  document.getElementById('userChip').textContent = currentUser.name || 'User';
-  
-  // قراءة editCustomerId من URL (للوصول من CustomerDashboard)
+  // قراءة المعلمات من URL
   const urlParams = new URLSearchParams(window.location.search);
   editCustomerIdFromUrl = urlParams.get('editCustomerId');
   const fromPage = urlParams.get('from');
   
-  // تحديد صفحة العودة
+  // تحديد عنوان العودة
   if (fromPage === 'CustomerDashboard') {
-    returnToPage = 'CustomerDashboard.html';
-  } else if (currentUser?.type) {
-    returnToPage = DASH[currentUser.type];
+    returnToUrl = 'CustomerDashboard.html';
   } else {
-    returnToPage = 'index.html';
+    // محاولة قراءة المستخدم من sessionStorage
+    let ud = sessionStorage.getItem('currentUser');
+    if (ud) {
+      try {
+        currentUser = JSON.parse(ud);
+        document.getElementById('userChip').textContent = currentUser.name || 'User';
+        returnToUrl = DASH[currentUser.type] || 'Dashboard.html';
+      } catch(e) {
+        console.error('خطأ في قراءة المستخدم:', e);
+        returnToUrl = 'index.html';
+      }
+    } else {
+      // لا يوجد مستخدم مسجل - العودة إلى صفحة تسجيل الدخول
+      returnToUrl = 'index.html';
+    }
   }
   
-  console.log('🔵 page initialized, returnToPage:', returnToPage);
+  console.log('🔵 page initialized, returnToUrl:', returnToUrl);
   console.log('🔵 editCustomerIdFromUrl:', editCustomerIdFromUrl);
+  console.log('🔵 currentUser:', currentUser);
+  
+  // إذا لم يكن هناك مستخدم ولا يوجد editCustomerId، العودة إلى تسجيل الدخول
+  if (!currentUser && !editCustomerIdFromUrl) {
+    window.location.href = 'index.html';
+    return;
+  }
   
   await loadAccounts();
 });
