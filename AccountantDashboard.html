@@ -71,7 +71,7 @@
     /* مودال */
     .modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);align-items:center;justify-content:center;z-index:9999;}
     .modal.open{display:flex;}
-    .modal-box{background:white;width:90%;max-width:380px;border-radius:22px;padding:26px;text-align:center;box-shadow:0 20px 40px rgba(0,0,0,.3);}
+    .modal-box{background:white;width:90%;max-width:500px;border-radius:22px;padding:26px;text-align:center;box-shadow:0 20px 40px rgba(0,0,0,.3);}
     .modal-icon{font-size:44px;margin-bottom:12px;}
     .modal-msg{color:var(--navy);font-size:15px;font-weight:700;margin-bottom:18px;}
     .modal-btns{display:flex;gap:10px;justify-content:center;}
@@ -79,7 +79,20 @@
     .loader{text-align:center;padding:40px;color:var(--text-lt);}
     .spinner{width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 12px;}
     @keyframes spin{to{transform:rotate(360deg)}}
-    @media(max-width:600px){.action-grid{grid-template-columns:1fr;}}
+    
+    /* استايلات الفلتر */
+    .filter-panel{background:#f8fafc;border-radius:20px;padding:20px;margin-bottom:24px;border:1px solid var(--border);}
+    .filter-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:15px;margin-bottom:15px;}
+    .filter-group{display:flex;flex-direction:column;gap:6px;text-align:right;}
+    .filter-group label{font-size:12px;font-weight:700;color:var(--text-lt);}
+    .filter-select{padding:10px 14px;border:2px solid var(--border);border-radius:12px;font-size:14px;font-family:'Cairo',sans-serif;background:white;cursor:pointer;transition:all .2s;}
+    .filter-select:focus{border-color:var(--teal);outline:none;}
+    .filter-select option{padding:8px;}
+    .btn-view{background:linear-gradient(135deg,var(--teal),#0f766e);color:white;padding:12px 24px;border:none;border-radius:40px;font-weight:700;font-size:14px;cursor:pointer;transition:all .2s;width:100%;margin-top:10px;}
+    .btn-view:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(13,148,136,.4);}
+    .btn-view:disabled{opacity:.5;cursor:not-allowed;transform:none;}
+    .selected-info{background:#e6f0ff;border-radius:12px;padding:10px 15px;margin-top:12px;font-size:13px;color:var(--navy);text-align:center;}
+    @media(max-width:600px){.action-grid{grid-template-columns:1fr;}.filter-row{grid-template-columns:1fr;}}
   </style>
 </head>
 <body>
@@ -108,15 +121,15 @@
   </div>
 </div>
 
-<!-- Modal اختيار العميل -->
-<div id="customerListModal" class="modal">
-  <div class="modal-box" style="max-width:600px;max-height:80vh;overflow-y:auto;">
-    <div class="modal-title">📊 اختيار عميل لعرض كشف الحساب</div>
-    <div id="customerListContent" style="max-height:60vh;overflow-y:auto;">
-      <div class="loader"><div class="spinner"></div>جاري تحميل العملاء...</div>
+<!-- Modal اختيار العميل (المحسن) -->
+<div id="customerSelectModal" class="modal">
+  <div class="modal-box" style="max-width:550px;">
+    <div class="modal-title" style="font-size:18px;">📊 اختيار عميل / منفذ</div>
+    <div id="filterContent" style="text-align:right;">
+      <div class="loader"><div class="spinner"></div>جاري تحميل البيانات...</div>
     </div>
-    <div class="modal-footer" style="margin-top:16px;">
-      <button class="action-btn btn-gray" onclick="closeCustomerList()">إغلاق</button>
+    <div class="modal-footer" style="margin-top:20px;">
+      <button class="action-btn btn-gray" onclick="closeCustomerSelect()">إلغاء</button>
     </div>
   </div>
 </div>
@@ -124,8 +137,9 @@
 <script>
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbwe1Q9pjAJRk9CfWsK5YGjD5uVAbJkMhAVgw6akKkFIR9sz15V78C88Vs5dumKE-SwF/exec';
 
-let currentUser=null;
-let allCustomersList = [];
+let currentUser = null;
+let allAccounts = [];
+let filteredNames = [];
 
 // ====================== دوال الاتصال ======================
 function gas(action, params = {}) {
@@ -210,48 +224,148 @@ function go(url){
   location.href=url;
 }
 
-// ====================== دوال قائمة العملاء ======================
-async function openCustomerList() {
-  document.getElementById('customerListModal').classList.add('open');
-  document.getElementById('customerListContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري تحميل العملاء...</div>';
+// ====================== دوال اختيار العميل المحسنة ======================
+async function openCustomerSelect() {
+  document.getElementById('customerSelectModal').classList.add('open');
+  document.getElementById('filterContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري تحميل العملاء...</div>';
   
   try {
     const res = await gas('getAllSuppliersCustomers');
-    const accounts = Array.isArray(res) ? res : [];
-    allCustomersList = accounts.filter(a => a.customerType === 'Customer' && a.status === true);
+    allAccounts = Array.isArray(res) ? res : [];
     
-    if (allCustomersList.length === 0) {
-      document.getElementById('customerListContent').innerHTML = '<div class="no-data" style="padding:40px;">لا يوجد عملاء نشطاء</div>';
-      return;
-    }
+    // استخراج الأنواع والأنشطة الفريدة
+    const types = [...new Set(allAccounts.map(a => a.customerType).filter(Boolean))];
+    const categories = [...new Set(allAccounts.map(a => a.category).filter(Boolean))].sort();
     
-    let html = '<div style="display:flex;flex-direction:column;gap:8px;">';
-    allCustomersList.forEach(cust => {
-      html += `
-        <div onclick="openCustomerDashboard('${cust.customerId}')" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border:1px solid var(--border);border-radius:12px;cursor:pointer;background:white;transition:all .2s;" onmouseover="this.style.backgroundColor='#f0f4ff'" onmouseout="this.style.backgroundColor='white'">
-          <div>
-            <strong style="font-size:14px;color:var(--navy)">${esc(cust.customerName)}</strong>
-            <div style="font-size:11px;color:var(--text-lt);margin-top:4px;">${cust.category || ''} | ${cust.phone || ''}</div>
+    let html = `
+      <div class="filter-panel" style="background:transparent;padding:0;">
+        <div class="filter-row">
+          <div class="filter-group">
+            <label>🏷️ نوع الحساب</label>
+            <select id="filterType" class="filter-select" onchange="updateNamesList()">
+              <option value="all">الكل</option>
+              ${types.map(t => `<option value="${t}">${t === 'Customer' ? 'عميل' : 'منفذ'}</option>`).join('')}
+            </select>
           </div>
-          <div style="font-size:12px;color:var(--gold);background:var(--navy);padding:4px 12px;border-radius:20px;">عرض</div>
+          <div class="filter-group">
+            <label>🏄 نوع النشاط</label>
+            <select id="filterCategory" class="filter-select" onchange="updateNamesList()">
+              <option value="all">الكل</option>
+              ${categories.map(c => `<option value="${c}">${c}</option>`).join('')}
+            </select>
+          </div>
         </div>
-      `;
-    });
-    html += '</div>';
-    document.getElementById('customerListContent').innerHTML = html;
+        <div class="filter-row">
+          <div class="filter-group">
+            <label>👤 اختر الاسم</label>
+            <select id="filterName" class="filter-select" style="background:white;">
+              <option value="">-- اختر من القائمة --</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn-view" id="viewAccountBtn" onclick="viewSelectedAccount()" disabled>📊 عرض كشف الحساب</button>
+        <div id="selectedInfo" class="selected-info" style="display:none;"></div>
+      </div>
+    `;
+    document.getElementById('filterContent').innerHTML = html;
+    
+    // تحديث قائمة الأسماء الأولية
+    updateNamesList();
+    
   } catch(e) {
-    document.getElementById('customerListContent').innerHTML = '<div class="no-data" style="padding:40px;">خطأ في التحميل: ' + e.message + '</div>';
+    document.getElementById('filterContent').innerHTML = '<div class="no-data" style="padding:40px;">خطأ في التحميل: ' + e.message + '</div>';
   }
 }
 
-function closeCustomerList() {
-  document.getElementById('customerListModal').classList.remove('open');
+function updateNamesList() {
+  const typeFilter = document.getElementById('filterType')?.value || 'all';
+  const categoryFilter = document.getElementById('filterCategory')?.value || 'all';
+  
+  // تصفية الحسابات
+  filteredNames = allAccounts.filter(acc => {
+    if (typeFilter !== 'all' && acc.customerType !== typeFilter) return false;
+    if (categoryFilter !== 'all' && acc.category !== categoryFilter) return false;
+    return true;
+  });
+  
+  // ترتيب حسب الاسم
+  filteredNames.sort((a,b) => (a.customerName || '').localeCompare(b.customerName || '', 'ar'));
+  
+  const nameSelect = document.getElementById('filterName');
+  const viewBtn = document.getElementById('viewAccountBtn');
+  const infoDiv = document.getElementById('selectedInfo');
+  
+  if (nameSelect) {
+    if (filteredNames.length === 0) {
+      nameSelect.innerHTML = '<option value="">-- لا توجد نتائج --</option>';
+      if (viewBtn) viewBtn.disabled = true;
+      if (infoDiv) infoDiv.style.display = 'none';
+    } else {
+      let options = '<option value="">-- اختر من القائمة --</option>';
+      filteredNames.forEach(acc => {
+        const typeText = acc.customerType === 'Customer' ? 'عميل' : 'منفذ';
+        const statusText = acc.status ? '✓' : '✗';
+        options += `<option value="${acc.customerId}" data-name="${esc(acc.customerName)}" data-type="${acc.customerType}" data-category="${acc.category}" data-phone="${acc.phone || ''}">
+          ${esc(acc.customerName)} (${typeText} - ${acc.category}) ${statusText}
+        </option>`;
+      });
+      nameSelect.innerHTML = options;
+      
+      // إضافة حدث التغيير
+      nameSelect.onchange = function() {
+        const selectedOption = nameSelect.options[nameSelect.selectedIndex];
+        const selectedId = nameSelect.value;
+        
+        if (selectedId && viewBtn) {
+          viewBtn.disabled = false;
+          const name = selectedOption.getAttribute('data-name') || '';
+          const type = selectedOption.getAttribute('data-type') || '';
+          const category = selectedOption.getAttribute('data-category') || '';
+          const phone = selectedOption.getAttribute('data-phone') || '';
+          const typeText = type === 'Customer' ? 'عميل' : 'منفذ';
+          if (infoDiv) {
+            infoDiv.style.display = 'block';
+            infoDiv.innerHTML = `✅ تم اختيار: <strong>${name}</strong> (${typeText} - ${category})${phone ? ` | 📞 ${phone}` : ''}`;
+          }
+        } else {
+          if (viewBtn) viewBtn.disabled = true;
+          if (infoDiv) infoDiv.style.display = 'none';
+        }
+      };
+      
+      if (viewBtn) viewBtn.disabled = true;
+      if (infoDiv) infoDiv.style.display = 'none';
+    }
+  }
 }
 
-function openCustomerDashboard(customerId) {
-  closeCustomerList();
+function viewSelectedAccount() {
+  const nameSelect = document.getElementById('filterName');
+  const selectedId = nameSelect?.value;
+  
+  if (!selectedId) {
+    showAlert('الرجاء اختيار عميل أو منفذ أولاً', '⚠️');
+    return;
+  }
+  
+  const selectedAccount = allAccounts.find(acc => acc.customerId === selectedId);
+  if (!selectedAccount) {
+    showAlert('البيانات غير موجودة', '❌');
+    return;
+  }
+  
+  if (selectedAccount.customerType !== 'Customer') {
+    showAlert('هذا الحساب منفذ وليس عميلاً، لا يوجد كشف حساب', '⚠️');
+    return;
+  }
+  
+  closeCustomerSelect();
   const userParam = encodeURIComponent(JSON.stringify(currentUser));
-  location.href = `CustomerDashboard.html?customerId=${customerId}&user=${userParam}`;
+  location.href = `CustomerDashboard.html?customerId=${selectedId}&user=${userParam}`;
+}
+
+function closeCustomerSelect() {
+  document.getElementById('customerSelectModal').classList.remove('open');
 }
 
 // ====================== عرض لوحة التحكم ======================
@@ -327,7 +441,7 @@ function showDashboard(){
       </div>
       <div class="action-grid">
         <button class="action-btn" style="background:linear-gradient(135deg,#0f1f3d,#1e3a5f);color:var(--gold)" onclick="go('CustomerInvoice.html')">📋 فاتورة عميل</button>
-        <button class="action-btn btn-teal" onclick="openCustomerList()">📊 كشف حساب العملاء</button>
+        <button class="action-btn btn-teal" onclick="openCustomerSelect()">📊 كشف حساب العملاء</button>
         <button class="action-btn btn-gray" onclick="showAlert('مديونيات العملاء - قيد التطوير')">💰 مديونيات العملاء</button>
       </div>
     </div>
@@ -370,9 +484,10 @@ window.go = go;
 window.logout = logout;
 window.showAlert = showAlert;
 window.closeAlert = closeAlert;
-window.openCustomerList = openCustomerList;
-window.closeCustomerList = closeCustomerList;
-window.openCustomerDashboard = openCustomerDashboard;
+window.openCustomerSelect = openCustomerSelect;
+window.closeCustomerSelect = closeCustomerSelect;
+window.updateNamesList = updateNamesList;
+window.viewSelectedAccount = viewSelectedAccount;
 </script>
 </body>
 </html>
