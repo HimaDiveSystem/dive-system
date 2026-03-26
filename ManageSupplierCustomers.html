@@ -112,7 +112,7 @@
   <h2>🏢 إدارة العملاء والمنفذين</h2>
   <div class="header-right">
     <span class="user-chip" id="userChip">...</span>
-    <button class="back-btn" onclick="goBack()">← العودة</button>
+    <button class="back-btn" id="backButton" onclick="goBack()">← العودة</button>
   </div>
 </div>
 
@@ -145,6 +145,8 @@
 </div>
 
 <script>
+console.log('=== PAGE STARTED ===');
+
 const GAS = 'https://script.google.com/macros/s/AKfycbwe1Q9pjAJRk9CfWsK5YGjD5uVAbJkMhAVgw6akKkFIR9sz15V78C88Vs5dumKE-SwF/exec';
 const DASH = {Admin:'Dashboard.html',Owner:'OwnerDashboard.html',Sales:'SalesDashboard.html',Accountant:'AccountantDashboard.html',Customer:'CustomerDashboard.html'};
 
@@ -159,7 +161,7 @@ let _currentCategory = '';
 let _editSheetDates = null;
 let _formStep1Data = {};
 let editCustomerIdFromUrl = null;
-let returnToPage = null;  // الصفحة التي يجب العودة إليها
+let returnToUrl = null;
 
 // ====================== دوال الاتصال ======================
 function gas(action, params = {}) {
@@ -214,28 +216,16 @@ async function gasPost(data) {
 
 // ====================== دوال مساعدة ======================
 function goBack() { 
-  console.log('🔙 goBack called, returnToPage:', returnToPage);
-  console.log('🔙 currentUser?.type:', currentUser?.type);
-  console.log('🔙 editCustomerIdFromUrl:', editCustomerIdFromUrl);
+  console.log('🔙 goBack called, returnToUrl:', returnToUrl);
   
-  // إذا كان هناك صفحة محددة للعودة، استخدمها
-  if (returnToPage) {
-    location.href = returnToPage;
-    return;
-  }
-  
-  // إذا أتينا من CustomerDashboard (يوجد editCustomerId في URL)
-  if (editCustomerIdFromUrl) {
-    location.href = 'CustomerDashboard.html';
-    return;
-  }
-  
-  // العودة إلى لوحة التحكم حسب نوع المستخدم
-  const defaultPage = DASH[currentUser?.type];
-  if (defaultPage) {
-    location.href = defaultPage;
+  if (returnToUrl) {
+    window.location.href = returnToUrl;
+  } else if (editCustomerIdFromUrl) {
+    window.location.href = 'CustomerDashboard.html';
+  } else if (currentUser && currentUser.type && DASH[currentUser.type]) {
+    window.location.href = DASH[currentUser.type];
   } else {
-    location.href = 'index.html';
+    window.location.href = 'index.html';
   }
 }
 
@@ -349,25 +339,27 @@ async function fetchTripItems(tripName) {
 
 // ====================== عرض الجدول ======================
 async function loadAccounts() {
+  console.log('🔄 loadAccounts - START');
   try {
     const res = await gas('getAllSuppliersCustomers');
+    console.log('📡 getAllSuppliersCustomers response:', res ? 'received' : 'empty');
     allAccounts = Array.isArray(res) ? res : [];
+    console.log('✅ Loaded ' + allAccounts.length + ' accounts');
     renderTable();
     
-    // إذا كان هناك editCustomerId من URL، افتح التعديل تلقائياً
     if (editCustomerIdFromUrl) {
       const targetAccount = allAccounts.find(a => a.customerId === editCustomerIdFromUrl);
       if (targetAccount) {
+        console.log('✅ Found customer to edit: ' + targetAccount.customerName);
         selectedAccount = targetAccount;
         renderTable();
         setTimeout(() => openEdit(), 500);
       } else {
-        console.warn('لم يتم العثور على العميل: ' + editCustomerIdFromUrl);
+        console.warn('❌ Customer not found: ' + editCustomerIdFromUrl);
       }
-      // لا نمسح editCustomerIdFromUrl هنا حتى يتم استخدامه في goBack
     }
   } catch(e) {
-    console.error('loadAccounts error:', e);
+    console.error('❌ loadAccounts error:', e);
     allAccounts = [];
     renderTable();
     showAlert('فشل تحميل البيانات: ' + e.message, '❌');
@@ -375,6 +367,7 @@ async function loadAccounts() {
 }
 
 function renderTable() {
+  console.log('📊 renderTable, accounts count: ' + allAccounts.length);
   const search = (document.getElementById('searchIn')?.value || '').toLowerCase();
   const typeF = document.getElementById('typeF')?.value || '';
   const catF  = document.getElementById('catF')?.value || '';
@@ -388,12 +381,12 @@ function renderTable() {
 
   const cats = [...new Set(allAccounts.map(a => a.category).filter(Boolean))].sort();
 
-  document.getElementById('mainContent').innerHTML = `
+  const html = `
     <div class="card">
       <div class="card-head"><span class="ch-icon">🔍</span><h3>بحث وتصفية</h3></div>
       <div class="card-body">
         <div class="search-bar">
-          <input type="text" id="searchIn" class="search-in" placeholder="بحث بالاسم..." oninput="renderTable()" value="${search.replace(/"/g, '&quot;')}">
+          <input type="text" id="searchIn" class="search-in" placeholder="بحث بالاسم..." oninput="renderTable()" value="${(search||'').replace(/"/g, '&quot;')}">
           <select id="typeF" class="filter-sel" onchange="renderTable()">
             <option value="">كل الأنواع</option>
             <option value="Customer" ${typeF==='Customer'?'selected':''}>عملاء</option>
@@ -416,11 +409,11 @@ function renderTable() {
         </div>
         <div class="table-wrap">
           <table class="data-table">
-            <thead><th>المعرف</th><th>الاسم</th><th>النوع</th><th>النشاط</th><th>التواصل</th><th>الهاتف</th><th>البداية</th><th>النهاية</th><th>الحالة</th></thead>
+            <thead><tr><th>المعرف</th><th>الاسم</th><th>النوع</th><th>النشاط</th><th>التواصل</th><th>الهاتف</th><th>البداية</th><th>النهاية</th><th>الحالة</th></tr></thead>
             <tbody>
               ${filtered.length ? filtered.map(a => `
                 <tr class="${selectedAccount?.customerId===a.customerId?'sel':''}" onclick="selectRow('${a.customerId}')">
-                  <td>${a.customerId||''}                   </td>
+                  <td>${a.customerId||''}</td>
                   <td><strong>${(a.customerName||'').replace(/</g,'&lt;')}</strong> ${editCustomerIdFromUrl === a.customerId ? '<span class="edit-badge">✏️ جاري التعديل</span>' : ''}</td>
                   <td><span class="badge ${a.customerType==='Customer'?'badge-blue':'badge-orange'}">${a.customerType==='Customer'?'عميل':'منفذ'}</span></td>
                   <td>${a.category||'-'}</td>
@@ -429,15 +422,18 @@ function renderTable() {
                   <td>${formatDateDisplay(a.startDate)||'-'}</td>
                   <td>${formatDateDisplay(a.endDate)||'-'}</td>
                   <td><span class="badge ${a.status?'badge-green':'badge-red'}">${a.status?'نشط':'متوقف'}</span></td>
-                  </tr>`).join('') : `<tr><td colspan="9" class="no-data">لا توجد بيانات</td></tr>`}
+                </tr>`).join('') : `<tr><td colspan="9" class="no-data">لا توجد بيانات</td></tr>`}
             </tbody>
           </table>
         </div>
       </div>
     </div>`;
+  
+  document.getElementById('mainContent').innerHTML = html;
 }
 
 function selectRow(id) {
+  console.log('🖱️ selectRow: ' + id);
   selectedAccount = allAccounts.find(a => a.customerId === id) || null;
   renderTable();
 }
@@ -742,8 +738,6 @@ async function goStep2() {
 function renderStep2(cat) {
   console.log('=== renderStep2 START ===');
   console.log('cat:', cat);
-  console.log('isEdit:', isEdit);
-  console.log('selectedAccount:', selectedAccount);
   const isSubmarine = (cat === 'Submarine');
 
   let html = '';
@@ -757,19 +751,19 @@ function renderStep2(cat) {
           <tbody>
             ${['F','Aarab','Arab48','EGY'].map(c => `
                 <tr>
-                  <td><strong>${c}</strong></td>
-                  <td><input type="number" id="sp_${c}_PAX" placeholder="0" min="0" value="0" oninput="updateSaveButtonState()"></td>
-                  <td><input type="number" id="sp_${c}_CHILD" placeholder="0" min="0" value="0" oninput="updateSaveButtonState()"></td>
-                  <td><input type="number" id="sp_${c}_INF" placeholder="0" min="0" value="0" oninput="updateSaveButtonState()"></td>
+                  <td><strong>${c}</strong>                  
+                  <td><input type="number" id="sp_${c}_PAX" placeholder="0" min="0" value="0" oninput="updateSaveButtonState()">                  
+                  <td><input type="number" id="sp_${c}_CHILD" placeholder="0" min="0" value="0" oninput="updateSaveButtonState()">                  
+                  <td><input type="number" id="sp_${c}_INF" placeholder="0" min="0" value="0" oninput="updateSaveButtonState()">                  
                   <td><select id="sc_${c}" onchange="updateSaveButtonState()">
                   <option value="USD">USD $</option>
                   <option value="EUR">EUR €</option>
                   <option value="GBP">GBP £</option>
                   <option value="LE">LE ج</option>
-                </select></td>
+                </select>                  
                 </tr>`).join('')}
           </tbody>
-        </table>
+        能有
       </div>`;
   } else {
     let availableTrips = [...tripsForCategory];
@@ -800,10 +794,9 @@ function renderStep2(cat) {
     <button class="btn btn-gray" onclick="goBackStep1()">← رجوع</button>
     <button class="btn btn-gray" onclick="closeModal()">إلغاء</button>`;
 
-  console.log('بعد إنشاء الزر، saveBtn موجود:', document.getElementById('saveBtn'));
   updateSaveButtonState();
-  console.log('بعد updateSaveButtonState، saveBtn.disabled:', document.getElementById('saveBtn')?.disabled);
 
+  // باقي الكود كما هو...
   if (!isSubmarine && isEdit && selectedAccount) {
     let prevTrips = [];
     let savedPrices = {};
@@ -1020,8 +1013,6 @@ async function doSave() {
 
   try {
     console.log('💾 doSave - بدء الحفظ');
-    console.log('💾 isEdit:', isEdit);
-    console.log('💾 selectedAccount:', selectedAccount);
     
     const cat = _currentCategory || document.getElementById('f_cat')?.value ||
                 (isEdit ? selectedAccount?.category : '');
@@ -1039,10 +1030,7 @@ async function doSave() {
     
     if (isEdit && selectedAccount) {
       formData.customerId = selectedAccount.customerId;
-      console.log('💾 adding customerId to formData:', formData.customerId);
     }
-    
-    console.log('💾 formData before sending:', JSON.stringify(formData, null, 2));
     
     let assignedTrips = [];
     let pricesData = {};
@@ -1078,19 +1066,13 @@ async function doSave() {
 
     formData.assignedTrips = assignedTrips;
     formData.pricesData = JSON.stringify(pricesData);
-
-    console.log('💾 final formData for API:', JSON.stringify(formData, null, 2));
     
     let result;
     if (isEdit && selectedAccount) {
-      console.log('💾 calling updateSupplierCustomer');
       result = await gasPost({ action: 'updateSupplierCustomer', ...formData });
     } else {
-      console.log('💾 calling addSupplierCustomer');
       result = await gasPost({ action: 'addSupplierCustomer', ...formData });
     }
-    
-    console.log('💾 API response:', result);
 
     if (btn) {
       btn.disabled = false;
@@ -1103,7 +1085,6 @@ async function doSave() {
       const extra = result.sheetName ? `\nتم ${isEdit ? 'تحديث' : 'إنشاء'} الشيت: ${result.sheetName}` : '';
       showAlert(`✅ تم ${isEdit ? 'التحديث' : 'الحفظ'} بنجاح` + extra, '✅');
     } else {
-      console.error('💾 API returned error:', result);
       showAlert('❌ ' + (result?.message || 'فشل الحفظ'), '❌');
     }
   } catch(e) {
@@ -1165,58 +1146,51 @@ async function confirmDelete() {
 
 // ====================== تهيئة الصفحة ======================
 document.addEventListener('DOMContentLoaded', async () => {
-  let ud = sessionStorage.getItem('currentUser');
-  if (!ud) { 
-    const p = new URLSearchParams(location.search).get('user'); 
-    if (p) { 
-      ud = decodeURIComponent(p); 
-      sessionStorage.setItem('currentUser', ud); 
-    } 
-  }
-  if (!ud) { location.href = 'index.html'; return; }
-  try { currentUser = JSON.parse(ud); } catch(e) { location.href = 'index.html'; return; }
-  document.getElementById('userChip').textContent = currentUser.name || 'User';
+  console.log('🔵 DOMContentLoaded - START');
   
-  // قراءة editCustomerId من URL (للوصول من CustomerDashboard)
+  // قراءة المعلمات من URL
   const urlParams = new URLSearchParams(window.location.search);
   editCustomerIdFromUrl = urlParams.get('editCustomerId');
   const fromPage = urlParams.get('from');
   
-  // تحديد صفحة العودة
-  if (fromPage === 'CustomerDashboard') {
-    returnToPage = 'CustomerDashboard.html';
-  } else if (currentUser?.type) {
-    returnToPage = DASH[currentUser.type];
-  } else {
-    returnToPage = 'index.html';
+  console.log('📌 URL Params - editCustomerId:', editCustomerIdFromUrl, 'from:', fromPage);
+  
+  // قراءة المستخدم من sessionStorage
+  let ud = sessionStorage.getItem('currentUser');
+  console.log('📦 sessionStorage currentUser:', ud ? 'found' : 'not found');
+  
+  if (ud) {
+    try {
+      currentUser = JSON.parse(ud);
+      console.log('👤 currentUser loaded:', currentUser.name, '(', currentUser.type, ')');
+      document.getElementById('userChip').textContent = currentUser.name || 'User';
+    } catch(e) {
+      console.error('❌ Error parsing currentUser:', e);
+      currentUser = null;
+    }
   }
   
-  console.log('🔵 page initialized, returnToPage:', returnToPage);
-  console.log('🔵 editCustomerIdFromUrl:', editCustomerIdFromUrl);
+  // تحديد عنوان العودة
+  if (fromPage === 'CustomerDashboard') {
+    returnToUrl = 'CustomerDashboard.html';
+    console.log('📍 returnToUrl set to: CustomerDashboard.html (from param)');
+  } else if (currentUser && currentUser.type) {
+    returnToUrl = DASH[currentUser.type];
+    console.log('📍 returnToUrl set to:', returnToUrl, '(from user type)');
+  } else if (editCustomerIdFromUrl) {
+    returnToUrl = 'CustomerDashboard.html';
+    console.log('📍 returnToUrl set to: CustomerDashboard.html (because editCustomerId exists)');
+  } else {
+    returnToUrl = 'index.html';
+    console.log('📍 returnToUrl set to: index.html (default)');
+  }
   
+  console.log('🔵 Final returnToUrl:', returnToUrl);
+  
+  // تحميل البيانات
   await loadAccounts();
+  console.log('🔵 loadAccounts completed');
 });
-
-// ====================== دوال عامة ======================
-window.goBack = goBack;
-window.openAdd = openAdd;
-window.openEdit = openEdit;
-window.selectRow = selectRow;
-window.renderTable = renderTable;
-window.closeModal = closeModal;
-window.closeAlert = closeAlert;
-window.goStep2 = goStep2;
-window.goBackStep1 = goBackStep1;
-window.handleTripToggle = handleTripToggle;
-window.doSave = doSave;
-window.doDelete = doDelete;
-window.confirmDelete = confirmDelete;
-window.loadPriceInputs = loadPriceInputs;
-window.toggleSystemAccess = toggleSystemAccess;
-window.togglePasswordVisibility = togglePasswordVisibility;
-window.updateAutoEmail = updateAutoEmail;
-window.updateSaveButtonState = updateSaveButtonState;
-window.hasAnyPrice = hasAnyPrice;
 </script>
 </body>
 </html>
