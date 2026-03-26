@@ -884,6 +884,7 @@ async function updateCollectionTotal() {
   const currency = currentInvoice?.invoiceCurrency || '$';
   const activeDate = currentInvoice?.activeDate;
   
+  // الحصول على القيم وتحويلها إلى أرقام
   const cU = parseFloat(document.getElementById('collUSD')?.value) || 0;
   const cE = parseFloat(document.getElementById('collEUR')?.value) || 0;
   const cG = parseFloat(document.getElementById('collGBP')?.value) || 0;
@@ -893,11 +894,20 @@ async function updateCollectionTotal() {
   const vG = parseFloat(document.getElementById('collVisaGBP')?.value) || 0;
   const vL = parseFloat(document.getElementById('collVisaLE')?.value) || 0;
   
+  // طباعة القيم للتأكد
+  console.log('💰 updateCollectionTotal - inputs:', {
+    cU, cE, cG, cL,
+    vU, vE, vG, vL,
+    currency, activeDate
+  });
+  
   let totalInEGP = 0;
   let totalInInvoiceCurrency = 0;
   
   if (activeDate) {
     const rate = await getExRate(activeDate);
+    console.log('💰 rate:', rate);
+    
     if (rate) {
       totalInEGP = cU * (rate.cash?.USD || 47.5) +
                    cE * (rate.cash?.EUR || 50.25) +
@@ -907,6 +917,8 @@ async function updateCollectionTotal() {
                    vE * (rate.visa?.EUR || 49) +
                    vG * (rate.visa?.GBP || 58.5) +
                    vL * (rate.visa?.LE || 0.975);
+      
+      console.log('💰 totalInEGP:', totalInEGP);
       
       if (currency === '$') totalInInvoiceCurrency = totalInEGP / (rate.cash?.USD || 47.5);
       else if (currency === '€') totalInInvoiceCurrency = totalInEGP / (rate.cash?.EUR || 50.25);
@@ -919,7 +931,23 @@ async function updateCollectionTotal() {
     totalInInvoiceCurrency = cU + cE + cG + cL + vU + vE + vG + vL;
   }
   
-  document.getElementById('collectionTotalDisplay').textContent = totalInInvoiceCurrency.toFixed(2);
+  // التأكد من أن القيمة رقم صحيح
+  totalInInvoiceCurrency = parseFloat(totalInInvoiceCurrency.toFixed(2));
+  if (isNaN(totalInInvoiceCurrency)) totalInInvoiceCurrency = 0;
+  
+  console.log('💰 totalInInvoiceCurrency final:', totalInInvoiceCurrency);
+  
+  // تحديث العرض
+  const totalDisplay = document.getElementById('collectionTotalDisplay');
+  if (totalDisplay) {
+    totalDisplay.textContent = totalInInvoiceCurrency.toFixed(2);
+  }
+  
+  // تحديث حقل المبلغ المحصل تلقائياً
+  const amountInput = document.getElementById('collectionAmount');
+  if (amountInput && totalInInvoiceCurrency > 0) {
+    amountInput.value = totalInInvoiceCurrency.toFixed(2);
+  }
 }
 
 function closeCollectionModal() {
@@ -929,7 +957,33 @@ function closeCollectionModal() {
 
 // دالة التحصيل الجديدة التي تنشئ فاتورة تحصيل
 async function submitCollection() {
-  const amount = parseFloat(document.getElementById('collectionAmount')?.value) || 0;
+  // الحصول على المبلغ من الحقل
+  const amountRaw = document.getElementById('collectionAmount')?.value || '0';
+  const amount = parseFloat(amountRaw);
+  if (isNaN(amount)) {
+    showAlert('الرجاء إدخال مبلغ صحيح', '⚠️');
+    return;
+  }
+  // الحصول على القيم مع التأكد من أنها أرقام
+  const cU = parseFloat(document.getElementById('collUSD')?.value) || 0;
+  const cE = parseFloat(document.getElementById('collEUR')?.value) || 0;
+  const cG = parseFloat(document.getElementById('collGBP')?.value) || 0;
+  const cL = parseFloat(document.getElementById('collLE')?.value) || 0;
+  const vU = parseFloat(document.getElementById('collVisaUSD')?.value) || 0;
+  const vE = parseFloat(document.getElementById('collVisaEUR')?.value) || 0;
+  const vG = parseFloat(document.getElementById('collVisaGBP')?.value) || 0;
+  const vL = parseFloat(document.getElementById('collVisaLE')?.value) || 0;
+  // التأكد من أن قيم العملات أرقام صالحة
+  if (isNaN(cU) || isNaN(cE) || isNaN(cG) || isNaN(cL) ||
+      isNaN(vU) || isNaN(vE) || isNaN(vG) || isNaN(vL)) {
+    showAlert('خطأ في قراءة قيم العملات', '⚠️');
+    return;
+  }
+  // طباعة القيم للتأكد
+  console.log('💰 submitCollection - amounts:', {
+    amount, cU, cE, cG, cL, vU, vE, vG, vL
+  });
+  
   const rest = parseFloat(currentInvoice.rest) || 0;
   
   if (amount <= 0) {
@@ -942,14 +996,12 @@ async function submitCollection() {
     return;
   }
   
-  const cU = parseFloat(document.getElementById('collUSD')?.value) || 0;
-  const cE = parseFloat(document.getElementById('collEUR')?.value) || 0;
-  const cG = parseFloat(document.getElementById('collGBP')?.value) || 0;
-  const cL = parseFloat(document.getElementById('collLE')?.value) || 0;
-  const vU = parseFloat(document.getElementById('collVisaUSD')?.value) || 0;
-  const vE = parseFloat(document.getElementById('collVisaEUR')?.value) || 0;
-  const vG = parseFloat(document.getElementById('collVisaGBP')?.value) || 0;
-  const vL = parseFloat(document.getElementById('collVisaLE')?.value) || 0;
+  // حساب إجمالي المبلغ المحصل من العملات
+  const totalFromCurrencies = cU + cE + cG + cL + vU + vE + vG + vL;
+  if (totalFromCurrencies === 0) {
+    showAlert('الرجاء إدخال تفاصيل المبلغ المحصل (عملات مستلمة)', '⚠️');
+    return;
+  }
   
   const notes = document.getElementById('collectionNotes')?.value || '';
   
@@ -995,10 +1047,11 @@ async function submitCollection() {
     rest: 0
   };
   
+  console.log('💰 collectionData being sent:', JSON.stringify(collectionData, null, 2));
+  
   showPDFOv('جاري حفظ التحصيل...');
   
   try {
-    // إنشاء فاتورة تحصيل جديدة
     const result = await callGAS('createCollectionInvoice', collectionData);
     
     hidePDFOv();
@@ -1022,7 +1075,6 @@ async function submitCollection() {
     showAlert('خطأ: ' + err.message, '❌');
   }
 }
-
 function getAccountType(customerName) {
   const customerLower = (customerName || '').toLowerCase();
   if (customerLower.includes('water') || customerLower.includes('sport') || customerLower.includes('قوارب'))
