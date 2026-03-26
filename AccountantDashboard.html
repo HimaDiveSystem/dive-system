@@ -140,7 +140,10 @@ const GAS_URL = 'https://script.google.com/macros/s/AKfycbwe1Q9pjAJRk9CfWsK5YGjD
 let currentUser = null;
 let allAccounts = [];
 let filteredNames = [];
-
+// حفظ رابط العودة قبل التوجيه
+if (!sessionStorage.getItem('returnUrl')) {
+  sessionStorage.setItem('returnUrl', document.referrer || 'index.html');
+}
 // ====================== دوال الاتصال ======================
 function gas(action, params = {}) {
   return new Promise((resolve, reject) => {
@@ -216,9 +219,12 @@ function showConfirm(m,onOk){
 function logout(){
   showConfirm('هل أنت متأكد من تسجيل الخروج؟',()=>{
     sessionStorage.removeItem('currentUser');
-    location.href='index.html';
+    // العودة إلى الصفحة التي فتحت الملف
+    const returnUrl = sessionStorage.getItem('returnUrl') || 'index.html';
+    location.href = returnUrl;
   });
 }
+  
 function go(url){
   sessionStorage.setItem('currentUser',JSON.stringify(currentUser));
   location.href=url;
@@ -233,8 +239,13 @@ async function openCustomerSelect() {
     const res = await gas('getAllSuppliersCustomers');
     allAccounts = Array.isArray(res) ? res : [];
     
-    // استخراج الأنواع والأنشطة الفريدة
-    const types = [...new Set(allAccounts.map(a => a.customerType).filter(Boolean))];
+    // استخراج الأنواع الفريدة (Customer و Supplier)
+    const types = [];
+    if (allAccounts.some(a => a.customerType === 'Customer')) types.push({value: 'Customer', label: 'عميل'});
+    if (allAccounts.some(a => a.customerType === 'Supplier')) types.push({value: 'Supplier', label: 'منفذ'});
+    types.unshift({value: 'all', label: 'الكل'});
+    
+    // استخراج الأنشطة الفريدة
     const categories = [...new Set(allAccounts.map(a => a.category).filter(Boolean))].sort();
     
     let html = `
@@ -243,8 +254,7 @@ async function openCustomerSelect() {
           <div class="filter-group">
             <label>🏷️ نوع الحساب</label>
             <select id="filterType" class="filter-select" onchange="updateNamesList()">
-              <option value="all">الكل</option>
-              ${types.map(t => `<option value="${t}">${t === 'Customer' ? 'عميل' : 'منفذ'}</option>`).join('')}
+              ${types.map(t => `<option value="${t.value}">${t.label}</option>`).join('')}
             </select>
           </div>
           <div class="filter-group">
@@ -269,7 +279,6 @@ async function openCustomerSelect() {
     `;
     document.getElementById('filterContent').innerHTML = html;
     
-    // تحديث قائمة الأسماء الأولية
     updateNamesList();
     
   } catch(e) {
@@ -281,14 +290,12 @@ function updateNamesList() {
   const typeFilter = document.getElementById('filterType')?.value || 'all';
   const categoryFilter = document.getElementById('filterCategory')?.value || 'all';
   
-  // تصفية الحسابات
   filteredNames = allAccounts.filter(acc => {
     if (typeFilter !== 'all' && acc.customerType !== typeFilter) return false;
     if (categoryFilter !== 'all' && acc.category !== categoryFilter) return false;
     return true;
   });
   
-  // ترتيب حسب الاسم
   filteredNames.sort((a,b) => (a.customerName || '').localeCompare(b.customerName || '', 'ar'));
   
   const nameSelect = document.getElementById('filterName');
@@ -311,7 +318,6 @@ function updateNamesList() {
       });
       nameSelect.innerHTML = options;
       
-      // إضافة حدث التغيير
       nameSelect.onchange = function() {
         const selectedOption = nameSelect.options[nameSelect.selectedIndex];
         const selectedId = nameSelect.value;
@@ -354,8 +360,9 @@ function viewSelectedAccount() {
     return;
   }
   
+  // التحقق: فقط العملاء لديهم كشف حساب
   if (selectedAccount.customerType !== 'Customer') {
-    showAlert('هذا الحساب منفذ وليس عميلاً، لا يوجد كشف حساب', '⚠️');
+    showAlert('⚠️ هذا الحساب منفذ وليس عميلاً\nلا يوجد كشف حساب للمنفذين', '⚠️');
     return;
   }
   
@@ -363,7 +370,6 @@ function viewSelectedAccount() {
   const userParam = encodeURIComponent(JSON.stringify(currentUser));
   location.href = `CustomerDashboard.html?customerId=${selectedId}&user=${userParam}`;
 }
-
 function closeCustomerSelect() {
   document.getElementById('customerSelectModal').classList.remove('open');
 }
