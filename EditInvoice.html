@@ -952,35 +952,47 @@ if (result?.success) {
 }
 // ====================== Load & Render Main Form ======================
 async function loadInvoice() {
+  console.log('🚀 loadInvoice STARTED');
+  
   const params = new URLSearchParams(location.search);
   const voucherNo = params.get('voucherNo');
   openFrom = params.get('from') || 'today';
   
-  console.log('💰 loadInvoice - voucherNo:', voucherNo);
-  console.log('💰 loadInvoice - openFrom:', openFrom);
+  console.log('📌 voucherNo:', voucherNo);
+  console.log('📌 openFrom:', openFrom);
+  console.log('📌 currentUser:', currentUser);
   
   if (!voucherNo) { 
+    console.log('❌ No voucherNo');
     showAlert('رقم الفاتورة غير موجود', '❌', '<button class="btn btn-primary" onclick="goBack()">رجوع</button>'); 
     return; 
   }
   
   showPDF('جاري التحميل...');
+  
   try {
+    console.log('🔄 Loading suppliers and trips...');
     await loadSuppliersAndTrips();
-    console.log('✅ loadSuppliersAndTrips completed');
+    console.log('✅ Suppliers and trips loaded');
     
+    console.log('🔄 Fetching all invoices...');
     const allInv = await gas('getAllInvoices');
-    console.log('✅ getAllInvoices completed, count:', allInv?.length);
+    console.log('✅ Invoices fetched, count:', allInv?.length);
     
     const invoices = Array.isArray(allInv) ? allInv : [];
-    currentInvoice = invoices.find(i => i.voucherNo === voucherNo);
+    console.log('🔍 Looking for voucher:', voucherNo);
     
-    console.log('💰 currentInvoice found:', currentInvoice ? 'YES' : 'NO');
-    console.log('💰 currentInvoice.rest:', currentInvoice?.rest);
-    console.log('💰 currentInvoice.actualPrice:', currentInvoice?.actualPrice);
-    console.log('💰 currentInvoice.paymentPrice:', currentInvoice?.paymentPrice);
+    currentInvoice = invoices.find(i => i.voucherNo === voucherNo);
+    console.log('📄 currentInvoice:', currentInvoice ? 'FOUND' : 'NOT FOUND');
     
     if (!currentInvoice) throw new Error('الفاتورة غير موجودة');
+    
+    console.log('💰 currentInvoice.rest:', currentInvoice.rest);
+    console.log('💰 currentInvoice.actualPrice:', currentInvoice.actualPrice);
+    console.log('💰 currentInvoice.paymentPrice:', currentInvoice.paymentPrice);
+    console.log('💰 currentInvoice.invoiceCurrency:', currentInvoice.invoiceCurrency);
+    console.log('💰 currentInvoice.trip:', currentInvoice.trip);
+    
     originalInvoice = { ...currentInvoice };
     
     const restVal = parseFloat(currentInvoice.rest) || 0;
@@ -988,6 +1000,7 @@ async function loadInvoice() {
     
     document.getElementById('userNameDisplay').textContent = currentUser?.name || 'User';
     document.getElementById('voucherDisplay').textContent = voucherNo;
+    console.log('✅ Header updated');
     
     const issueDate = parseDate(currentInvoice.issueDate);
     const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -996,28 +1009,40 @@ async function loadInvoice() {
     if (openFrom === 'today' && issueDate && issueDate < today) {
       isDisabled = true;
       warnHtml = `<div class="warning-bar">⚠️ تاريخ الفاتورة (${currentInvoice.issueDate}) قد مضى — التعديل غير مسموح لحماية بيانات الخزينة.</div>`;
+      console.log('⚠️ Invoice is past date, editing disabled');
     } else if (openFrom === 'activeDate') {
       warnHtml = `<div class="warning-bar info">ℹ️ وضع التعديل: يمكنك تعديل جميع الحقول ما عدا تاريخ التنفيذ.</div>`;
+      console.log('ℹ️ Edit mode from activeDate');
     }
     
     const disableActiveDate = (openFrom === 'activeDate');
     const dis = isDisabled ? 'disabled' : '';
     const disActiveDate = disableActiveDate ? 'disabled' : dis;
     
+    console.log('🔄 Getting trip category...');
     const currentCategory = getTripCategory(currentInvoice.trip);
+    console.log('📌 currentCategory:', currentCategory);
+    
     const customers = getCustomersByCategory(currentCategory);
     const suppliers = getSuppliersByCategory(currentCategory);
+    console.log('📌 customers count:', customers.length);
+    console.log('📌 suppliers count:', suppliers.length);
     
+    console.log('🔄 Fetching unique trips...');
     const uniqueTrips = await gas('getUniqueTrips');
     let tripsOpts = '';
     if (Array.isArray(uniqueTrips)) {
       tripsOpts = uniqueTrips.map(t => `<option value="${esc(t.name)}" ${t.name === currentInvoice.trip ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
+      console.log('✅ Trips options generated, count:', uniqueTrips.length);
     }
     
     let supOpts = '<option value="">-- اختر --</option>' + suppliers.map(s => `<option value="${esc(s.customerName)}" ${s.customerName === currentInvoice.supplier ? 'selected' : ''}>${esc(s.customerName)}</option>`).join('');
     let custOpts = '<option value="">-- اختر --</option>' + customers.map(c => `<option value="${esc(c.customerName)}" ${c.customerName === currentInvoice.customer ? 'selected' : ''}>${esc(c.customerName)}</option>`).join('');
     
+    console.log('🔄 Fetching trip data...');
     const tripData = await gas('getTripData', { tripName: currentInvoice.trip, currency: currentInvoice.invoiceCurrency });
+    console.log('✅ Trip data fetched:', tripData ? 'YES' : 'NO');
+    
     let tRows = '';
     if (tripData?.items) {
       const acts = parseActivities(currentInvoice.activitiesText || '');
@@ -1029,8 +1054,9 @@ async function loadInvoice() {
           <td><input type="number" id="qty_${i}" class="item-qty" min="0" placeholder="0" value="${qty || ''}" oninput="updateItemTotal(${i}, ${price})" ${dis}></td>
           <td><input type="number" id="price_${i}" value="${price}" readonly></td>
           <td><input type="number" id="total_${i}" value="${(qty * price).toFixed(2)}" readonly></td>
-         </tr>`;
+        </tr>`;
       }).join('');
+      console.log('✅ Trip rows generated, count:', tripData.items.length);
     }
     
     const formHtml = `
@@ -1123,11 +1149,12 @@ async function loadInvoice() {
       </div>
     `;
     
+    console.log('📝 Rendering form HTML...');
     document.getElementById('loaderState').style.display = 'none';
     document.getElementById('formContent').style.display = 'block';
     document.getElementById('formContent').innerHTML = formHtml;
+    console.log('✅ Form rendered');
     
-    // ✅ إضافة مستمع لزر التحصيل
     const collectionBtn = document.getElementById('collectionBtn');
     if (collectionBtn) {
       collectionBtn.addEventListener('click', openCollectionModal);
@@ -1136,10 +1163,12 @@ async function loadInvoice() {
       console.warn('⚠️ collectionBtn not found');
     }
     
+    console.log('🔄 Updating totals...');
     await updateTotals();
     console.log('✅ updateTotals completed');
     
     window.changeTrip = async function() {
+      console.log('🔄 changeTrip called');
       const newTrip = document.getElementById('tripName')?.value;
       const currency = document.getElementById('invoiceCurrency')?.value;
       if (!newTrip || !currency) return;
@@ -1166,8 +1195,11 @@ async function loadInvoice() {
       await updateTotals();
     };
     
+    console.log('🎉 loadInvoice completed successfully!');
+    
   } catch (err) {
     console.error('❌ loadInvoice error:', err);
+    console.error('❌ Error stack:', err.stack);
     hidePDF();
     showAlert('خطأ: ' + err.message, '❌', '<button class="btn btn-primary" onclick="goBack()">رجوع</button>');
     document.getElementById('loaderState').style.display = 'none';
