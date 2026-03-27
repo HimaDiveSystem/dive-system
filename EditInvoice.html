@@ -723,9 +723,17 @@ function parseActivities(text) {
 // ====================== Collection Modal ======================
 async function openCollectionModal() {
   if (!currentInvoice) return;
-  const rest = parseFloat(currentInvoice.rest) || 0;
-  if (rest <= 0) { showAlert('لا يوجد مبلغ متبقي للتحصيل', 'ℹ️'); return; }
+  
+  // ✅ التأكد من قراءة المبلغ المتبقي الصحيح
+  const rest = parseFloat(currentInvoice.rest);
+  if (isNaN(rest) || rest <= 0) { 
+    showAlert('لا يوجد مبلغ متبقي للتحصيل', 'ℹ️'); 
+    return; 
+  }
+  
   const currency = currentInvoice.invoiceCurrency || 'LE';
+  
+  console.log('💰 openCollectionModal - rest:', rest, currency); // للتتبع
 
   const modalHtml = `
     <div style="text-align:center; margin-bottom:20px;">
@@ -760,7 +768,7 @@ async function openCollectionModal() {
 
       <div class="payment-label">📌 المبلغ المتبقي بعد التحصيل</div>
       <div style="margin-bottom:12px;">
-        <input type="number" id="newRestPreview" class="form-control" step="0.01" style="text-align:center; font-weight:700;">
+        <input type="number" id="newRestPreview" class="form-control" step="0.01" style="text-align:center; font-weight:700;" readonly>
         <div style="font-size:10px; color:var(--gray-500); margin-top:4px;">* يمكن تعديله يدوياً إذا كان ≤ 5 (فروق طفيفة)</div>
       </div>
 
@@ -779,15 +787,27 @@ async function openCollectionModal() {
   document.getElementById('collectionModalContent').innerHTML = modalHtml;
   document.getElementById('collectionModal').classList.add('open');
   
-  // ✅ استدعاء واحد فقط بعد 100ms لضمان تحميل DOM
   setTimeout(() => {
     updateCollectionPreview();
+    const amountField = document.getElementById('collectionAmount');
+    if (amountField) {
+      amountField.addEventListener('input', function() {
+        updateCollectionPreview();
+      });
+    }
   }, 100);
 }
-async function updateCollectionPreview() {
-  // ✅ حساب إجمالي العملات فقط للعرض (كمرجع للمستخدم)
-  const currency = currentInvoice?.invoiceCurrency || '$';
-  const activeDate = currentInvoice?.activeDate;
+
+function updateCollectionPreview() {
+  // ✅ قراءة المبلغ المحصل
+  const amountField = document.getElementById('collectionAmount');
+  let collected = 0;
+  if (amountField) {
+    collected = parseFloat(amountField.value);
+    if (isNaN(collected)) collected = 0;
+  }
+  
+  // ✅ قراءة تفاصيل العملات
   const cU = parseFloat(document.getElementById('collUSD')?.value) || 0;
   const cE = parseFloat(document.getElementById('collEUR')?.value) || 0;
   const cG = parseFloat(document.getElementById('collGBP')?.value) || 0;
@@ -797,59 +817,49 @@ async function updateCollectionPreview() {
   const vG = parseFloat(document.getElementById('collVisaGBP')?.value) || 0;
   const vL = parseFloat(document.getElementById('collVisaLE')?.value) || 0;
   
-  let referenceTotal = 0;
-  if (activeDate) {
-    const raw = await getRate(activeDate);
-    const r = rateFields(raw);
-    if (r) {
-      const LE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
-                 vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
-      if (currency === '$') referenceTotal = R2(LE / r.cash.USD);
-      else if (currency === '€') referenceTotal = R2(LE / r.cash.EUR);
-      else if (currency === '£') referenceTotal = R2(LE / r.cash.GBP);
-      else referenceTotal = R2(LE);
-    } else {
-      referenceTotal = directPaid(currency, cU, cE, cG, cL, vU, vE, vG, vL);
-    }
-  } else {
-    referenceTotal = directPaid(currency, cU, cE, cG, cL, vU, vE, vG, vL);
+  // ✅ عرض الإجمالي المرجعي
+  const totalRef = cU + cE + cG + cL + vU + vE + vG + vL;
+  const totalDisplay = document.getElementById('collectionTotalDisplay');
+  if (totalDisplay) {
+    totalDisplay.textContent = totalRef.toFixed(2);
   }
   
-  // ✅ عرض الإجمالي المرجعي فقط (لا يتم تعيينه في حقل المبلغ المحصل)
-  document.getElementById('collectionTotalDisplay').textContent = referenceTotal.toFixed(2);
-  
-  // ✅ حساب المبلغ المتبقي بعد التحصيل بناءً على المبلغ المدخل (وليس المرجعي)
-  const amountField = document.getElementById('collectionAmount');
-  const collected = parseFloat(amountField?.value) || 0;
-  const originalRest = parseFloat(currentInvoice.rest) || 0;
-  let newRest = originalRest - collected;
-  if (newRest < 0) newRest = 0;
-  
-  const newRestField = document.getElementById('newRestPreview');
-  if (newRestField) {
-    newRestField.value = newRest.toFixed(2);
-    newRestField.readOnly = newRest > 5;
-    newRestField.style.background = newRest > 5 ? '#f1f5f9' : 'white';
+  // ✅ حساب المبلغ المتبقي بعد التحصيل
+  const originalRest = parseFloat(currentInvoice.rest);
+  if (!isNaN(originalRest)) {
+    let newRest = originalRest - collected;
+    if (newRest < 0) newRest = 0;
+    
+    const newRestField = document.getElementById('newRestPreview');
+    if (newRestField) {
+      newRestField.value = newRest.toFixed(2);
+      newRestField.readOnly = newRest > 5;
+      newRestField.style.background = newRest > 5 ? '#f1f5f9' : 'white';
+    }
   }
 }
 
 // ✅ إضافة مستمع لتحديث المبلغ المتبقي عند تغيير المبلغ المحصل يدوياً
-function setupCollectionListeners() {
-  const amountField = document.getElementById('collectionAmount');
-  if (amountField) {
-    amountField.addEventListener('input', function() {
-      updateCollectionPreview();
-    });
-  }
-}
-  
+
 function closeCollectionModal() {
   document.getElementById('collectionModal').classList.remove('open');
 }
 async function submitCollection() {
-  // ✅ 1. المبلغ المحصل = ما أدخله المستخدم مباشرة
-  const amount = parseFloat(document.getElementById('collectionAmount')?.value) || 0;
-  const originalRest = parseFloat(currentInvoice.rest) || 0;
+  // ✅ قراءة المبلغ المحصل مباشرة
+  const amountField = document.getElementById('collectionAmount');
+  let amount = 0;
+  if (amountField) {
+    amount = parseFloat(amountField.value);
+    if (isNaN(amount)) amount = 0;
+  }
+  
+  const originalRest = parseFloat(currentInvoice.rest);
+  if (isNaN(originalRest)) {
+    showAlert('خطأ في قراءة المبلغ المتبقي', '❌');
+    return;
+  }
+  
+  console.log('💰 submitCollection - amount:', amount, 'originalRest:', originalRest);
   
   if (amount <= 0) {
     showAlert('الرجاء إدخال مبلغ تحصيل صحيح', '⚠️');
@@ -860,7 +870,7 @@ async function submitCollection() {
     return;
   }
   
-  // ✅ 2. تفاصيل العملات (للتسجيل فقط، لا يتم التحقق منها)
+  // ✅ قراءة تفاصيل العملات (للتسجيل فقط)
   const cU = parseFloat(document.getElementById('collUSD')?.value) || 0;
   const cE = parseFloat(document.getElementById('collEUR')?.value) || 0;
   const cG = parseFloat(document.getElementById('collGBP')?.value) || 0;
@@ -870,22 +880,21 @@ async function submitCollection() {
   const vG = parseFloat(document.getElementById('collVisaGBP')?.value) || 0;
   const vL = parseFloat(document.getElementById('collVisaLE')?.value) || 0;
   
-  // ✅ 3. المبلغ المتبقي بعد التحصيل (من حقل التعديل أو محسوب)
+  // ✅ المبلغ المتبقي بعد التحصيل
   const newRestField = document.getElementById('newRestPreview');
   let finalRest = originalRest - amount;
   if (newRestField && !newRestField.readOnly && parseFloat(newRestField.value) >= 0) {
-    finalRest = parseFloat(newRestField.value) || 0;
+    finalRest = parseFloat(newRestField.value);
+    if (isNaN(finalRest)) finalRest = originalRest - amount;
   }
   if (finalRest < 0) finalRest = 0;
   
   const notes = document.getElementById('collectionNotes')?.value || '';
   
-  // ✅ 4. تحديد طريقة الدفع
   const hasCash = (cU + cE + cG + cL) > 0;
   const hasVisa = (vU + vE + vG + vL) > 0;
   const paymentMethod = hasCash && hasVisa ? 'Mixed' : (hasCash ? 'Cash' : (hasVisa ? 'Visa' : 'Mixed'));
   
-  // ✅ 5. إرسال البيانات للخادم (بدون تحقق إضافي)
   const collectionData = {
     parentVoucherNo: currentInvoice.voucherNo,
     activeDate: currentInvoice.activeDate,
@@ -913,6 +922,8 @@ async function submitCollection() {
     paymentMethod: paymentMethod,
     rest: finalRest
   };
+  
+  console.log('💰 collectionData:', collectionData);
   
   showPDF('جاري حفظ التحصيل...');
   try {
