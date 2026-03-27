@@ -955,43 +955,68 @@ async function loadInvoice() {
   const params = new URLSearchParams(location.search);
   const voucherNo = params.get('voucherNo');
   openFrom = params.get('from') || 'today';
-  if (!voucherNo) { showAlert('رقم الفاتورة غير موجود', '❌', '<button class="btn btn-primary" onclick="goBack()">رجوع</button>'); return; }
+  
+  console.log('💰 loadInvoice - voucherNo:', voucherNo);
+  console.log('💰 loadInvoice - openFrom:', openFrom);
+  
+  if (!voucherNo) { 
+    showAlert('رقم الفاتورة غير موجود', '❌', '<button class="btn btn-primary" onclick="goBack()">رجوع</button>'); 
+    return; 
+  }
+  
   showPDF('جاري التحميل...');
   try {
     await loadSuppliersAndTrips();
+    console.log('✅ loadSuppliersAndTrips completed');
+    
     const allInv = await gas('getAllInvoices');
+    console.log('✅ getAllInvoices completed, count:', allInv?.length);
+    
     const invoices = Array.isArray(allInv) ? allInv : [];
     currentInvoice = invoices.find(i => i.voucherNo === voucherNo);
+    
+    console.log('💰 currentInvoice found:', currentInvoice ? 'YES' : 'NO');
+    console.log('💰 currentInvoice.rest:', currentInvoice?.rest);
+    console.log('💰 currentInvoice.actualPrice:', currentInvoice?.actualPrice);
+    console.log('💰 currentInvoice.paymentPrice:', currentInvoice?.paymentPrice);
+    
     if (!currentInvoice) throw new Error('الفاتورة غير موجودة');
     originalInvoice = { ...currentInvoice };
     
-    // ✅ أضف هذا السطر هنا - تعريف restVal
     const restVal = parseFloat(currentInvoice.rest) || 0;
+    console.log('💰 restVal:', restVal);
     
     document.getElementById('userNameDisplay').textContent = currentUser?.name || 'User';
     document.getElementById('voucherDisplay').textContent = voucherNo;
+    
     const issueDate = parseDate(currentInvoice.issueDate);
     const today = new Date(); today.setHours(0, 0, 0, 0);
     let isDisabled = false, warnHtml = '';
+    
     if (openFrom === 'today' && issueDate && issueDate < today) {
       isDisabled = true;
       warnHtml = `<div class="warning-bar">⚠️ تاريخ الفاتورة (${currentInvoice.issueDate}) قد مضى — التعديل غير مسموح لحماية بيانات الخزينة.</div>`;
     } else if (openFrom === 'activeDate') {
       warnHtml = `<div class="warning-bar info">ℹ️ وضع التعديل: يمكنك تعديل جميع الحقول ما عدا تاريخ التنفيذ.</div>`;
     }
+    
     const disableActiveDate = (openFrom === 'activeDate');
     const dis = isDisabled ? 'disabled' : '';
     const disActiveDate = disableActiveDate ? 'disabled' : dis;
+    
     const currentCategory = getTripCategory(currentInvoice.trip);
     const customers = getCustomersByCategory(currentCategory);
     const suppliers = getSuppliersByCategory(currentCategory);
+    
     const uniqueTrips = await gas('getUniqueTrips');
     let tripsOpts = '';
     if (Array.isArray(uniqueTrips)) {
       tripsOpts = uniqueTrips.map(t => `<option value="${esc(t.name)}" ${t.name === currentInvoice.trip ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
     }
+    
     let supOpts = '<option value="">-- اختر --</option>' + suppliers.map(s => `<option value="${esc(s.customerName)}" ${s.customerName === currentInvoice.supplier ? 'selected' : ''}>${esc(s.customerName)}</option>`).join('');
     let custOpts = '<option value="">-- اختر --</option>' + customers.map(c => `<option value="${esc(c.customerName)}" ${c.customerName === currentInvoice.customer ? 'selected' : ''}>${esc(c.customerName)}</option>`).join('');
+    
     const tripData = await gas('getTripData', { tripName: currentInvoice.trip, currency: currentInvoice.invoiceCurrency });
     let tRows = '';
     if (tripData?.items) {
@@ -1004,9 +1029,10 @@ async function loadInvoice() {
           <td><input type="number" id="qty_${i}" class="item-qty" min="0" placeholder="0" value="${qty || ''}" oninput="updateItemTotal(${i}, ${price})" ${dis}></td>
           <td><input type="number" id="price_${i}" value="${price}" readonly></td>
           <td><input type="number" id="total_${i}" value="${(qty * price).toFixed(2)}" readonly></td>
-        </tr>`;
+         </tr>`;
       }).join('');
     }
+    
     const formHtml = `
       ${warnHtml}
       <div class="card">
@@ -1040,7 +1066,12 @@ async function loadInvoice() {
             </select></div>
           </div>
           <div class="form-group"><label>اسم الرحلة</label><select id="tripName" onchange="changeTrip()" ${dis}>${tripsOpts}</select></div>
-          <div class="trip-table"><table><thead><tr><th>البند</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th></tr></thead><tbody id="itemsBody">${tRows}</tbody></table></div>
+          <div class="trip-table">
+            <table>
+              <thead><tr><th>البند</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th></tr></thead>
+              <tbody id="itemsBody">${tRows}</tbody>
+            </table>
+          </div>
         </div>
       </div>
       <div class="card">
@@ -1086,16 +1117,28 @@ async function loadInvoice() {
         </div>
       </div>
       <div class="action-buttons">
-  <button class="btn btn-success" id="collectionBtn" ${restVal <= 0 ? 'disabled' : ''}>💰 تحصيل دفعة</button>
-  <button class="btn btn-primary" onclick="saveChanges()" ${dis}>💾 حفظ التعديلات</button>
-  <button class="btn btn-danger" onclick="cancelEdit()">❌ إلغاء</button>
-</div>
+        <button class="btn btn-success" id="collectionBtn" ${restVal <= 0 ? 'disabled' : ''}>💰 تحصيل دفعة</button>
+        <button class="btn btn-primary" onclick="saveChanges()" ${dis}>💾 حفظ التعديلات</button>
+        <button class="btn btn-danger" onclick="cancelEdit()">❌ إلغاء</button>
+      </div>
     `;
+    
     document.getElementById('loaderState').style.display = 'none';
     document.getElementById('formContent').style.display = 'block';
     document.getElementById('formContent').innerHTML = formHtml;
-    document.getElementById('collectionBtn')?.addEventListener('click', openCollectionModal);
+    
+    // ✅ إضافة مستمع لزر التحصيل
+    const collectionBtn = document.getElementById('collectionBtn');
+    if (collectionBtn) {
+      collectionBtn.addEventListener('click', openCollectionModal);
+      console.log('✅ collectionBtn listener added');
+    } else {
+      console.warn('⚠️ collectionBtn not found');
+    }
+    
     await updateTotals();
+    console.log('✅ updateTotals completed');
+    
     window.changeTrip = async function() {
       const newTrip = document.getElementById('tripName')?.value;
       const currency = document.getElementById('invoiceCurrency')?.value;
@@ -1111,20 +1154,26 @@ async function loadInvoice() {
       if (newTripData?.items) {
         let rows = '';
         for (let i = 0; i < newTripData.items.length; i++) {
-          rows += `<tr><td style="font-weight:600">${esc(newTripData.items[i])}</td>
+          rows += `<tr>
+            <td style="font-weight:600">${esc(newTripData.items[i])}</td>
             <td><input type="number" id="qty_${i}" min="0" placeholder="0" oninput="updateItemTotal(${i}, ${newTripData.prices?.[i] || 0})" ${dis}></td>
             <td><input type="number" id="price_${i}" value="${newTripData.prices?.[i] || 0}" readonly></td>
-            <td><input type="number" id="total_${i}" value="0" readonly></td></tr>`;
+            <td><input type="number" id="total_${i}" value="0" readonly></td>
+          </tr>`;
         }
         document.getElementById('itemsBody').innerHTML = rows;
       }
       await updateTotals();
     };
+    
   } catch (err) {
+    console.error('❌ loadInvoice error:', err);
     hidePDF();
     showAlert('خطأ: ' + err.message, '❌', '<button class="btn btn-primary" onclick="goBack()">رجوع</button>');
     document.getElementById('loaderState').style.display = 'none';
-  } finally { hidePDF(); }
+  } finally { 
+    hidePDF(); 
+  }
 }
 
 async function saveChanges() {
