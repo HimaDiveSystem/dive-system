@@ -726,7 +726,6 @@ async function openCollectionModal() {
   const rest = parseFloat(currentInvoice.rest) || 0;
   if (rest <= 0) { showAlert('لا يوجد مبلغ متبقي للتحصيل', 'ℹ️'); return; }
   const currency = currentInvoice.invoiceCurrency || 'LE';
-  const activeDate = currentInvoice.activeDate;
 
   const modalHtml = `
     <div style="text-align:center; margin-bottom:20px;">
@@ -776,11 +775,17 @@ async function openCollectionModal() {
       </div>
     </div>
   `;
+  
   document.getElementById('collectionModalContent').innerHTML = modalHtml;
   document.getElementById('collectionModal').classList.add('open');
-  updateCollectionPreview();
+  
+  // ✅ استدعاء واحد فقط بعد 100ms لضمان تحميل DOM
+  setTimeout(() => {
+    updateCollectionPreview();
+  }, 100);
 }
 async function updateCollectionPreview() {
+  // ✅ حساب إجمالي العملات فقط للعرض (كمرجع للمستخدم)
   const currency = currentInvoice?.invoiceCurrency || '$';
   const activeDate = currentInvoice?.activeDate;
   const cU = parseFloat(document.getElementById('collUSD')?.value) || 0;
@@ -791,26 +796,35 @@ async function updateCollectionPreview() {
   const vE = parseFloat(document.getElementById('collVisaEUR')?.value) || 0;
   const vG = parseFloat(document.getElementById('collVisaGBP')?.value) || 0;
   const vL = parseFloat(document.getElementById('collVisaLE')?.value) || 0;
-  let total = 0;
+  
+  let referenceTotal = 0;
   if (activeDate) {
     const raw = await getRate(activeDate);
     const r = rateFields(raw);
     if (r) {
       const LE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
                  vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
-      if (currency === '$') total = R2(LE / r.cash.USD);
-      else if (currency === '€') total = R2(LE / r.cash.EUR);
-      else if (currency === '£') total = R2(LE / r.cash.GBP);
-      else total = R2(LE);
-    } else total = directPaid(currency, cU, cE, cG, cL, vU, vE, vG, vL);
-  } else total = directPaid(currency, cU, cE, cG, cL, vU, vE, vG, vL);
-  document.getElementById('collectionTotalDisplay').textContent = total.toFixed(2);
+      if (currency === '$') referenceTotal = R2(LE / r.cash.USD);
+      else if (currency === '€') referenceTotal = R2(LE / r.cash.EUR);
+      else if (currency === '£') referenceTotal = R2(LE / r.cash.GBP);
+      else referenceTotal = R2(LE);
+    } else {
+      referenceTotal = directPaid(currency, cU, cE, cG, cL, vU, vE, vG, vL);
+    }
+  } else {
+    referenceTotal = directPaid(currency, cU, cE, cG, cL, vU, vE, vG, vL);
+  }
+  
+  // ✅ عرض الإجمالي المرجعي فقط (لا يتم تعيينه في حقل المبلغ المحصل)
+  document.getElementById('collectionTotalDisplay').textContent = referenceTotal.toFixed(2);
+  
+  // ✅ حساب المبلغ المتبقي بعد التحصيل بناءً على المبلغ المدخل (وليس المرجعي)
   const amountField = document.getElementById('collectionAmount');
-  if (amountField && total > 0 && !amountField.value) amountField.value = total.toFixed(2);
-  const originalRest = parseFloat(currentInvoice.rest) || 0;
   const collected = parseFloat(amountField?.value) || 0;
+  const originalRest = parseFloat(currentInvoice.rest) || 0;
   let newRest = originalRest - collected;
   if (newRest < 0) newRest = 0;
+  
   const newRestField = document.getElementById('newRestPreview');
   if (newRestField) {
     newRestField.value = newRest.toFixed(2);
@@ -818,14 +832,35 @@ async function updateCollectionPreview() {
     newRestField.style.background = newRest > 5 ? '#f1f5f9' : 'white';
   }
 }
+
+// ✅ إضافة مستمع لتحديث المبلغ المتبقي عند تغيير المبلغ المحصل يدوياً
+function setupCollectionListeners() {
+  const amountField = document.getElementById('collectionAmount');
+  if (amountField) {
+    amountField.addEventListener('input', function() {
+      updateCollectionPreview();
+    });
+  }
+}
+  
 function closeCollectionModal() {
   document.getElementById('collectionModal').classList.remove('open');
 }
 async function submitCollection() {
+  // ✅ 1. المبلغ المحصل = ما أدخله المستخدم مباشرة
   const amount = parseFloat(document.getElementById('collectionAmount')?.value) || 0;
   const originalRest = parseFloat(currentInvoice.rest) || 0;
-  if (amount <= 0) { showAlert('أدخل مبلغ التحصيل', '⚠️'); return; }
-  if (amount > originalRest) { showAlert(`المبلغ المحصل (${amount.toFixed(2)}) يتجاوز المبلغ المتبقي (${originalRest.toFixed(2)})`, '⚠️'); return; }
+  
+  if (amount <= 0) {
+    showAlert('الرجاء إدخال مبلغ تحصيل صحيح', '⚠️');
+    return;
+  }
+  if (amount > originalRest) {
+    showAlert(`المبلغ المحصل (${amount.toFixed(2)}) يتجاوز المبلغ المتبقي (${originalRest.toFixed(2)})`, '⚠️');
+    return;
+  }
+  
+  // ✅ 2. تفاصيل العملات (للتسجيل فقط، لا يتم التحقق منها)
   const cU = parseFloat(document.getElementById('collUSD')?.value) || 0;
   const cE = parseFloat(document.getElementById('collEUR')?.value) || 0;
   const cG = parseFloat(document.getElementById('collGBP')?.value) || 0;
@@ -834,14 +869,23 @@ async function submitCollection() {
   const vE = parseFloat(document.getElementById('collVisaEUR')?.value) || 0;
   const vG = parseFloat(document.getElementById('collVisaGBP')?.value) || 0;
   const vL = parseFloat(document.getElementById('collVisaLE')?.value) || 0;
+  
+  // ✅ 3. المبلغ المتبقي بعد التحصيل (من حقل التعديل أو محسوب)
   const newRestField = document.getElementById('newRestPreview');
   let finalRest = originalRest - amount;
   if (newRestField && !newRestField.readOnly && parseFloat(newRestField.value) >= 0) {
     finalRest = parseFloat(newRestField.value) || 0;
   }
   if (finalRest < 0) finalRest = 0;
+  
   const notes = document.getElementById('collectionNotes')?.value || '';
-  const paymentMethod = (cU + cE + cG + cL) > 0 && (vU + vE + vG + vL) > 0 ? 'Mixed' : ((cU + cE + cG + cL) > 0 ? 'Cash' : 'Visa');
+  
+  // ✅ 4. تحديد طريقة الدفع
+  const hasCash = (cU + cE + cG + cL) > 0;
+  const hasVisa = (vU + vE + vG + vL) > 0;
+  const paymentMethod = hasCash && hasVisa ? 'Mixed' : (hasCash ? 'Cash' : (hasVisa ? 'Visa' : 'Mixed'));
+  
+  // ✅ 5. إرسال البيانات للخادم (بدون تحقق إضافي)
   const collectionData = {
     parentVoucherNo: currentInvoice.voucherNo,
     activeDate: currentInvoice.activeDate,
@@ -862,17 +906,20 @@ async function submitCollection() {
     salesName: currentInvoice.salesName,
     cashUSD: cU, cashEUR: cE, cashGBP: cG, cashLE: cL,
     visaUSD: vU, visaEUR: vE, visaGBP: vG, visaLE: vL,
-    discount: 0, notes: notes,
+    discount: 0,
+    notes: notes,
     collectedBy: currentUser?.id || '',
     collectedByName: currentUser?.name || '',
     paymentMethod: paymentMethod,
     rest: finalRest
   };
+  
   showPDF('جاري حفظ التحصيل...');
   try {
     const result = await gas('createCollectionInvoice', collectionData);
     hidePDF();
     closeCollectionModal();
+    
     if (result?.success) {
       showAlert(`✅ تم تحصيل ${amount.toFixed(2)} ${currentInvoice.invoiceCurrency}\nرقم فاتورة التحصيل: ${result.voucherNo}\nالمبلغ المتبقي الجديد: ${finalRest.toFixed(2)} ${currentInvoice.invoiceCurrency}`,
         '✅',
@@ -886,7 +933,7 @@ async function submitCollection() {
     showAlert('خطأ: ' + err.message, '❌');
   }
 }
-
+  
 // ====================== Load & Render Main Form ======================
 async function loadInvoice() {
   const params = new URLSearchParams(location.search);
