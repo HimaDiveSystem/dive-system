@@ -1065,9 +1065,160 @@ async function loadInvoice() {
 }
 
 async function saveChanges() {
-  // جمع البيانات وحفظها (مشابه للكود السابق)
-  showAlert('جاري حفظ التعديلات...', '⏳');
+  // جمع البيانات من النموذج
+  const editedData = await collectEditedData();
+  
+  // إنشاء ملخص التعديلات
+  const summary = createEditSummary(originalInvoice, editedData);
+  
+  showPDF('جاري حفظ التعديلات...');
+  try {
+    // تحديث الفاتورة
+    const upd = await gas('updateInvoice', editedData);
+    if (!upd.success) throw new Error(upd.message || 'فشل التحديث');
+    
+    // حفظ نسخة في Invoices_Edit للتتبع
+    await gas('copyInvoiceToEdit', {
+      originalData: JSON.stringify(originalInvoice),
+      editedData: JSON.stringify(editedData),
+      userId: currentUser?.id || '',
+      editSummary: summary
+    });
+    
+    // إعادة إنشاء PDF
+    showPDF('جاري إنشاء PDF...');
+    const pdf = await gas('saveAndGenerateSinglePDF', { voucherNo: editedData.voucherNo });
+    hidePDF();
+    
+    if (pdf?.success) {
+      showAlert('✅ تم حفظ التعديلات بنجاح', '✅',
+        `<a href="${pdf.url}" target="_blank" class="btn btn-primary" style="text-decoration:none; margin:4px">📄 فتح PDF</a>
+         <button class="btn btn-primary" onclick="goBack()">رجوع</button>`);
+    } else {
+      showAlert('✅ تم الحفظ (فشل إنشاء PDF: ' + (pdf?.message || '') + ')', '⚠️',
+        '<button class="btn btn-primary" onclick="goBack()">رجوع</button>');
+    }
+  } catch (err) {
+    hidePDF();
+    showAlert('خطأ: ' + err.message, '❌');
+  }
 }
+
+// دالة جمع البيانات من النموذج
+async function collectEditedData() {
+  const currency = document.getElementById('invoiceCurrency')?.value;
+  const activeDateInput = document.getElementById('activeDate')?.value;
+  let activeDate = '';
+  if (activeDateInput) {
+    const d = new Date(activeDateInput);
+    activeDate = formatDate(d);
+  }
+  
+  // جمع الكميات من جدول البنود
+  const items = [];
+  for (let i = 0; i < 20; i++) {
+    const qtyEl = document.getElementById(`qty_${i}`);
+    if (qtyEl) {
+      const qty = parseFloat(qtyEl.value) || 0;
+      const nameEl = document.querySelector(`#itemsBody tr:nth-child(${i + 1}) td:first-child`);
+      if (qty > 0 && nameEl) {
+        items.push(`${nameEl.textContent}×${qty}`);
+      }
+    }
+  }
+  
+  // حساب ActualPrice
+  let actualPrice = 0;
+  for (let i = 0; i < 20; i++) {
+    const totalEl = document.getElementById(`total_${i}`);
+    if (totalEl) actualPrice += parseFloat(totalEl.value) || 0;
+  }
+  
+  const disc = parseFloat(document.getElementById('discount')?.value) || 0;
+  const cU = parseFloat(document.getElementById('cashUSD')?.value) || 0;
+  const cE = parseFloat(document.getElementById('cashEUR')?.value) || 0;
+  const cG = parseFloat(document.getElementById('cashGBP')?.value) || 0;
+  const cL = parseFloat(document.getElementById('cashLE')?.value) || 0;
+  const vU = parseFloat(document.getElementById('visaUSD')?.value) || 0;
+  const vE = parseFloat(document.getElementById('visaEUR')?.value) || 0;
+  const vG = parseFloat(document.getElementById('visaGBP')?.value) || 0;
+  const vL = parseFloat(document.getElementById('visaLE')?.value) || 0;
+  
+  // حساب المدفوع
+  let paid = 0;
+  const dateStr = document.getElementById('activeDate')?.value;
+  if (dateStr) {
+    const raw = await getRate(dateStr);
+    const r = rateFields(raw);
+    if (r) {
+      const LE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
+                 vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
+      if (currency === '$') paid = R2(LE / r.cash.USD);
+      else if (currency === '€') paid = R2(LE / r.cash.EUR);
+      else if (currency === '£') paid = R2(LE / r.cash.GBP);
+      else paid = R2(LE);
+    } else {
+      paid = directPaid(currency, cU, cE, cG, cL, vU, vE, vG, vL);
+    }
+  } else {
+    paid = directPaid(currency, cU, cE, cG, cL, vU, vE, vG, vL);
+  }
+  
+  const rest = R2(actualPrice - disc - paid);
+  
+  return {
+    voucherNo: currentInvoice.voucherNo,
+    issueDate: currentInvoice.issueDate,
+    activeDate: activeDate,
+    time: document.getElementById('tripTime')?.value || '',
+    contactNo: document.getElementById('contactNo')?.value || '',
+    guestName: document.getElementById('guestName')?.value || '',
+    nationality: document.getElementById('nationality')?.value || '',
+    hotel: document.getElementById('hotel')?.value || '',
+    roomNo: document.getElementById('roomNo')?.value || '',
+    trip: document.getElementById('tripName')?.value || '',
+    invoiceCurrency: currency || '',
+    adultCount: parseInt(document.getElementById('adultCount')?.value) || 0,
+    childCount: parseInt(document.getElementById('childCount')?.value) || 0,
+    infantCount: parseInt(document.getElementById('infantCount')?.value) || 0,
+    cashUSD: cU, cashEUR: cE, cashGBP: cG, cashLE: cL,
+    visaUSD: vU, visaEUR: vE, visaGBP: vG, visaLE: vL,
+    actualPrice: actualPrice,
+    paymentPrice: paid,
+    discount: disc,
+    rest: rest,
+    activitiesText: items.join(' | '),
+    supplier: document.getElementById('supplier')?.value || '',
+    customer: document.getElementById('customer')?.value || '',
+    state: document.getElementById('state')?.value || 'pending',
+    notes: document.getElementById('notes')?.value || '',
+    salesId: currentInvoice.salesId,
+    centerName: currentInvoice.centerName,
+    branchName: currentInvoice.branchName,
+    salesName: currentInvoice.salesName,
+    cost: currentInvoice.cost || ''
+  };
+}
+
+// دالة إنشاء ملخص التعديلات
+function createEditSummary(orig, edited) {
+  const changes = [];
+  const cur = edited.invoiceCurrency || '$';
+  
+  if ((orig.discount || 0) !== (edited.discount || 0)) {
+    const d = (edited.discount || 0) - (orig.discount || 0);
+    changes.push(`💰 الخصم ${d > 0 ? '+' : ''}${d} ${cur}`);
+  }
+  if (orig.state !== edited.state) {
+    changes.push(`📌 الحالة: ${orig.state} → ${edited.state}`);
+  }
+  const ot = timeToInput(orig.time || '');
+  const et = timeToInput(edited.time || '');
+  if (ot !== et) changes.push(`⏰ الوقت: ${ot} → ${et}`);
+  
+  return changes.length ? changes.join(' | ') : 'لا توجد تغييرات';
+}
+  
 async function cancelEdit() {
   if (confirm('هل أنت متأكد من إلغاء التعديلات؟')) goBack();
 }
