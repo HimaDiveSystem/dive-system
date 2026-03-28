@@ -186,17 +186,25 @@ async function getTotalPaymentsForInvoice(voucherNo) {
     if (!Array.isArray(allInvoices)) return null;
     
     console.log('💰 getTotalPaymentsForInvoice - allInvoices count:', allInvoices.length);
-    // طباعة جميع فواتير التحصيل للتأكد
-const allCollection = allInvoices.filter(inv => inv.receiptType === 'Collection');
-console.log('💰 جميع فواتير التحصيل:', allCollection.map(inv => ({ voucherNo: inv.voucherNo, parentVoucherNo: inv.parentVoucherNo, cashEUR: inv.cashEUR })));
-    // البحث عن الفاتورة الأصلية
+    
+    // طباعة جميع الفواتير مع parentVoucherNo للتحقق
+    console.log('💰 جميع الفواتير مع parentVoucherNo:', allInvoices.map(inv => ({ 
+      voucherNo: inv.voucherNo, 
+      parentVoucherNo: inv.parentVoucherNo,
+      receiptType: inv.receiptType,
+      cashEUR: inv.cashEUR 
+    })));
+    
+    // البحث عن الفاتورة الأصلية (ليست تحصيل)
     const originalInvoice = allInvoices.find(inv => inv.voucherNo === voucherNo && inv.receiptType !== 'Collection');
     if (!originalInvoice) {
       console.log('⚠️ لم يتم العثور على الفاتورة الأصلية:', voucherNo);
       return null;
     }
     
+    console.log('💰 الفاتورة الأصلية - voucherNo:', originalInvoice.voucherNo);
     console.log('💰 الفاتورة الأصلية - cashEUR:', originalInvoice.cashEUR);
+    console.log('💰 الفاتورة الأصلية - receiptType:', originalInvoice.receiptType);
     
     let totalCashUSD = originalInvoice.cashUSD || 0;
     let totalCashEUR = originalInvoice.cashEUR || 0;
@@ -207,12 +215,39 @@ console.log('💰 جميع فواتير التحصيل:', allCollection.map(inv 
     let totalVisaGBP = originalInvoice.visaGBP || 0;
     let totalVisaLE = originalInvoice.visaLE || 0;
     
-    // جمع المدفوعات من فواتير التحصيل
-    const collectionInvoices = allInvoices.filter(inv => inv.parentVoucherNo === voucherNo && inv.receiptType === 'Collection');
+    // جمع المدفوعات من فواتير التحصيل - طرق بحث متعددة للتأكد
+    const collectionInvoices = allInvoices.filter(inv => {
+      // الشرط الأول: receiptType = 'Collection'
+      const isCollection = inv.receiptType === 'Collection';
+      // الشرط الثاني: parentVoucherNo يطابق رقم الفاتورة الأصلية
+      const matchesParent = inv.parentVoucherNo === voucherNo;
+      // الشرط الثالث: رقم الفاتورة يحتوي على رقم الأب (مثل INV0081-C1)
+      const voucherContainsParent = inv.voucherNo && inv.voucherNo.includes(voucherNo);
+      // الشرط الرابع: إذا كان رقم الفاتورة يبدأ برقم الأب مع -C
+      const startsWithParent = inv.voucherNo && inv.voucherNo.startsWith(voucherNo + '-C');
+      
+      const isMatch = isCollection && (matchesParent || voucherContainsParent || startsWithParent);
+      
+      if (isMatch) {
+        console.log('💰 تم العثور على فاتورة تحصيل:', inv.voucherNo, 'parent:', inv.parentVoucherNo);
+      }
+      
+      return isMatch;
+    });
+    
     console.log('💰 عدد فواتير التحصيل:', collectionInvoices.length);
     
+    if (collectionInvoices.length > 0) {
+      console.log('💰 تفاصيل فواتير التحصيل:', collectionInvoices.map(c => ({ 
+        voucherNo: c.voucherNo, 
+        parentVoucherNo: c.parentVoucherNo,
+        cashEUR: c.cashEUR,
+        cashUSD: c.cashUSD,
+        actualPrice: c.actualPrice
+      })));
+    }
+    
     for (const coll of collectionInvoices) {
-      console.log('💰 فاتورة تحصيل - cashEUR:', coll.cashEUR);
       totalCashUSD += (coll.cashUSD || 0);
       totalCashEUR += (coll.cashEUR || 0);
       totalCashGBP += (coll.cashGBP || 0);
@@ -223,7 +258,10 @@ console.log('💰 جميع فواتير التحصيل:', allCollection.map(inv 
       totalVisaLE += (coll.visaLE || 0);
     }
     
+    console.log('💰 بعد جمع التحصيلات - totalCashUSD:', totalCashUSD);
     console.log('💰 بعد جمع التحصيلات - totalCashEUR:', totalCashEUR);
+    console.log('💰 بعد جمع التحصيلات - totalCashGBP:', totalCashGBP);
+    console.log('💰 بعد جمع التحصيلات - totalCashLE:', totalCashLE);
     
     // حساب المبلغ المدفوع باستخدام أسعار الصرف
     const currency = originalInvoice.invoiceCurrency || 'LE';
