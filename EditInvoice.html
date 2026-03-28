@@ -176,7 +176,85 @@ function calculateTotalFromItems() {
   }
   return total;
 }
-
+// دالة لجمع جميع المدفوعات للفاتورة (الأصلية + فواتير التحصيل)
+async function getTotalPaymentsForInvoice(voucherNo) {
+  try {
+    const allInvoices = await gas('getAllInvoices', { includeCollection: true });
+    if (!Array.isArray(allInvoices)) return null;
+    
+    // البحث عن الفاتورة الأصلية
+    const originalInvoice = allInvoices.find(inv => inv.voucherNo === voucherNo && inv.receiptType !== 'Collection');
+    if (!originalInvoice) return null;
+    
+    let totalCashUSD = originalInvoice.cashUSD || 0;
+    let totalCashEUR = originalInvoice.cashEUR || 0;
+    let totalCashGBP = originalInvoice.cashGBP || 0;
+    let totalCashLE = originalInvoice.cashLE || 0;
+    let totalVisaUSD = originalInvoice.visaUSD || 0;
+    let totalVisaEUR = originalInvoice.visaEUR || 0;
+    let totalVisaGBP = originalInvoice.visaGBP || 0;
+    let totalVisaLE = originalInvoice.visaLE || 0;
+    
+    // جمع المدفوعات من فواتير التحصيل
+    const collectionInvoices = allInvoices.filter(inv => inv.parentVoucherNo === voucherNo && inv.receiptType === 'Collection');
+    
+    for (const coll of collectionInvoices) {
+      totalCashUSD += (coll.cashUSD || 0);
+      totalCashEUR += (coll.cashEUR || 0);
+      totalCashGBP += (coll.cashGBP || 0);
+      totalCashLE += (coll.cashLE || 0);
+      totalVisaUSD += (coll.visaUSD || 0);
+      totalVisaEUR += (coll.visaEUR || 0);
+      totalVisaGBP += (coll.visaGBP || 0);
+      totalVisaLE += (coll.visaLE || 0);
+    }
+    
+    // حساب المبلغ المدفوع باستخدام أسعار الصرف
+    const currency = originalInvoice.invoiceCurrency || 'LE';
+    const activeDate = originalInvoice.activeDate;
+    let totalPaymentPrice = 0;
+    
+    if (activeDate) {
+      const raw = await getRate(activeDate);
+      const r = rateFields(raw);
+      if (r) {
+        const totalLE = totalCashUSD * r.cash.USD + totalCashEUR * r.cash.EUR + totalCashGBP * r.cash.GBP + totalCashLE +
+                        totalVisaUSD * r.visa.USD + totalVisaEUR * r.visa.EUR + totalVisaGBP * r.visa.GBP + totalVisaLE * (r.visa.LE || 0.975);
+        if (currency === '$') totalPaymentPrice = R2(totalLE / r.cash.USD);
+        else if (currency === '€') totalPaymentPrice = R2(totalLE / r.cash.EUR);
+        else if (currency === '£') totalPaymentPrice = R2(totalLE / r.cash.GBP);
+        else totalPaymentPrice = R2(totalLE);
+      } else {
+        totalPaymentPrice = totalCashUSD + totalCashEUR + totalCashGBP + totalCashLE + totalVisaUSD + totalVisaEUR + totalVisaGBP + totalVisaLE;
+      }
+    } else {
+      totalPaymentPrice = totalCashUSD + totalCashEUR + totalCashGBP + totalCashLE + totalVisaUSD + totalVisaEUR + totalVisaGBP + totalVisaLE;
+    }
+    
+    // حساب المبلغ المتبقي
+    const actualPrice = originalInvoice.actualPrice || 0;
+    const discount = originalInvoice.discount || 0;
+    const rest = actualPrice - discount - totalPaymentPrice;
+    
+    return {
+      paymentPrice: totalPaymentPrice,
+      cashUSD: totalCashUSD,
+      cashEUR: totalCashEUR,
+      cashGBP: totalCashGBP,
+      cashLE: totalCashLE,
+      visaUSD: totalVisaUSD,
+      visaEUR: totalVisaEUR,
+      visaGBP: totalVisaGBP,
+      visaLE: totalVisaLE,
+      rest: rest > 0 ? rest : 0,
+      actualPrice: actualPrice,
+      discount: discount
+    };
+  } catch(e) {
+    console.error('getTotalPaymentsForInvoice error:', e);
+    return null;
+  }
+}
 function getCurrentDiscount() {
   return parseFloat(document.getElementById('discount')?.value) || 0;
 }
@@ -537,12 +615,24 @@ async function loadInvoice() {
   showPDF('جاري التحميل...');
   try {
     await loadSuppliersAndTrips();
-    const allInv = await gas('getAllInvoices');
+    const allInv = await gas('getAllInvoices', { includeCollection: true });
     const invoices = Array.isArray(allInv) ? allInv : [];
     currentInvoice = invoices.find(i => i.voucherNo === voucherNo);
     if (!currentInvoice) throw new Error('الفاتورة غير موجودة');
     originalInvoice = { ...currentInvoice };
-    
+    const totalPayments = await getTotalPaymentsForInvoice(voucherNo);
+if (totalPayments) {
+  // تحديث currentInvoice بالمبالغ المجمعة
+  currentInvoice.paymentPrice = totalPayments.paymentPrice;
+  currentInvoice.cashUSD = totalPayments.cashUSD;
+  currentInvoice.cashEUR = totalPayments.cashEUR;
+  currentInvoice.cashGBP = totalPayments.cashGBP;
+  currentInvoice.cashLE = totalPayments.cashLE;
+  currentInvoice.visaUSD = totalPayments.visaUSD;
+  currentInvoice.visaEUR = totalPayments.visaEUR;
+  currentInvoice.visaGBP = totalPayments.visaGBP;
+  currentInvoice.visaLE = totalPayments.visaLE;
+  currentInvoice.rest = totalPayments.rest;
     document.getElementById('userNameDisplay').textContent = currentUser?.name || 'User';
     document.getElementById('voucherDisplay').textContent = voucherNo;
     
@@ -634,7 +724,9 @@ async function loadInvoice() {
         <div class="form-group"><label>الحالة</label><select id="state"><option value="pending" ${currentInvoice.state === 'pending' ? 'selected' : ''}>⏳ قيد الانتظار</option><option value="Confirmed" ${(currentInvoice.state === 'Confirmed' || currentInvoice.state === 'confirmed') ? 'selected' : ''}>✅ مؤكد</option><option value="cancel" ${currentInvoice.state === 'cancel' ? 'selected' : ''}>❌ ملغي</option></select></div>
       </div></div></div>
       <div class="action-buttons">
-        <button class="btn btn-success" id="collectionBtn" ${(parseFloat(currentInvoice.rest) <= 0) ? 'disabled' : ''}>💰 تحصيل دفعة</button>
+        const isIssueDateToday = (currentInvoice.issueDate === formatDate(new Date()));
+const disableCollectionBtn = (parseFloat(currentInvoice.rest) <= 0) || isIssueDateToday;
+<button class="btn btn-success" id="collectionBtn" ${disableCollectionBtn ? 'disabled' : ''}>💰 تحصيل دفعة</button>
         <button class="btn btn-primary" onclick="saveChanges()">💾 حفظ التعديلات</button>
         <button class="btn btn-danger" onclick="cancelEdit()">❌ إلغاء</button>
       </div>
@@ -732,9 +824,9 @@ function createEditSummary(orig, edited) {
 }
 
 async function saveChanges() {
-  const issueDate = currentInvoice.issueDate;
-  const today = formatDate(new Date());
-  const isPastDate = (issueDate < today);
+  const issueDate = currentInvoice.issueDate; // مثلاً "28/Mar/2026"
+const today = formatDate(new Date()); // مثلاً "28/Mar/2026"
+const isToday = (issueDate === today);
   const editedData = await collectEditedData();
   if (isPastDate) {
     editedData.cashUSD = currentInvoice.cashUSD;
