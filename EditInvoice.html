@@ -181,12 +181,21 @@ function calculateTotalFromItems() {
 // دالة لجمع جميع المدفوعات للفاتورة (الأصلية + فواتير التحصيل)
 async function getTotalPaymentsForInvoice(voucherNo) {
   try {
+    // جلب جميع الفواتير (بدون تصفية)
     const allInvoices = await gas('getAllInvoices', { includeCollection: true });
     if (!Array.isArray(allInvoices)) return null;
     
+    console.log('💰 getTotalPaymentsForInvoice - allInvoices count:', allInvoices.length);
+    
     // البحث عن الفاتورة الأصلية
     const originalInvoice = allInvoices.find(inv => inv.voucherNo === voucherNo);
-    if (!originalInvoice) return null;
+    if (!originalInvoice) {
+      console.log('⚠️ لم يتم العثور على الفاتورة:', voucherNo);
+      return null;
+    }
+    
+    console.log('💰 الفاتورة الأصلية - voucherNo:', originalInvoice.voucherNo);
+    console.log('💰 الفاتورة الأصلية - cashEUR:', originalInvoice.cashEUR);
     
     // بدء المجاميع من الفاتورة الأصلية
     let totalCashUSD = originalInvoice.cashUSD || 0;
@@ -199,9 +208,24 @@ async function getTotalPaymentsForInvoice(voucherNo) {
     let totalVisaLE = originalInvoice.visaLE || 0;
     
     // البحث عن أي فاتورة رقمها يبدأ بـ voucherNo + '-C'
+    // أو تحتوي على voucherNo في parentVoucherNo
     const collectionInvoices = allInvoices.filter(inv => {
-      return inv.voucherNo && inv.voucherNo.startsWith(voucherNo + '-C');
+      // الشرط 1: رقم الفاتورة يبدأ بـ INVxxxx-C
+      const startsWithParent = inv.voucherNo && inv.voucherNo.startsWith(voucherNo + '-C');
+      // الشرط 2: parentVoucherNo يطابق
+      const parentMatch = inv.parentVoucherNo === voucherNo;
+      // الشرط 3: رقم الفاتورة يحتوي على voucherNo مع -C
+      const containsParent = inv.voucherNo && inv.voucherNo.includes(voucherNo + '-C');
+      
+      return startsWithParent || parentMatch || containsParent;
     });
+    
+    console.log('💰 عدد فواتير التحصيل:', collectionInvoices.length);
+    console.log('💰 تفاصيل فواتير التحصيل:', collectionInvoices.map(c => ({ 
+      voucherNo: c.voucherNo, 
+      parentVoucherNo: c.parentVoucherNo,
+      cashEUR: c.cashEUR 
+    })));
     
     // جمع المدفوعات
     for (const coll of collectionInvoices) {
@@ -214,6 +238,8 @@ async function getTotalPaymentsForInvoice(voucherNo) {
       totalVisaGBP += (coll.visaGBP || 0);
       totalVisaLE += (coll.visaLE || 0);
     }
+    
+    console.log('💰 بعد الجمع - totalCashEUR:', totalCashEUR);
     
     // حساب المبلغ المدفوع
     const currency = originalInvoice.invoiceCurrency || 'LE';
@@ -241,6 +267,8 @@ async function getTotalPaymentsForInvoice(voucherNo) {
     const discount = originalInvoice.discount || 0;
     const rest = actualPrice - discount - totalPaymentPrice;
     
+    console.log('💰 النتائج النهائية - totalPaymentPrice:', totalPaymentPrice, 'rest:', rest);
+    
     return {
       paymentPrice: totalPaymentPrice,
       cashUSD: totalCashUSD,
@@ -259,8 +287,7 @@ async function getTotalPaymentsForInvoice(voucherNo) {
     console.error('getTotalPaymentsForInvoice error:', e);
     return null;
   }
-}
-  
+}  
 
 function getCurrentDiscount() {
   return parseFloat(document.getElementById('discount')?.value) || 0;
