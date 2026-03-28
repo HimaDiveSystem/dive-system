@@ -7,6 +7,7 @@
   <title>Edit Invoice | تعديل الفاتورة</title>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <style>
+    /* نفس الـ CSS السابق - لم يتغير */
     * { margin: 0; padding: 0; box-sizing: border-box; }
     :root {
       --primary: #0f1f3d; --primary-dark: #1a3260; --accent: #f5c842; --accent-dark: #e6b800;
@@ -176,13 +177,13 @@ function calculateTotalFromItems() {
   }
   return total;
 }
+
 // دالة لجمع جميع المدفوعات للفاتورة (الأصلية + فواتير التحصيل)
 async function getTotalPaymentsForInvoice(voucherNo) {
   try {
     const allInvoices = await gas('getAllInvoices', { includeCollection: true });
     if (!Array.isArray(allInvoices)) return null;
     
-    // البحث عن الفاتورة الأصلية
     const originalInvoice = allInvoices.find(inv => inv.voucherNo === voucherNo && inv.receiptType !== 'Collection');
     if (!originalInvoice) return null;
     
@@ -195,7 +196,6 @@ async function getTotalPaymentsForInvoice(voucherNo) {
     let totalVisaGBP = originalInvoice.visaGBP || 0;
     let totalVisaLE = originalInvoice.visaLE || 0;
     
-    // جمع المدفوعات من فواتير التحصيل
     const collectionInvoices = allInvoices.filter(inv => inv.parentVoucherNo === voucherNo && inv.receiptType === 'Collection');
     
     for (const coll of collectionInvoices) {
@@ -209,7 +209,6 @@ async function getTotalPaymentsForInvoice(voucherNo) {
       totalVisaLE += (coll.visaLE || 0);
     }
     
-    // حساب المبلغ المدفوع باستخدام أسعار الصرف
     const currency = originalInvoice.invoiceCurrency || 'LE';
     const activeDate = originalInvoice.activeDate;
     let totalPaymentPrice = 0;
@@ -231,7 +230,6 @@ async function getTotalPaymentsForInvoice(voucherNo) {
       totalPaymentPrice = totalCashUSD + totalCashEUR + totalCashGBP + totalCashLE + totalVisaUSD + totalVisaEUR + totalVisaGBP + totalVisaLE;
     }
     
-    // حساب المبلغ المتبقي
     const actualPrice = originalInvoice.actualPrice || 0;
     const discount = originalInvoice.discount || 0;
     const rest = actualPrice - discount - totalPaymentPrice;
@@ -255,6 +253,7 @@ async function getTotalPaymentsForInvoice(voucherNo) {
     return null;
   }
 }
+
 function getCurrentDiscount() {
   return parseFloat(document.getElementById('discount')?.value) || 0;
 }
@@ -266,7 +265,7 @@ function getCurrentRest() {
   return actualPrice - discount - paid;
 }
 
-  async function updateTotals() {
+async function updateTotals() {
   const currency = document.getElementById('invoiceCurrency')?.value;
   const dateStr = document.getElementById('activeDate')?.value;
   
@@ -382,7 +381,6 @@ async function updateCollectionPreview() {
   const currency = document.getElementById('invoiceCurrency')?.value || currentInvoice?.invoiceCurrency || 'LE';
   const activeDate = document.getElementById('activeDate')?.value;
   
-  // قراءة العملات من الحقول
   const cU = Number(document.getElementById('collUSD')?.value) || 0;
   const cE = Number(document.getElementById('collEUR')?.value) || 0;
   const cG = Number(document.getElementById('collGBP')?.value) || 0;
@@ -398,11 +396,9 @@ async function updateCollectionPreview() {
     const raw = await getRate(activeDate);
     const r = rateFields(raw);
     if (r) {
-      // تحويل كل العملات إلى LE أولاً
       const totalLE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
                       vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
       
-      // تحويل من LE إلى عملة الفاتورة
       if (currency === '$') collectedTotal = R2(totalLE / r.cash.USD);
       else if (currency === '€') collectedTotal = R2(totalLE / r.cash.EUR);
       else if (currency === '£') collectedTotal = R2(totalLE / r.cash.GBP);
@@ -410,18 +406,13 @@ async function updateCollectionPreview() {
       
       console.log('💰 updateCollectionPreview - totalLE:', totalLE.toFixed(2), 'collectedTotal:', collectedTotal);
     } else {
-      // إذا لم يوجد سعر صرف، استخدم جمع مباشر
       collectedTotal = cU + cE + cG + cL + vU + vE + vG + vL;
     }
   } else {
-    // جمع مباشر
     collectedTotal = cU + cE + cG + cL + vU + vE + vG + vL;
   }
   
-  // تحديث عرض إجمالي المبلغ المحصل
   document.getElementById('collectionTotalDisplay').textContent = collectedTotal.toFixed(2);
-  
-  // حساب المبلغ المتبقي بعد التحصيل
   const currentRest = getCurrentRest();
   let newRest = currentRest - collectedTotal;
   if (newRest < 0) newRest = 0;
@@ -446,12 +437,11 @@ function openCollectionModal() {
 }
 function closeCollectionModal() { document.getElementById('collectionModal').classList.remove('open'); }
 
- async function submitCollection() {
+async function submitCollection() {
   const issueDate = currentInvoice.issueDate;
   const today = formatDate(new Date());
   const isToday = (issueDate === today);
   
-  // قراءة العملات من الحقول - تحويلها إلى أرقام
   const cU = Number(document.getElementById('collUSD')?.value) || 0;
   const cE = Number(document.getElementById('collEUR')?.value) || 0;
   const cG = Number(document.getElementById('collGBP')?.value) || 0;
@@ -463,7 +453,6 @@ function closeCollectionModal() { document.getElementById('collectionModal').cla
   
   console.log('💰 العملات المدخلة:', { cU, cE, cG, cL, vU, vE, vG, vL });
   
-  // جلب سعر الصرف للتاريخ الحالي
   const activeDate = document.getElementById('activeDate')?.value;
   let collectedTotal = 0;
   const currency = currentInvoice.invoiceCurrency || 'LE';
@@ -476,7 +465,6 @@ function closeCollectionModal() { document.getElementById('collectionModal').cla
     const r = rateFields(raw);
     
     if (r) {
-      // عرض أسعار الصرف المستخدمة
       console.log('📊 أسعار الصرف المستخدمة:');
       console.log('   كاش USD:', r.cash.USD);
       console.log('   كاش EUR:', r.cash.EUR);
@@ -486,13 +474,11 @@ function closeCollectionModal() { document.getElementById('collectionModal').cla
       console.log('   فيزا GBP:', r.visa.GBP);
       console.log('   فيزا LE:', r.visa.LE);
       
-      // تحويل كل العملات إلى LE أولاً
       const totalLE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
                       vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
       
       console.log('💰 totalLE (إجمالي بالجنيه):', totalLE.toFixed(2));
       
-      // تحويل من LE إلى عملة الفاتورة
       if (currency === '$') collectedTotal = R2(totalLE / r.cash.USD);
       else if (currency === '€') collectedTotal = R2(totalLE / r.cash.EUR);
       else if (currency === '£') collectedTotal = R2(totalLE / r.cash.GBP);
@@ -500,13 +486,11 @@ function closeCollectionModal() { document.getElementById('collectionModal').cla
       
       console.log(`💰 التحويل: ${totalLE.toFixed(2)} LE → ${collectedTotal.toFixed(2)} ${currency}`);
     } else {
-      // إذا لم يوجد سعر صرف، استخدم جمع مباشر
       collectedTotal = cU + cE + cG + cL + vU + vE + vG + vL;
       console.log('⚠️ لا يوجد سعر صرف للتاريخ:', activeDate);
       console.log('💰 collectedTotal (جمع مباشر):', collectedTotal);
     }
   } else {
-    // إذا لم يوجد تاريخ، استخدم جمع مباشر
     collectedTotal = cU + cE + cG + cL + vU + vE + vG + vL;
     console.log('⚠️ لا يوجد تاريخ تنفيذ');
     console.log('💰 collectedTotal (جمع مباشر - لا تاريخ):', collectedTotal);
@@ -556,7 +540,6 @@ function closeCollectionModal() { document.getElementById('collectionModal').cla
     params.set('branchName', currentInvoice.branchName || '');
     params.set('salesName', currentInvoice.salesName || '');
     
-    // إرسال العملات الأصلية (بدون تحويل) للخلفية
     params.set('cashUSD', cU.toString());
     params.set('cashEUR', cE.toString());
     params.set('cashGBP', cG.toString());
@@ -566,9 +549,7 @@ function closeCollectionModal() { document.getElementById('collectionModal').cla
     params.set('visaGBP', vG.toString());
     params.set('visaLE', vL.toString());
     
-    // إرسال المبلغ المحصل المحسوب بالواجهة (بعد التحويل باستخدام سعر الصرف)
     params.set('collectedTotal', collectedTotal.toString());
-    
     params.set('discount', (getCurrentDiscount()).toString());
     params.set('notes', notes);
     params.set('collectedBy', collectedById);
@@ -605,7 +586,6 @@ function closeCollectionModal() { document.getElementById('collectionModal').cla
   }
 }
   
-  
 // ====================== LOAD INVOICE ======================
 async function loadInvoice() {
   const params = new URLSearchParams(location.search);
@@ -620,19 +600,21 @@ async function loadInvoice() {
     currentInvoice = invoices.find(i => i.voucherNo === voucherNo);
     if (!currentInvoice) throw new Error('الفاتورة غير موجودة');
     originalInvoice = { ...currentInvoice };
+    
     const totalPayments = await getTotalPaymentsForInvoice(voucherNo);
-if (totalPayments) {
-  // تحديث currentInvoice بالمبالغ المجمعة
-  currentInvoice.paymentPrice = totalPayments.paymentPrice;
-  currentInvoice.cashUSD = totalPayments.cashUSD;
-  currentInvoice.cashEUR = totalPayments.cashEUR;
-  currentInvoice.cashGBP = totalPayments.cashGBP;
-  currentInvoice.cashLE = totalPayments.cashLE;
-  currentInvoice.visaUSD = totalPayments.visaUSD;
-  currentInvoice.visaEUR = totalPayments.visaEUR;
-  currentInvoice.visaGBP = totalPayments.visaGBP;
-  currentInvoice.visaLE = totalPayments.visaLE;
-  currentInvoice.rest = totalPayments.rest;
+    if (totalPayments) {
+      currentInvoice.paymentPrice = totalPayments.paymentPrice;
+      currentInvoice.cashUSD = totalPayments.cashUSD;
+      currentInvoice.cashEUR = totalPayments.cashEUR;
+      currentInvoice.cashGBP = totalPayments.cashGBP;
+      currentInvoice.cashLE = totalPayments.cashLE;
+      currentInvoice.visaUSD = totalPayments.visaUSD;
+      currentInvoice.visaEUR = totalPayments.visaEUR;
+      currentInvoice.visaGBP = totalPayments.visaGBP;
+      currentInvoice.visaLE = totalPayments.visaLE;
+      currentInvoice.rest = totalPayments.rest;
+    }
+    
     document.getElementById('userNameDisplay').textContent = currentUser?.name || 'User';
     document.getElementById('voucherDisplay').textContent = voucherNo;
     
@@ -673,6 +655,9 @@ if (totalPayments) {
                 </tr>`;
       }).join('');
     }
+    
+    const isIssueDateToday = (currentInvoice.issueDate === formatDate(new Date()));
+    const disableCollectionBtn = (parseFloat(currentInvoice.rest) <= 0) || isIssueDateToday;
     
     const formHtml = `
       ${warnHtml}
@@ -724,9 +709,7 @@ if (totalPayments) {
         <div class="form-group"><label>الحالة</label><select id="state"><option value="pending" ${currentInvoice.state === 'pending' ? 'selected' : ''}>⏳ قيد الانتظار</option><option value="Confirmed" ${(currentInvoice.state === 'Confirmed' || currentInvoice.state === 'confirmed') ? 'selected' : ''}>✅ مؤكد</option><option value="cancel" ${currentInvoice.state === 'cancel' ? 'selected' : ''}>❌ ملغي</option></select></div>
       </div></div></div>
       <div class="action-buttons">
-        const isIssueDateToday = (currentInvoice.issueDate === formatDate(new Date()));
-const disableCollectionBtn = (parseFloat(currentInvoice.rest) <= 0) || isIssueDateToday;
-<button class="btn btn-success" id="collectionBtn" ${disableCollectionBtn ? 'disabled' : ''}>💰 تحصيل دفعة</button>
+        <button class="btn btn-success" id="collectionBtn" ${disableCollectionBtn ? 'disabled' : ''}>💰 تحصيل دفعة</button>
         <button class="btn btn-primary" onclick="saveChanges()">💾 حفظ التعديلات</button>
         <button class="btn btn-danger" onclick="cancelEdit()">❌ إلغاء</button>
       </div>
@@ -824,9 +807,9 @@ function createEditSummary(orig, edited) {
 }
 
 async function saveChanges() {
-  const issueDate = currentInvoice.issueDate; // مثلاً "28/Mar/2026"
-const today = formatDate(new Date()); // مثلاً "28/Mar/2026"
-const isToday = (issueDate === today);
+  const issueDate = currentInvoice.issueDate;
+  const today = formatDate(new Date());
+  const isPastDate = (issueDate < today);
   const editedData = await collectEditedData();
   if (isPastDate) {
     editedData.cashUSD = currentInvoice.cashUSD;
