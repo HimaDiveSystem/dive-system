@@ -292,9 +292,6 @@ function getCollectionModalHtml() {
 }
 
 async function updateCollectionPreview() {
-  const currency = document.getElementById('invoiceCurrency')?.value || currentInvoice?.invoiceCurrency || 'LE';
-  const activeDate = document.getElementById('activeDate')?.value;
-  
   const cU = parseFloat(document.getElementById('collUSD')?.value) || 0;
   const cE = parseFloat(document.getElementById('collEUR')?.value) || 0;
   const cG = parseFloat(document.getElementById('collGBP')?.value) || 0;
@@ -304,7 +301,7 @@ async function updateCollectionPreview() {
   const vG = parseFloat(document.getElementById('collVisaGBP')?.value) || 0;
   const vL = parseFloat(document.getElementById('collVisaLE')?.value) || 0;
   
-  let collectedTotal = cU + cE + cG + cL + vU + vE + vG + vL;
+  const collectedTotal = cU + cE + cG + cL + vU + vE + vG + vL;
   
   document.getElementById('collectionTotalDisplay').textContent = collectedTotal.toFixed(2);
   const currentRest = getCurrentRest();
@@ -335,9 +332,7 @@ async function submitCollection() {
   const today = formatDate(new Date());
   const isToday = (issueDate === today);
   
-  const currency = document.getElementById('invoiceCurrency')?.value || currentInvoice?.invoiceCurrency || 'LE';
-  
-  // جمع العملات من الحقول مباشرة
+  // قراءة العملات مباشرة من الحقول
   const cU = parseFloat(document.getElementById('collUSD')?.value) || 0;
   const cE = parseFloat(document.getElementById('collEUR')?.value) || 0;
   const cG = parseFloat(document.getElementById('collGBP')?.value) || 0;
@@ -347,10 +342,12 @@ async function submitCollection() {
   const vG = parseFloat(document.getElementById('collVisaGBP')?.value) || 0;
   const vL = parseFloat(document.getElementById('collVisaLE')?.value) || 0;
   
-  // المجموع المحصل = مجموع العملات (بدون تحويل للعملة)
+  // المجموع المحصل = مجموع العملات
   const collectedTotal = cU + cE + cG + cL + vU + vE + vG + vL;
   
   console.log('💰 collectedTotal:', collectedTotal);
+  console.log('💰 cU:', cU, 'cE:', cE, 'cG:', cG, 'cL:', cL);
+  console.log('💰 vU:', vU, 'vE:', vE, 'vG:', vG, 'vL:', vL);
   
   if (collectedTotal <= 0) { 
     showAlert('الرجاء إدخال مبلغ تحصيل صحيح'); 
@@ -361,7 +358,6 @@ async function submitCollection() {
   const transferred = document.getElementById('transferredToTreasury')?.value === 'Yes' ? 'Yes' : 'No';
   const paymentMethod = (cU+cE+cG+cL > 0 && vU+vE+vG+vL > 0) ? 'Mixed' : (cU+cE+cG+cL > 0 ? 'Cash' : 'Visa');
   
-  // الحصول على بيانات المحصل
   const collectedBySelect = document.getElementById('collectedBySelect')?.value || '';
   let collectedById = currentUser?.id || '';
   let collectedByName = currentUser?.name || '';
@@ -373,110 +369,58 @@ async function submitCollection() {
     }
   }
   
-  if (isToday) {
-    // حالة الفواتير الحديثة: تعديل مباشر على الفاتورة الأصلية
-    showPDF('جاري تحديث الفاتورة...');
-    try {
-      const editedData = await collectEditedData();
-      
-      // إضافة المبالغ المحصلة للمدفوعات الموجودة
-      editedData.cashUSD = (parseFloat(editedData.cashUSD) || 0) + cU;
-      editedData.cashEUR = (parseFloat(editedData.cashEUR) || 0) + cE;
-      editedData.cashGBP = (parseFloat(editedData.cashGBP) || 0) + cG;
-      editedData.cashLE = (parseFloat(editedData.cashLE) || 0) + cL;
-      editedData.visaUSD = (parseFloat(editedData.visaUSD) || 0) + vU;
-      editedData.visaEUR = (parseFloat(editedData.visaEUR) || 0) + vE;
-      editedData.visaGBP = (parseFloat(editedData.visaGBP) || 0) + vG;
-      editedData.visaLE = (parseFloat(editedData.visaLE) || 0) + vL;
-      
-      // حساب المدفوع الجديد
-      const newPaid = await calculatePaymentPriceFromData(editedData);
-      editedData.paymentPrice = newPaid;
-      editedData.rest = editedData.actualPrice - editedData.discount - newPaid;
-      
-      const result = await gas('updateInvoice', editedData);
-      if (!result.success) throw new Error(result.message);
-      
-      await gas('copyInvoiceToEdit', { 
-        originalData: JSON.stringify({}), 
-        editedData: JSON.stringify({ collectionAmount: collectedTotal, collectedBy: collectedByName }), 
-        userId: collectedById, 
-        editSummary: `تحصيل ${collectedTotal} ${currency} بواسطة ${collectedByName}` 
-      });
-      
-      hidePDF();
-      showAlert(`✅ تم تحصيل ${collectedTotal.toFixed(2)} ${currency}\nالمحصل: ${collectedByName}`, 
-        `<button class="btn btn-primary" onclick="location.reload()">تحديث</button><button class="btn btn-primary" onclick="goBack()">رجوع</button>`);
-    } catch(err) { hidePDF(); showAlert('خطأ: ' + err.message); }
-  } else {
-    // حالة الفواتير القديمة: إنشاء فاتورة تحصيل جديدة
-    showPDF('جاري إنشاء فاتورة التحصيل...');
-    try {
-      const currentDiscount = getCurrentDiscount();
-      const actualPrice = calculateTotalFromItems() > 0 ? calculateTotalFromItems() : (currentInvoice?.actualPrice || 0);
-      const currentPaid = parseFloat(document.getElementById('displayPaymentPrice')?.textContent) || 0;
-      const newRest = actualPrice - currentDiscount - currentPaid - collectedTotal;
-      
-      const collectionData = {
-        parentVoucherNo: currentInvoice.voucherNo,
-        activeDate: currentInvoice.activeDate,
-        salesId: currentInvoice.salesId,
-        time: currentInvoice.time,
-        trip: currentInvoice.trip,
-        hotel: currentInvoice.hotel,
-        roomNo: currentInvoice.roomNo,
-        nationality: currentInvoice.nationality,
-        guestName: currentInvoice.guestName,
-        contactNo: currentInvoice.contactNo,
-        supplier: currentInvoice.supplier,
-        customer: currentInvoice.customer,
-        state: currentInvoice.state,
-        invoiceCurrency: currentInvoice.invoiceCurrency,
-        centerName: currentInvoice.centerName,
-        branchName: currentInvoice.branchName,
-        salesName: currentInvoice.salesName,
-        cashUSD: cU, cashEUR: cE, cashGBP: cG, cashLE: cL,
-        visaUSD: vU, visaEUR: vE, visaGBP: vG, visaLE: vL,
-        discount: currentDiscount,
-        notes: notes,
-        collectedBy: collectedById,
-        collectedByName: collectedByName,
-        paymentMethod: paymentMethod,
-        transferredToTreasury: transferred,
-        rest: newRest > 0 ? newRest : 0
-      };
-      
-      const result = await gas('createCollectionInvoice', collectionData);
-      hidePDF();
-      
-      if (result?.success) { 
-        showAlert(`✅ تم تحصيل ${collectedTotal.toFixed(2)} ${currency}\nرقم فاتورة التحصيل: ${result.voucherNo}\nالمحصل: ${collectedByName}`, 
-          `<button class="btn btn-primary" onclick="location.reload()">تحديث</button><button class="btn btn-primary" onclick="goBack()">رجوع</button>`); 
-      } else { 
-        showAlert('❌ فشل التحصيل: ' + (result?.message || 'خطأ غير معروف')); 
-      }
-    } catch(err) { hidePDF(); showAlert('خطأ: ' + err.message); }
+  showPDF('جاري المعالجة...');
+  try {
+    const collectionData = {
+      parentVoucherNo: currentInvoice.voucherNo,
+      activeDate: currentInvoice.activeDate,
+      salesId: currentInvoice.salesId,
+      time: currentInvoice.time,
+      trip: currentInvoice.trip,
+      hotel: currentInvoice.hotel,
+      roomNo: currentInvoice.roomNo,
+      nationality: currentInvoice.nationality,
+      guestName: currentInvoice.guestName,
+      contactNo: currentInvoice.contactNo,
+      supplier: currentInvoice.supplier,
+      customer: currentInvoice.customer,
+      state: currentInvoice.state,
+      invoiceCurrency: currentInvoice.invoiceCurrency,
+      centerName: currentInvoice.centerName,
+      branchName: currentInvoice.branchName,
+      salesName: currentInvoice.salesName,
+      cashUSD: cU,
+      cashEUR: cE,
+      cashGBP: cG,
+      cashLE: cL,
+      visaUSD: vU,
+      visaEUR: vE,
+      visaGBP: vG,
+      visaLE: vL,
+      discount: getCurrentDiscount(),
+      notes: notes,
+      collectedBy: collectedById,
+      collectedByName: collectedByName,
+      paymentMethod: paymentMethod,
+      transferredToTreasury: transferred,
+      rest: getCurrentRest() - collectedTotal
+    };
+    
+    console.log('📤 إرسال بيانات التحصيل:', collectionData);
+    
+    const result = await gas('createCollectionInvoice', collectionData);
+    hidePDF();
+    
+    if (result?.success) { 
+      showAlert(`✅ تم تحصيل ${collectedTotal.toFixed(2)} ${currentInvoice.invoiceCurrency}\nرقم فاتورة التحصيل: ${result.voucherNo}\nالمحصل: ${collectedByName}`, 
+        `<button class="btn btn-primary" onclick="location.reload()">تحديث</button><button class="btn btn-primary" onclick="goBack()">رجوع</button>`); 
+    } else { 
+      showAlert('❌ فشل التحصيل: ' + (result?.message || 'خطأ غير معروف')); 
+    }
+  } catch(err) { 
+    hidePDF(); 
+    showAlert('خطأ: ' + err.message); 
   }
-}
-
-async function calculatePaymentPriceFromData(inv) {
-  const currency = inv.invoiceCurrency;
-  const dateStr = inv.activeDate;
-  const cU = inv.cashUSD || 0, cE = inv.cashEUR || 0, cG = inv.cashGBP || 0, cL = inv.cashLE || 0;
-  const vU = inv.visaUSD || 0, vE = inv.visaEUR || 0, vG = inv.visaGBP || 0, vL = inv.visaLE || 0;
-  let paid = 0;
-  if (dateStr) {
-    const raw = await getRate(dateStr);
-    const r = rateFields(raw);
-    if (r) {
-      const LE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL + vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
-      if (currency === '$') paid = R2(LE / r.cash.USD);
-      else if (currency === '€') paid = R2(LE / r.cash.EUR);
-      else if (currency === '£') paid = R2(LE / r.cash.GBP);
-      else paid = R2(LE);
-    } else paid = directPaid(currency, cU, cE, cG, cL, vU, vE, vG, vL);
-  } else paid = directPaid(currency, cU, cE, cG, cL, vU, vE, vG, vL);
-  return paid;
 }
 
 // ====================== LOAD INVOICE ======================
@@ -731,11 +675,7 @@ window.changeTrip = async function() {
   const newTripData = await gas('getTripData', { tripName: newTrip, currency });
   if (newTripData?.items) {
     let rows = '';
-    for (let i = 0; i < newTripData.items.length; i++) rows += `<td><td style="font-weight:600">${esc(newTripData.items[i])}</td>
-                  <td><input type="number" id="qty_${i}" min="0" placeholder="0" oninput="updateItemTotal(${i}, ${newTripData.prices?.[i] || 0})"></td>
-                  <td><input type="number" id="price_${i}" value="${newTripData.prices?.[i] || 0}" readonly></td>
-                  <td><input type="number" id="total_${i}" value="0" readonly></td>
-                </tr>`;
+    for (let i = 0; i < newTripData.items.length; i++) rows += `<tr><td style="font-weight:600">${esc(newTripData.items[i])}</td><td><input type="number" id="qty_${i}" min="0" placeholder="0" oninput="updateItemTotal(${i}, ${newTripData.prices?.[i] || 0})"></td><td><input type="number" id="price_${i}" value="${newTripData.prices?.[i] || 0}" readonly></td><td><input type="number" id="total_${i}" value="0" readonly></td></tr>`;
     document.getElementById('itemsBody').innerHTML = rows;
   }
   await updateTotals();
