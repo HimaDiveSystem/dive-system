@@ -181,19 +181,18 @@ function calculateTotalFromItems() {
 // دالة لجمع جميع المدفوعات للفاتورة (الأصلية + فواتير التحصيل)
 async function getTotalPaymentsForInvoice(voucherNo) {
   try {
-    // جلب الفاتورة الأصلية
-    const originalInvoice = await gas('getInvoiceByVoucher', { voucherNo: voucherNo });
-    if (!originalInvoice || !originalInvoice.success) {
+    // استخدام دالة getInvoiceByVoucher لجلب الفاتورة الأصلية
+    const originalResult = await gas('getInvoiceByVoucher', { voucherNo: voucherNo });
+    if (!originalResult || !originalResult.success) {
       console.log('⚠️ لم يتم العثور على الفاتورة:', voucherNo);
       return null;
     }
-    
-    const original = originalInvoice.invoice;
+    const original = originalResult.invoice;
     
     console.log('💰 الفاتورة الأصلية - voucherNo:', original.voucherNo);
     console.log('💰 الفاتورة الأصلية - cashEUR:', original.cashEUR);
     
-    // بدء المجاميع من الفاتورة الأصلية
+    // جمع المدفوعات من الفاتورة الأصلية فقط
     let totalCashUSD = original.cashUSD || 0;
     let totalCashEUR = original.cashEUR || 0;
     let totalCashGBP = original.cashGBP || 0;
@@ -203,21 +202,25 @@ async function getTotalPaymentsForInvoice(voucherNo) {
     let totalVisaGBP = original.visaGBP || 0;
     let totalVisaLE = original.visaLE || 0;
     
-    // جلب فواتير التحصيل
-    const collectionInvoices = await getCollectionInvoicesForVoucher(voucherNo);
-    
-    console.log('💰 عدد فواتير التحصيل:', collectionInvoices.length);
-    
-    // جمع المدفوعات
-    for (const coll of collectionInvoices) {
-      totalCashUSD += (coll.cashUSD || 0);
-      totalCashEUR += (coll.cashEUR || 0);
-      totalCashGBP += (coll.cashGBP || 0);
-      totalCashLE += (coll.cashLE || 0);
-      totalVisaUSD += (coll.visaUSD || 0);
-      totalVisaEUR += (coll.visaEUR || 0);
-      totalVisaGBP += (coll.visaGBP || 0);
-      totalVisaLE += (coll.visaLE || 0);
+    // محاولة جلب فواتير التحصيل من allInvoices
+    const allInvoices = await gas('getAllInvoices', { includeCollection: true });
+    if (Array.isArray(allInvoices)) {
+      const collectionInvoices = allInvoices.filter(inv => {
+        return inv.parentVoucherNo === voucherNo || (inv.voucherNo && inv.voucherNo.startsWith(voucherNo + '-C'));
+      });
+      console.log('💰 عدد فواتير التحصيل (من allInvoices):', collectionInvoices.length);
+      for (const coll of collectionInvoices) {
+        totalCashUSD += (coll.cashUSD || 0);
+        totalCashEUR += (coll.cashEUR || 0);
+        totalCashGBP += (coll.cashGBP || 0);
+        totalCashLE += (coll.cashLE || 0);
+        totalVisaUSD += (coll.visaUSD || 0);
+        totalVisaEUR += (coll.visaEUR || 0);
+        totalVisaGBP += (coll.visaGBP || 0);
+        totalVisaLE += (coll.visaLE || 0);
+      }
+    } else {
+      console.log('⚠️ getAllInvoices لم تعد مصفوفة');
     }
     
     console.log('💰 بعد الجمع - totalCashEUR:', totalCashEUR);
@@ -271,26 +274,76 @@ async function getTotalPaymentsForInvoice(voucherNo) {
 }
 
   // دالة لجلب فواتير التحصيل المرتبطة برقم فاتورة معين
-async function getCollectionInvoicesForVoucher(voucherNo) {
+function getAllInvoices(includeCollection = false) {
   try {
-    // استخدام دالة getTotalCollectedForInvoice الموجودة في الخلفية
-    const totalCollected = await gas('getTotalCollectedForInvoice', { voucherNo: voucherNo });
+    const s = SpreadsheetApp.openById(SHEET_ID).getSheetByName("Invoices");
+    if (!s) return [];
     
-    // جلب جميع الفواتير ثم التصفية
-    const allInvoices = await gas('getAllInvoices', { includeCollection: true });
-    if (!Array.isArray(allInvoices)) return [];
+    const raw = s.getDataRange().getValues();
+    if (raw.length < 2) return [];
     
-    // البحث عن فواتير التحصيل: إما parentVoucherNo يطابق أو رقم الفاتورة يبدأ بـ voucherNo + '-C'
-    const collectionInvoices = allInvoices.filter(inv => {
-      return inv.parentVoucherNo === voucherNo || (inv.voucherNo && inv.voucherNo.startsWith(voucherNo + '-C'));
+    let rows = raw.slice(1);
+    
+    // تصفية الفواتير التي تبدأ بـ INV
+    rows = rows.filter(row => {
+      const voucherNo = row[1] ? row[1].toString().trim() : '';
+      return voucherNo.startsWith('INV');
     });
     
-    console.log('💰 getCollectionInvoicesForVoucher - found:', collectionInvoices.length);
-    collectionInvoices.forEach(c => console.log(`   ${c.voucherNo}: cashEUR=${c.cashEUR}`));
+    const result = rows.map(row => {
+      return {
+        rest: Number(row[0]) || 0,
+        voucherNo: String(row[1] || ""),
+        issueDate: row[2] ? row[2].toString() : "",
+        activeDate: row[3] ? row[3].toString() : "",
+        salesId: String(row[4] || ""),
+        time: String(row[5] || ""),
+        trip: String(row[6] || ""),
+        cashUSD: Number(row[17]) || 0,
+        cashEUR: Number(row[18]) || 0,
+        cashGBP: Number(row[19]) || 0,
+        cashLE: Number(row[20]) || 0,
+        visaUSD: Number(row[21]) || 0,
+        visaEUR: Number(row[22]) || 0,
+        visaGBP: Number(row[23]) || 0,
+        visaLE: Number(row[24]) || 0,
+        hotel: String(row[25] || ""),
+        roomNo: String(row[26] || ""),
+        nationality: String(row[27] || ""),
+        guestName: String(row[28] || ""),
+        contactNo: String(row[29] || ""),
+        notes: String(row[30] || ""),
+        supplier: String(row[31] || ""),
+        customer: String(row[32] || ""),
+        state: String(row[33] || ""),
+        actualPrice: Number(row[34]) || 0,
+        paymentPrice: Number(row[35]) || 0,
+        invoiceCurrency: String(row[41] || ""),
+        centerName: String(row[43] || ""),
+        branchName: String(row[44] || ""),
+        salesName: String(row[45] || ""),
+        discount: Number(row[46]) || 0,
+        adultCount: Number(row[47]) || 0,
+        childCount: Number(row[48]) || 0,
+        infantCount: Number(row[49]) || 0,
+        activitiesText: String(row[50] || ""),
+        receiptType: String(row[55] || ""),
+        parentVoucherNo: String(row[56] || ""),
+        collectionNumber: Number(row[57]) || 0,
+        collectedBy: String(row[58] || ""),
+        collectedByName: String(row[59] || ""),
+        collectionDate: String(row[60] || ""),
+        paymentMethod: String(row[61] || ""),
+        transferredToTreasury: String(row[62] || "")
+      };
+    });
     
-    return collectionInvoices;
+    if (!includeCollection) {
+      return result.filter(r => r.receiptType !== 'Collection');
+    }
+    return result;
   } catch(e) {
-    console.error('getCollectionInvoicesForVoucher error:', e);
+    console.error('❌ getAllInvoices error:', e);
     return [];
   }
 }
