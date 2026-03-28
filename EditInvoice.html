@@ -326,28 +326,25 @@ function openCollectionModal() {
   setTimeout(() => updateCollectionPreview(), 100);
 }
 function closeCollectionModal() { document.getElementById('collectionModal').classList.remove('open'); }
-
 async function submitCollection() {
   const issueDate = currentInvoice.issueDate;
   const today = formatDate(new Date());
   const isToday = (issueDate === today);
   
-  // قراءة العملات مباشرة من الحقول
-  const cU = parseFloat(document.getElementById('collUSD')?.value) || 0;
-  const cE = parseFloat(document.getElementById('collEUR')?.value) || 0;
-  const cG = parseFloat(document.getElementById('collGBP')?.value) || 0;
-  const cL = parseFloat(document.getElementById('collLE')?.value) || 0;
-  const vU = parseFloat(document.getElementById('collVisaUSD')?.value) || 0;
-  const vE = parseFloat(document.getElementById('collVisaEUR')?.value) || 0;
-  const vG = parseFloat(document.getElementById('collVisaGBP')?.value) || 0;
-  const vL = parseFloat(document.getElementById('collVisaLE')?.value) || 0;
+  // قراءة العملات من الحقول - تحويلها إلى أرقام صحيحة
+  const cU = Number(document.getElementById('collUSD')?.value) || 0;
+  const cE = Number(document.getElementById('collEUR')?.value) || 0;
+  const cG = Number(document.getElementById('collGBP')?.value) || 0;
+  const cL = Number(document.getElementById('collLE')?.value) || 0;
+  const vU = Number(document.getElementById('collVisaUSD')?.value) || 0;
+  const vE = Number(document.getElementById('collVisaEUR')?.value) || 0;
+  const vG = Number(document.getElementById('collVisaGBP')?.value) || 0;
+  const vL = Number(document.getElementById('collVisaLE')?.value) || 0;
   
-  // المجموع المحصل = مجموع العملات
+  // حساب المجموع المحصل
   const collectedTotal = cU + cE + cG + cL + vU + vE + vG + vL;
   
-  console.log('💰 collectedTotal:', collectedTotal);
-  console.log('💰 cU:', cU, 'cE:', cE, 'cG:', cG, 'cL:', cL);
-  console.log('💰 vU:', vU, 'vE:', vE, 'vG:', vG, 'vL:', vL);
+  console.log('💰 collectedTotal (محسوب):', collectedTotal);
   
   if (collectedTotal <= 0) { 
     showAlert('الرجاء إدخال مبلغ تحصيل صحيح'); 
@@ -369,46 +366,63 @@ async function submitCollection() {
     }
   }
   
+  // تأكد من أن جميع القيم أرقام وليست نصوص
+  const cleanNumber = (val) => {
+    const num = Number(val);
+    return isNaN(num) ? 0 : num;
+  };
+  
   showPDF('جاري المعالجة...');
   try {
+    // إنشاء الكائن يدوياً مع التأكد من أن القيم أرقام
     const collectionData = {
-      parentVoucherNo: currentInvoice.voucherNo,
-      activeDate: currentInvoice.activeDate,
-      salesId: currentInvoice.salesId,
-      time: currentInvoice.time,
-      trip: currentInvoice.trip,
-      hotel: currentInvoice.hotel,
-      roomNo: currentInvoice.roomNo,
-      nationality: currentInvoice.nationality,
-      guestName: currentInvoice.guestName,
-      contactNo: currentInvoice.contactNo,
-      supplier: currentInvoice.supplier,
-      customer: currentInvoice.customer,
-      state: currentInvoice.state,
-      invoiceCurrency: currentInvoice.invoiceCurrency,
-      centerName: currentInvoice.centerName,
-      branchName: currentInvoice.branchName,
-      salesName: currentInvoice.salesName,
-      cashUSD: cU,
-      cashEUR: cE,
-      cashGBP: cG,
-      cashLE: cL,
-      visaUSD: vU,
-      visaEUR: vE,
-      visaGBP: vG,
-      visaLE: vL,
-      discount: getCurrentDiscount(),
-      notes: notes,
-      collectedBy: collectedById,
-      collectedByName: collectedByName,
-      paymentMethod: paymentMethod,
-      transferredToTreasury: transferred,
-      rest: getCurrentRest() - collectedTotal
+      parentVoucherNo: String(currentInvoice.voucherNo),
+      activeDate: String(currentInvoice.activeDate || ''),
+      salesId: String(currentInvoice.salesId || ''),
+      time: String(currentInvoice.time || ''),
+      trip: String(currentInvoice.trip || ''),
+      hotel: String(currentInvoice.hotel || ''),
+      roomNo: String(currentInvoice.roomNo || ''),
+      nationality: String(currentInvoice.nationality || ''),
+      guestName: String(currentInvoice.guestName || ''),
+      contactNo: String(currentInvoice.contactNo || ''),
+      supplier: String(currentInvoice.supplier || ''),
+      customer: String(currentInvoice.customer || ''),
+      state: String(currentInvoice.state || 'pending'),
+      invoiceCurrency: String(currentInvoice.invoiceCurrency || 'LE'),
+      centerName: String(currentInvoice.centerName || ''),
+      branchName: String(currentInvoice.branchName || ''),
+      salesName: String(currentInvoice.salesName || ''),
+      cashUSD: cleanNumber(cU),
+      cashEUR: cleanNumber(cE),
+      cashGBP: cleanNumber(cG),
+      cashLE: cleanNumber(cL),
+      visaUSD: cleanNumber(vU),
+      visaEUR: cleanNumber(vE),
+      visaGBP: cleanNumber(vG),
+      visaLE: cleanNumber(vL),
+      discount: cleanNumber(getCurrentDiscount()),
+      notes: String(notes),
+      collectedBy: String(collectedById),
+      collectedByName: String(collectedByName),
+      paymentMethod: String(paymentMethod),
+      transferredToTreasury: String(transferred),
+      rest: cleanNumber(getCurrentRest() - collectedTotal)
     };
     
-    console.log('📤 إرسال بيانات التحصيل:', collectionData);
+    console.log('📤 إرسال بيانات التحصيل:', JSON.stringify(collectionData, null, 2));
     
-    const result = await gas('createCollectionInvoice', collectionData);
+    // استخدام POST بدلاً من GET لتجنب مشاكل تحويل الأرقام
+    const response = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'createCollectionInvoice', ...collectionData }),
+      redirect: 'follow'
+    });
+    
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const result = await response.json();
+    
     hidePDF();
     
     if (result?.success) { 
@@ -419,10 +433,10 @@ async function submitCollection() {
     }
   } catch(err) { 
     hidePDF(); 
+    console.error('خطأ في الإرسال:', err);
     showAlert('خطأ: ' + err.message); 
   }
 }
-
 // ====================== LOAD INVOICE ======================
 async function loadInvoice() {
   const params = new URLSearchParams(location.search);
