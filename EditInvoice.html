@@ -179,7 +179,6 @@ function calculateTotalFromItems() {
 }
 
 // دالة لجمع جميع المدفوعات للفاتورة (الأصلية + فواتير التحصيل)
-// دالة لجمع جميع المدفوعات للفاتورة (الأصلية + فواتير التحصيل)
 async function getTotalPaymentsForInvoice(voucherNo) {
   try {
     const allInvoices = await gas('getAllInvoices', { includeCollection: true });
@@ -187,25 +186,17 @@ async function getTotalPaymentsForInvoice(voucherNo) {
     
     console.log('💰 getTotalPaymentsForInvoice - allInvoices count:', allInvoices.length);
     
-    // طباعة جميع الفواتير مع parentVoucherNo للتحقق
-    console.log('💰 جميع الفواتير مع parentVoucherNo:', allInvoices.map(inv => ({ 
-      voucherNo: inv.voucherNo, 
-      parentVoucherNo: inv.parentVoucherNo,
-      receiptType: inv.receiptType,
-      cashEUR: inv.cashEUR 
-    })));
-    
-    // البحث عن الفاتورة الأصلية (ليست تحصيل)
-    const originalInvoice = allInvoices.find(inv => inv.voucherNo === voucherNo && inv.receiptType !== 'Collection');
+    // البحث عن الفاتورة الأصلية (التي ليس لها parent)
+    const originalInvoice = allInvoices.find(inv => inv.voucherNo === voucherNo);
     if (!originalInvoice) {
-      console.log('⚠️ لم يتم العثور على الفاتورة الأصلية:', voucherNo);
+      console.log('⚠️ لم يتم العثور على الفاتورة:', voucherNo);
       return null;
     }
     
     console.log('💰 الفاتورة الأصلية - voucherNo:', originalInvoice.voucherNo);
     console.log('💰 الفاتورة الأصلية - cashEUR:', originalInvoice.cashEUR);
-    console.log('💰 الفاتورة الأصلية - receiptType:', originalInvoice.receiptType);
     
+    // بدء المجاميع من الفاتورة الأصلية
     let totalCashUSD = originalInvoice.cashUSD || 0;
     let totalCashEUR = originalInvoice.cashEUR || 0;
     let totalCashGBP = originalInvoice.cashGBP || 0;
@@ -215,35 +206,23 @@ async function getTotalPaymentsForInvoice(voucherNo) {
     let totalVisaGBP = originalInvoice.visaGBP || 0;
     let totalVisaLE = originalInvoice.visaLE || 0;
     
-    // جمع المدفوعات من فواتير التحصيل - طرق بحث متعددة للتأكد
+    // جمع المدفوعات من أي فاتورة لها ParentVoucherNo يطابق رقم الفاتورة الأصلية
+    // بغض النظر عن ReceiptType
     const collectionInvoices = allInvoices.filter(inv => {
-      // الشرط الأول: receiptType = 'Collection'
-      const isCollection = inv.receiptType === 'Collection';
-      // الشرط الثاني: parentVoucherNo يطابق رقم الفاتورة الأصلية
-      const matchesParent = inv.parentVoucherNo === voucherNo;
-      // الشرط الثالث: رقم الفاتورة يحتوي على رقم الأب (مثل INV0081-C1)
-      const voucherContainsParent = inv.voucherNo && inv.voucherNo.includes(voucherNo);
-      // الشرط الرابع: إذا كان رقم الفاتورة يبدأ برقم الأب مع -C
-      const startsWithParent = inv.voucherNo && inv.voucherNo.startsWith(voucherNo + '-C');
-      
-      const isMatch = isCollection && (matchesParent || voucherContainsParent || startsWithParent);
-      
-      if (isMatch) {
-        console.log('💰 تم العثور على فاتورة تحصيل:', inv.voucherNo, 'parent:', inv.parentVoucherNo);
-      }
-      
-      return isMatch;
+      const parentMatch = inv.parentVoucherNo === voucherNo;
+      // أيضاً تحقق إذا كان رقم الفاتورة يحتوي على رقم الأب (مثل INV0081-C1)
+      const voucherContainsParent = inv.voucherNo && inv.voucherNo.includes(voucherNo + '-C');
+      return parentMatch || voucherContainsParent;
     });
     
-    console.log('💰 عدد فواتير التحصيل:', collectionInvoices.length);
+    console.log('💰 عدد فواتير التحصيل/المدفوعات المرتبطة:', collectionInvoices.length);
     
     if (collectionInvoices.length > 0) {
-      console.log('💰 تفاصيل فواتير التحصيل:', collectionInvoices.map(c => ({ 
+      console.log('💰 تفاصيل الفواتير المرتبطة:', collectionInvoices.map(c => ({ 
         voucherNo: c.voucherNo, 
         parentVoucherNo: c.parentVoucherNo,
         cashEUR: c.cashEUR,
-        cashUSD: c.cashUSD,
-        actualPrice: c.actualPrice
+        cashUSD: c.cashUSD
       })));
     }
     
@@ -258,10 +237,7 @@ async function getTotalPaymentsForInvoice(voucherNo) {
       totalVisaLE += (coll.visaLE || 0);
     }
     
-    console.log('💰 بعد جمع التحصيلات - totalCashUSD:', totalCashUSD);
-    console.log('💰 بعد جمع التحصيلات - totalCashEUR:', totalCashEUR);
-    console.log('💰 بعد جمع التحصيلات - totalCashGBP:', totalCashGBP);
-    console.log('💰 بعد جمع التحصيلات - totalCashLE:', totalCashLE);
+    console.log('💰 بعد جمع الفواتير المرتبطة - totalCashEUR:', totalCashEUR);
     
     // حساب المبلغ المدفوع باستخدام أسعار الصرف
     const currency = originalInvoice.invoiceCurrency || 'LE';
