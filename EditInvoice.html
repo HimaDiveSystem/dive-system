@@ -181,41 +181,32 @@ function calculateTotalFromItems() {
 // دالة لجمع جميع المدفوعات للفاتورة (الأصلية + فواتير التحصيل)
 async function getTotalPaymentsForInvoice(voucherNo) {
   try {
-    const allInvoices = await gas('getAllInvoices', { includeCollection: true });
-    if (!Array.isArray(allInvoices)) return null;
-    
-    console.log('💰 getTotalPaymentsForInvoice - allInvoices count:', allInvoices.length);
-    
-    // البحث عن الفاتورة الأصلية
-    const originalInvoice = allInvoices.find(inv => inv.voucherNo === voucherNo);
-    if (!originalInvoice) {
+    // جلب الفاتورة الأصلية
+    const originalInvoice = await gas('getInvoiceByVoucher', { voucherNo: voucherNo });
+    if (!originalInvoice || !originalInvoice.success) {
       console.log('⚠️ لم يتم العثور على الفاتورة:', voucherNo);
       return null;
     }
     
-    console.log('💰 الفاتورة الأصلية - voucherNo:', originalInvoice.voucherNo);
-    console.log('💰 الفاتورة الأصلية - cashEUR:', originalInvoice.cashEUR);
+    const original = originalInvoice.invoice;
+    
+    console.log('💰 الفاتورة الأصلية - voucherNo:', original.voucherNo);
+    console.log('💰 الفاتورة الأصلية - cashEUR:', original.cashEUR);
     
     // بدء المجاميع من الفاتورة الأصلية
-    let totalCashUSD = originalInvoice.cashUSD || 0;
-    let totalCashEUR = originalInvoice.cashEUR || 0;
-    let totalCashGBP = originalInvoice.cashGBP || 0;
-    let totalCashLE = originalInvoice.cashLE || 0;
-    let totalVisaUSD = originalInvoice.visaUSD || 0;
-    let totalVisaEUR = originalInvoice.visaEUR || 0;
-    let totalVisaGBP = originalInvoice.visaGBP || 0;
-    let totalVisaLE = originalInvoice.visaLE || 0;
+    let totalCashUSD = original.cashUSD || 0;
+    let totalCashEUR = original.cashEUR || 0;
+    let totalCashGBP = original.cashGBP || 0;
+    let totalCashLE = original.cashLE || 0;
+    let totalVisaUSD = original.visaUSD || 0;
+    let totalVisaEUR = original.visaEUR || 0;
+    let totalVisaGBP = original.visaGBP || 0;
+    let totalVisaLE = original.visaLE || 0;
     
-    // البحث عن فواتير التحصيل: أي فاتورة رقمها يبدأ بـ voucherNo + '-C'
-    const collectionInvoices = allInvoices.filter(inv => {
-      return inv.voucherNo && inv.voucherNo.startsWith(voucherNo + '-C');
-    });
+    // جلب فواتير التحصيل
+    const collectionInvoices = await getCollectionInvoicesForVoucher(voucherNo);
     
     console.log('💰 عدد فواتير التحصيل:', collectionInvoices.length);
-    console.log('💰 تفاصيل فواتير التحصيل:', collectionInvoices.map(c => ({ 
-      voucherNo: c.voucherNo, 
-      cashEUR: c.cashEUR 
-    })));
     
     // جمع المدفوعات
     for (const coll of collectionInvoices) {
@@ -232,8 +223,8 @@ async function getTotalPaymentsForInvoice(voucherNo) {
     console.log('💰 بعد الجمع - totalCashEUR:', totalCashEUR);
     
     // حساب المبلغ المدفوع
-    const currency = originalInvoice.invoiceCurrency || 'LE';
-    const activeDate = originalInvoice.activeDate;
+    const currency = original.invoiceCurrency || 'LE';
+    const activeDate = original.activeDate;
     let totalPaymentPrice = 0;
     
     if (activeDate) {
@@ -253,8 +244,8 @@ async function getTotalPaymentsForInvoice(voucherNo) {
       totalPaymentPrice = totalCashUSD + totalCashEUR + totalCashGBP + totalCashLE + totalVisaUSD + totalVisaEUR + totalVisaGBP + totalVisaLE;
     }
     
-    const actualPrice = originalInvoice.actualPrice || 0;
-    const discount = originalInvoice.discount || 0;
+    const actualPrice = original.actualPrice || 0;
+    const discount = original.discount || 0;
     const rest = actualPrice - discount - totalPaymentPrice;
     
     console.log('💰 النتائج النهائية - totalPaymentPrice:', totalPaymentPrice, 'rest:', rest);
@@ -279,6 +270,30 @@ async function getTotalPaymentsForInvoice(voucherNo) {
   }
 }
 
+  // دالة لجلب فواتير التحصيل المرتبطة برقم فاتورة معين
+async function getCollectionInvoicesForVoucher(voucherNo) {
+  try {
+    // استخدام دالة getTotalCollectedForInvoice الموجودة في الخلفية
+    const totalCollected = await gas('getTotalCollectedForInvoice', { voucherNo: voucherNo });
+    
+    // جلب جميع الفواتير ثم التصفية
+    const allInvoices = await gas('getAllInvoices', { includeCollection: true });
+    if (!Array.isArray(allInvoices)) return [];
+    
+    // البحث عن فواتير التحصيل: إما parentVoucherNo يطابق أو رقم الفاتورة يبدأ بـ voucherNo + '-C'
+    const collectionInvoices = allInvoices.filter(inv => {
+      return inv.parentVoucherNo === voucherNo || (inv.voucherNo && inv.voucherNo.startsWith(voucherNo + '-C'));
+    });
+    
+    console.log('💰 getCollectionInvoicesForVoucher - found:', collectionInvoices.length);
+    collectionInvoices.forEach(c => console.log(`   ${c.voucherNo}: cashEUR=${c.cashEUR}`));
+    
+    return collectionInvoices;
+  } catch(e) {
+    console.error('getCollectionInvoicesForVoucher error:', e);
+    return [];
+  }
+}
 function getCurrentDiscount() {
   return parseFloat(document.getElementById('discount')?.value) || 0;
 }
