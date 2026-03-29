@@ -467,39 +467,62 @@ function getCollectionModalHtml() {
 }
 
 async function updateCollectionPreview() {
-  const currency = (document.getElementById('invoiceCurrency')?.value || currentInvoice?.invoiceCurrency || 'LE').trim();
+  const currency = document.getElementById('invoiceCurrency')?.value || currentInvoice?.invoiceCurrency || 'LE';
   const activeDate = document.getElementById('activeDate')?.value;
-  const cU = Number(document.getElementById('collUSD')?.value)     || 0;
-  const cE = Number(document.getElementById('collEUR')?.value)     || 0;
-  const cG = Number(document.getElementById('collGBP')?.value)     || 0;
-  const cL = Number(document.getElementById('collLE')?.value)      || 0;
+  
+  // قراءة العملات المدخلة في مودال التحصيل
+  const cU = Number(document.getElementById('collUSD')?.value) || 0;
+  const cE = Number(document.getElementById('collEUR')?.value) || 0;
+  const cG = Number(document.getElementById('collGBP')?.value) || 0;
+  const cL = Number(document.getElementById('collLE')?.value) || 0;
   const vU = Number(document.getElementById('collVisaUSD')?.value) || 0;
   const vE = Number(document.getElementById('collVisaEUR')?.value) || 0;
   const vG = Number(document.getElementById('collVisaGBP')?.value) || 0;
-  const vL = Number(document.getElementById('collVisaLE')?.value)  || 0;
-
+  const vL = Number(document.getElementById('collVisaLE')?.value) || 0;
+  
   let collectedTotal = 0;
-  if (activeDate && (cU+cE+cG+cL+vU+vE+vG+vL) > 0) {
+  
+  if (activeDate && (cU + cE + cG + cL + vU + vE + vG + vL) > 0) {
     const raw = await getRate(activeDate);
-    const r   = rateFields(raw);
+    const r = rateFields(raw);
     if (r) {
-      const totalLE = cU*r.cash.USD + cE*r.cash.EUR + cG*r.cash.GBP + cL
-                    + vU*r.visa.USD + vE*r.visa.EUR + vG*r.visa.GBP + vL*(r.visa.LE||0.975);
-      if (currency==='$') collectedTotal = R2(totalLE/r.cash.USD);
-      else if (currency==='€') collectedTotal = R2(totalLE/r.cash.EUR);
-      else if (currency==='£') collectedTotal = R2(totalLE/r.cash.GBP);
+      // تحويل كل العملات إلى LE أولاً
+      const totalLE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
+                      vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
+      
+      // تحويل من LE إلى عملة الفاتورة
+      if (currency === '$') collectedTotal = R2(totalLE / r.cash.USD);
+      else if (currency === '€') collectedTotal = R2(totalLE / r.cash.EUR);
+      else if (currency === '£') collectedTotal = R2(totalLE / r.cash.GBP);
       else collectedTotal = R2(totalLE);
-    } else collectedTotal = cU+cE+cG+cL+vU+vE+vG+vL;
-  } else collectedTotal = cU+cE+cG+cL+vU+vE+vG+vL;
-
-  const el = document.getElementById('collectionTotalDisplay');
-  if (el) el.textContent = collectedTotal.toFixed(2);
-  const currentRest = getCurrentRestValue();
-  const newRest = Math.max(0, currentRest - collectedTotal);
-  const nr = document.getElementById('newRestPreview');
-  if (nr) { nr.value = newRest.toFixed(2); nr.readOnly = newRest > 5; }
+      
+      console.log('💰 updateCollectionPreview - التحويل:', {
+        cU, cE, totalLE, collectedTotal, currency,
+        rates: { cashUSD: r.cash.USD, cashEUR: r.cash.EUR }
+      });
+    } else {
+      // إذا لم يوجد سعر صرف، استخدم جمع مباشر
+      collectedTotal = cU + cE + cG + cL + vU + vE + vG + vL;
+    }
+  } else {
+    collectedTotal = cU + cE + cG + cL + vU + vE + vG + vL;
+  }
+  
+  // تحديث عرض إجمالي المبلغ المحصل
+  document.getElementById('collectionTotalDisplay').textContent = collectedTotal.toFixed(2);
+  
+  // حساب المبلغ المتبقي بعد التحصيل
+  const currentRest = getCurrentRest();
+  let newRest = currentRest - collectedTotal;
+  if (newRest < 0) newRest = 0;
+  
+  const newRestField = document.getElementById('newRestPreview');
+  if (newRestField) {
+    newRestField.value = newRest.toFixed(2);
+    newRestField.readOnly = newRest > 5;
+  }
 }
-
+  
 function openCollectionModal() {
   if (!currentInvoice) return;
   const rest = getCurrentRestValue();
@@ -509,88 +532,163 @@ function openCollectionModal() {
   setTimeout(() => updateCollectionPreview(), 100);
 }
 function closeCollectionModal() { document.getElementById('collectionModal').classList.remove('open'); }
-
 async function submitCollection() {
-  const cU = Number(document.getElementById('collUSD')?.value)     || 0;
-  const cE = Number(document.getElementById('collEUR')?.value)     || 0;
-  const cG = Number(document.getElementById('collGBP')?.value)     || 0;
-  const cL = Number(document.getElementById('collLE')?.value)      || 0;
+  const issueDate = currentInvoice.issueDate;
+  const today = formatDate(new Date());
+  const isToday = (issueDate === today);
+  
+  // قراءة العملات من الحقول - تحويلها إلى أرقام
+  const cU = Number(document.getElementById('collUSD')?.value) || 0;
+  const cE = Number(document.getElementById('collEUR')?.value) || 0;
+  const cG = Number(document.getElementById('collGBP')?.value) || 0;
+  const cL = Number(document.getElementById('collLE')?.value) || 0;
   const vU = Number(document.getElementById('collVisaUSD')?.value) || 0;
   const vE = Number(document.getElementById('collVisaEUR')?.value) || 0;
   const vG = Number(document.getElementById('collVisaGBP')?.value) || 0;
-  const vL = Number(document.getElementById('collVisaLE')?.value)  || 0;
-
+  const vL = Number(document.getElementById('collVisaLE')?.value) || 0;
+  
+  console.log('💰 العملات المدخلة:', { cU, cE, cG, cL, vU, vE, vG, vL });
+  
+  // جلب سعر الصرف للتاريخ الحالي
   const activeDate = document.getElementById('activeDate')?.value;
-  const currency = (currentInvoice.invoiceCurrency || 'LE').trim();
   let collectedTotal = 0;
-
+  const currency = currentInvoice.invoiceCurrency || 'LE';
+  
+  console.log('💰 تاريخ التنفيذ:', activeDate);
+  console.log('💰 عملة الفاتورة:', currency);
+  
   if (activeDate) {
     const raw = await getRate(activeDate);
-    const r   = rateFields(raw);
+    const r = rateFields(raw);
+    
     if (r) {
-      const totalLE = cU*r.cash.USD + cE*r.cash.EUR + cG*r.cash.GBP + cL
-                    + vU*r.visa.USD + vE*r.visa.EUR + vG*r.visa.GBP + vL*(r.visa.LE||0.975);
-      if (currency==='$') collectedTotal = R2(totalLE/r.cash.USD);
-      else if (currency==='€') collectedTotal = R2(totalLE/r.cash.EUR);
-      else if (currency==='£') collectedTotal = R2(totalLE/r.cash.GBP);
+      // عرض أسعار الصرف المستخدمة
+      console.log('📊 أسعار الصرف المستخدمة:');
+      console.log('   كاش USD:', r.cash.USD);
+      console.log('   كاش EUR:', r.cash.EUR);
+      console.log('   كاش GBP:', r.cash.GBP);
+      console.log('   فيزا USD:', r.visa.USD);
+      console.log('   فيزا EUR:', r.visa.EUR);
+      console.log('   فيزا GBP:', r.visa.GBP);
+      console.log('   فيزا LE:', r.visa.LE);
+      
+      // تحويل كل العملات إلى LE أولاً
+      const totalLE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
+                      vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
+      
+      console.log('💰 totalLE (إجمالي بالجنيه):', totalLE.toFixed(2));
+      
+      // تحويل من LE إلى عملة الفاتورة
+      if (currency === '$') collectedTotal = R2(totalLE / r.cash.USD);
+      else if (currency === '€') collectedTotal = R2(totalLE / r.cash.EUR);
+      else if (currency === '£') collectedTotal = R2(totalLE / r.cash.GBP);
       else collectedTotal = R2(totalLE);
-    } else collectedTotal = cU+cE+cG+cL+vU+vE+vG+vL;
-  } else collectedTotal = cU+cE+cG+cL+vU+vE+vG+vL;
-
-  if (collectedTotal <= 0) { showAlert('الرجاء إدخال مبلغ تحصيل صحيح'); return; }
-
+      
+      console.log(`💰 التحويل: ${totalLE.toFixed(2)} LE → ${collectedTotal.toFixed(2)} ${currency}`);
+    } else {
+      // إذا لم يوجد سعر صرف، استخدم جمع مباشر
+      collectedTotal = cU + cE + cG + cL + vU + vE + vG + vL;
+      console.log('⚠️ لا يوجد سعر صرف للتاريخ:', activeDate);
+      console.log('💰 collectedTotal (جمع مباشر):', collectedTotal);
+    }
+  } else {
+    // إذا لم يوجد تاريخ، استخدم جمع مباشر
+    collectedTotal = cU + cE + cG + cL + vU + vE + vG + vL;
+    console.log('⚠️ لا يوجد تاريخ تنفيذ');
+    console.log('💰 collectedTotal (جمع مباشر - لا تاريخ):', collectedTotal);
+  }
+  
+  console.log('💰 collectedTotal النهائي:', collectedTotal);
+  
+  if (collectedTotal <= 0) { 
+    showAlert('الرجاء إدخال مبلغ تحصيل صحيح'); 
+    return; 
+  }
+  
   const notes = document.getElementById('collectionNotes')?.value || '';
   const transferred = document.getElementById('transferredToTreasury')?.value === 'Yes' ? 'Yes' : 'No';
   const paymentMethod = (cU+cE+cG+cL > 0 && vU+vE+vG+vL > 0) ? 'Mixed' : (cU+cE+cG+cL > 0 ? 'Cash' : 'Visa');
-  const collSel = document.getElementById('collectedBySelect')?.value || '';
-  let collectedById = currentUser?.id || '', collectedByName = currentUser?.name || '';
-  if (collSel) { const pts = collSel.split('|'); if (pts.length === 2) { collectedById = pts[0]; collectedByName = pts[1]; } }
-
+  
+  const collectedBySelect = document.getElementById('collectedBySelect')?.value || '';
+  let collectedById = currentUser?.id || '';
+  let collectedByName = currentUser?.name || '';
+  if (collectedBySelect) {
+    const parts = collectedBySelect.split('|');
+    if (parts.length === 2) {
+      collectedById = parts[0];
+      collectedByName = parts[1];
+    }
+  }
+  
   showPDF('جاري المعالجة...');
   try {
     const params = new URLSearchParams();
     params.set('action', 'createCollectionInvoice');
     params.set('parentVoucherNo', currentInvoice.voucherNo);
-    params.set('activeDate',  currentInvoice.activeDate || '');
-    params.set('salesId',     currentInvoice.salesId   || '');
-    params.set('time',        currentInvoice.time       || '');
-    params.set('trip',        currentInvoice.trip       || '');
-    params.set('hotel',       currentInvoice.hotel      || '');
-    params.set('roomNo',      currentInvoice.roomNo     || '');
-    params.set('nationality', currentInvoice.nationality|| '');
-    params.set('guestName',   currentInvoice.guestName  || '');
-    params.set('contactNo',   currentInvoice.contactNo  || '');
-    params.set('supplier',    currentInvoice.supplier   || '');
-    params.set('customer',    currentInvoice.customer   || '');
-    params.set('state',       currentInvoice.state      || 'pending');
+    params.set('activeDate', currentInvoice.activeDate || '');
+    params.set('salesId', currentInvoice.salesId || '');
+    params.set('time', currentInvoice.time || '');
+    params.set('trip', currentInvoice.trip || '');
+    params.set('hotel', currentInvoice.hotel || '');
+    params.set('roomNo', currentInvoice.roomNo || '');
+    params.set('nationality', currentInvoice.nationality || '');
+    params.set('guestName', currentInvoice.guestName || '');
+    params.set('contactNo', currentInvoice.contactNo || '');
+    params.set('supplier', currentInvoice.supplier || '');
+    params.set('customer', currentInvoice.customer || '');
+    params.set('state', currentInvoice.state || 'pending');
     params.set('invoiceCurrency', currentInvoice.invoiceCurrency || 'LE');
-    params.set('centerName',  currentInvoice.centerName || '');
-    params.set('branchName',  currentInvoice.branchName || '');
-    params.set('salesName',   currentInvoice.salesName  || '');
-    params.set('cashUSD', String(cU)); params.set('cashEUR', String(cE));
-    params.set('cashGBP', String(cG)); params.set('cashLE',  String(cL));
-    params.set('visaUSD', String(vU)); params.set('visaEUR', String(vE));
-    params.set('visaGBP', String(vG)); params.set('visaLE',  String(vL));
-    params.set('collectedTotal', String(collectedTotal));
-    params.set('discount', String(getCurrentDiscount()));
+    params.set('centerName', currentInvoice.centerName || '');
+    params.set('branchName', currentInvoice.branchName || '');
+    params.set('salesName', currentInvoice.salesName || '');
+    
+    // إرسال العملات الأصلية (بدون تحويل) للخلفية
+    params.set('cashUSD', cU.toString());
+    params.set('cashEUR', cE.toString());
+    params.set('cashGBP', cG.toString());
+    params.set('cashLE', cL.toString());
+    params.set('visaUSD', vU.toString());
+    params.set('visaEUR', vE.toString());
+    params.set('visaGBP', vG.toString());
+    params.set('visaLE', vL.toString());
+    
+    // إرسال المبلغ المحصل المحسوب بالواجهة (بعد التحويل باستخدام سعر الصرف)
+    params.set('collectedTotal', collectedTotal.toString());
+    
+    params.set('discount', (getCurrentDiscount()).toString());
     params.set('notes', notes);
     params.set('collectedBy', collectedById);
     params.set('collectedByName', collectedByName);
     params.set('paymentMethod', paymentMethod);
     params.set('transferredToTreasury', transferred);
-    params.set('rest', String(Math.max(0, getCurrentRestValue() - collectedTotal)));
-
-    const res = await fetch(GAS_URL + '?' + params.toString(), { redirect: 'follow' });
+    params.set('rest', (getCurrentRest() - collectedTotal).toString());
+    
+    const url = GAS_URL + '?' + params.toString();
+    console.log('📤 إرسال البيانات للخلفية:', {
+      cashUSD: cU, cashEUR: cE, cashGBP: cG, cashLE: cL,
+      visaUSD: vU, visaEUR: vE, visaGBP: vG, visaLE: vL,
+      collectedTotal: collectedTotal,
+      currency: currency,
+      rest: getCurrentRest() - collectedTotal
+    });
+    
+    const res = await fetch(url, { redirect: 'follow' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const result = await res.json();
+    
     hidePDF();
-    if (result?.success) {
-      showAlert(`✅ تم تحصيل ${collectedTotal.toFixed(2)} ${currency}\nرقم فاتورة التحصيل: ${result.voucherNo}\nالمحصل: ${collectedByName}`,
-        `<button class="btn btn-primary" onclick="location.reload()">تحديث</button><button class="btn btn-primary" onclick="goBack()">رجوع</button>`);
-    } else {
-      showAlert('❌ فشل التحصيل: ' + (result?.message || 'خطأ غير معروف'));
+    
+    if (result?.success) { 
+      showAlert(`✅ تم تحصيل ${collectedTotal.toFixed(2)} ${currency}\nرقم فاتورة التحصيل: ${result.voucherNo}\nالمحصل: ${collectedByName}`, 
+        `<button class="btn btn-primary" onclick="location.reload()">تحديث</button><button class="btn btn-primary" onclick="goBack()">رجوع</button>`); 
+    } else { 
+      showAlert('❌ فشل التحصيل: ' + (result?.message || 'خطأ غير معروف')); 
     }
-  } catch(err) { hidePDF(); console.error(err); showAlert('خطأ: ' + err.message); }
+  } catch(err) { 
+    hidePDF(); 
+    console.error('خطأ:', err);
+    showAlert('خطأ: ' + err.message); 
+  }
 }
 
 // ─── تحميل الفاتورة ──────────────────────────────────────
