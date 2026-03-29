@@ -234,16 +234,18 @@ async function getTotalPaymentsForInvoice(voucherNo) {
     const allData = await gas('getAllInvoices', { includeCollection: 'true' });
     if (!Array.isArray(allData)) return null;
 
+    // الفاتورة الأصلية (ليست تحصيل)
     const original = allData.find(r => r.voucherNo === voucherNo && r.receiptType !== 'Collection');
     if (!original) return null;
 
+    // فواتير التحصيل المرتبطة
     const collections = allData.filter(r =>
       r.receiptType === 'Collection' &&
       (r.parentVoucherNo === voucherNo || r.voucherNo.startsWith(voucherNo + '-C'))
     );
     console.log(`💰 فاتورة ${voucherNo}: أصلية + ${collections.length} تحصيل`);
 
-    // جمع العملات من الفاتورة الأصلية وفواتير التحصيل
+    // جمع العملات من الفاتورة الأصلية
     let totalCashUSD = Number(original.cashUSD) || 0;
     let totalCashEUR = Number(original.cashEUR) || 0;
     let totalCashGBP = Number(original.cashGBP) || 0;
@@ -253,6 +255,7 @@ async function getTotalPaymentsForInvoice(voucherNo) {
     let totalVisaGBP = Number(original.visaGBP) || 0;
     let totalVisaLE  = Number(original.visaLE)  || 0;
 
+    // إضافة العملات من فواتير التحصيل
     for (const coll of collections) {
       totalCashUSD += Number(coll.cashUSD) || 0;
       totalCashEUR += Number(coll.cashEUR) || 0;
@@ -269,7 +272,7 @@ async function getTotalPaymentsForInvoice(voucherNo) {
       totalVisaUSD, totalVisaEUR, totalVisaGBP, totalVisaLE
     });
 
-    // حساب المبلغ المدفوع باستخدام أسعار الصرف
+    // الحصول على عملة الفاتورة وتاريخ التنفيذ
     const currency = (original.invoiceCurrency || 'LE').trim();
     let activeDateStr = original.activeDate || '';
     if (activeDateStr instanceof Date) activeDateStr = formatDate(activeDateStr);
@@ -281,7 +284,7 @@ async function getTotalPaymentsForInvoice(voucherNo) {
       const raw = await getRate(activeDateInput);
       const r = rateFields(raw);
       if (r) {
-        // تحويل كل العملات إلى LE أولاً
+        // تحويل جميع العملات إلى LE باستخدام أسعار الصرف
         const totalLE = totalCashUSD * r.cash.USD +
                         totalCashEUR * r.cash.EUR +
                         totalCashGBP * r.cash.GBP +
@@ -292,7 +295,7 @@ async function getTotalPaymentsForInvoice(voucherNo) {
                         totalVisaLE * (r.visa.LE || 0.975);
         
         console.log('💰 totalLE =', totalLE.toFixed(2), '| عملة =', currency);
-        
+
         // تحويل من LE إلى عملة الفاتورة
         if (currency === '$') totalPaymentPrice = R2(totalLE / r.cash.USD);
         else if (currency === '€') totalPaymentPrice = R2(totalLE / r.cash.EUR);
@@ -301,12 +304,13 @@ async function getTotalPaymentsForInvoice(voucherNo) {
         
         console.log(`💰 التحويل: ${totalLE.toFixed(2)} LE → ${totalPaymentPrice.toFixed(2)} ${currency}`);
       } else {
-        // إذا لم يوجد سعر صرف، استخدم جمع مباشر (حل مؤقت)
+        // احتياطي: جمع مباشر (لا يفضل استخدامه)
         totalPaymentPrice = totalCashUSD + totalCashEUR + totalCashGBP + totalCashLE +
                            totalVisaUSD + totalVisaEUR + totalVisaGBP + totalVisaLE;
         console.log('⚠️ لا يوجد سعر صرف، استخدم جمع مباشر:', totalPaymentPrice);
       }
     } else {
+      // إذا لم يوجد تاريخ تنفيذ، استخدم جمع مباشر
       totalPaymentPrice = totalCashUSD + totalCashEUR + totalCashGBP + totalCashLE +
                          totalVisaUSD + totalVisaEUR + totalVisaGBP + totalVisaLE;
     }
@@ -327,7 +331,9 @@ async function getTotalPaymentsForInvoice(voucherNo) {
       visaEUR: totalVisaEUR,
       visaGBP: totalVisaGBP,
       visaLE: totalVisaLE,
-      rest, actualPrice, discount
+      rest,
+      actualPrice,
+      discount
     };
   } catch(e) {
     console.error('getTotalPaymentsForInvoice error:', e);
