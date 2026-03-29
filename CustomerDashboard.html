@@ -170,17 +170,14 @@ function gas(action, params={}) {
 function doLogout(){
   console.log('🔍 [Customer] بدء تسجيل الخروج');
   
-  // محاولة الحصول على رابط العودة من sessionStorage
   let returnUrl = sessionStorage.getItem('returnUrl');
   console.log('📦 [Customer] returnUrl من sessionStorage:', returnUrl);
   
-  // إذا لم يكن هناك returnUrl، حاول الحصول عليه من document.referrer
   if (!returnUrl && document.referrer) {
     returnUrl = document.referrer;
     console.log('📎 [Customer] returnUrl من referrer:', returnUrl);
   }
   
-  // إذا كان لا يزال فارغاً، استخدم الصفحة الافتراضية حسب نوع المستخدم
   if (!returnUrl) {
     const userType = loggedInUser?.type || 'Customer';
     const dashboardPage = DASHBOARDS[userType] || 'Dashboard.html';
@@ -188,59 +185,10 @@ function doLogout(){
     console.log('🏠 [Customer] returnUrl افتراضي:', returnUrl);
   }
   
-  // ⚠️ لا تقم بحذف currentUser هنا، فقط احذف returnUrl
-  // sessionStorage.removeItem('currentUser');  // <-- تعليق أو حذف هذا السطر
   sessionStorage.removeItem('returnUrl');
-  
   console.log('🗑️ [Customer] تم مسح returnUrl فقط');
   console.log('🔁 [Customer] التوجيه إلى:', returnUrl);
   
-  // التوجيه
-  location.href = returnUrl;
-}
-// ====================== تهيئة ======================
-document.addEventListener('DOMContentLoaded', async () => {
-  let ud = sessionStorage.getItem('currentUser');
-  if (!ud) { 
-    const p = new URLSearchParams(location.search).get('user'); 
-    if (p) { 
-      ud = decodeURIComponent(p); 
-      sessionStorage.setItem('currentUser', ud); 
-    } 
-  }
-  if (!ud) { location.href = 'index.html'; return; }
-  try { 
-    loggedInUser = JSON.parse(ud);
-    currentUser = loggedInUser;
-    console.log('👤 [Customer] المستخدم الحالي:', loggedInUser.name, loggedInUser.type);
-  } catch(e) { location.href = 'index.html'; return; }
-  
-  // التحقق من وجود returnUrl في sessionStorage
-  const storedReturnUrl = sessionStorage.getItem('returnUrl');
-  console.log('📥 [Customer] returnUrl عند التحميل:', storedReturnUrl);
-  
-  // حفظ رابط العودة إذا كان موجوداً من referrer ولم يكن مخزناً
-  if (!sessionStorage.getItem('returnUrl') && document.referrer) {
-    sessionStorage.setItem('returnUrl', document.referrer);
-    console.log('💾 [Customer] تم حفظ returnUrl من referrer:', document.referrer);
-  }
-  
-  // التحقق من وجود customerId في رابط الصفحة
-  const urlParams = new URLSearchParams(location.search);
-  const customerId = urlParams.get('customerId');
-  
-  if (customerId) {
-    viewingCustomer = { customerId: customerId };
-    console.log('🎯 [Customer] عرض العميل:', customerId);
-  }
-  
-  document.getElementById('userChip').textContent = loggedInUser.name || 'User';
-  await loadAll();
-});
-
-function goBackToDashboard(){
-  // العودة إلى الصفحة التي فتحت هذا الملف (الصفحة السابقة)
-  const returnUrl = sessionStorage.getItem('returnUrl') || 'index.html';
   location.href = returnUrl;
 }
 
@@ -249,6 +197,7 @@ function showAlert(msg,icon){
   document.getElementById('alertMsg').textContent=msg;
   document.getElementById('alertModal').classList.add('open');
 }
+
 function closeAlert(){
   document.getElementById('alertModal').classList.remove('open');
 }
@@ -280,6 +229,83 @@ function parseDateToObj(v){
   if(m){ const d=new Date(+m[3],MN[m[2]],+m[1]); d.setHours(0,0,0,0); return d; }
   try{ const d=new Date(s); if(!isNaN(d)) return d; }catch(e){}
   return null;
+}
+
+// ====================== تحديث البيانات بدون إعادة تحميل ======================
+async function refreshData() {
+  try {
+    if (!customerAccount) return false;
+    
+    const sheetName = customerAccount.customerName + '_' + customerAccount.category + '_' + customerAccount.customerType;
+    
+    const refreshBtn = document.getElementById('refreshDataBtn');
+    if (refreshBtn) {
+      refreshBtn.innerHTML = '⏳ جاري...';
+      refreshBtn.disabled = true;
+    }
+    
+    const res = await gas('getAccountSheetData', { sheetName });
+    if (res?.success && Array.isArray(res.data)) {
+      sheetData = res.data;
+      console.log('✅ تم تحديث البيانات بنجاح');
+    }
+    
+    const startDate = document.getElementById('fStart')?.value || '';
+    const endDate = document.getElementById('fEnd')?.value || '';
+    renderPage(startDate, endDate);
+    
+    return true;
+  } catch(e) {
+    console.error('❌ خطأ في تحديث البيانات:', e);
+    showAlert('خطأ في تحديث البيانات: ' + e.message, '❌');
+    return false;
+  } finally {
+    const refreshBtn = document.getElementById('refreshDataBtn');
+    if (refreshBtn) {
+      refreshBtn.innerHTML = '🔄 تحديث';
+      refreshBtn.disabled = false;
+    }
+  }
+}
+
+async function updateTotalsAndRefresh() {
+  try {
+    const activeTab = document.querySelector('.tab-btn.active');
+    let originalText = '';
+    if (activeTab) {
+      originalText = activeTab.textContent;
+      activeTab.textContent = '⏳ جاري التحديث...';
+      activeTab.disabled = true;
+    }
+    
+    const totalsBtn = document.getElementById('updateTotalsBtn');
+    if (totalsBtn) {
+      totalsBtn.innerHTML = '⏳ جاري...';
+      totalsBtn.disabled = true;
+    }
+    
+    const totalsResult = await gas('writeDailyTotalsToSheet', { customerId: customerAccount.customerId });
+    console.log('📊 نتيجة تحديث الإجماليات:', totalsResult);
+    
+    await refreshData();
+    
+    if (activeTab) {
+      activeTab.textContent = originalText;
+      activeTab.disabled = false;
+    }
+    
+    return totalsResult;
+  } catch(e) {
+    console.error('❌ خطأ:', e);
+    showAlert('خطأ: ' + e.message, '❌');
+    return null;
+  } finally {
+    const totalsBtn = document.getElementById('updateTotalsBtn');
+    if (totalsBtn) {
+      totalsBtn.innerHTML = '🔄 تحديث الإجماليات';
+      totalsBtn.disabled = false;
+    }
+  }
 }
 
 // ====================== تحليل هيكل الشيت ======================
@@ -386,7 +412,7 @@ function renderPricesTab(rows) {
           <tr class="row-trip">${trTrip}</tr>
           <tr class="row-item">${trItem}</tr>
         </thead>
-        <tbody>${tbody||'<tr><td colspan="100" class="no-data">لا توجد بيانات</td></tr>'}</tbody>
+        <tbody>${tbody||'<tr><td colspan="100" class="no-data">لا توجد بيانات</td></td>'}</tbody>
       </table>
     </div>`;
 }
@@ -455,7 +481,7 @@ function renderTotalsTab(rows) {
     grandTds += `<td style="background:#1a3260;color:var(--gold);font-size:13px"><strong>${v.toLocaleString()} ${cur}</strong></td>`;
   }
   const emptyCell = '<td style="color:#94a3b8">-</td>';
-  tbody += `<tr class="total-row"><td>الإجمالي الكلي</td>${emptyCell.repeat(totalCols)}${grandTds}</tr>`;
+  tbody += `<tr class="total-row"><td>الإجمالي الكلي<\/td>${emptyCell.repeat(totalCols)}${grandTds}</tr>`;
 
   return `
     <div class="table-wrap">
@@ -551,9 +577,8 @@ function renderPage(startISO, endISO) {
         </button>
       ` : ''}
       <button class="edit-btn" style="background:var(--green);color:white;" onclick="addNewInvoice()">
-    📋 إضافة فاتورة جديدة
-  </button>
-</div>
+        📋 إضافة فاتورة جديدة
+      </button>
     </div>
   ` : '';
 
@@ -578,7 +603,12 @@ function renderPage(startISO, endISO) {
         <button class="tab-btn" onclick="switchTab('summary',event)">📊 إجمالي العملات</button>
       </div>
       <div>
-        <button class="btn btn-gray" onclick="loadAll()">🔄 تحديث</button>
+        <button class="btn btn-navy" id="updateTotalsBtn" onclick="updateTotalsAndRefresh()" style="background:var(--navy);color:var(--gold);">
+          🔄 تحديث الإجماليات
+        </button>
+        <button class="btn btn-gray" id="refreshDataBtn" onclick="refreshData()" style="margin-right:8px">
+          🔄 تحديث
+        </button>
       </div>
     </div>
     <hr style="border:none;border-top:2px solid var(--border);margin-bottom:16px;">
@@ -610,13 +640,43 @@ function applyFilter(){
   const e=document.getElementById('fEnd')?.value||'';
   renderPage(s,e);
 }
-function resetFilter(){ renderPage('',''); }
 
-function switchTab(name,event){
-  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+function resetFilter(){ 
+  document.getElementById('fStart').value = '';
+  document.getElementById('fEnd').value = '';
+  renderPage('', ''); 
+}
+
+async function switchTab(name, event){
+  const btns = document.querySelectorAll('.tab-btn');
+  btns.forEach(b => b.classList.remove('active'));
   if(event?.target) event.target.classList.add('active');
-  ['prices','totals','summary'].forEach(t=>{
-    const el=document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1));
+  
+  // قبل عرض التبويب، قم بتحديث الإجماليات إذا كان التبويب هو totals أو summary
+  if (name === 'totals' || name === 'summary') {
+    const targetBtn = event?.target;
+    const originalText = targetBtn ? targetBtn.textContent : '';
+    if (targetBtn) {
+      targetBtn.textContent = '⏳ جاري التحديث...';
+      targetBtn.disabled = true;
+    }
+    
+    try {
+      const totalsResult = await gas('writeDailyTotalsToSheet', { customerId: customerAccount.customerId });
+      console.log('📊 تحديث الإجماليات:', totalsResult);
+      await refreshData();
+    } catch(e) {
+      console.error('خطأ في تحديث الإجماليات:', e);
+    } finally {
+      if (targetBtn) {
+        targetBtn.textContent = originalText;
+        targetBtn.disabled = false;
+      }
+    }
+  }
+  
+  ['prices','totals','summary'].forEach(t => {
+    const el = document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1));
     if(el) el.classList[t===name?'add':'remove']('active');
   });
 }
@@ -626,39 +686,34 @@ function openEditCustomer(){
     showAlert('لا يمكن تعديل بيانات هذا العميل', '⚠️');
     return;
   }
-  // فتح صفحة إدارة العملاء مع تمرير معرف العميل للتحرير المباشر
   const userParam = encodeURIComponent(JSON.stringify(loggedInUser));
   location.href = `ManageSupplierCustomers.html?customerId=${customerAccount.customerId}&user=${userParam}`;
 }
+
 function addNewInvoice() {
   if (!customerAccount || !customerAccount.customerName) {
     showAlert('لا يمكن إضافة فاتورة لهذا العميل', '⚠️');
     return;
   }
   
-  // حفظ رابط العودة (الصفحة الحالية)
   const returnUrl = window.location.href;
   sessionStorage.setItem('returnUrl', returnUrl);
   
-  // ترميز بيانات المستخدم الحالي
   const userParam = encodeURIComponent(JSON.stringify(loggedInUser));
   
-  // التوجيه إلى صفحة إضافة الفاتورة مع تمرير اسم العميل
   location.href = `CustomerInvoice.html?customer=${encodeURIComponent(customerAccount.customerName)}&returnUrl=${encodeURIComponent(returnUrl)}&user=${userParam}`;
 }
+
 // ====================== تحميل البيانات ======================
 async function loadAll(){
   document.getElementById('mainContent').innerHTML='<div class="loader"><div class="spinner"></div>جاري جلب الحساب...</div>';
   try{
-    // 1. جلب حساب العميل المطلوب عرضه
     const allAcc = await gas('getAllSuppliersCustomers');
     const accounts = Array.isArray(allAcc) ? allAcc : [];
     
-    // تحديد العميل المطلوب عرضه
     if (viewingCustomer && viewingCustomer.customerId) {
       customerAccount = accounts.find(a => a.customerId === viewingCustomer.customerId);
     } else if (loggedInUser?.type === 'Customer') {
-      // إذا كان المستخدم الحالي عميلاً، اعرض حسابه الخاص
       customerAccount = accounts.find(a => 
         a.customerType === 'Customer' && 
         (a.loginEmail === loggedInUser?.email || a.customerName === loggedInUser?.name)
@@ -670,7 +725,6 @@ async function loadAll(){
       return;
     }
 
-    // 2. جلب بيانات شيت الحساب
     const sheetName = customerAccount.customerName + '_' + customerAccount.category + '_' + customerAccount.customerType;
     document.getElementById('mainContent').innerHTML=`<div class="loader"><div class="spinner"></div>جاري جلب شيت "${sheetName}"...</div>`;
 
@@ -681,12 +735,9 @@ async function loadAll(){
     }
     sheetData = res.data;
 
-    // 3. كتابة الإجماليات في الشيت (background)
-    gas('writeDailyTotalsToSheet', {customerId: customerAccount.customerId})
-      .then(r => console.log('writeDailyTotals:', r?.updated, 'rows'))
-      .catch(e => console.warn('writeDailyTotals:', e.message));
+    const totalsResult = await gas('writeDailyTotalsToSheet', { customerId: customerAccount.customerId });
+    console.log('📊 نتيجة تحديث الإجماليات:', totalsResult);
 
-    // 4. تصيير
     renderPage('','');
 
   } catch(e){
@@ -695,7 +746,7 @@ async function loadAll(){
   }
 }
 
-// ====================== تهيئة ======================
+// ====================== تهيئة الصفحة ======================
 document.addEventListener('DOMContentLoaded', async () => {
   let ud = sessionStorage.getItem('currentUser');
   if (!ud) { 
@@ -711,12 +762,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     currentUser = loggedInUser;
   } catch(e) { location.href = 'index.html'; return; }
   
-  // حفظ رابط العودة (الصفحة التي فتحت هذا الملف)
   if (!sessionStorage.getItem('returnUrl') && document.referrer) {
     sessionStorage.setItem('returnUrl', document.referrer);
   }
   
-  // التحقق من وجود customerId في رابط الصفحة
   const urlParams = new URLSearchParams(location.search);
   const customerId = urlParams.get('customerId');
   
@@ -728,6 +777,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadAll();
 });
 
+// ====================== دوال عامة ======================
 window.doLogout = doLogout;
 window.closeAlert = closeAlert;
 window.switchTab = switchTab;
@@ -736,6 +786,9 @@ window.resetFilter = resetFilter;
 window.loadAll = loadAll;
 window.openEditCustomer = openEditCustomer;
 window.goBackToDashboard = goBackToDashboard;
+window.addNewInvoice = addNewInvoice;
+window.refreshData = refreshData;
+window.updateTotalsAndRefresh = updateTotalsAndRefresh;
 </script>
 </body>
 </html>
