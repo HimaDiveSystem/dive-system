@@ -7,7 +7,6 @@
   <title>Edit Invoice | تعديل الفاتورة</title>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <style>
-    /* نفس الـ CSS السابق - لم يتغير */
     * { margin: 0; padding: 0; box-sizing: border-box; }
     :root {
       --primary: #0f1f3d; --primary-dark: #1a3260; --accent: #f5c842; --accent-dark: #e6b800;
@@ -117,19 +116,43 @@ const DASH = { Admin: 'Dashboard.html', Owner: 'OwnerDashboard.html', Sales: 'Sa
 let currentUser = null, currentInvoice = null, originalInvoice = null, openFrom = 'today';
 let tripDefinitions = [], allSuppliersCustomers = [], allEmployees = [], exRatesCache = {};
 
+// ─── helpers ───────────────────────────────────────────────
 function esc(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function R2(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
 function dV(v) { const n = Number(v); return (n === 0 || isNaN(n)) ? '' : n; }
 function formatDate(d) { return `${String(d.getDate()).padStart(2,'0')}/${MONTHS[d.getMonth()]}/${d.getFullYear()}`; }
-function parseDate(str) { if (!str) return null; const p = str.split('/'); if (p.length === 3) { const mi = MONTHS.findIndex(m => m.toLowerCase() === p[1].toLowerCase()); if (mi !== -1) return new Date(+p[2], mi, +p[0]); } return null; }
-function dateToInput(s) { const d = parseDate(s); if (!d) return ''; return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
-function timeToInput(t) { if (!t) return ''; const m = String(t).match(/(\d{1,2}):(\d{2})/); return m ? `${m[1].padStart(2,'0')}:${m[2]}` : String(t).substring(0,5); }
-
-function showAlert(msg, btns = null) { document.getElementById('alertMsg').textContent = msg; if (btns) document.getElementById('alertBtns').innerHTML = btns; else document.getElementById('alertBtns').innerHTML = '<button class="btn btn-primary" onclick="closeAlert()">موافق</button>'; document.getElementById('alertModal').classList.add('open'); }
+function parseDate(str) {
+  if (!str) return null;
+  const p = str.split('/');
+  if (p.length === 3) {
+    const mi = MONTHS.findIndex(m => m.toLowerCase() === p[1].toLowerCase());
+    if (mi !== -1) return new Date(+p[2], mi, +p[0]);
+  }
+  return null;
+}
+function dateToInput(s) {
+  const d = parseDate(s);
+  if (!d) return '';
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function timeToInput(t) {
+  if (!t) return '';
+  const m = String(t).match(/(\d{1,2}):(\d{2})/);
+  return m ? `${m[1].padStart(2,'0')}:${m[2]}` : String(t).substring(0,5);
+}
+function showAlert(msg, btns = null) {
+  document.getElementById('alertMsg').textContent = msg;
+  document.getElementById('alertBtns').innerHTML = btns || '<button class="btn btn-primary" onclick="closeAlert()">موافق</button>';
+  document.getElementById('alertModal').classList.add('open');
+}
 function closeAlert() { document.getElementById('alertModal').classList.remove('open'); }
 function showPDF(m) { document.getElementById('pdfMsg').textContent = m; document.getElementById('pdfOverlay').classList.add('show'); }
 function hidePDF() { document.getElementById('pdfOverlay').classList.remove('show'); }
-function goBack() { const returnUrl = sessionStorage.getItem('returnUrl'); if (returnUrl) location.href = returnUrl; else location.href = DASH[currentUser?.type] || 'Dashboard.html'; }
+function goBack() {
+  const returnUrl = sessionStorage.getItem('returnUrl');
+  if (returnUrl) location.href = returnUrl;
+  else location.href = DASH[currentUser?.type] || 'Dashboard.html';
+}
 
 async function gas(action, params = {}) {
   const url = new URL(GAS_URL);
@@ -141,257 +164,185 @@ async function gas(action, params = {}) {
 }
 
 async function loadSuppliersAndTrips() {
-  try { 
+  try {
     const [suppliers, trips, employees] = await Promise.all([
-      gas('getAllSuppliersCustomers'), 
+      gas('getAllSuppliersCustomers'),
       gas('getAllTrips'),
       gas('getAllEmployees')
-    ]); 
-    allSuppliersCustomers = Array.isArray(suppliers) ? suppliers : []; 
+    ]);
+    allSuppliersCustomers = Array.isArray(suppliers) ? suppliers : [];
     tripDefinitions = Array.isArray(trips) ? trips : [];
     allEmployees = Array.isArray(employees) ? employees : [];
-  } catch(e) { console.warn(e); }
+  } catch(e) { console.warn('loadSuppliersAndTrips:', e); }
 }
-function getTripCategory(tripName) { const trip = tripDefinitions.find(t => t.name === tripName); return trip?.category || ''; }
+function getTripCategory(tripName) { return (tripDefinitions.find(t => t.name === tripName) || {}).category || ''; }
 function getCustomersByCategory(cat) { if (!cat) return []; return allSuppliersCustomers.filter(c => c.customerType === 'Customer' && c.category === cat && c.status === true); }
 function getSuppliersByCategory(cat) { if (!cat) return []; return allSuppliersCustomers.filter(s => s.customerType === 'Supplier' && s.category === cat && s.status === true); }
 
 async function getRate(dateStr) {
   if (!dateStr) return null;
   if (exRatesCache[dateStr]) return exRatesCache[dateStr];
-  try { const r = await gas('getExchangeRate', { dateStr }); if (r) { exRatesCache[dateStr] = r; return r; } } catch(e) {}
+  try {
+    const r = await gas('getExchangeRate', { dateStr });
+    if (r) { exRatesCache[dateStr] = r; return r; }
+  } catch(e) {}
   return null;
 }
 function rateFields(r) {
   if (!r) return null;
   if (r.cash) return r;
-  return { cash: { USD: +r.sUSD || 47.5, EUR: +r.sEUR || 50.25, GBP: +r.sGBP || 60 }, visa: { USD: +r.sVUSD || 46.3, EUR: +r.sVEUR || 49, GBP: +r.sVGBP || 58.5, LE: +r.sVLE || 0.975 } };
+  return {
+    cash: { USD: +r.sUSD || 47.5, EUR: +r.sEUR || 50.25, GBP: +r.sGBP || 60 },
+    visa: { USD: +r.sVUSD || 46.3, EUR: +r.sVEUR || 49, GBP: +r.sVGBP || 58.5, LE: +r.sVLE || 0.975 }
+  };
 }
-function directPaid(cur, cU, cE, cG, cL, vU, vE, vG, vL) { if (cur === '$') return cU + vU; if (cur === '€') return cE + vE; if (cur === '£') return cG + vG; return cL + vL; }
+function directPaid(cur, cU, cE, cG, cL, vU, vE, vG, vL) {
+  if (cur === '$') return cU + vU;
+  if (cur === '€') return cE + vE;
+  if (cur === '£') return cG + vG;
+  return cL + vL;
+}
 
+// ─── حساب إجمالي بنود الرحلة من الجدول ──────────────────
 function calculateTotalFromItems() {
   let total = 0;
   for (let i = 0; i < 20; i++) {
-    const totalEl = document.getElementById(`total_${i}`);
-    if (totalEl) total += parseFloat(totalEl.value) || 0;
+    const el = document.getElementById(`total_${i}`);
+    if (el) total += parseFloat(el.value) || 0;
   }
   return total;
 }
+function getCurrentDiscount() { return parseFloat(document.getElementById('discount')?.value) || 0; }
 
-// دالة لجمع جميع المدفوعات للفاتورة (الأصلية + فواتير التحصيل)
+// ─── جمع كل مدفوعات فاتورة (الأصل + التحصيلات) ────────────
+// يعتمد على getAllInvoices بدلاً من getInvoiceByVoucher لأن
+// response الأخيرة يستخدم أسماء الأعمدة الإنجليزية المحوّلة
 async function getTotalPaymentsForInvoice(voucherNo) {
   try {
-    // استخدام دالة getInvoiceByVoucher لجلب الفاتورة الأصلية
-    const originalResult = await gas('getInvoiceByVoucher', { voucherNo: voucherNo });
-    if (!originalResult || !originalResult.success) {
-      console.log('⚠️ لم يتم العثور على الفاتورة:', voucherNo);
+    // نجلب كل الفواتير (شاملة فواتير التحصيل)
+    const allData = await gas('getAllInvoices', { includeCollection: 'true' });
+    if (!Array.isArray(allData)) {
+      console.warn('getAllInvoices لم يُعد مصفوفة');
       return null;
     }
-    const original = originalResult.invoice;
-    
-    console.log('💰 الفاتورة الأصلية - voucherNo:', original.VoucherNo || original.voucherNo);
-    
-    // استخدام الأسماء الصحيحة للأعمدة
-    const cashUSD = original['$'] || 0;
-    const cashEUR = original['€'] || 0;
-    const cashGBP = original['£'] || 0;
-    const cashLE = original['LE'] || 0;
-    const visaUSD = original['Visa$'] || 0;
-    const visaEUR = original['Visa€'] || 0;
-    const visaGBP = original['Visa£'] || 0;
-    const visaLE = original['VisaLE'] || 0;
-    
-    console.log('💰 الفاتورة الأصلية - cashEUR:', cashEUR);
-    
-    // بدء المجاميع
-    let totalCashUSD = cashUSD;
-    let totalCashEUR = cashEUR;
-    let totalCashGBP = cashGBP;
-    let totalCashLE = cashLE;
-    let totalVisaUSD = visaUSD;
-    let totalVisaEUR = visaEUR;
-    let totalVisaGBP = visaGBP;
-    let totalVisaLE = visaLE;
-    
-    // جلب فواتير التحصيل
-    const allInvoices = await gas('getAllInvoices', { includeCollection: true });
-    if (Array.isArray(allInvoices)) {
-      const collectionInvoices = allInvoices.filter(inv => {
-        return inv.ParentVoucherNo === voucherNo || (inv.VoucherNo && inv.VoucherNo.startsWith(voucherNo + '-C'));
-      });
-      
-      console.log('💰 عدد فواتير التحصيل:', collectionInvoices.length);
-      
-      for (const coll of collectionInvoices) {
-        totalCashUSD += (coll['$'] || 0);
-        totalCashEUR += (coll['€'] || 0);
-        totalCashGBP += (coll['£'] || 0);
-        totalCashLE += (coll['LE'] || 0);
-        totalVisaUSD += (coll['Visa$'] || 0);
-        totalVisaEUR += (coll['Visa€'] || 0);
-        totalVisaGBP += (coll['Visa£'] || 0);
-        totalVisaLE += (coll['VisaLE'] || 0);
-      }
+
+    // الفاتورة الأصلية
+    const original = allData.find(r => r.voucherNo === voucherNo && r.receiptType !== 'Collection');
+    if (!original) {
+      console.warn('لم يتم العثور على الفاتورة الأصلية:', voucherNo);
+      return null;
     }
-    
-    console.log('💰 بعد الجمع - totalCashEUR:', totalCashEUR);
-    
-    // حساب المبلغ المدفوع باستخدام أسعار الصرف
-    const currency = original['InvoiceCurrency '] || original.invoiceCurrency || 'LE';
-    const activeDate = original.ActiveDate || original.activeDate;
+
+    // فواتير التحصيل المرتبطة: parentVoucherNo = voucherNo  أو  voucherNo يبدأ بـ voucherNo-C
+    const collections = allData.filter(r =>
+      r.receiptType === 'Collection' &&
+      (r.parentVoucherNo === voucherNo || r.voucherNo.startsWith(voucherNo + '-C'))
+    );
+    console.log(`💰 فاتورة ${voucherNo}: أصلية + ${collections.length} تحصيل`);
+
+    // ── جمع مدفوعات الفاتورة الأصلية ──
+    let totalCashUSD = Number(original.cashUSD) || 0;
+    let totalCashEUR = Number(original.cashEUR) || 0;
+    let totalCashGBP = Number(original.cashGBP) || 0;
+    let totalCashLE  = Number(original.cashLE)  || 0;
+    let totalVisaUSD = Number(original.visaUSD) || 0;
+    let totalVisaEUR = Number(original.visaEUR) || 0;
+    let totalVisaGBP = Number(original.visaGBP) || 0;
+    let totalVisaLE  = Number(original.visaLE)  || 0;
+
+    // ── جمع مدفوعات فواتير التحصيل ──
+    for (const coll of collections) {
+      totalCashUSD += Number(coll.cashUSD) || 0;
+      totalCashEUR += Number(coll.cashEUR) || 0;
+      totalCashGBP += Number(coll.cashGBP) || 0;
+      totalCashLE  += Number(coll.cashLE)  || 0;
+      totalVisaUSD += Number(coll.visaUSD) || 0;
+      totalVisaEUR += Number(coll.visaEUR) || 0;
+      totalVisaGBP += Number(coll.visaGBP) || 0;
+      totalVisaLE  += Number(coll.visaLE)  || 0;
+    }
+
+    console.log('💰 إجمالي المدفوعات بعد الجمع:', {
+      totalCashUSD, totalCashEUR, totalCashGBP, totalCashLE,
+      totalVisaUSD, totalVisaEUR, totalVisaGBP, totalVisaLE
+    });
+
+    // ── تحويل إلى عملة الفاتورة ──
+    const currency = (original.invoiceCurrency || 'LE').trim();
+    // تاريخ التنفيذ — قد يكون Date object أو نص
+    let activeDateStr = original.activeDate || '';
+    if (activeDateStr instanceof Date) activeDateStr = formatDate(activeDateStr);
+    // حوّله لصيغة YYYY-MM-DD لاستخدامه في getRate
+    const activeDateInput = dateToInput(activeDateStr) || activeDateStr;
+
     let totalPaymentPrice = 0;
-    
-    if (activeDate) {
-      const raw = await getRate(activeDate);
+    if (activeDateInput) {
+      const raw = await getRate(activeDateInput);
       const r = rateFields(raw);
       if (r) {
-        const totalLE = totalCashUSD * r.cash.USD + totalCashEUR * r.cash.EUR + totalCashGBP * r.cash.GBP + totalCashLE +
-                        totalVisaUSD * r.visa.USD + totalVisaEUR * r.visa.EUR + totalVisaGBP * r.visa.GBP + totalVisaLE * (r.visa.LE || 0.975);
+        const totalLE = totalCashUSD * r.cash.USD
+                      + totalCashEUR * r.cash.EUR
+                      + totalCashGBP * r.cash.GBP
+                      + totalCashLE
+                      + totalVisaUSD * r.visa.USD
+                      + totalVisaEUR * r.visa.EUR
+                      + totalVisaGBP * r.visa.GBP
+                      + totalVisaLE  * (r.visa.LE || 0.975);
+        console.log('💰 totalLE =', totalLE.toFixed(2), '| عملة =', currency);
         if (currency === '$') totalPaymentPrice = R2(totalLE / r.cash.USD);
         else if (currency === '€') totalPaymentPrice = R2(totalLE / r.cash.EUR);
         else if (currency === '£') totalPaymentPrice = R2(totalLE / r.cash.GBP);
         else totalPaymentPrice = R2(totalLE);
       } else {
-        totalPaymentPrice = totalCashUSD + totalCashEUR + totalCashGBP + totalCashLE + totalVisaUSD + totalVisaEUR + totalVisaGBP + totalVisaLE;
+        totalPaymentPrice = R2(totalCashUSD + totalCashEUR + totalCashGBP + totalCashLE
+                             + totalVisaUSD + totalVisaEUR + totalVisaGBP + totalVisaLE);
       }
     } else {
-      totalPaymentPrice = totalCashUSD + totalCashEUR + totalCashGBP + totalCashLE + totalVisaUSD + totalVisaEUR + totalVisaGBP + totalVisaLE;
+      totalPaymentPrice = R2(totalCashUSD + totalCashEUR + totalCashGBP + totalCashLE
+                           + totalVisaUSD + totalVisaEUR + totalVisaGBP + totalVisaLE);
     }
-    
-    const actualPrice = original.ActualPrice || original.actualPrice || 0;
-    const discount = original['Discount '] || original.discount || 0;
-    const rest = actualPrice - discount - totalPaymentPrice;
-    
-    console.log('💰 النتائج النهائية - totalPaymentPrice:', totalPaymentPrice, 'rest:', rest);
-    
+
+    const actualPrice = Number(original.actualPrice) || 0;
+    const discount    = Number(original.discount)    || 0;
+    const rest        = Math.max(0, R2(actualPrice - discount - totalPaymentPrice));
+
+    console.log('💰 النتيجة النهائية:', { actualPrice, discount, totalPaymentPrice, rest, currency });
+
     return {
       paymentPrice: totalPaymentPrice,
-      cashUSD: totalCashUSD,
-      cashEUR: totalCashEUR,
-      cashGBP: totalCashGBP,
-      cashLE: totalCashLE,
-      visaUSD: totalVisaUSD,
-      visaEUR: totalVisaEUR,
-      visaGBP: totalVisaGBP,
-      visaLE: totalVisaLE,
-      rest: rest > 0 ? rest : 0,
-      actualPrice: actualPrice,
-      discount: discount
+      cashUSD: totalCashUSD, cashEUR: totalCashEUR, cashGBP: totalCashGBP, cashLE: totalCashLE,
+      visaUSD: totalVisaUSD, visaEUR: totalVisaEUR, visaGBP: totalVisaGBP, visaLE: totalVisaLE,
+      rest, actualPrice, discount
     };
   } catch(e) {
-    console.error('getTotalPaymentsForInvoice error:', e);
+    console.error('getTotalPaymentsForInvoice:', e);
     return null;
   }
 }
-  // دالة لجلب فواتير التحصيل المرتبطة برقم فاتورة معين
-function getAllInvoices(includeCollection = false) {
-  try {
-    const s = SpreadsheetApp.openById(SHEET_ID).getSheetByName("Invoices");
-    if (!s) return [];
-    
-    const raw = s.getDataRange().getValues();
-    if (raw.length < 2) return [];
-    
-    let rows = raw.slice(1);
-    
-    // تصفية الفواتير التي تبدأ بـ INV
-    rows = rows.filter(row => {
-      const voucherNo = row[1] ? row[1].toString().trim() : '';
-      return voucherNo.startsWith('INV');
-    });
-    
-    const result = rows.map(row => {
-      return {
-        rest: Number(row[0]) || 0,
-        voucherNo: String(row[1] || ""),
-        issueDate: row[2] ? row[2].toString() : "",
-        activeDate: row[3] ? row[3].toString() : "",
-        salesId: String(row[4] || ""),
-        time: String(row[5] || ""),
-        trip: String(row[6] || ""),
-        cashUSD: Number(row[17]) || 0,
-        cashEUR: Number(row[18]) || 0,
-        cashGBP: Number(row[19]) || 0,
-        cashLE: Number(row[20]) || 0,
-        visaUSD: Number(row[21]) || 0,
-        visaEUR: Number(row[22]) || 0,
-        visaGBP: Number(row[23]) || 0,
-        visaLE: Number(row[24]) || 0,
-        hotel: String(row[25] || ""),
-        roomNo: String(row[26] || ""),
-        nationality: String(row[27] || ""),
-        guestName: String(row[28] || ""),
-        contactNo: String(row[29] || ""),
-        notes: String(row[30] || ""),
-        supplier: String(row[31] || ""),
-        customer: String(row[32] || ""),
-        state: String(row[33] || ""),
-        actualPrice: Number(row[34]) || 0,
-        paymentPrice: Number(row[35]) || 0,
-        invoiceCurrency: String(row[41] || ""),
-        centerName: String(row[43] || ""),
-        branchName: String(row[44] || ""),
-        salesName: String(row[45] || ""),
-        discount: Number(row[46]) || 0,
-        adultCount: Number(row[47]) || 0,
-        childCount: Number(row[48]) || 0,
-        infantCount: Number(row[49]) || 0,
-        activitiesText: String(row[50] || ""),
-        receiptType: String(row[55] || ""),
-        parentVoucherNo: String(row[56] || ""),
-        collectionNumber: Number(row[57]) || 0,
-        collectedBy: String(row[58] || ""),
-        collectedByName: String(row[59] || ""),
-        collectionDate: String(row[60] || ""),
-        paymentMethod: String(row[61] || ""),
-        transferredToTreasury: String(row[62] || "")
-      };
-    });
-    
-    if (!includeCollection) {
-      return result.filter(r => r.receiptType !== 'Collection');
-    }
-    return result;
-  } catch(e) {
-    console.error('❌ getAllInvoices error:', e);
-    return [];
-  }
-}
-function getCurrentDiscount() {
-  return parseFloat(document.getElementById('discount')?.value) || 0;
-}
 
-function getCurrentRest() {
-  const actualPrice = calculateTotalFromItems() > 0 ? calculateTotalFromItems() : (currentInvoice?.actualPrice || 0);
-  const discount = getCurrentDiscount();
-  const paid = parseFloat(document.getElementById('displayPaymentPrice')?.textContent) || 0;
-  return actualPrice - discount - paid;
-}
-
+// ─── تحديث الإجماليات في الفورم ──────────────────────────
 async function updateTotals() {
-  const currency = document.getElementById('invoiceCurrency')?.value;
-  const dateStr = document.getElementById('activeDate')?.value;
-  
+  const currency   = document.getElementById('invoiceCurrency')?.value;
+  const dateStr    = document.getElementById('activeDate')?.value;
   const actualFromItems = calculateTotalFromItems();
   const actualPrice = actualFromItems > 0 ? actualFromItems : (currentInvoice?.actualPrice || 0);
-  
   const disc = getCurrentDiscount();
   const cU = parseFloat(document.getElementById('cashUSD')?.value) || 0;
   const cE = parseFloat(document.getElementById('cashEUR')?.value) || 0;
   const cG = parseFloat(document.getElementById('cashGBP')?.value) || 0;
-  const cL = parseFloat(document.getElementById('cashLE')?.value) || 0;
+  const cL = parseFloat(document.getElementById('cashLE')?.value)  || 0;
   const vU = parseFloat(document.getElementById('visaUSD')?.value) || 0;
   const vE = parseFloat(document.getElementById('visaEUR')?.value) || 0;
   const vG = parseFloat(document.getElementById('visaGBP')?.value) || 0;
-  const vL = parseFloat(document.getElementById('visaLE')?.value) || 0;
-  
+  const vL = parseFloat(document.getElementById('visaLE')?.value)  || 0;
+
   let paid = 0;
   if (dateStr) {
     const raw = await getRate(dateStr);
-    const r = rateFields(raw);
+    const r   = rateFields(raw);
     if (r) {
-      const LE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
-                 vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
+      const LE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL
+               + vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
       if (currency === '$') paid = R2(LE / r.cash.USD);
       else if (currency === '€') paid = R2(LE / r.cash.EUR);
       else if (currency === '£') paid = R2(LE / r.cash.GBP);
@@ -402,55 +353,58 @@ async function updateTotals() {
   } else {
     paid = directPaid(currency, cU, cE, cG, cL, vU, vE, vG, vL);
   }
-  
+
   const rest = R2(actualPrice - disc - paid);
-  
-  const actualPriceEl = document.getElementById('displayActualPrice');
-  const paymentPriceEl = document.getElementById('displayPaymentPrice');
-  const restEl = document.getElementById('displayRest');
-  
-  if (actualPriceEl) actualPriceEl.textContent = actualPrice.toFixed(2);
-  if (paymentPriceEl) paymentPriceEl.textContent = paid.toFixed(2);
-  if (restEl) restEl.textContent = rest.toFixed(2);
-}
-  
-function updateItemTotal(idx, price) { 
-  const qty = parseFloat(document.getElementById(`qty_${idx}`)?.value) || 0; 
-  const tot = document.getElementById(`total_${idx}`); 
-  if (tot) tot.value = (qty * price).toFixed(2); 
-  updateTotals(); 
-}
-function parseActivities(text) { 
-  const res = []; 
-  if (!text) return res; 
-  text.split('|').forEach(p => { 
-    const m = p.trim().match(/^(.+?)×(\d+(\.\d+)?)$/); 
-    if (m) res.push({ name: m[1].trim(), qty: parseFloat(m[2]) || 0 }); 
-  }); 
-  return res; 
+  const elA = document.getElementById('displayActualPrice');
+  const elP = document.getElementById('displayPaymentPrice');
+  const elR = document.getElementById('displayRest');
+  if (elA) elA.textContent = actualPrice.toFixed(2);
+  if (elP) elP.textContent = paid.toFixed(2);
+  if (elR) elR.textContent = rest.toFixed(2);
 }
 
-// ====================== COLLECTION MODAL ======================
+function updateItemTotal(idx, price) {
+  const qty = parseFloat(document.getElementById(`qty_${idx}`)?.value) || 0;
+  const tot = document.getElementById(`total_${idx}`);
+  if (tot) tot.value = (qty * price).toFixed(2);
+  updateTotals();
+}
+function parseActivities(text) {
+  const res = [];
+  if (!text) return res;
+  text.split('|').forEach(p => {
+    const m = p.trim().match(/^(.+?)×(\d+(\.\d+)?)$/);
+    if (m) res.push({ name: m[1].trim(), qty: parseFloat(m[2]) || 0 });
+  });
+  return res;
+}
+
+function getCurrentRestValue() {
+  const el = document.getElementById('displayRest');
+  return parseFloat(el?.textContent) || 0;
+}
+
+// ─── COLLECTION MODAL ────────────────────────────────────
 function getCollectionModalHtml() {
-  const currentRest = getCurrentRest();
-  const currency = document.getElementById('invoiceCurrency')?.value || currentInvoice?.invoiceCurrency || 'LE';
-  
+  const currentRest = getCurrentRestValue();
+  const currency = (document.getElementById('invoiceCurrency')?.value || currentInvoice?.invoiceCurrency || 'LE').trim();
   let collectorsOptions = '<option value="">-- اختر المحصل --</option>';
-  if (allEmployees && allEmployees.length) {
-    collectorsOptions += allEmployees.map(emp => `<option value="${esc(emp.serial)}|${esc(emp.name)}" ${emp.serial === currentUser?.id ? 'selected' : ''}>${esc(emp.name)} (${esc(emp.position || 'موظف')})</option>`).join('');
+  if (allEmployees.length) {
+    collectorsOptions += allEmployees.map(emp =>
+      `<option value="${esc(emp.serial)}|${esc(emp.name)}" ${emp.serial === currentUser?.id ? 'selected' : ''}>${esc(emp.name)} (${esc(emp.position || 'موظف')})</option>`
+    ).join('');
   }
   if (currentUser && !allEmployees.some(e => e.serial === currentUser.id)) {
     collectorsOptions += `<option value="${currentUser.id}|${currentUser.name}" selected>${currentUser.name} (المستخدم الحالي)</option>`;
   }
-  
   return `
-    <div style="text-align:center; margin-bottom:20px;">
-      <div style="font-size:42px;">💰</div>
-      <div style="font-size:28px; font-weight:900; color:var(--primary);">${currentRest.toFixed(2)}</div>
-      <div style="font-size:14px; color:var(--accent-dark);">${currency}</div>
-      <div style="font-size:11px; color:var(--gray-500);">المبلغ المتبقي (بعد الخصم)</div>
+    <div style="text-align:center;margin-bottom:20px">
+      <div style="font-size:42px">💰</div>
+      <div style="font-size:28px;font-weight:900;color:var(--primary)">${currentRest.toFixed(2)}</div>
+      <div style="font-size:14px;color:var(--accent-dark)">${currency}</div>
+      <div style="font-size:11px;color:var(--gray-500)">المبلغ المتبقي (بعد الخصم)</div>
     </div>
-    <div class="payment-section" style="background:transparent;">
+    <div class="payment-section" style="background:transparent">
       <div class="payment-label">💰 تفاصيل العملات المستلمة</div>
       <div class="payment-grid">
         <div class="payment-card"><label>USD $</label><input type="number" id="collUSD" step="0.01" placeholder="0" oninput="updateCollectionPreview()"></div>
@@ -462,78 +416,61 @@ function getCollectionModalHtml() {
         <div class="payment-card"><label>Visa £</label><input type="number" id="collVisaGBP" step="0.01" placeholder="0" oninput="updateCollectionPreview()"></div>
         <div class="payment-card"><label>Visa LE</label><input type="number" id="collVisaLE" step="0.01" placeholder="0" oninput="updateCollectionPreview()"></div>
       </div>
-      <div style="background:#f1f5f9; border-radius:12px; padding:12px; margin:8px 0; text-align:center;">
-        <span style="font-weight:600;">إجمالي المبلغ المحصل (${currency}):</span>
-        <span id="collectionTotalDisplay" style="font-size:20px; font-weight:900; color:var(--success); margin-left:8px;">0.00</span>
+      <div style="background:#f1f5f9;border-radius:12px;padding:12px;margin:8px 0;text-align:center">
+        <span style="font-weight:600">إجمالي المبلغ المحصل (${currency}):</span>
+        <span id="collectionTotalDisplay" style="font-size:20px;font-weight:900;color:var(--success);margin-left:8px">0.00</span>
       </div>
       <div class="payment-label">📌 المبلغ المتبقي بعد التحصيل</div>
-      <input type="number" id="newRestPreview" class="form-control" step="0.01" style="text-align:center; font-weight:700; margin-bottom:12px;" readonly>
-      <div style="font-size:10px; color:var(--gray-500); margin-bottom:12px;">* يمكن تعديله يدوياً إذا كان ≤ 5 (فروق طفيفة)</div>
-      <div class="form-group"><label>من قام بالتحصيل؟</label><select id="collectedBySelect" class="form-control">${collectorsOptions}</select></div>
-      <div class="form-group"><label>هل تم تسليم المبلغ للخزينة؟</label><select id="transferredToTreasury" class="form-control"><option value="No">لا، لم يُسلم بعد</option><option value="Yes">نعم، تم التسليم</option></select></div>
-      <div class="form-group"><label>ملاحظات التحصيل</label><textarea id="collectionNotes" rows="2" class="form-control"></textarea></div>
+      <input type="number" id="newRestPreview" step="0.01" style="text-align:center;font-weight:700;margin-bottom:12px" readonly>
+      <div style="font-size:10px;color:var(--gray-500);margin-bottom:12px">* يمكن تعديله يدوياً إذا كان ≤ 5 (فروق طفيفة)</div>
+      <div class="form-group"><label>من قام بالتحصيل؟</label><select id="collectedBySelect">${collectorsOptions}</select></div>
+      <div class="form-group"><label>هل تم تسليم المبلغ للخزينة؟</label><select id="transferredToTreasury"><option value="No">لا، لم يُسلم بعد</option><option value="Yes">نعم، تم التسليم</option></select></div>
+      <div class="form-group"><label>ملاحظات التحصيل</label><textarea id="collectionNotes" rows="2"></textarea></div>
     </div>
     <div class="modal-buttons">
       <button class="btn btn-success" onclick="submitCollection()">💾 تأكيد التحصيل</button>
       <button class="btn btn-danger" onclick="closeCollectionModal()">إلغاء</button>
-    </div>
-  `;
+    </div>`;
 }
 
 async function updateCollectionPreview() {
-  const currency = document.getElementById('invoiceCurrency')?.value || currentInvoice?.invoiceCurrency || 'LE';
+  const currency = (document.getElementById('invoiceCurrency')?.value || currentInvoice?.invoiceCurrency || 'LE').trim();
   const activeDate = document.getElementById('activeDate')?.value;
-  
-  const cU = Number(document.getElementById('collUSD')?.value) || 0;
-  const cE = Number(document.getElementById('collEUR')?.value) || 0;
-  const cG = Number(document.getElementById('collGBP')?.value) || 0;
-  const cL = Number(document.getElementById('collLE')?.value) || 0;
+  const cU = Number(document.getElementById('collUSD')?.value)     || 0;
+  const cE = Number(document.getElementById('collEUR')?.value)     || 0;
+  const cG = Number(document.getElementById('collGBP')?.value)     || 0;
+  const cL = Number(document.getElementById('collLE')?.value)      || 0;
   const vU = Number(document.getElementById('collVisaUSD')?.value) || 0;
   const vE = Number(document.getElementById('collVisaEUR')?.value) || 0;
   const vG = Number(document.getElementById('collVisaGBP')?.value) || 0;
-  const vL = Number(document.getElementById('collVisaLE')?.value) || 0;
-  
+  const vL = Number(document.getElementById('collVisaLE')?.value)  || 0;
+
   let collectedTotal = 0;
-  
-  if (activeDate && (cU + cE + cG + cL + vU + vE + vG + vL) > 0) {
+  if (activeDate && (cU+cE+cG+cL+vU+vE+vG+vL) > 0) {
     const raw = await getRate(activeDate);
-    const r = rateFields(raw);
+    const r   = rateFields(raw);
     if (r) {
-      const totalLE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
-                      vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
-      
-      if (currency === '$') collectedTotal = R2(totalLE / r.cash.USD);
-      else if (currency === '€') collectedTotal = R2(totalLE / r.cash.EUR);
-      else if (currency === '£') collectedTotal = R2(totalLE / r.cash.GBP);
+      const totalLE = cU*r.cash.USD + cE*r.cash.EUR + cG*r.cash.GBP + cL
+                    + vU*r.visa.USD + vE*r.visa.EUR + vG*r.visa.GBP + vL*(r.visa.LE||0.975);
+      if (currency==='$') collectedTotal = R2(totalLE/r.cash.USD);
+      else if (currency==='€') collectedTotal = R2(totalLE/r.cash.EUR);
+      else if (currency==='£') collectedTotal = R2(totalLE/r.cash.GBP);
       else collectedTotal = R2(totalLE);
-      
-      console.log('💰 updateCollectionPreview - totalLE:', totalLE.toFixed(2), 'collectedTotal:', collectedTotal);
-    } else {
-      collectedTotal = cU + cE + cG + cL + vU + vE + vG + vL;
-    }
-  } else {
-    collectedTotal = cU + cE + cG + cL + vU + vE + vG + vL;
-  }
-  
-  document.getElementById('collectionTotalDisplay').textContent = collectedTotal.toFixed(2);
-  const currentRest = getCurrentRest();
-  let newRest = currentRest - collectedTotal;
-  if (newRest < 0) newRest = 0;
-  
-  const newRestField = document.getElementById('newRestPreview');
-  if (newRestField) {
-    newRestField.value = newRest.toFixed(2);
-    newRestField.readOnly = newRest > 5;
-  }
+    } else collectedTotal = cU+cE+cG+cL+vU+vE+vG+vL;
+  } else collectedTotal = cU+cE+cG+cL+vU+vE+vG+vL;
+
+  const el = document.getElementById('collectionTotalDisplay');
+  if (el) el.textContent = collectedTotal.toFixed(2);
+  const currentRest = getCurrentRestValue();
+  const newRest = Math.max(0, currentRest - collectedTotal);
+  const nr = document.getElementById('newRestPreview');
+  if (nr) { nr.value = newRest.toFixed(2); nr.readOnly = newRest > 5; }
 }
 
 function openCollectionModal() {
   if (!currentInvoice) return;
-  const currentRest = getCurrentRest();
-  if (isNaN(currentRest) || currentRest <= 0.01) { 
-    showAlert('لا يوجد مبلغ متبقي للتحصيل'); 
-    return; 
-  }
+  const rest = getCurrentRestValue();
+  if (isNaN(rest) || rest <= 0.01) { showAlert('لا يوجد مبلغ متبقي للتحصيل'); return; }
   document.getElementById('collectionModalContent').innerHTML = getCollectionModalHtml();
   document.getElementById('collectionModal').classList.add('open');
   setTimeout(() => updateCollectionPreview(), 100);
@@ -541,451 +478,489 @@ function openCollectionModal() {
 function closeCollectionModal() { document.getElementById('collectionModal').classList.remove('open'); }
 
 async function submitCollection() {
-  const issueDate = currentInvoice.issueDate;
-  const today = formatDate(new Date());
-  const isToday = (issueDate === today);
-  
-  const cU = Number(document.getElementById('collUSD')?.value) || 0;
-  const cE = Number(document.getElementById('collEUR')?.value) || 0;
-  const cG = Number(document.getElementById('collGBP')?.value) || 0;
-  const cL = Number(document.getElementById('collLE')?.value) || 0;
+  const cU = Number(document.getElementById('collUSD')?.value)     || 0;
+  const cE = Number(document.getElementById('collEUR')?.value)     || 0;
+  const cG = Number(document.getElementById('collGBP')?.value)     || 0;
+  const cL = Number(document.getElementById('collLE')?.value)      || 0;
   const vU = Number(document.getElementById('collVisaUSD')?.value) || 0;
   const vE = Number(document.getElementById('collVisaEUR')?.value) || 0;
   const vG = Number(document.getElementById('collVisaGBP')?.value) || 0;
-  const vL = Number(document.getElementById('collVisaLE')?.value) || 0;
-  
-  console.log('💰 العملات المدخلة:', { cU, cE, cG, cL, vU, vE, vG, vL });
-  
+  const vL = Number(document.getElementById('collVisaLE')?.value)  || 0;
+
   const activeDate = document.getElementById('activeDate')?.value;
+  const currency = (currentInvoice.invoiceCurrency || 'LE').trim();
   let collectedTotal = 0;
-  const currency = currentInvoice.invoiceCurrency || 'LE';
-  
-  console.log('💰 تاريخ التنفيذ:', activeDate);
-  console.log('💰 عملة الفاتورة:', currency);
-  
+
   if (activeDate) {
     const raw = await getRate(activeDate);
-    const r = rateFields(raw);
-    
+    const r   = rateFields(raw);
     if (r) {
-      console.log('📊 أسعار الصرف المستخدمة:');
-      console.log('   كاش USD:', r.cash.USD);
-      console.log('   كاش EUR:', r.cash.EUR);
-      console.log('   كاش GBP:', r.cash.GBP);
-      console.log('   فيزا USD:', r.visa.USD);
-      console.log('   فيزا EUR:', r.visa.EUR);
-      console.log('   فيزا GBP:', r.visa.GBP);
-      console.log('   فيزا LE:', r.visa.LE);
-      
-      const totalLE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
-                      vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
-      
-      console.log('💰 totalLE (إجمالي بالجنيه):', totalLE.toFixed(2));
-      
-      if (currency === '$') collectedTotal = R2(totalLE / r.cash.USD);
-      else if (currency === '€') collectedTotal = R2(totalLE / r.cash.EUR);
-      else if (currency === '£') collectedTotal = R2(totalLE / r.cash.GBP);
+      const totalLE = cU*r.cash.USD + cE*r.cash.EUR + cG*r.cash.GBP + cL
+                    + vU*r.visa.USD + vE*r.visa.EUR + vG*r.visa.GBP + vL*(r.visa.LE||0.975);
+      if (currency==='$') collectedTotal = R2(totalLE/r.cash.USD);
+      else if (currency==='€') collectedTotal = R2(totalLE/r.cash.EUR);
+      else if (currency==='£') collectedTotal = R2(totalLE/r.cash.GBP);
       else collectedTotal = R2(totalLE);
-      
-      console.log(`💰 التحويل: ${totalLE.toFixed(2)} LE → ${collectedTotal.toFixed(2)} ${currency}`);
-    } else {
-      collectedTotal = cU + cE + cG + cL + vU + vE + vG + vL;
-      console.log('⚠️ لا يوجد سعر صرف للتاريخ:', activeDate);
-      console.log('💰 collectedTotal (جمع مباشر):', collectedTotal);
-    }
-  } else {
-    collectedTotal = cU + cE + cG + cL + vU + vE + vG + vL;
-    console.log('⚠️ لا يوجد تاريخ تنفيذ');
-    console.log('💰 collectedTotal (جمع مباشر - لا تاريخ):', collectedTotal);
-  }
-  
-  console.log('💰 collectedTotal النهائي:', collectedTotal);
-  
-  if (collectedTotal <= 0) { 
-    showAlert('الرجاء إدخال مبلغ تحصيل صحيح'); 
-    return; 
-  }
-  
+    } else collectedTotal = cU+cE+cG+cL+vU+vE+vG+vL;
+  } else collectedTotal = cU+cE+cG+cL+vU+vE+vG+vL;
+
+  if (collectedTotal <= 0) { showAlert('الرجاء إدخال مبلغ تحصيل صحيح'); return; }
+
   const notes = document.getElementById('collectionNotes')?.value || '';
   const transferred = document.getElementById('transferredToTreasury')?.value === 'Yes' ? 'Yes' : 'No';
   const paymentMethod = (cU+cE+cG+cL > 0 && vU+vE+vG+vL > 0) ? 'Mixed' : (cU+cE+cG+cL > 0 ? 'Cash' : 'Visa');
-  
-  const collectedBySelect = document.getElementById('collectedBySelect')?.value || '';
-  let collectedById = currentUser?.id || '';
-  let collectedByName = currentUser?.name || '';
-  if (collectedBySelect) {
-    const parts = collectedBySelect.split('|');
-    if (parts.length === 2) {
-      collectedById = parts[0];
-      collectedByName = parts[1];
-    }
-  }
-  
+  const collSel = document.getElementById('collectedBySelect')?.value || '';
+  let collectedById = currentUser?.id || '', collectedByName = currentUser?.name || '';
+  if (collSel) { const pts = collSel.split('|'); if (pts.length === 2) { collectedById = pts[0]; collectedByName = pts[1]; } }
+
   showPDF('جاري المعالجة...');
   try {
     const params = new URLSearchParams();
     params.set('action', 'createCollectionInvoice');
     params.set('parentVoucherNo', currentInvoice.voucherNo);
-    params.set('activeDate', currentInvoice.activeDate || '');
-    params.set('salesId', currentInvoice.salesId || '');
-    params.set('time', currentInvoice.time || '');
-    params.set('trip', currentInvoice.trip || '');
-    params.set('hotel', currentInvoice.hotel || '');
-    params.set('roomNo', currentInvoice.roomNo || '');
-    params.set('nationality', currentInvoice.nationality || '');
-    params.set('guestName', currentInvoice.guestName || '');
-    params.set('contactNo', currentInvoice.contactNo || '');
-    params.set('supplier', currentInvoice.supplier || '');
-    params.set('customer', currentInvoice.customer || '');
-    params.set('state', currentInvoice.state || 'pending');
+    params.set('activeDate',  currentInvoice.activeDate || '');
+    params.set('salesId',     currentInvoice.salesId   || '');
+    params.set('time',        currentInvoice.time       || '');
+    params.set('trip',        currentInvoice.trip       || '');
+    params.set('hotel',       currentInvoice.hotel      || '');
+    params.set('roomNo',      currentInvoice.roomNo     || '');
+    params.set('nationality', currentInvoice.nationality|| '');
+    params.set('guestName',   currentInvoice.guestName  || '');
+    params.set('contactNo',   currentInvoice.contactNo  || '');
+    params.set('supplier',    currentInvoice.supplier   || '');
+    params.set('customer',    currentInvoice.customer   || '');
+    params.set('state',       currentInvoice.state      || 'pending');
     params.set('invoiceCurrency', currentInvoice.invoiceCurrency || 'LE');
-    params.set('centerName', currentInvoice.centerName || '');
-    params.set('branchName', currentInvoice.branchName || '');
-    params.set('salesName', currentInvoice.salesName || '');
-    
-    params.set('cashUSD', cU.toString());
-    params.set('cashEUR', cE.toString());
-    params.set('cashGBP', cG.toString());
-    params.set('cashLE', cL.toString());
-    params.set('visaUSD', vU.toString());
-    params.set('visaEUR', vE.toString());
-    params.set('visaGBP', vG.toString());
-    params.set('visaLE', vL.toString());
-    
-    params.set('collectedTotal', collectedTotal.toString());
-    params.set('discount', (getCurrentDiscount()).toString());
+    params.set('centerName',  currentInvoice.centerName || '');
+    params.set('branchName',  currentInvoice.branchName || '');
+    params.set('salesName',   currentInvoice.salesName  || '');
+    params.set('cashUSD', String(cU)); params.set('cashEUR', String(cE));
+    params.set('cashGBP', String(cG)); params.set('cashLE',  String(cL));
+    params.set('visaUSD', String(vU)); params.set('visaEUR', String(vE));
+    params.set('visaGBP', String(vG)); params.set('visaLE',  String(vL));
+    params.set('collectedTotal', String(collectedTotal));
+    params.set('discount', String(getCurrentDiscount()));
     params.set('notes', notes);
     params.set('collectedBy', collectedById);
     params.set('collectedByName', collectedByName);
     params.set('paymentMethod', paymentMethod);
     params.set('transferredToTreasury', transferred);
-    params.set('rest', (getCurrentRest() - collectedTotal).toString());
-    
-    const url = GAS_URL + '?' + params.toString();
-    console.log('📤 إرسال البيانات للخلفية:', {
-      cashUSD: cU, cashEUR: cE, cashGBP: cG, cashLE: cL,
-      visaUSD: vU, visaEUR: vE, visaGBP: vG, visaLE: vL,
-      collectedTotal: collectedTotal,
-      currency: currency,
-      rest: getCurrentRest() - collectedTotal
-    });
-    
-    const res = await fetch(url, { redirect: 'follow' });
+    params.set('rest', String(Math.max(0, getCurrentRestValue() - collectedTotal)));
+
+    const res = await fetch(GAS_URL + '?' + params.toString(), { redirect: 'follow' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const result = await res.json();
-    
     hidePDF();
-    
-    if (result?.success) { 
-      showAlert(`✅ تم تحصيل ${collectedTotal.toFixed(2)} ${currency}\nرقم فاتورة التحصيل: ${result.voucherNo}\nالمحصل: ${collectedByName}`, 
-        `<button class="btn btn-primary" onclick="location.reload()">تحديث</button><button class="btn btn-primary" onclick="goBack()">رجوع</button>`); 
-    } else { 
-      showAlert('❌ فشل التحصيل: ' + (result?.message || 'خطأ غير معروف')); 
+    if (result?.success) {
+      showAlert(`✅ تم تحصيل ${collectedTotal.toFixed(2)} ${currency}\nرقم فاتورة التحصيل: ${result.voucherNo}\nالمحصل: ${collectedByName}`,
+        `<button class="btn btn-primary" onclick="location.reload()">تحديث</button><button class="btn btn-primary" onclick="goBack()">رجوع</button>`);
+    } else {
+      showAlert('❌ فشل التحصيل: ' + (result?.message || 'خطأ غير معروف'));
     }
-  } catch(err) { 
-    hidePDF(); 
-    console.error('خطأ:', err);
-    showAlert('خطأ: ' + err.message); 
-  }
+  } catch(err) { hidePDF(); console.error(err); showAlert('خطأ: ' + err.message); }
 }
-  
-// ====================== LOAD INVOICE ======================
+
+// ─── تحميل الفاتورة ──────────────────────────────────────
 async function loadInvoice() {
   const params = new URLSearchParams(location.search);
   const voucherNo = params.get('voucherNo');
   openFrom = params.get('from') || 'today';
   if (!voucherNo) { showAlert('رقم الفاتورة غير موجود', '<button class="btn btn-primary" onclick="goBack()">رجوع</button>'); return; }
+
   showPDF('جاري التحميل...');
   try {
     await loadSuppliersAndTrips();
-    const allInv = await gas('getAllInvoices', { includeCollection: true });
-    const invoices = Array.isArray(allInv) ? allInv : [];
-    currentInvoice = invoices.find(i => i.voucherNo === voucherNo);
-    if (!currentInvoice) throw new Error('الفاتورة غير موجودة');
-    originalInvoice = { ...currentInvoice };
-    
-    // جلب جميع المدفوعات (الأصلية + التحصيلات)
+
+    // نجلب كل الفواتير مرة واحدة (تحتوي على الأصل والتحصيلات)
+    const allData = await gas('getAllInvoices', { includeCollection: 'true' });
+    const invoices = Array.isArray(allData) ? allData : [];
+
+    // الفاتورة الأصلية فقط (ليست تحصيل)
+    const inv = invoices.find(i => i.voucherNo === voucherNo && i.receiptType !== 'Collection');
+    if (!inv) throw new Error('الفاتورة غير موجودة: ' + voucherNo);
+
+    // نسخ أصلية قبل أي تعديل
+    currentInvoice  = { ...inv };
+    originalInvoice = { ...inv };
+
+    // ── حساب إجمالي المدفوعات (الأصل + التحصيلات) ──
     const totalPayments = await getTotalPaymentsForInvoice(voucherNo);
-    console.log('💰 totalPayments:', totalPayments);
-    
     if (totalPayments) {
-      // تحديث currentInvoice بالمبالغ المجمعة
       currentInvoice.paymentPrice = totalPayments.paymentPrice;
       currentInvoice.cashUSD = totalPayments.cashUSD;
       currentInvoice.cashEUR = totalPayments.cashEUR;
       currentInvoice.cashGBP = totalPayments.cashGBP;
-      currentInvoice.cashLE = totalPayments.cashLE;
+      currentInvoice.cashLE  = totalPayments.cashLE;
       currentInvoice.visaUSD = totalPayments.visaUSD;
       currentInvoice.visaEUR = totalPayments.visaEUR;
       currentInvoice.visaGBP = totalPayments.visaGBP;
-      currentInvoice.visaLE = totalPayments.visaLE;
-      currentInvoice.rest = totalPayments.rest;
-      currentInvoice.actualPrice = totalPayments.actualPrice;
-      currentInvoice.discount = totalPayments.discount;
-      console.log('💰 بعد التحديث - currentInvoice.cashEUR:', currentInvoice.cashEUR);
-      console.log('💰 بعد التحديث - currentInvoice.paymentPrice:', currentInvoice.paymentPrice);
-      console.log('💰 بعد التحديث - currentInvoice.rest:', currentInvoice.rest);
+      currentInvoice.visaLE  = totalPayments.visaLE;
+      currentInvoice.rest    = totalPayments.rest;
+      // actualPrice و discount لا نغيّرهما (يظلان من الأصل)
     }
-    
+
     document.getElementById('userNameDisplay').textContent = currentUser?.name || 'User';
-    document.getElementById('voucherDisplay').textContent = voucherNo;
-    
+    document.getElementById('voucherDisplay').textContent  = voucherNo;
+
+    // ── تحديد قواعد التعديل حسب التاريخ ──
     const issueDate = parseDate(currentInvoice.issueDate);
-    const todayDate = new Date(); todayDate.setHours(0,0,0,0);
-    let isPastDate = false;
+    const today     = new Date(); today.setHours(0,0,0,0);
+    // هل تاريخ إصدار الفاتورة = اليوم؟ → نسمح بتعديل المدفوعات، لكن نُغلق زر التحصيل
+    const isIssueDateToday = issueDate && issueDate.getTime() === today.getTime();
+    // هل تاريخ الفاتورة ماضٍ (قبل اليوم)؟ → نمنع تعديل المدفوعات
+    const isPastDate = issueDate && issueDate < today;
+
     let warnHtml = '';
-    
-    if (issueDate && issueDate < todayDate) { 
-      isPastDate = true; 
+    if (isPastDate) {
       warnHtml = `<div class="warning-bar">⚠️ تاريخ الفاتورة (${currentInvoice.issueDate}) قد مضى — التعديل على المدفوعات غير مسموح لحماية بيانات الخزينة.</div>`;
-    } else if (openFrom === 'activeDate') { 
-      warnHtml = `<div class="warning-bar info">ℹ️ وضع التعديل: يمكنك تعديل جميع الحقول.</div>`;
+    } else if (isIssueDateToday) {
+      warnHtml = `<div class="warning-bar info">ℹ️ فاتورة اليوم — يمكن تعديل المدفوعات مباشرة. زر التحصيل معطّل لفواتير نفس اليوم.</div>`;
     }
-    
+
+    // حقول المدفوعات: مقيّدة فقط لفواتير الماضي
     const disPayments = isPastDate ? 'disabled' : '';
-    
+
+    // ── قوائم الرحلات والعملاء ──
     const currentCategory = getTripCategory(currentInvoice.trip);
     const customers = getCustomersByCategory(currentCategory);
     const suppliers = getSuppliersByCategory(currentCategory);
     const uniqueTrips = await gas('getUniqueTrips');
-    let tripsOpts = '';
-    if (Array.isArray(uniqueTrips)) tripsOpts = uniqueTrips.map(t => `<option value="${esc(t.name)}" ${t.name === currentInvoice.trip ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
-    let supOpts = '<option value="">-- اختر --</option>' + suppliers.map(s => `<option value="${esc(s.customerName)}" ${s.customerName === currentInvoice.supplier ? 'selected' : ''}>${esc(s.customerName)}</option>`).join('');
-    let custOpts = '<option value="">-- اختر --</option>' + customers.map(c => `<option value="${esc(c.customerName)}" ${c.customerName === currentInvoice.customer ? 'selected' : ''}>${esc(c.customerName)}</option>`).join('');
+    const tripsOpts = Array.isArray(uniqueTrips)
+      ? uniqueTrips.map(t => `<option value="${esc(t.name)}" ${t.name === currentInvoice.trip ? 'selected' : ''}>${esc(t.name)}</option>`).join('')
+      : '';
+    const supOpts = '<option value="">-- اختر --</option>' + suppliers.map(s => `<option value="${esc(s.customerName)}" ${s.customerName === currentInvoice.supplier ? 'selected' : ''}>${esc(s.customerName)}</option>`).join('');
+    const custOpts = '<option value="">-- اختر --</option>' + customers.map(c => `<option value="${esc(c.customerName)}" ${c.customerName === currentInvoice.customer ? 'selected' : ''}>${esc(c.customerName)}</option>`).join('');
+
+    // ── بنود الرحلة ──
     const tripData = await gas('getTripData', { tripName: currentInvoice.trip, currency: currentInvoice.invoiceCurrency });
-    
     let tRows = '';
     if (tripData?.items) {
       const acts = parseActivities(currentInvoice.activitiesText || '');
-      tRows = tripData.items.map((name, i) => { 
-        const qty = acts.find(a => a.name === name)?.qty || 0; 
-        const price = tripData.prices?.[i] || 0; 
-        return `<td><td style="font-weight:600">${esc(name)}</td>
-                   <td><input type="number" id="qty_${i}" min="0" placeholder="0" value="${qty || ''}" oninput="updateItemTotal(${i}, ${price})"></td>
-                   <td><input type="number" id="price_${i}" value="${price}" readonly></td>
-                   <td><input type="number" id="total_${i}" value="${(qty * price).toFixed(2)}" readonly></td>
-                 </tr>`;
+      tRows = tripData.items.map((name, i) => {
+        const qty   = acts.find(a => a.name === name)?.qty || 0;
+        const price = tripData.prices?.[i] || 0;
+        return `<tr>
+          <td style="font-weight:600">${esc(name)}</td>
+          <td><input type="number" id="qty_${i}" min="0" placeholder="0" value="${qty || ''}" oninput="updateItemTotal(${i}, ${price})"></td>
+          <td><input type="number" id="price_${i}" value="${price}" readonly></td>
+          <td><input type="number" id="total_${i}" value="${(qty * price).toFixed(2)}" readonly></td>
+        </tr>`;
       }).join('');
     }
-    
-    const isIssueDateToday = (currentInvoice.issueDate === formatDate(new Date()));
-    const disableCollectionBtn = (parseFloat(currentInvoice.rest) <= 0) || isIssueDateToday;
-    
+
+    // ── زر التحصيل: مغلق إذا (لا يوجد متبقٍ) أو (تاريخ إصدار = اليوم) ──
+    const disableCollectionBtn = (currentInvoice.rest <= 0.01) || isIssueDateToday;
+
+    // ── بناء الفورم ──
     const formHtml = `
       ${warnHtml}
-      <div class="card"><div class="card-header"><span class="icon">👤</span><h3>بيانات العميل</h3></div><div class="card-body"><div class="form-grid">
-        <div class="form-group"><label>الهاتف</label><input type="text" id="contactNo" value="${esc(currentInvoice.contactNo)}"></div>
-        <div class="form-group"><label>اسم الضيف</label><input type="text" id="guestName" value="${esc(currentInvoice.guestName)}"></div>
-        <div class="form-group"><label>الجنسية</label><input type="text" id="nationality" value="${esc(currentInvoice.nationality)}"></div>
-      </div></div></div>
-      <div class="card"><div class="card-header"><span class="icon">🏝️</span><h3>تفاصيل الرحلة</h3></div><div class="card-body">
-        <div class="hotel-row">
-          <div class="form-group"><label>الفندق</label><input type="text" id="hotel" value="${esc(currentInvoice.hotel)}"></div>
-          <div class="form-group"><label>رقم الغرفة</label><input type="text" id="roomNo" value="${esc(currentInvoice.roomNo)}"></div>
-          <div class="form-group"><label>بالغين</label><input type="number" id="adultCount" value="${dV(currentInvoice.adultCount)}"></div>
-          <div class="form-group"><label>أطفال</label><input type="number" id="childCount" value="${dV(currentInvoice.childCount)}"></div>
-          <div class="form-group"><label>رضع</label><input type="number" id="infantCount" value="${dV(currentInvoice.infantCount)}"></div>
-        </div>
-        <div class="form-grid" style="margin-bottom:12px">
-          <div class="form-group"><label>تاريخ التنفيذ</label><input type="date" id="activeDate" value="${dateToInput(currentInvoice.activeDate)}" onchange="updateTotals()"></div>
-          <div class="form-group"><label>الوقت</label><input type="text" id="tripTime" value="${timeToInput(currentInvoice.time)}" placeholder="--:--"></div>
-          <div class="form-group"><label>عملة الفاتورة</label><select id="invoiceCurrency" onchange="updateTotals()"><option value="$" ${currentInvoice.invoiceCurrency === '$' ? 'selected' : ''}>USD ($)</option><option value="€" ${currentInvoice.invoiceCurrency === '€' ? 'selected' : ''}>EUR (€)</option><option value="£" ${currentInvoice.invoiceCurrency === '£' ? 'selected' : ''}>GBP (£)</option><option value="LE" ${currentInvoice.invoiceCurrency === 'LE' ? 'selected' : ''}>EGP (LE)</option></select></div>
-        </div>
-        <div class="form-group"><label>اسم الرحلة</label><select id="tripName" onchange="changeTrip()">${tripsOpts}</select></div>
-        <div class="trip-table"><table><thead><tr><th style="text-align:left">البند</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th></tr></thead><tbody id="itemsBody">${tRows}</tbody></table></div>
-      </div></div>
-      <div class="card"><div class="card-header"><span class="icon">💰</span><h3>المدفوعات والإجماليات</h3></div>
-        <div class="totals-strip">
-          <div class="total-item"><div class="label">الخصم</div><input type="number" id="discount" min="0" step="0.01" value="${dV(currentInvoice.discount)}" oninput="updateTotals()"></div>
-          <div class="total-item"><div class="label">إجمالي الفاتورة</div><div class="value" id="displayActualPrice">${(currentInvoice.actualPrice || 0).toFixed(2)}</div><div class="currency">${currentInvoice.invoiceCurrency || ''}</div></div>
-          <div class="total-item"><div class="label">المدفوع</div><div class="value" id="displayPaymentPrice">${(currentInvoice.paymentPrice || 0).toFixed(2)}</div><div class="currency">${currentInvoice.invoiceCurrency || ''}</div></div>
-          <div class="total-item"><div class="label">المتبقي</div><div class="value" id="displayRest">${(currentInvoice.rest || 0).toFixed(2)}</div><div class="currency">${currentInvoice.invoiceCurrency || ''}</div></div>
-        </div>
-        <div class="payment-section"><div class="payment-label">💵 كاش</div><div class="payment-grid">
-          <div class="payment-card"><label>USD $</label><input type="number" id="cashUSD" step="0.01" value="${dV(currentInvoice.cashUSD)}" oninput="updateTotals()" ${disPayments}></div>
-          <div class="payment-card"><label>EUR €</label><input type="number" id="cashEUR" step="0.01" value="${dV(currentInvoice.cashEUR)}" oninput="updateTotals()" ${disPayments}></div>
-          <div class="payment-card"><label>GBP £</label><input type="number" id="cashGBP" step="0.01" value="${dV(currentInvoice.cashGBP)}" oninput="updateTotals()" ${disPayments}></div>
-          <div class="payment-card"><label>EGP LE</label><input type="number" id="cashLE" step="0.01" value="${dV(currentInvoice.cashLE)}" oninput="updateTotals()" ${disPayments}></div>
+      <div class="card">
+        <div class="card-header"><span class="icon">👤</span><h3>بيانات العميل</h3></div>
+        <div class="card-body"><div class="form-grid">
+          <div class="form-group"><label>الهاتف</label><input type="text" id="contactNo" value="${esc(currentInvoice.contactNo)}"></div>
+          <div class="form-group"><label>اسم الضيف</label><input type="text" id="guestName" value="${esc(currentInvoice.guestName)}"></div>
+          <div class="form-group"><label>الجنسية</label><input type="text" id="nationality" value="${esc(currentInvoice.nationality)}"></div>
         </div></div>
-        <div class="payment-section"><div class="payment-label">💳 فيزا / بطاقة</div><div class="payment-grid">
-          <div class="payment-card"><label>Visa $</label><input type="number" id="visaUSD" step="0.01" value="${dV(currentInvoice.visaUSD)}" oninput="updateTotals()" ${disPayments}></div>
-          <div class="payment-card"><label>Visa €</label><input type="number" id="visaEUR" step="0.01" value="${dV(currentInvoice.visaEUR)}" oninput="updateTotals()" ${disPayments}></div>
-          <div class="payment-card"><label>Visa £</label><input type="number" id="visaGBP" step="0.01" value="${dV(currentInvoice.visaGBP)}" oninput="updateTotals()" ${disPayments}></div>
-          <div class="payment-card"><label>Visa LE</label><input type="number" id="visaLE" step="0.01" value="${dV(currentInvoice.visaLE)}" oninput="updateTotals()" ${disPayments}></div>
-        </div></div>
-        <div class="card-body" style="padding-top:0"><div class="form-group"><label>ملاحظات</label><textarea id="notes" rows="2">${esc(currentInvoice.notes)}</textarea></div></div>
       </div>
-      <div class="card"><div class="card-header"><span class="icon">🏢</span><h3>معلومات إضافية</h3></div><div class="card-body"><div class="form-grid">
-        <div class="form-group"><label>المنفذ</label><select id="supplier">${supOpts}</select></div>
-        <div class="form-group"><label>العميل</label><select id="customer">${custOpts}</select></div>
-        <div class="form-group"><label>الحالة</label><select id="state"><option value="pending" ${currentInvoice.state === 'pending' ? 'selected' : ''}>⏳ قيد الانتظار</option><option value="Confirmed" ${(currentInvoice.state === 'Confirmed' || currentInvoice.state === 'confirmed') ? 'selected' : ''}>✅ مؤكد</option><option value="cancel" ${currentInvoice.state === 'cancel' ? 'selected' : ''}>❌ ملغي</option></select></div>
-      </div></div></div>
+
+      <div class="card">
+        <div class="card-header"><span class="icon">🏝️</span><h3>تفاصيل الرحلة</h3></div>
+        <div class="card-body">
+          <div class="hotel-row">
+            <div class="form-group"><label>الفندق</label><input type="text" id="hotel" value="${esc(currentInvoice.hotel)}"></div>
+            <div class="form-group"><label>رقم الغرفة</label><input type="text" id="roomNo" value="${esc(currentInvoice.roomNo)}"></div>
+            <div class="form-group"><label>بالغين</label><input type="number" id="adultCount" value="${dV(currentInvoice.adultCount)}"></div>
+            <div class="form-group"><label>أطفال</label><input type="number" id="childCount" value="${dV(currentInvoice.childCount)}"></div>
+            <div class="form-group"><label>رضع</label><input type="number" id="infantCount" value="${dV(currentInvoice.infantCount)}"></div>
+          </div>
+          <div class="form-grid" style="margin-bottom:12px">
+            <div class="form-group"><label>تاريخ التنفيذ</label><input type="date" id="activeDate" value="${dateToInput(currentInvoice.activeDate)}" onchange="updateTotals()"></div>
+            <div class="form-group"><label>الوقت</label><input type="text" id="tripTime" value="${timeToInput(currentInvoice.time)}" placeholder="--:--"></div>
+            <div class="form-group"><label>عملة الفاتورة</label>
+              <select id="invoiceCurrency" onchange="updateTotals()">
+                <option value="$" ${currentInvoice.invoiceCurrency==='$'?'selected':''}>USD ($)</option>
+                <option value="€" ${currentInvoice.invoiceCurrency==='€'?'selected':''}>EUR (€)</option>
+                <option value="£" ${currentInvoice.invoiceCurrency==='£'?'selected':''}>GBP (£)</option>
+                <option value="LE" ${currentInvoice.invoiceCurrency==='LE'?'selected':''}>EGP (LE)</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group"><label>اسم الرحلة</label><select id="tripName" onchange="changeTrip()">${tripsOpts}</select></div>
+          <div class="trip-table">
+            <table><thead><tr><th style="text-align:left">البند</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th></tr></thead>
+            <tbody id="itemsBody">${tRows}</tbody></table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="icon">💰</span><h3>المدفوعات والإجماليات</h3></div>
+        <div class="totals-strip">
+          <div class="total-item">
+            <div class="label">الخصم</div>
+            <input type="number" id="discount" min="0" step="0.01" value="${dV(currentInvoice.discount)}" oninput="updateTotals()">
+          </div>
+          <div class="total-item">
+            <div class="label">إجمالي الفاتورة</div>
+            <div class="value" id="displayActualPrice">${(currentInvoice.actualPrice||0).toFixed(2)}</div>
+            <div class="currency">${currentInvoice.invoiceCurrency||''}</div>
+          </div>
+          <div class="total-item">
+            <div class="label">المدفوع (كل التحصيلات)</div>
+            <div class="value" id="displayPaymentPrice">${(currentInvoice.paymentPrice||0).toFixed(2)}</div>
+            <div class="currency">${currentInvoice.invoiceCurrency||''}</div>
+          </div>
+          <div class="total-item">
+            <div class="label">المتبقي</div>
+            <div class="value" id="displayRest">${(currentInvoice.rest||0).toFixed(2)}</div>
+            <div class="currency">${currentInvoice.invoiceCurrency||''}</div>
+          </div>
+        </div>
+
+        <div class="payment-section">
+          <div class="payment-label">💵 كاش (إجمالي كل التحصيلات)</div>
+          <div class="payment-grid">
+            <div class="payment-card"><label>USD $</label><input type="number" id="cashUSD" step="0.01" value="${dV(currentInvoice.cashUSD)}" oninput="updateTotals()" ${disPayments}></div>
+            <div class="payment-card"><label>EUR €</label><input type="number" id="cashEUR" step="0.01" value="${dV(currentInvoice.cashEUR)}" oninput="updateTotals()" ${disPayments}></div>
+            <div class="payment-card"><label>GBP £</label><input type="number" id="cashGBP" step="0.01" value="${dV(currentInvoice.cashGBP)}" oninput="updateTotals()" ${disPayments}></div>
+            <div class="payment-card"><label>EGP LE</label><input type="number" id="cashLE"  step="0.01" value="${dV(currentInvoice.cashLE)}"  oninput="updateTotals()" ${disPayments}></div>
+          </div>
+        </div>
+        <div class="payment-section">
+          <div class="payment-label">💳 فيزا / بطاقة (إجمالي كل التحصيلات)</div>
+          <div class="payment-grid">
+            <div class="payment-card"><label>Visa $</label><input type="number" id="visaUSD" step="0.01" value="${dV(currentInvoice.visaUSD)}" oninput="updateTotals()" ${disPayments}></div>
+            <div class="payment-card"><label>Visa €</label><input type="number" id="visaEUR" step="0.01" value="${dV(currentInvoice.visaEUR)}" oninput="updateTotals()" ${disPayments}></div>
+            <div class="payment-card"><label>Visa £</label><input type="number" id="visaGBP" step="0.01" value="${dV(currentInvoice.visaGBP)}" oninput="updateTotals()" ${disPayments}></div>
+            <div class="payment-card"><label>Visa LE</label><input type="number" id="visaLE"  step="0.01" value="${dV(currentInvoice.visaLE)}"  oninput="updateTotals()" ${disPayments}></div>
+          </div>
+        </div>
+
+        <div class="card-body" style="padding-top:0">
+          <div class="form-group"><label>ملاحظات</label><textarea id="notes" rows="2">${esc(currentInvoice.notes)}</textarea></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="icon">🏢</span><h3>معلومات إضافية</h3></div>
+        <div class="card-body"><div class="form-grid">
+          <div class="form-group"><label>المنفذ</label><select id="supplier">${supOpts}</select></div>
+          <div class="form-group"><label>العميل</label><select id="customer">${custOpts}</select></div>
+          <div class="form-group"><label>الحالة</label>
+            <select id="state">
+              <option value="pending"   ${currentInvoice.state==='pending'?'selected':''}>⏳ قيد الانتظار</option>
+              <option value="Confirmed" ${(currentInvoice.state==='Confirmed'||currentInvoice.state==='confirmed')?'selected':''}>✅ مؤكد</option>
+              <option value="cancel"    ${currentInvoice.state==='cancel'?'selected':''}>❌ ملغي</option>
+            </select>
+          </div>
+        </div></div>
+      </div>
+
       <div class="action-buttons">
         <button class="btn btn-success" id="collectionBtn" ${disableCollectionBtn ? 'disabled' : ''}>💰 تحصيل دفعة</button>
         <button class="btn btn-primary" onclick="saveChanges()">💾 حفظ التعديلات</button>
-        <button class="btn btn-danger" onclick="cancelEdit()">❌ إلغاء</button>
-      </div>
-    `;
-    document.getElementById('loaderState').style.display = 'none';
-    document.getElementById('formContent').style.display = 'block';
+        <button class="btn btn-danger"  onclick="cancelEdit()">❌ إلغاء</button>
+      </div>`;
+
+    document.getElementById('loaderState').style.display  = 'none';
+    document.getElementById('formContent').style.display  = 'block';
     document.getElementById('formContent').innerHTML = formHtml;
+
+    // ربط زر التحصيل
     document.getElementById('collectionBtn')?.addEventListener('click', openCollectionModal);
-    
-    // تعبئة حقول المدفوعات (مرة أخرى للتأكيد)
-    document.getElementById('cashUSD').value = dV(currentInvoice.cashUSD);
-    document.getElementById('cashEUR').value = dV(currentInvoice.cashEUR);
-    document.getElementById('cashGBP').value = dV(currentInvoice.cashGBP);
-    document.getElementById('cashLE').value = dV(currentInvoice.cashLE);
-    document.getElementById('visaUSD').value = dV(currentInvoice.visaUSD);
-    document.getElementById('visaEUR').value = dV(currentInvoice.visaEUR);
-    document.getElementById('visaGBP').value = dV(currentInvoice.visaGBP);
-    document.getElementById('visaLE').value = dV(currentInvoice.visaLE);
-    document.getElementById('discount').value = dV(currentInvoice.discount);
-    
+
+    // حساب الإجماليات بعد بناء الفورم
     await updateTotals();
-  } catch(err) { hidePDF(); showAlert('خطأ: ' + err.message, '<button class="btn btn-primary" onclick="goBack()">رجوع</button>'); document.getElementById('loaderState').style.display = 'none'; }
-  finally { hidePDF(); }
+
+  } catch(err) {
+    hidePDF();
+    showAlert('خطأ: ' + err.message, '<button class="btn btn-primary" onclick="goBack()">رجوع</button>');
+    document.getElementById('loaderState').style.display = 'none';
+  } finally {
+    hidePDF();
+  }
 }
+
+// ─── جمع البيانات المعدّلة لحفظها ──────────────────────
 async function collectEditedData() {
   const currency = document.getElementById('invoiceCurrency')?.value;
   const activeDateInput = document.getElementById('activeDate')?.value;
   let activeDate = '';
   if (activeDateInput) { const d = new Date(activeDateInput); activeDate = formatDate(d); }
+
+  // بنود الرحلة
   const items = [];
   for (let i = 0; i < 20; i++) {
     const qtyEl = document.getElementById(`qty_${i}`);
-    if (qtyEl) {
-      const qty = parseFloat(qtyEl.value) || 0;
-      const nameEl = document.querySelector(`#itemsBody tr:nth-child(${i + 1}) td:first-child`);
-      if (qty > 0 && nameEl) items.push(`${nameEl.textContent}×${qty}`);
-    }
+    if (!qtyEl) continue;
+    const qty = parseFloat(qtyEl.value) || 0;
+    const nameEl = document.querySelector(`#itemsBody tr:nth-child(${i+1}) td:first-child`);
+    if (qty > 0 && nameEl) items.push(`${nameEl.textContent}×${qty}`);
   }
-  let actualPrice = parseFloat(currentInvoice.actualPrice) || 0;
-  let itemsTotal = 0;
-  for (let i = 0; i < 20; i++) { const totalEl = document.getElementById(`total_${i}`); if (totalEl) itemsTotal += parseFloat(totalEl.value) || 0; }
+
+  let actualPrice = currentInvoice.actualPrice || 0;
+  let itemsTotal  = 0;
+  for (let i = 0; i < 20; i++) { const el = document.getElementById(`total_${i}`); if (el) itemsTotal += parseFloat(el.value)||0; }
   if (itemsTotal > 0 && itemsTotal !== actualPrice) actualPrice = itemsTotal;
-  
+
   const disc = parseFloat(document.getElementById('discount')?.value) || 0;
   const cU = parseFloat(document.getElementById('cashUSD')?.value) || 0;
   const cE = parseFloat(document.getElementById('cashEUR')?.value) || 0;
   const cG = parseFloat(document.getElementById('cashGBP')?.value) || 0;
-  const cL = parseFloat(document.getElementById('cashLE')?.value) || 0;
+  const cL = parseFloat(document.getElementById('cashLE')?.value)  || 0;
   const vU = parseFloat(document.getElementById('visaUSD')?.value) || 0;
   const vE = parseFloat(document.getElementById('visaEUR')?.value) || 0;
   const vG = parseFloat(document.getElementById('visaGBP')?.value) || 0;
-  const vL = parseFloat(document.getElementById('visaLE')?.value) || 0;
-  
+  const vL = parseFloat(document.getElementById('visaLE')?.value)  || 0;
+
   let paid = 0;
-  const dateStr = document.getElementById('activeDate')?.value;
-  if (dateStr) {
-    const raw = await getRate(dateStr);
-    const r = rateFields(raw);
+  if (activeDateInput) {
+    const raw = await getRate(activeDateInput);
+    const r   = rateFields(raw);
     if (r) {
-      const LE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL + vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
-      if (currency === '$') paid = R2(LE / r.cash.USD);
-      else if (currency === '€') paid = R2(LE / r.cash.EUR);
-      else if (currency === '£') paid = R2(LE / r.cash.GBP);
+      const LE = cU*r.cash.USD + cE*r.cash.EUR + cG*r.cash.GBP + cL
+               + vU*r.visa.USD + vE*r.visa.EUR + vG*r.visa.GBP + vL*(r.visa.LE||0.975);
+      if (currency==='$') paid = R2(LE/r.cash.USD);
+      else if (currency==='€') paid = R2(LE/r.cash.EUR);
+      else if (currency==='£') paid = R2(LE/r.cash.GBP);
       else paid = R2(LE);
-    } else paid = directPaid(currency, cU, cE, cG, cL, vU, vE, vG, vL);
-  } else paid = directPaid(currency, cU, cE, cG, cL, vU, vE, vG, vL);
+    } else paid = directPaid(currency, cU,cE,cG,cL,vU,vE,vG,vL);
+  } else paid = directPaid(currency, cU,cE,cG,cL,vU,vE,vG,vL);
+
   const rest = R2(actualPrice - disc - paid);
-  
+
   return {
-    voucherNo: currentInvoice.voucherNo, issueDate: currentInvoice.issueDate, activeDate: activeDate,
-    time: document.getElementById('tripTime')?.value || '', contactNo: document.getElementById('contactNo')?.value || '',
-    guestName: document.getElementById('guestName')?.value || '', nationality: document.getElementById('nationality')?.value || '',
-    hotel: document.getElementById('hotel')?.value || '', roomNo: document.getElementById('roomNo')?.value || '',
-    trip: document.getElementById('tripName')?.value || '', invoiceCurrency: currency || '',
-    adultCount: parseInt(document.getElementById('adultCount')?.value) || 0, childCount: parseInt(document.getElementById('childCount')?.value) || 0,
+    voucherNo: currentInvoice.voucherNo,
+    issueDate: currentInvoice.issueDate,
+    activeDate, time: document.getElementById('tripTime')?.value || '',
+    contactNo:  document.getElementById('contactNo')?.value   || '',
+    guestName:  document.getElementById('guestName')?.value   || '',
+    nationality:document.getElementById('nationality')?.value || '',
+    hotel:      document.getElementById('hotel')?.value       || '',
+    roomNo:     document.getElementById('roomNo')?.value      || '',
+    trip:       document.getElementById('tripName')?.value    || '',
+    invoiceCurrency: currency || '',
+    adultCount:  parseInt(document.getElementById('adultCount')?.value)  || 0,
+    childCount:  parseInt(document.getElementById('childCount')?.value)  || 0,
     infantCount: parseInt(document.getElementById('infantCount')?.value) || 0,
-    cashUSD: cU, cashEUR: cE, cashGBP: cG, cashLE: cL, visaUSD: vU, visaEUR: vE, visaGBP: vG, visaLE: vL,
-    actualPrice: actualPrice, paymentPrice: paid, discount: disc, rest: rest,
-    activitiesText: items.join(' | '), supplier: document.getElementById('supplier')?.value || '',
-    customer: document.getElementById('customer')?.value || '', state: document.getElementById('state')?.value || 'pending',
-    notes: document.getElementById('notes')?.value || '', salesId: currentInvoice.salesId,
-    centerName: currentInvoice.centerName, branchName: currentInvoice.branchName, salesName: currentInvoice.salesName,
-    cost: currentInvoice.cost || ''
+    cashUSD: cU, cashEUR: cE, cashGBP: cG, cashLE: cL,
+    visaUSD: vU, visaEUR: vE, visaGBP: vG, visaLE: vL,
+    actualPrice, paymentPrice: paid, discount: disc, rest,
+    activitiesText: items.join(' | '),
+    supplier: document.getElementById('supplier')?.value || '',
+    customer: document.getElementById('customer')?.value || '',
+    state:    document.getElementById('state')?.value    || 'pending',
+    notes:    document.getElementById('notes')?.value    || '',
+    salesId:      currentInvoice.salesId,
+    centerName:   currentInvoice.centerName,
+    branchName:   currentInvoice.branchName,
+    salesName:    currentInvoice.salesName,
+    cost:         currentInvoice.cost || ''
   };
 }
 
 function createEditSummary(orig, edited) {
-  const changes = [];
-  const cur = edited.invoiceCurrency || '$';
-  if ((orig.discount || 0) !== (edited.discount || 0)) { const d = (edited.discount || 0) - (orig.discount || 0); changes.push(`💰 الخصم ${d > 0 ? '+' : ''}${d} ${cur}`); }
+  const changes = [], cur = edited.invoiceCurrency || '$';
+  if ((orig.discount||0) !== (edited.discount||0)) { const d=(edited.discount||0)-(orig.discount||0); changes.push(`💰 الخصم ${d>0?'+':''}${d} ${cur}`); }
   if (orig.state !== edited.state) changes.push(`📌 الحالة: ${orig.state} → ${edited.state}`);
-  const ot = timeToInput(orig.time || ''), et = timeToInput(edited.time || '');
+  const ot = timeToInput(orig.time||''), et = timeToInput(edited.time||'');
   if (ot !== et) changes.push(`⏰ الوقت: ${ot} → ${et}`);
   return changes.length ? changes.join(' | ') : 'لا توجد تغييرات';
 }
 
 async function saveChanges() {
-  const issueDate = currentInvoice.issueDate;
-  const today = formatDate(new Date());
-  const isPastDate = (issueDate < today);
+  const issueDate  = parseDate(currentInvoice.issueDate);
+  const today      = new Date(); today.setHours(0,0,0,0);
+  const isPastDate = issueDate && issueDate < today;
+
   const editedData = await collectEditedData();
+
+  // إذا كانت الفاتورة ماضية: اسحب قيم المدفوعات من currentInvoice (المجمّعة)
   if (isPastDate) {
     editedData.cashUSD = currentInvoice.cashUSD;
     editedData.cashEUR = currentInvoice.cashEUR;
     editedData.cashGBP = currentInvoice.cashGBP;
-    editedData.cashLE = currentInvoice.cashLE;
+    editedData.cashLE  = currentInvoice.cashLE;
     editedData.visaUSD = currentInvoice.visaUSD;
     editedData.visaEUR = currentInvoice.visaEUR;
     editedData.visaGBP = currentInvoice.visaGBP;
-    editedData.visaLE = currentInvoice.visaLE;
-    const actualPrice = editedData.actualPrice;
-    const disc = editedData.discount || 0;
-    const paid = currentInvoice.paymentPrice;
-    editedData.paymentPrice = paid;
-    editedData.rest = actualPrice - disc - paid;
+    editedData.visaLE  = currentInvoice.visaLE;
+    editedData.paymentPrice = currentInvoice.paymentPrice;
+    editedData.rest = R2(editedData.actualPrice - (editedData.discount||0) - currentInvoice.paymentPrice);
   }
+
   const summary = createEditSummary(originalInvoice, editedData);
   showPDF('جاري حفظ التعديلات...');
   try {
     const upd = await gas('updateInvoice', editedData);
     if (!upd.success) throw new Error(upd.message || 'فشل التحديث');
-    await gas('copyInvoiceToEdit', { originalData: JSON.stringify(originalInvoice), editedData: JSON.stringify(editedData), userId: currentUser?.id || '', editSummary: summary });
+    await gas('copyInvoiceToEdit', {
+      originalData: JSON.stringify(originalInvoice),
+      editedData:   JSON.stringify(editedData),
+      userId:       currentUser?.id || '',
+      editSummary:  summary
+    });
     showPDF('جاري إنشاء PDF...');
     const pdf = await gas('saveAndGenerateSinglePDF', { voucherNo: editedData.voucherNo });
     hidePDF();
-    if (pdf?.success) { showAlert('✅ تم حفظ التعديلات بنجاح', `<a href="${pdf.url}" target="_blank" class="btn btn-primary" style="text-decoration:none;">📄 فتح PDF</a><button class="btn btn-primary" onclick="goBack()">رجوع</button>`); }
-    else { showAlert('✅ تم الحفظ (فشل إنشاء PDF: ' + (pdf?.message || '') + ')', '<button class="btn btn-primary" onclick="goBack()">رجوع</button>'); }
+    if (pdf?.success) {
+      showAlert('✅ تم حفظ التعديلات بنجاح',
+        `<a href="${pdf.url}" target="_blank" class="btn btn-primary" style="text-decoration:none">📄 فتح PDF</a><button class="btn btn-primary" onclick="goBack()">رجوع</button>`);
+    } else {
+      showAlert('✅ تم الحفظ (فشل إنشاء PDF: ' + (pdf?.message||'') + ')', '<button class="btn btn-primary" onclick="goBack()">رجوع</button>');
+    }
   } catch(err) { hidePDF(); showAlert('خطأ: ' + err.message); }
 }
+
 async function cancelEdit() { if (confirm('هل أنت متأكد من إلغاء التعديلات؟')) goBack(); }
 
 window.changeTrip = async function() {
-  const newTrip = document.getElementById('tripName')?.value;
+  const newTrip  = document.getElementById('tripName')?.value;
   const currency = document.getElementById('invoiceCurrency')?.value;
   if (!newTrip || !currency) return;
-  const newCategory = getTripCategory(newTrip);
+  const newCategory  = getTripCategory(newTrip);
   const newCustomers = getCustomersByCategory(newCategory);
   const newSuppliers = getSuppliersByCategory(newCategory);
-  const supSelect = document.getElementById('supplier');
-  const custSelect = document.getElementById('customer');
-  if (supSelect) supSelect.innerHTML = '<option value="">-- اختر --</option>' + newSuppliers.map(s => `<option value="${esc(s.customerName)}">${esc(s.customerName)}</option>`).join('');
-  if (custSelect) custSelect.innerHTML = '<option value="">-- اختر --</option>' + newCustomers.map(c => `<option value="${esc(c.customerName)}">${esc(c.customerName)}</option>`).join('');
-  const newTripData = await gas('getTripData', { tripName: newTrip, currency });
-  if (newTripData?.items) {
+  const supSel  = document.getElementById('supplier');
+  const custSel = document.getElementById('customer');
+  if (supSel)  supSel.innerHTML  = '<option value="">-- اختر --</option>' + newSuppliers.map(s=>`<option value="${esc(s.customerName)}">${esc(s.customerName)}</option>`).join('');
+  if (custSel) custSel.innerHTML = '<option value="">-- اختر --</option>' + newCustomers.map(c=>`<option value="${esc(c.customerName)}">${esc(c.customerName)}</option>`).join('');
+  const td = await gas('getTripData', { tripName: newTrip, currency });
+  if (td?.items) {
     let rows = '';
-    for (let i = 0; i < newTripData.items.length; i++) rows += `<tr><td style="font-weight:600">${esc(newTripData.items[i])}</td><td><input type="number" id="qty_${i}" min="0" placeholder="0" oninput="updateItemTotal(${i}, ${newTripData.prices?.[i] || 0})"></td><td><input type="number" id="price_${i}" value="${newTripData.prices?.[i] || 0}" readonly></td><td><input type="number" id="total_${i}" value="0" readonly></td></tr>`;
+    for (let i=0; i<td.items.length; i++) {
+      rows += `<tr><td style="font-weight:600">${esc(td.items[i])}</td>
+        <td><input type="number" id="qty_${i}" min="0" placeholder="0" oninput="updateItemTotal(${i}, ${td.prices?.[i]||0})"></td>
+        <td><input type="number" id="price_${i}" value="${td.prices?.[i]||0}" readonly></td>
+        <td><input type="number" id="total_${i}" value="0" readonly></td></tr>`;
+    }
     document.getElementById('itemsBody').innerHTML = rows;
   }
   await updateTotals();
 };
 
+// ─── Bootstrap ───────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   let ud = sessionStorage.getItem('currentUser');
-  if (!ud) { const p = new URLSearchParams(location.search).get('user'); if (p) { ud = decodeURIComponent(p); sessionStorage.setItem('currentUser', ud); } }
+  if (!ud) {
+    const p = new URLSearchParams(location.search).get('user');
+    if (p) { ud = decodeURIComponent(p); sessionStorage.setItem('currentUser', ud); }
+  }
   if (!ud) { location.href = 'index.html'; return; }
   try { currentUser = JSON.parse(ud); } catch { location.href = 'index.html'; return; }
   if (!sessionStorage.getItem('returnUrl') && document.referrer) sessionStorage.setItem('returnUrl', document.referrer);
   loadInvoice();
 });
 
-window.goBack = goBack; window.closeAlert = closeAlert; window.updateTotals = updateTotals;
-window.updateItemTotal = updateItemTotal; window.openCollectionModal = openCollectionModal;
-window.closeCollectionModal = closeCollectionModal; window.submitCollection = submitCollection;
-window.updateCollectionPreview = updateCollectionPreview; window.saveChanges = saveChanges;
+window.goBack = goBack;
+window.closeAlert = closeAlert;
+window.updateTotals = updateTotals;
+window.updateItemTotal = updateItemTotal;
+window.openCollectionModal = openCollectionModal;
+window.closeCollectionModal = closeCollectionModal;
+window.submitCollection = submitCollection;
+window.updateCollectionPreview = updateCollectionPreview;
+window.saveChanges = saveChanges;
 window.cancelEdit = cancelEdit;
 </script>
 </body>
