@@ -322,47 +322,80 @@ async function getTotalPaymentsForInvoice(voucherNo) {
 
 // ─── تحديث الإجماليات في الفورم ──────────────────────────
 async function updateTotals() {
-  const currency   = document.getElementById('invoiceCurrency')?.value;
-  const dateStr    = document.getElementById('activeDate')?.value;
-  const actualFromItems = calculateTotalFromItems();
-  const actualPrice = actualFromItems > 0 ? actualFromItems : (currentInvoice?.actualPrice || 0);
-  const disc = getCurrentDiscount();
-  const cU = parseFloat(document.getElementById('cashUSD')?.value) || 0;
-  const cE = parseFloat(document.getElementById('cashEUR')?.value) || 0;
-  const cG = parseFloat(document.getElementById('cashGBP')?.value) || 0;
-  const cL = parseFloat(document.getElementById('cashLE')?.value)  || 0;
-  const vU = parseFloat(document.getElementById('visaUSD')?.value) || 0;
-  const vE = parseFloat(document.getElementById('visaEUR')?.value) || 0;
-  const vG = parseFloat(document.getElementById('visaGBP')?.value) || 0;
-  const vL = parseFloat(document.getElementById('visaLE')?.value)  || 0;
-
+  const currency = document.getElementById('invoiceCurrency')?.value;
+  const dateStr = document.getElementById('activeDate')?.value;
+  
+  // 1. إجمالي الفاتورة من العمود ActualPrice
+  const actualPrice = currentInvoice?.actualPrice || 0;
+  
+  // 2. الخصم من الفاتورة الأصلية
+  const discount = currentInvoice?.discount || 0;
+  
+  // 3. قراءة العملات من currentInvoice (التي تحتوي على إجمالي كل التحصيلات)
+  const cU = currentInvoice?.cashUSD || 0;
+  const cE = currentInvoice?.cashEUR || 0;
+  const cG = currentInvoice?.cashGBP || 0;
+  const cL = currentInvoice?.cashLE || 0;
+  const vU = currentInvoice?.visaUSD || 0;
+  const vE = currentInvoice?.visaEUR || 0;
+  const vG = currentInvoice?.visaGBP || 0;
+  const vL = currentInvoice?.visaLE || 0;
+  
+  // 4. حساب المدفوع (تحويل جميع العملات إلى عملة الفاتورة)
   let paid = 0;
+  
   if (dateStr) {
     const raw = await getRate(dateStr);
-    const r   = rateFields(raw);
+    const r = rateFields(raw);
     if (r) {
-      const LE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL
-               + vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
-      if (currency === '$') paid = R2(LE / r.cash.USD);
-      else if (currency === '€') paid = R2(LE / r.cash.EUR);
-      else if (currency === '£') paid = R2(LE / r.cash.GBP);
-      else paid = R2(LE);
+      // تحويل كل العملات إلى LE أولاً
+      const totalLE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
+                      vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
+      
+      // تحويل من LE إلى عملة الفاتورة
+      if (currency === '$') paid = R2(totalLE / r.cash.USD);
+      else if (currency === '€') paid = R2(totalLE / r.cash.EUR);
+      else if (currency === '£') paid = R2(totalLE / r.cash.GBP);
+      else paid = R2(totalLE);
     } else {
-      paid = directPaid(currency, cU, cE, cG, cL, vU, vE, vG, vL);
+      // إذا لم يوجد سعر صرف، استخدم جمع مباشر
+      paid = cU + cE + cG + cL + vU + vE + vG + vL;
     }
   } else {
-    paid = directPaid(currency, cU, cE, cG, cL, vU, vE, vG, vL);
+    paid = cU + cE + cG + cL + vU + vE + vG + vL;
   }
-
-  const rest = R2(actualPrice - disc - paid);
-  const elA = document.getElementById('displayActualPrice');
-  const elP = document.getElementById('displayPaymentPrice');
-  const elR = document.getElementById('displayRest');
-  if (elA) elA.textContent = actualPrice.toFixed(2);
-  if (elP) elP.textContent = paid.toFixed(2);
-  if (elR) elR.textContent = rest.toFixed(2);
+  
+  // 5. حساب المتبقي
+  const rest = R2(actualPrice - discount - paid);
+  
+  // 6. تحديث واجهة المستخدم
+  const actualPriceEl = document.getElementById('displayActualPrice');
+  const paymentPriceEl = document.getElementById('displayPaymentPrice');
+  const restEl = document.getElementById('displayRest');
+  
+  if (actualPriceEl) actualPriceEl.textContent = actualPrice.toFixed(2);
+  if (paymentPriceEl) paymentPriceEl.textContent = paid.toFixed(2);
+  if (restEl) restEl.textContent = rest.toFixed(2);
+  
+  // 7. تحديث حقول العملات المعروضة في الفورم (عرض إجمالي كل التحصيلات)
+  const cashUSDEl = document.getElementById('cashUSD');
+  const cashEUREl = document.getElementById('cashEUR');
+  const cashGBPEl = document.getElementById('cashGBP');
+  const cashLEEl = document.getElementById('cashLE');
+  const visaUSDEl = document.getElementById('visaUSD');
+  const visaEUREl = document.getElementById('visaEUR');
+  const visaGBPEl = document.getElementById('visaGBP');
+  const visaLEEl = document.getElementById('visaLE');
+  
+  if (cashUSDEl) cashUSDEl.value = dV(cU);
+  if (cashEUREl) cashEUREl.value = dV(cE);
+  if (cashGBPEl) cashGBPEl.value = dV(cG);
+  if (cashLEEl) cashLEEl.value = dV(cL);
+  if (visaUSDEl) visaUSDEl.value = dV(vU);
+  if (visaEUREl) visaEUREl.value = dV(vE);
+  if (visaGBPEl) visaGBPEl.value = dV(vG);
+  if (visaLEEl) visaLEEl.value = dV(vL);
 }
-
 function updateItemTotal(idx, price) {
   const qty = parseFloat(document.getElementById(`qty_${idx}`)?.value) || 0;
   const tot = document.getElementById(`total_${idx}`);
