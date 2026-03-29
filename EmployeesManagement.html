@@ -367,7 +367,8 @@
 // ══════════════════════════════════════════════════════════
 const GAS = 'https://script.google.com/macros/s/AKfycbwe1Q9pjAJRk9CfWsK5YGjD5uVAbJkMhAVgw6akKkFIR9sz15V78C88Vs5dumKE-SwF/exec';
 
-let currentUser   = null;
+let currentCenterId = '';
+let currentBranchId = '';
 let employees     = [];
 let branches      = [];
 let editingSerial = null;
@@ -407,7 +408,11 @@ document.addEventListener('DOMContentLoaded', () => {
       '</div>';
     return;
   }
-  try { currentUser = JSON.parse(ud); } catch(e) {
+  try { 
+    currentUser = JSON.parse(ud);
+    currentCenterId = currentUser.centerId || '';
+    currentBranchId = currentUser.branchId || '';
+  } catch(e) {
     document.querySelector('.content').innerHTML = '<div style="text-align:center;padding:60px;color:#e74c3c;"><h3>خطأ في بيانات الجلسة</h3></div>';
     return;
   }
@@ -422,9 +427,21 @@ async function loadEmployees() {
   document.getElementById('employeesTable').innerHTML = '<div class="loader"></div>';
   document.getElementById('statsRow').innerHTML = '';
   try {
-    const result = await jsonpRequest('getAllEmployees');
+    let result;
+    
+    // إذا كان المستخدم محاسباً، جلب موظفي مركزه فقط
+    if (currentUser?.type === 'Accountant') {
+      result = await jsonpRequest('getEmployeesByCenter', { 
+        centerId: currentCenterId,
+        branchId: currentBranchId
+      });
+    } else {
+      // Admin أو Owner يرون جميع الموظفين
+      result = await jsonpRequest('getAllEmployees');
+    }
+    
     if (Array.isArray(result)) {
-      employees  = result;
+      employees = result;
       usedEmails = new Set(employees.filter(e=>e.email).map(e=>e.email.toLowerCase().trim()));
       renderStats();
       displayTable();
@@ -436,6 +453,7 @@ async function loadEmployees() {
     showToast('خطأ في الاتصال', 'error');
   }
 }
+
 
 function renderStats() {
   const active  = employees.filter(e => e.status === 'نشط').length;
@@ -588,9 +606,7 @@ function resetForm() {
   });
 }
 
-// ══════════════════════════════════════════════════════════
-// BRANCHES
-// ══════════════════════════════════════════════════════════
+// عند إضافة أو تعديل موظف، تأكد من أن الفرع المختار يتبع مركز المستخدم الحالي
 async function loadBranches() {
   if (!currentUser?.centerId) return;
   try {
