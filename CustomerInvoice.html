@@ -30,7 +30,7 @@
     .card-body{padding:16px;}
     .fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:14px;}
     .fgroup{display:flex;flex-direction:column;gap:5px;}
-    .fgroup label{font-size:11px;font-weight:700;color:var(--text-lt);text-transform:uppercase;letter-spacing:.5px;}
+    .fgroup label{font-size:11px;font-weight:700;color:var(--text-lt);text-transform:uppercase;letter-spacing:.5px;margin-bottom:0;}
     .fgroup label.req::after{content:' *';color:var(--red);}
     .fc{padding:8px 12px;border:2px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:'Cairo',sans-serif;color:var(--text);background:#fafbfd;width:100%;height:40px;transition:border-color .2s;}
     .fc:focus{border-color:var(--blue);outline:none;background:white;}
@@ -49,15 +49,16 @@
     .trip-table input{width:80px;padding:6px;text-align:center;border:2px solid var(--border);border-radius:8px;background:#fafbfd;}
     .trip-table input:focus{border-color:var(--blue);outline:none;}
     .trip-table input:focus::placeholder{color:transparent;}
-    .total-card{background:linear-gradient(135deg,var(--navy),var(--navy2));color:white;}
+    .total-card{background:linear-gradient(135deg,var(--navy),var(--navy2));}
     .total-card .card-head{background:transparent;}
     .total-card .card-head h3{color:var(--gold);}
     .total-strip{display:flex;justify-content:space-around;align-items:center;flex-wrap:wrap;gap:14px;padding:16px;}
     .total-tile{text-align:center;}
-    .total-tile .tl{font-size:10px;font-weight:700;color:rgba(255,255,255,.7);text-transform:uppercase;}
+    .total-tile .tl{font-size:10px;font-weight:700;color:rgba(255,255,255,.7);text-transform:uppercase;margin-bottom:6px;}
     .total-tile .tv{font-size:28px;font-weight:900;color:white;}
     .total-tile input{width:130px;padding:8px;border-radius:10px;text-align:center;font-size:16px;font-weight:700;background:white;border:none;color:var(--navy);}
     .total-tile input:focus{outline:2px solid var(--gold);}
+    .total-tile select{width:100px;padding:8px;border-radius:10px;text-align:center;font-size:14px;font-weight:700;background:white;border:none;color:var(--navy);}
     .loader{text-align:center;padding:40px;}
     .spinner{width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 12px;}
     @keyframes spin{to{transform:rotate(360deg)}}
@@ -66,6 +67,7 @@
     .alert-box{background:white;width:90%;max-width:380px;border-radius:22px;padding:24px;text-align:center;}
     .alert-icon{font-size:40px;margin-bottom:10px;}
     .alert-msg{color:var(--navy);font-size:14px;font-weight:700;margin-bottom:18px;}
+    .alert-actions{display:flex;gap:10px;justify-content:center;margin-top:16px;}
     .hotel-row{display:grid;grid-template-columns:1fr 90px 70px 70px 70px;gap:10px;margin-top:12px;}
     @media(max-width:640px){.hotel-row{grid-template-columns:1fr 70px 60px 60px 60px;}}
     .compact-num{text-align:center;}
@@ -110,7 +112,7 @@
   <div class="alert-box">
     <div class="alert-icon" id="alertIcon">ℹ️</div>
     <div class="alert-msg" id="alertMsg"></div>
-    <div style="margin-top:16px;">
+    <div class="alert-actions" id="alertActions">
       <button class="btn btn-save" onclick="closeAlert()">موافق</button>
     </div>
   </div>
@@ -162,6 +164,7 @@ let allNationalities = [];
 let allHotels = [];
 let currentTripItems = [];
 let activitiesQuantities = [];
+let returnUrl = null; // رابط العودة
 
 // ====================== الساعة ======================
 let ckHour = null, ckMin = null, ckMode = 'hour';
@@ -331,16 +334,25 @@ function gas(action, params = {}) {
 }
 
 // ====================== مساعدات ======================
-function goBack() { 
-  if (currentUser?.type === 'Customer') {
-    window.location.href = 'CustomerDashboard.html';
+function goBack() {
+  if (returnUrl) {
+    location.href = returnUrl;
+  } else if (currentUser?.type === 'Customer') {
+    location.href = 'CustomerDashboard.html';
   } else {
-    window.location.href = 'Dashboard.html';
+    location.href = 'Dashboard.html';
   }
 }
-function showAlert(msg, icon) { 
+
+function showAlert(msg, icon, actionsHtml = null) {
   document.getElementById('alertIcon').textContent = icon || 'ℹ️';
   document.getElementById('alertMsg').textContent = msg;
+  const actionsContainer = document.getElementById('alertActions');
+  if (actionsHtml) {
+    actionsContainer.innerHTML = actionsHtml;
+  } else {
+    actionsContainer.innerHTML = '<button class="btn btn-save" onclick="closeAlert()">موافق</button>';
+  }
   document.getElementById('alertModal').classList.add('open');
 }
 function closeAlert() { 
@@ -373,19 +385,25 @@ function formatActivitiesText(items, quantities) {
 }
 
 // ====================== جلب بيانات العميل ======================
-async function loadCustomerData() {
+async function loadCustomerData(customerNameFromUrl) {
   try {
     const res = await gas('getAllSuppliersCustomers');
     allCustomers = Array.isArray(res) ? res.filter(c => c.customerType === 'Customer') : [];
     
-    if (currentUser?.type === 'Customer') {
+    // إذا كان هناك اسم عميل من رابط الصفحة
+    if (customerNameFromUrl) {
+      selectedCustomer = allCustomers.find(c => c.customerName === customerNameFromUrl);
+    }
+    // إذا لم يتم العثور وكان المستخدم من نوع Customer
+    else if (currentUser?.type === 'Customer') {
       selectedCustomer = allCustomers.find(c => 
         c.loginEmail === currentUser?.email || c.customerName === currentUser?.name
       );
-      if (selectedCustomer) {
-        customerTrips = selectedCustomer.assignedTrips ? 
-          selectedCustomer.assignedTrips.split('|').filter(Boolean) : [];
-      }
+    }
+    
+    if (selectedCustomer) {
+      customerTrips = selectedCustomer.assignedTrips ? 
+        selectedCustomer.assignedTrips.split('|').filter(Boolean) : [];
     }
     return true;
   } catch (e) {
@@ -443,14 +461,10 @@ function renderTripsList() {
   if (!tripsSelect) return;
   
   let tripsList = [];
-  if (currentUser?.type === 'Customer') {
+  if (selectedCustomer && selectedCustomer.customerName) {
     tripsList = customerTrips;
   } else {
-    if (selectedCustomer && selectedCustomer.customerName) {
-      tripsList = customerTrips;
-    } else {
-      tripsList = allTrips.map(t => t.name || t).filter(Boolean);
-    }
+    tripsList = allTrips.map(t => t.name || t).filter(Boolean);
   }
   
   tripsSelect.innerHTML = '<option value="">-- اختر الرحلة --</option>' +
@@ -491,8 +505,8 @@ function renderTripTable() {
   for (let i = 0; i < currentTripItems.length; i++) {
     const item = currentTripItems[i];
     rows += `汽水<td style="font-weight:600;text-align:right">${item}</td>
-             <td><input type="number" id="qty_${i}" min="0" placeholder="0" value="${activitiesQuantities[i] || ''}" oninput="updateActivitiesText()" class="fc" style="width:80px"></td>
-            </tr>`;
+              <td><input type="number" id="qty_${i}" min="0" placeholder="0" value="${activitiesQuantities[i] || ''}" oninput="updateActivitiesText()" class="fc" style="width:80px"></td>
+            `;
   }
   
   document.getElementById('tripItemsContainer').innerHTML = `
@@ -530,7 +544,7 @@ function updateCurrencyVisibility() {
   const restAmount = parseFloat(document.getElementById('totalPrice')?.value) || 0;
   const currencyRow = document.getElementById('currencyRow');
   if (currencyRow) {
-    currencyRow.style.display = restAmount > 0 ? 'flex' : 'none';
+    currencyRow.style.display = restAmount > 0 ? 'block' : 'none';
   }
 }
 
@@ -571,8 +585,7 @@ async function saveInvoice() {
   const childCount = parseInt(document.getElementById('childCount')?.value) || 0;
   const infantCount = parseInt(document.getElementById('infantCount')?.value) || 0;
   
-  // استخدام CenterName من المستخدم إذا كان عميل، وإلا من العميل المختار
-  const centerName = currentUser?.type === 'Customer' ? (currentUser?.centerName || '') : (selectedCustomer?.parentCenter || '');
+  const centerName = selectedCustomer?.parentCenter || currentUser?.centerName || '';
   
   const invoiceData = {
     issueDate: issueDate,
@@ -614,7 +627,7 @@ async function saveInvoice() {
         `✅ تم حفظ الفاتورة بنجاح\nرقم الفاتورة: ${result.voucherNo}\nالعميل: ${customer}\n${restAmount > 0 ? 'المبلغ المتبقي: ' + restAmount + ' ' + currency : ''}`,
         '✅',
         `<button class="btn btn-save" onclick="location.reload()">فاتورة جديدة</button>
-         <button class="btn btn-back" onclick="goBack()">رجوع للوحة</button>`
+         <button class="btn btn-back" onclick="goBack()">رجوع</button>`
       );
     } else {
       throw new Error(result?.message || 'فشل الحفظ');
@@ -627,7 +640,6 @@ async function saveInvoice() {
 }
 
 function clearForm(){
-  document.getElementById('customer').value = '';
   document.getElementById('guestName').value = '';
   document.getElementById('contactNo').value = '';
   document.getElementById('nationality').value = '';
@@ -653,9 +665,9 @@ function clearForm(){
 }
 
 // ====================== عرض النموذج ======================
-function renderForm() {
+function renderForm(customerNameFromUrl) {
   const isCustomerUser = currentUser?.type === 'Customer';
-  const customerDefault = isCustomerUser && selectedCustomer ? selectedCustomer.customerName : '';
+  const customerDefault = customerNameFromUrl || (isCustomerUser && selectedCustomer ? selectedCustomer.customerName : '');
   
   const customersOptions = allCustomers.map(c => `<option value="${c.customerName}" ${customerDefault === c.customerName ? 'selected' : ''}>${c.customerName}</option>`).join('');
   const tripsOptions = customerTrips.map(t => `<option value="${t}">${t}</option>`).join('');
@@ -668,7 +680,7 @@ function renderForm() {
       <div class="card-body">
         <div class="fgrid">
           <div class="fgroup"><label class="req">العميل</label>
-            <select class="fc" id="customer" onchange="onCustomerChange()" ${isCustomerUser ? 'disabled' : ''}>
+            <select class="fc" id="customer" onchange="onCustomerChange()" ${customerNameFromUrl ? 'disabled' : ''}>
               <option value="">-- اختر العميل --</option>
               ${customersOptions}
             </select>
@@ -728,8 +740,12 @@ function renderForm() {
     <div class="card total-card">
       <div class="card-head"><span class="ch-icon">💰</span><h3>المبلغ المتبقي على الزبون</h3></div>
       <div class="total-strip">
-        <div class="total-tile"><div class="tl">عدد المشاركين</div><div class="tv" id="displayTotalPersons">0</div></div>
-        <div class="total-tile" id="currencyRow" style="display:none"><div class="tl">العملة</div>
+        <div class="total-tile">
+          <div class="tl">عدد المشاركين</div>
+          <div class="tv" id="displayTotalPersons">0</div>
+        </div>
+        <div class="total-tile" id="currencyRow" style="display:none">
+          <div class="tl">العملة</div>
           <select class="fc" id="invoiceCurrency" style="width:100px;background:white">
             <option value="">اختر العملة</option>
             <option value="$">USD $</option>
@@ -738,7 +754,10 @@ function renderForm() {
             <option value="LE">EGP LE</option>
           </select>
         </div>
-        <div class="total-tile"><div class="tl">المبلغ المتبقي</div><input type="number" id="totalPrice" min="0" step="0.01" placeholder="0.00" oninput="updateCurrencyVisibility()" style="width:140px"></div>
+        <div class="total-tile">
+          <div class="tl">المبلغ المتبقي</div>
+          <input type="number" id="totalPrice" min="0" step="0.01" placeholder="0.00" oninput="updateCurrencyVisibility()" style="width:140px">
+        </div>
       </div>
     </div>
     
@@ -759,9 +778,15 @@ function renderForm() {
   const today = new Date();
   document.getElementById('activeDate').value = today.toISOString().split('T')[0];
   
-  if (isCustomerUser && selectedCustomer) {
-    document.getElementById('customer').value = selectedCustomer.customerName;
-    onCustomerChange();
+  if (customerNameFromUrl || selectedCustomer) {
+    const customerSelect = document.getElementById('customer');
+    if (customerSelect) {
+      const customerValue = customerNameFromUrl || selectedCustomer?.customerName;
+      if (customerValue) {
+        customerSelect.value = customerValue;
+        onCustomerChange();
+      }
+    }
   }
   
   updateTotalPersons();
@@ -778,13 +803,25 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (!ud) { location.href = 'index.html'; return; }
   try { currentUser = JSON.parse(ud); } catch(e) { location.href = 'index.html'; return; }
   
+  // قراءة اسم العميل من رابط الصفحة
+  const urlParams = new URLSearchParams(location.search);
+  const customerName = urlParams.get('customer');
+  
+  // قراءة رابط العودة من الرابط أو من sessionStorage
+  returnUrl = urlParams.get('returnUrl') || sessionStorage.getItem('returnUrl');
+  
+  // حفظ رابط العودة إذا لم يكن موجوداً
+  if (returnUrl && !sessionStorage.getItem('returnUrl')) {
+    sessionStorage.setItem('returnUrl', returnUrl);
+  }
+  
   document.getElementById('userChip').textContent = currentUser.name || 'User';
   
-  await loadCustomerData();
+  await loadCustomerData(customerName);
   await loadTripsData();
   await loadLookups();
   
-  renderForm();
+  renderForm(customerName);
 });
 
 // ====================== دوال عامة ======================
