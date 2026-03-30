@@ -222,11 +222,17 @@ const C={
    FETCH HELPER — single GET to GAS
 ─────────────────────────────────────────────────────────── */
 function gas(action, params = {}) {
-  // إذا كانت params تحتوي على signatureData أو البيانات كبيرة جداً → استخدم POST
-  const hasSig = params.signatureData && params.signatureData.toString().startsWith('data:image');
-  const hasLargeData = JSON.stringify(params).length > 1500; // إذا كانت البيانات كبيرة
+  // قائمة الأكشنات التي يجب أن تستخدم POST دائماً
+  const forcePostActions = ['copyInvoiceToEdit', 'saveInvoice', 'saveAndGenerateSinglePDF'];
   
-  if (hasSig || hasLargeData) {
+  // استخدام POST إذا:
+  // 1. هناك signatureData (صورة كبيرة)
+  // 2. أو الاكشن في قائمة forcePostActions
+  // 3. أو حجم البيانات كبير
+  const hasSig = params.signatureData && params.signatureData.toString().startsWith('data:image');
+  const shouldPost = hasSig || forcePostActions.includes(action) || JSON.stringify(params).length > 1500;
+  
+  if (shouldPost) {
     const body = JSON.stringify({ action, ...params });
     return fetch(GAS, {
       method: 'POST',
@@ -234,7 +240,8 @@ function gas(action, params = {}) {
       body: body,
       redirect: 'follow'
     })
-    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .catch(err => { console.warn('POST failed for', action, err); throw err; });
   }
   
   // للبيانات الصغيرة: استخدم GET
@@ -244,7 +251,6 @@ function gas(action, params = {}) {
   return fetch(u.toString(), { redirect: 'follow' })
     .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
 }
-
 /* ───────────────────────────────────────────────────────────
    INIT ── Zero blocking. Form renders synchronously.
    Every GAS call fires AFTER the form is already visible.
