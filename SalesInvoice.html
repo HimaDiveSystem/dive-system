@@ -222,22 +222,41 @@ const C={
    FETCH HELPER — single GET to GAS
 ─────────────────────────────────────────────────────────── */
 function gas(action, params = {}) {
-  // ✅ استخدام POST لجميع الطلبات (للتغلب على CORS)
-  const body = JSON.stringify({ action, ...params });
-  return fetch(GAS, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: body,
-    redirect: 'follow'
-  })
-  .then(r => { 
-    if (!r.ok) throw new Error('HTTP ' + r.status); 
-    return r.json(); 
-  })
-  .catch(err => { 
-    console.error(`❌ ${action} failed:`, err); 
-    throw err; 
+  // استخدام GET لجميع الطلبات (لتجنب CORS)
+  const u = new URL(GAS);
+  u.searchParams.set('action', action);
+  
+  // إضافة جميع المعاملات إلى الرابط
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') {
+      if (typeof v === 'object') {
+        u.searchParams.set(k, JSON.stringify(v));
+      } else {
+        u.searchParams.set(k, String(v));
+      }
+    }
   });
+  
+  const urlString = u.toString();
+  console.log(`📡 ${action} - URL length: ${urlString.length}`);
+  
+  // إذا كان الرابط طويلاً جداً (لـ saveInvoice مع التوقيع)، نحاول
+  if (urlString.length > 1800 && action === 'saveInvoice') {
+    console.warn('⚠️ URL太长، يتم حذف signatureData مؤقتاً');
+    const newParams = { ...params };
+    delete newParams.signatureData;
+    return gas(action, newParams);
+  }
+  
+  return fetch(urlString, { method: 'GET', redirect: 'follow' })
+    .then(r => { 
+      if (!r.ok) throw new Error('HTTP ' + r.status); 
+      return r.json(); 
+    })
+    .catch(err => {
+      console.error(`❌ ${action} failed:`, err);
+      throw err;
+    });
 }
 /* ───────────────────────────────────────────────────────────
    INIT ── Zero blocking. Form renders synchronously.
