@@ -353,7 +353,8 @@ async function loadData(){
     }
     
     allInvoices = invoices;
-    
+    setDefaultDates();  // ← هذه ستستخدم نطاق الفواتير الآن
+runReport();
     // تعبئة الفلاتر
     const branchSet=new Set(),salesSet=new Set(),tripSet=new Set(),hotelSet=new Set(),natSet=new Set();
     allInvoices.forEach(i=>{
@@ -403,15 +404,41 @@ async function loadData(){
   }
 }
 
+// استبدل دالة setDefaultDates بهذه:
 function setDefaultDates(){
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = String(today.getMonth() + 1).padStart(2, '0');
-  const day = String(today.getDate()).padStart(2, '0');
-  const todayStr = `${year}-${month}-${day}`;
-  
-  document.getElementById('filterDateFrom').value = todayStr;
-  document.getElementById('filterDateTo').value = todayStr;
+    if(allInvoices && allInvoices.length > 0){
+        let minDate = null, maxDate = null;
+        allInvoices.forEach(inv => {
+            // ✅ استخدم activeDate أولاً
+            let dt = parseDate(inv.activeDate);
+            if (!dt) dt = parseDate(inv.issueDate);
+            if(dt){
+                if(!minDate || dt < minDate) minDate = dt;
+                if(!maxDate || dt > maxDate) maxDate = dt;
+            }
+        });
+        
+        if(minDate && maxDate){
+            const formatInput = (date) => {
+                const y = date.getFullYear();
+                const m = String(date.getMonth() + 1).padStart(2, '0');
+                const d = String(date.getDate()).padStart(2, '0');
+                return `${y}-${m}-${d}`;
+            };
+            document.getElementById('filterDateFrom').value = formatInput(minDate);
+            document.getElementById('filterDateTo').value = formatInput(maxDate);
+            console.log(`📅 نطاق التواريخ (حسب activeDate): ${formatInput(minDate)} → ${formatInput(maxDate)}`);
+            return;
+        }
+    }
+    
+    // Fallback
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    document.getElementById('filterDateFrom').value = `${year}-${month}-${day}`;
+    document.getElementById('filterDateTo').value = `${year}-${month}-${day}`;
 }
 
 function setFullYear(){
@@ -421,21 +448,44 @@ function setFullYear(){
   runReport();
 }
 
-function resetFilters(){
-  setFullYear();
-  const fBranch = document.getElementById('fBranch');
-  if(fBranch && !fBranch.disabled) fBranch.value='';
-  const fSales = document.getElementById('fSales');
-  if(fSales) fSales.value='';
-  const fTrip = document.getElementById('fTrip');
-  if(fTrip) fTrip.value='';
-  const fHotel = document.getElementById('fHotel');
-  if(fHotel) fHotel.value='';
-  const fNat = document.getElementById('fNat');
-  if(fNat) fNat.value='';
-  const fState = document.getElementById('fState');
-  if(fState) fState.value='';
-  runReport();
+function applyFilters(){
+    const fromDate=document.getElementById('filterDateFrom').value;
+    const toDate=document.getElementById('filterDateTo').value;
+    const branch=document.getElementById('fBranch')?.value;
+    const sales=document.getElementById('fSales')?.value;
+    const trip=document.getElementById('fTrip')?.value;
+    const hotel=document.getElementById('fHotel')?.value;
+    const nat=document.getElementById('fNat')?.value;
+    const state=document.getElementById('fState')?.value;
+    
+    let fromTs=null,toTs=null;
+    if(fromDate){
+        const [y,m,d]=fromDate.split('-').map(Number);
+        fromTs=new Date(y,m-1,d).getTime();
+    }
+    if(toDate){
+        const [y,m,d]=toDate.split('-').map(Number);
+        toTs=new Date(y,m-1,d,23,59,59,999).getTime();
+    }
+    
+    filteredInvoices=allInvoices.filter(inv=>{
+        // ✅ استخدم activeDate بدلاً من issueDate
+        let dt = parseDate(inv.activeDate);
+        if (!dt) dt = parseDate(inv.issueDate);  // fallback
+        const ts = dt ? dt.getTime() : null;
+        
+        if(fromTs && (ts===null || ts<fromTs)) return false;
+        if(toTs && (ts===null || ts>toTs)) return false;
+        if(branch && inv.branchName!==branch) return false;
+        if(sales && inv.salesName!==sales) return false;
+        if(trip && inv.trip!==trip) return false;
+        if(hotel && inv.hotel!==hotel) return false;
+        if(nat && inv.nationality!==nat) return false;
+        if(state && (inv.state||'').toLowerCase()!==state.toLowerCase()) return false;
+        return true;
+    });
+    
+    console.log(`📊 بعد التصفية: ${filteredInvoices.length} فاتورة`);
 }
 
 function applyFilters(){
