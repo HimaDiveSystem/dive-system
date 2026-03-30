@@ -153,7 +153,94 @@ let allInvoices=[];
 let filteredInvoices=[];
 let exchangeRatesCache={};
 let activeChart=null;
+// ============ تحسين الأداء: تخزين أسعار الصرف ============
+let exchangeRatesMap = new Map(); // { "YYYY-MM-DD": { cash: {USD, EUR, GBP}, visa: {...} } }
 
+// جلب جميع أسعار الصرف مرة واحدة
+async function loadAllExchangeRates() {
+    try {
+        const res = await fetch(`${GAS_URL}?action=getAllExchangeRatesNew`);
+        const rates = await res.json();
+        if (Array.isArray(rates)) {
+            rates.forEach(rate => {
+                if (rate.date) {
+                    // تحويل التاريخ من dd/MMM/yyyy إلى YYYY-MM-DD
+                    const isoDate = convertToISO(rate.date);
+                    if (isoDate) {
+                        exchangeRatesMap.set(isoDate, {
+                            cash: {
+                                USD: parseFloat(rate.bUSD) || 0,
+                                EUR: parseFloat(rate.bEUR) || 0,
+                                GBP: parseFloat(rate.bGBP) || 0
+                            },
+                            visa: {
+                                USD: parseFloat(rate.bVUSD) || 0,
+                                EUR: parseFloat(rate.bVEUR) || 0,
+                                GBP: parseFloat(rate.bVGBP) || 0
+                            }
+                        });
+                    }
+                }
+            });
+            console.log(`✅ تم تحميل ${exchangeRatesMap.size} سعر صرف`);
+            return true;
+        }
+    } catch(e) {
+        console.error('خطأ في تحميل أسعار الصرف:', e);
+    }
+    return false;
+}
+
+// تحويل dd/MMM/yyyy → YYYY-MM-DD
+function convertToISO(dateStr) {
+    if (!dateStr) return null;
+    const match = dateStr.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
+    if (!match) return null;
+    const months = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',
+                    Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
+    const day = match[1].padStart(2,'0');
+    const month = months[match[2]];
+    const year = match[3];
+    return `${year}-${month}-${day}`;
+}
+
+// حساب الإيرادات بدون طلب شبكي (من الخريطة المحلية)
+function getRevenueInEGPFromCache(inv) {
+    const actualPrice = parseFloat(inv.actualPrice) || 0;
+    const discount = parseFloat(inv.discount) || 0;
+    const netAmount = actualPrice - discount;
+    if (netAmount <= 0) return 0;
+    
+    const currency = inv.invoiceCurrency || '$';
+    
+    // الحصول على تاريخ التنفيذ بصيغة ISO
+    let dateISO = convertToISO(inv.activeDate);
+    if (!dateISO) {
+        // محاولة استخدام issueDate كبديل
+        dateISO = convertToISO(inv.issueDate);
+    }
+    if (!dateISO) return 0;
+    
+    // البحث عن أقرب سعر صرف (إذا لم يوجد في نفس اليوم، نبحث عن الأحدث)
+    let rate = exchangeRatesMap.get(dateISO);
+    if (!rate) {
+        // البحث عن أقرب تاريخ أقل
+        const dates = Array.from(exchangeRatesMap.keys()).sort();
+        let closest = null;
+        for (const d of dates) {
+            if (d <= dateISO) closest = d;
+            else break;
+        }
+        if (closest) rate = exchangeRatesMap.get(closest);
+    }
+    
+    if (!rate) return 0;
+    
+    if (currency === '$') return netAmount * (rate.cash?.USD || 47.5);
+    if (currency === '€') return netAmount * (rate.cash?.EUR || 50.25);
+    if (currency === '£') return netAmount * (rate.cash?.GBP || 60);
+    return netAmount;
+}
 // ============ دوال مساعدة ============
 function parseDate(str){
   if(!str) return null;
@@ -311,10 +398,13 @@ async function getRevenueInEGP(inv){
 }
 
 // ============ تحميل البيانات ============
-async function loadData(){
-  try{
-    const res=await fetch(`${GAS_URL}?action=getAllInvoices`);
-    const data=await res.json();
+async function loadData() {
+    try {
+        // ⚡ تحميل أسعار الصرف أولاً (مرة واحدة)
+        await loadAllExchangeRates();
+        
+        const res = await fetch(`${GAS_URL}?action=getAllInvoices`);
+        const data = await res.json();
     let invoices=Array.isArray(data)?data:[];
     
     // ✅ تصفية الفواتير حسب صلاحية المستخدم
@@ -526,32 +616,33 @@ function applyFilters(){
 }
 
 // ============ عرض التقرير ============
-async function runReport(){
-  applyFilters();
-  if(!filteredInvoices.length){
-    document.getElementById('reportContent').innerHTML='<div class="no-data">📭 لا توجد بيانات تطابق معايير البحث</div>';
-    return;
-  }
-  
-  // KPI الأساسية
-  const total=filteredInvoices.length;
-  const rev=filteredInvoices.reduce((s,i)=>s+(parseFloat(i.actualPrice)||0),0);
-  const coll=filteredInvoices.reduce((s,i)=>s+(parseFloat(i.paymentPrice)||0),0);
-  const rest=filteredInvoices.reduce((s,i)=>s+(parseFloat(i.rest)||0),0);
-  const confirmed=filteredInvoices.filter(i=>(i.state||'').toLowerCase()==='confirmed').length;
-  
-  // تجميع البيانات حسب الشهر
-  const monthlyMap={};
-  for(const inv of filteredInvoices){
-    const dt=parseDate(inv.activeDate);
-    if(!dt) continue;
-    const monthKey=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
-    const monthLabel=`${MONTHS[dt.getMonth()]} ${dt.getFullYear()}`;
-    if(!monthlyMap[monthKey]) monthlyMap[monthKey]={label:monthLabel,rev:0,count:0};
-    const revenueEGP=await getRevenueInEGP(inv);
-    monthlyMap[monthKey].rev+=revenueEGP;
-    monthlyMap[monthKey].count++;
-  }
+applyFilters();
+    if (!filteredInvoices.length) {
+        document.getElementById('reportContent').innerHTML = '<div class="no-data">📭 لا توجد بيانات تطابق معايير البحث</div>';
+        return;
+    }
+    
+    // ⚡ حساب الإيرادات من الخريطة المحلية (بدون طلبات شبكية)
+    const total = filteredInvoices.length;
+    const rev = filteredInvoices.reduce((s, i) => s + (parseFloat(i.actualPrice) || 0), 0);
+    const coll = filteredInvoices.reduce((s, i) => s + (parseFloat(i.paymentPrice) || 0), 0);
+    const rest = filteredInvoices.reduce((s, i) => s + (parseFloat(i.rest) || 0), 0);
+    const confirmed = filteredInvoices.filter(i => (i.state || '').toLowerCase() === 'confirmed').length;
+    
+    // تجميع البيانات حسب الشهر (باستخدام cache)
+    const monthlyMap = {};
+    for (const inv of filteredInvoices) {
+        const dt = parseDate(inv.activeDate);
+        if (!dt) continue;
+        const monthKey = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+        const monthLabel = `${MONTHS[dt.getMonth()]} ${dt.getFullYear()}`;
+        if (!monthlyMap[monthKey]) monthlyMap[monthKey] = { label: monthLabel, rev: 0, count: 0 };
+        
+        const revenueEGP = getRevenueInEGPFromCache(inv);  // ← سريع!
+        monthlyMap[monthKey].rev += revenueEGP;
+        monthlyMap[monthKey].count++;
+    }
+    
   
   const sortedMonths=Object.keys(monthlyMap).sort();
   const labels=sortedMonths.map(k=>monthlyMap[k].label);
