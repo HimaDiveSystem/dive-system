@@ -222,14 +222,37 @@ const C={
    FETCH HELPER — single GET to GAS
 ─────────────────────────────────────────────────────────── */
 function gas(action, params = {}) {
-  // استخدام GET فقط لجميع الطلبات (تجنب CORS)
+  // قائمة الأكشنات التي تحتوي على صور base64 كبيرة
+  const imageActions = ['uploadSignatureImage'];  // ✅ تصحيح الاسم
+  
+  // التحقق من وجود base64 كبير
+  const hasLargeBase64 = (params.b64 && params.b64.length > 1000) || 
+                         (params.signatureData && params.signatureData.toString().startsWith('data:image'));
+  
+  // استخدام POST للصور الكبيرة
+  if (imageActions.includes(action) || hasLargeBase64) {
+    const body = JSON.stringify({ action, ...params });
+    return fetch(GAS, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body,
+      redirect: 'follow'
+    })
+    .then(r => { 
+      if (!r.ok) throw new Error('HTTP ' + r.status); 
+      return r.json(); 
+    })
+    .catch(err => { 
+      console.warn('POST failed for', action, err); 
+      throw err; 
+    });
+  }
+  
+  // للبيانات الصغيرة: استخدم GET
   const u = new URL(GAS);
   u.searchParams.set('action', action);
-  
-  // إضافة جميع المعاملات إلى الرابط
   Object.entries(params).forEach(([k, v]) => {
     if (v !== undefined && v !== null && v !== '') {
-      // تحويل الكائنات والمصفوفات إلى JSON
       if (typeof v === 'object') {
         u.searchParams.set(k, JSON.stringify(v));
       } else {
@@ -241,7 +264,6 @@ function gas(action, params = {}) {
   const urlString = u.toString();
   console.log(`📡 ${action} - URL length: ${urlString.length}`);
   
-  // إذا كان الرابط طويلاً جداً، نحاول تقليل البيانات
   if (urlString.length > 1800 && action === 'saveInvoice') {
     console.warn('⚠️ URL太长، يتم حذف signatureData مؤقتاً');
     const newParams = { ...params };
@@ -249,18 +271,15 @@ function gas(action, params = {}) {
     return gas(action, newParams);
   }
   
-  return fetch(urlString, { 
-    method: 'GET',
-    redirect: 'follow'
-  })
-  .then(r => { 
-    if (!r.ok) throw new Error('HTTP ' + r.status); 
-    return r.json(); 
-  })
-  .catch(err => {
-    console.error(`❌ ${action} failed:`, err);
-    throw err;
-  });
+  return fetch(urlString, { method: 'GET', redirect: 'follow' })
+    .then(r => { 
+      if (!r.ok) throw new Error('HTTP ' + r.status); 
+      return r.json(); 
+    })
+    .catch(err => {
+      console.error(`❌ ${action} failed:`, err);
+      throw err;
+    });
 }
 /* ───────────────────────────────────────────────────────────
    INIT ── Zero blocking. Form renders synchronously.
@@ -668,20 +687,21 @@ async function saveAndGeneratePDF(inv) {
   if (inv.signatureData && inv.signatureData.startsWith('data:image')) {
     try {
       const base64Data = inv.signatureData.split(',')[1];
-      const sigRes = await gas('uploadEmployeeImage', {
+      
+      const sigRes = await gas('uploadSignatureImage', {  // ✅ تصحيح: uploadSignatureImage
         b64: base64Data,
-        mimeType: 'image/png',
-        label: 'sig_' + Date.now()
+        voucherNo: 'temp_' + Date.now()
       });
       if (sigRes?.success) {
         signatureUrl = sigRes.url;
+        console.log('✅ تم رفع التوقيع:', signatureUrl);
       }
     } catch(e) { 
       console.warn('Signature upload failed:', e); 
     }
   }
   
-  // ✅ إزالة signatureData من الفاتورة وإضافة الرابط
+  // إزالة signatureData من الفاتورة وإضافة الرابط
   const invForSave = { ...inv };
   delete invForSave.signatureData;
   if (signatureUrl) {
