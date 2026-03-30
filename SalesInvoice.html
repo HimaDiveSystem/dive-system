@@ -655,59 +655,77 @@ async function validate(){
    SAVE + PDF
    Signature upload runs IN PARALLEL with PDF generation
 ─────────────────────────────────────────────────────────── */
+// في SalesInvoice.html - دالة gas بسيطة
+function gas(action, params = {}) {
+  const u = new URL(GAS);
+  u.searchParams.set('action', action);
+
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') {
+      // ✅ تجاهل signatureData في GET
+      if (k === 'signatureData') return;
+      if (typeof v === 'object') {
+        u.searchParams.set(k, JSON.stringify(v));
+      } else {
+        u.searchParams.set(k, String(v));
+      }
+    }
+  });
+
+  return fetch(u.toString(), { method: 'GET', redirect: 'follow' })
+    .then(r => r.json())
+    .catch(err => { console.error(`❌ ${action} failed:`, err); throw err; });
+}
+
+// دالة saveAndGeneratePDF المعدلة
 async function saveAndGeneratePDF(inv) {
   showPDFOv('💾 Saving invoice...');
-  
-  // ✅ لا نحذف signatureData، نرسله كما هو ليتم حفظه في الشيت
-  const save = await gas('saveInvoice', inv);
+
+  // حفظ الفاتورة بدون توقيع
+  const invWithoutSig = { ...inv };
+  const signatureToUpload = invWithoutSig.signatureData || '';
+  delete invWithoutSig.signatureData;
+
+  const save = await gas('saveInvoice', invWithoutSig);
   if (!save?.success) throw new Error(save?.message || 'Save failed');
   const voucherNo = save.voucherNo;
-  
+
+  // رفع التوقيع بشكل منفصل (إذا وجد)
+  if (signatureToUpload && signatureToUpload.startsWith('data:image')) {
+    showPDFOv('✍️ Saving signature...');
+    try {
+      // ✅ استخدم saveSignature (موجودة في Code.gs وتستخدم POST)
+      const sigRes = await fetch(GAS, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'saveSignature',
+          voucherNo: voucherNo,
+          sig: signatureToUpload
+        })
+      }).then(r => r.json());
+      
+      if (sigRes.success) {
+        console.log('✅ تم حفظ التوقيع');
+      }
+    } catch(e) {
+      console.warn('⚠️ فشل حفظ التوقيع:', e);
+    }
+    
+    // انتظار قليلاً
+    await new Promise(r => setTimeout(r, 2000));
+  }
+
   showPDFOv('📄 Generating PDF...');
   const pdf = await gas('saveAndGenerateSinglePDF', { voucherNo });
   hidePDFOv();
-  if (!pdf?.success) { showAlert('Saved but PDF failed: ' + (pdf?.message || ''), '⚠️'); return null; }
+  
+  if (!pdf?.success) {
+    showAlert('Saved but PDF failed: ' + (pdf?.message || ''), '⚠️');
+    return null;
+  }
   return { voucherNo, url: pdf.url };
 }
-  async function testSaveSequence() {
-  console.log('=== بدء اختبار التسلسل ===');
-  
-  // 1. جمع البيانات
-  console.log('1. جمع البيانات...');
-  const inv = await collectData();
-  console.log('البيانات المجمعة:', {
-    guestName: inv.guestName,
-    contactNo: inv.contactNo,
-    actualPrice: inv.actualPrice
-  });
-  
-  // 2. حفظ الفاتورة
-  console.log('2. حفظ الفاتورة...');
-  const save = await gas('saveInvoice', inv);
-  console.log('نتيجة الحفظ:', save);
-  
-  if (!save?.success) {
-    console.error('فشل الحفظ:', save);
-    return;
-  }
-  
-  const voucherNo = save.voucherNo;
-  console.log('رقم الفاتورة:', voucherNo);
-  
-  // 3. إنشاء PDF
-  console.log('3. إنشاء PDF...');
-  const pdf = await gas('saveAndGenerateSinglePDF', { voucherNo });
-  console.log('نتيجة PDF:', pdf);
-  
-  if (pdf?.success) {
-    console.log('✅ رابط PDF:', pdf.url);
-    window.open(pdf.url, '_blank');
-  } else {
-    console.error('❌ فشل PDF:', pdf);
-  }
-  
-  console.log('=== انتهى الاختبار ===');
-}  
 async function saveInvoice(){
   const inv=await validate();if(!inv)return;setBtns(true);
   try{const res=await saveAndGeneratePDF(inv);if(res){const all=[...sessionVouchers,{voucherNo:res.voucherNo,url:res.url}];sessionVouchers=[];clearFormFull();showPDFsModal(all);}}
