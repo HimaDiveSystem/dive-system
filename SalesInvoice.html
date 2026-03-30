@@ -221,18 +221,28 @@ const C={
 /* ───────────────────────────────────────────────────────────
    FETCH HELPER — single GET to GAS
 ─────────────────────────────────────────────────────────── */
-function gas(action,params={}){
-  // إذا كان params يحتوي على signatureData → POST (base64 كبير جداً لـ URL)
+function gas(action, params = {}) {
+  // إذا كانت params تحتوي على signatureData أو البيانات كبيرة جداً → استخدم POST
   const hasSig = params.signatureData && params.signatureData.toString().startsWith('data:image');
-  if(hasSig){
-    const body=JSON.stringify({action,...params});
-    return fetch(GAS,{method:'POST',headers:{'Content-Type':'text/plain'},body,redirect:'follow'})
-      .then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();});
+  const hasLargeData = JSON.stringify(params).length > 1500; // إذا كانت البيانات كبيرة
+  
+  if (hasSig || hasLargeData) {
+    const body = JSON.stringify({ action, ...params });
+    return fetch(GAS, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body,
+      redirect: 'follow'
+    })
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
   }
-  const u=new URL(GAS);
-  u.searchParams.set('action',action);
-  Object.entries(params).forEach(([k,v])=>u.searchParams.set(k,String(v??'')));
-  return fetch(u.toString(),{redirect:'follow'}).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();});
+  
+  // للبيانات الصغيرة: استخدم GET
+  const u = new URL(GAS);
+  u.searchParams.set('action', action);
+  Object.entries(params).forEach(([k, v]) => u.searchParams.set(k, String(v ?? '')));
+  return fetch(u.toString(), { redirect: 'follow' })
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
 }
 
 /* ───────────────────────────────────────────────────────────
@@ -632,27 +642,36 @@ async function validate(){
    SAVE + PDF
    Signature upload runs IN PARALLEL with PDF generation
 ─────────────────────────────────────────────────────────── */
-async function saveAndGeneratePDF(inv){
+async function saveAndGeneratePDF(inv) {
   showPDFOv('💾 Saving invoice...');
-  const save=await gas('saveInvoice',inv);
-  if(!save?.success)throw new Error(save?.message||'Save failed');
-  const voucherNo=save.voucherNo;
+  const save = await gas('saveInvoice', inv);
+  if (!save?.success) throw new Error(save?.message || 'Save failed');
+  const voucherNo = save.voucherNo;
   
-  // حفظ نسخة من الفاتورة في Invoices_Edit للتتبع (بدون تعديل)
+  // حفظ نسخة من الفاتورة في Invoices_Edit للتتبع
+  // استخدم POST للبيانات الكبيرة (بدون signatureData هذه المرة)
   try {
-    await gas('copyInvoiceToEdit', {
+    // نسخة مبسطة من البيانات بدون signatureData الكبيرة
+    const editData = {
       originalData: JSON.stringify({}),
-      editedData: JSON.stringify(inv),
+      editedData: JSON.stringify({
+        voucherNo: inv.voucherNo,
+        guestName: inv.guestName,
+        actualPrice: inv.actualPrice,
+        paymentPrice: inv.paymentPrice,
+        // أضف الحقول الأساسية فقط
+      }),
       userId: currentUser?.id || '',
       editSummary: 'New invoice created'
-    });
-  } catch(e) { console.warn('Edit copy failed:', e); }
+    };
+    await gas('copyInvoiceToEdit', editData);
+  } catch (e) { console.warn('Edit copy failed:', e); }
   
   showPDFOv('📄 Generating PDF...');
-  const pdf=await gas('saveAndGenerateSinglePDF',{voucherNo});
+  const pdf = await gas('saveAndGenerateSinglePDF', { voucherNo });
   hidePDFOv();
-  if(!pdf?.success){showAlert('Saved but PDF failed: '+(pdf?.message||''),'⚠️');return null;}
-  return{voucherNo,url:pdf.url};
+  if (!pdf?.success) { showAlert('Saved but PDF failed: ' + (pdf?.message || ''), '⚠️'); return null; }
+  return { voucherNo, url: pdf.url };
 }
 
 async function saveInvoice(){
