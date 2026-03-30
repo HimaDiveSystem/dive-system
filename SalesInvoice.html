@@ -662,9 +662,31 @@ async function validate(){
 async function saveAndGeneratePDF(inv) {
   showPDFOv('💾 Saving invoice...');
   
-  // نسخ البيانات بدون signatureData لتقليل حجم الرابط
+  let signatureUrl = '';
+  
+  // ✅ رفع التوقيع إلى Drive أولاً (إذا وجد)
+  if (inv.signatureData && inv.signatureData.startsWith('data:image')) {
+    try {
+      const base64Data = inv.signatureData.split(',')[1];
+      const sigRes = await gas('uploadEmployeeImage', {
+        b64: base64Data,
+        mimeType: 'image/png',
+        label: 'sig_' + Date.now()
+      });
+      if (sigRes?.success) {
+        signatureUrl = sigRes.url;
+      }
+    } catch(e) { 
+      console.warn('Signature upload failed:', e); 
+    }
+  }
+  
+  // ✅ إزالة signatureData من الفاتورة وإضافة الرابط
   const invForSave = { ...inv };
   delete invForSave.signatureData;
+  if (signatureUrl) {
+    invForSave.signatureUrl = signatureUrl;
+  }
   
   const save = await gas('saveInvoice', invForSave);
   if (!save?.success) throw new Error(save?.message || 'Save failed');
