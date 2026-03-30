@@ -666,28 +666,22 @@ async function validate(){
 ─────────────────────────────────────────────────────────── */
 async function saveAndGeneratePDF(inv) {
   showPDFOv('💾 Saving invoice...');
-  const save = await gas('saveInvoice', inv);
+  
+  // إزالة signatureData مؤقتاً لتقليل حجم البيانات
+  const invWithoutSig = { ...inv };
+  delete invWithoutSig.signatureData;
+  
+  const save = await gas('saveInvoice', invWithoutSig);
   if (!save?.success) throw new Error(save?.message || 'Save failed');
   const voucherNo = save.voucherNo;
   
-  // حفظ نسخة من الفاتورة في Invoices_Edit للتتبع
-  // استخدم POST للبيانات الكبيرة (بدون signatureData هذه المرة)
-  try {
-    // نسخة مبسطة من البيانات بدون signatureData الكبيرة
-    const editData = {
-      originalData: JSON.stringify({}),
-      editedData: JSON.stringify({
-        voucherNo: inv.voucherNo,
-        guestName: inv.guestName,
-        actualPrice: inv.actualPrice,
-        paymentPrice: inv.paymentPrice,
-        // أضف الحقول الأساسية فقط
-      }),
-      userId: currentUser?.id || '',
-      editSummary: 'New invoice created'
-    };
-    await gas('copyInvoiceToEdit', editData);
-  } catch (e) { console.warn('Edit copy failed:', e); }
+  // تعطيل copyInvoiceToEdit نهائياً بسبب مشكلة CORS
+  // await gas('copyInvoiceToEdit', {
+  //   originalData: JSON.stringify({}),
+  //   editedData: JSON.stringify(invWithoutSig),
+  //   userId: currentUser?.id || '',
+  //   editSummary: 'New invoice created'
+  // }).catch(e => console.warn('Edit copy failed:', e));
   
   showPDFOv('📄 Generating PDF...');
   const pdf = await gas('saveAndGenerateSinglePDF', { voucherNo });
@@ -695,7 +689,45 @@ async function saveAndGeneratePDF(inv) {
   if (!pdf?.success) { showAlert('Saved but PDF failed: ' + (pdf?.message || ''), '⚠️'); return null; }
   return { voucherNo, url: pdf.url };
 }
-
+async function testSaveSequence() {
+  console.log('=== بدء اختبار التسلسل ===');
+  
+  // 1. جمع البيانات
+  console.log('1. جمع البيانات...');
+  const inv = await collectData();
+  console.log('البيانات المجمعة:', {
+    guestName: inv.guestName,
+    contactNo: inv.contactNo,
+    actualPrice: inv.actualPrice
+  });
+  
+  // 2. حفظ الفاتورة
+  console.log('2. حفظ الفاتورة...');
+  const save = await gas('saveInvoice', inv);
+  console.log('نتيجة الحفظ:', save);
+  
+  if (!save?.success) {
+    console.error('فشل الحفظ:', save);
+    return;
+  }
+  
+  const voucherNo = save.voucherNo;
+  console.log('رقم الفاتورة:', voucherNo);
+  
+  // 3. إنشاء PDF
+  console.log('3. إنشاء PDF...');
+  const pdf = await gas('saveAndGenerateSinglePDF', { voucherNo });
+  console.log('نتيجة PDF:', pdf);
+  
+  if (pdf?.success) {
+    console.log('✅ رابط PDF:', pdf.url);
+    window.open(pdf.url, '_blank');
+  } else {
+    console.error('❌ فشل PDF:', pdf);
+  }
+  
+  console.log('=== انتهى الاختبار ===');
+}  
 async function saveInvoice(){
   const inv=await validate();if(!inv)return;setBtns(true);
   try{const res=await saveAndGeneratePDF(inv);if(res){const all=[...sessionVouchers,{voucherNo:res.voucherNo,url:res.url}];sessionVouchers=[];clearFormFull();showPDFsModal(all);}}
