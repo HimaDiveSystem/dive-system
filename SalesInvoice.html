@@ -377,7 +377,7 @@ function renderForm(){
   document.getElementById('mainContent').innerHTML=`
   <div class="card"><div class="card-head"><span class="ch-icon">👤</span><h3>Customer Information</h3></div><div class="card-body">
     <div class="fgrid" style="margin-bottom:12px">
-     <div class="fgroup"><label class="req">Phone Number</label><div class="phone-row"><input type="text" class="fc phone-code" id="phoneCode" value="+" readonly style="background:#f0f4f8; color:#5a6a8a; cursor:default; width:70px;"><div class="ac-wrap"><input type="tel" inputmode="numeric" class="fc" id="phoneNumber" placeholder="1012345678" oninput="onPhoneInput()" autocomplete="off" style="width:100%" onfocus="this.select()"><div class="ac-drop" id="acPhoneDrop"></div></div></div></div>
+     <div class="fgroup"><label class="req">Phone Number</label><div class="phone-row"><input type="text" class="fc phone-code" id="phoneCode" value="+" readonly style="background:#f0f4f8; color:#5a6a8a; cursor:default; width:60px;"><div class="ac-wrap"><input type="tel" inputmode="numeric" class="fc" id="phoneNumber" placeholder="201012345678" oninput="onPhoneInput()" autocomplete="off" style="width:100%" onfocus="this.select()"><div class="ac-drop" id="acPhoneDrop"></div></div></div></div>
       <div class="fgroup"><label class="req">Guest Name</label><div class="ac-wrap"><input type="text" class="fc" id="guestName" placeholder="Full name" oninput="onNameInput()" autocomplete="off" style="width:100%" onfocus="this.select()"><div class="ac-drop" id="acNameDrop"></div></div></div>
       <div class="fgroup"><label class="req">Nationality</label><input type="text" class="fc" id="nationality" list="nationalitiesList" placeholder="Select or type" onfocus="this.select()"><datalist id="nationalitiesList"></datalist></div>
     </div>
@@ -445,7 +445,7 @@ let _act=null;
 function onPhoneInput(){clearTimeout(_act);_act=setTimeout(()=>{const q=document.getElementById('phoneNumber').value.replace(/\D/g,'');if(q.length<3){closeAC('acPhoneDrop');return;}renderAC('acPhoneDrop',C.customers.filter(c=>c.phone&&c.phone.includes(q)).slice(0,8));},250);}
 function onNameInput(){clearTimeout(_act);_act=setTimeout(()=>{const q=(document.getElementById('guestName').value||'').trim().toLowerCase();if(q.length<2){closeAC('acNameDrop');return;}renderAC('acNameDrop',C.customers.filter(c=>c.name&&c.name.toLowerCase().includes(q)).slice(0,8));},250);}
 function renderAC(id,hits){const d=document.getElementById(id);if(!d)return;if(!hits.length){d.classList.remove('open');d.innerHTML='';return;}d._h=hits;d.innerHTML=hits.map((c,i)=>`<div class="ac-item" onclick="acPick('${id}',${i})"><span class="ac-n">${esc(c.name)||'—'}</span><span class="ac-s">${c.phone?'📞 '+c.phone:''} ${c.hotel?'🏨 '+c.hotel:''}</span></div>`).join('');d.classList.add('open');}
-function acPick(id,i){const d=document.getElementById(id);if(!d||!d._h)return;const c=d._h[i];if(c.name)document.getElementById('guestName').value=c.name;if(c.nationality)document.getElementById('nationality').value=c.nationality;if(c.hotel)document.getElementById('hotel').value=c.hotel;if(c.roomNo)document.getElementById('roomNo').value=c.roomNo;const code=document.getElementById('phoneCode'),num=document.getElementById('phoneNumber');if(c.phone&&num){if(c.phone.startsWith('20')&&c.phone.length>10){code.value='+';num.value=c.phone.slice(2);}else num.value=c.phone;}closeAC('acPhoneDrop');closeAC('acNameDrop');}
+function acPick(id,i){const d=document.getElementById(id);if(!d||!d._h)return;const c=d._h[i];if(c.name)document.getElementById('guestName').value=c.name;if(c.nationality)document.getElementById('nationality').value=c.nationality;if(c.hotel)document.getElementById('hotel').value=c.hotel;if(c.roomNo)document.getElementById('roomNo').value=c.roomNo;const code=document.getElementById('phoneCode'),num=document.getElementById('phoneNumber');if(c.phone&&num){let cleanPhone=c.phone.replace(/^(00|\+)/,'');num.value=cleanPhone;code.value='+';}closeAC('acPhoneDrop');closeAC('acNameDrop');}
 function closeAC(id){const d=document.getElementById(id);if(d){d.classList.remove('open');d.innerHTML='';}}
 document.addEventListener('click',e=>{if(!e.target.closest('.ac-wrap')){closeAC('acPhoneDrop');closeAC('acNameDrop');}});
 
@@ -547,62 +547,72 @@ function updateSessionBadge(){
 /* ───────────────────────────────────────────────────────────
    DATA COLLECTION + VALIDATION
 ─────────────────────────────────────────────────────────── */
-async function collectData(){
-  const el=id=>document.getElementById(id);
-  // جلب الكود (مثال: "+20") وتحويل + إلى 00
-let countryCode = el('phoneCode').value || '+';
-let cleanCode = countryCode.replace(/^\+/, '00'); // "+20" → "0020"
-let phoneNumberRaw = el('phoneNumber').value || '';
-let phoneNumber = phoneNumberRaw.replace(/\D/g, ''); // إزالة أي أحرف غير رقمية
-
-// الرقم الكامل بالصيغة المطلوبة للتخزين في الشيت (0020xxxxxxxx)
-let fullPhoneForSheet = cleanCode + phoneNumber;
-
-// الرقم للعرض في الـ PDF (بدون + وبدون 00)
-let phoneForDisplay = phoneNumber; // أو يمكنك إضافة + إذا أردت: "+" + phoneNumber
-
-// في الكائن النهائي، ستستخدم fullPhoneForSheet للتخزين
-// وفي الـ PDF سيتم عرض phoneNumber فقط أو phoneForDisplay
+async function collectData() {
+  const el = id => document.getElementById(id);
   
-  const cur=el('invoiceCurrency')?.value||'';
-  const ds=el('activeDate')?.value;
-  let acts=[],i=0;
-  while(el(`qty_${i}`)){const q=+el(`qty_${i}`).value||0;if(q>0&&tripDef[i])acts.push(`${tripDef[i]}×${q}`);i++;}
-  const items=Array.from({length:10},(_,j)=>+(el(`qty_${j}`)?.value)||0);
-  let actualPrice=0;
-  items.forEach((q,j)=>{if(q&&tripPrices[j])actualPrice+=q*tripPrices[j];});
-  const cU=+el('cashUSD')?.value||0,cE=+el('cashEUR')?.value||0,cG=+el('cashGBP')?.value||0,cL=+el('cashLE')?.value||0;
-  const vU=+el('visaUSD')?.value||0,vE=+el('visaEUR')?.value||0,vG=+el('visaGBP')?.value||0,vL=+el('visaLE')?.value||0;
-  const disc=+el('discount')?.value||0;
-  let paid=0;
-  const raw=ds?await getRate(ds):C.rate;
-  const r=rateFields(raw);
-  if(r){
-    const LE=cU*r.cash.USD+cE*r.cash.EUR+cG*r.cash.GBP+cL+vU*r.visa.USD+vE*r.visa.EUR+vG*r.visa.GBP+vL*(r.visa.LE||0.975);
-    if(cur==='$')paid=R2(LE/r.cash.USD);
-    else if(cur==='€')paid=R2(LE/r.cash.EUR);
-    else if(cur==='£')paid=R2(LE/r.cash.GBP);
-    else paid=R2(LE);
-  }else paid=directPaid(cur,cU,cE,cG,cL,vU,vE,vG,vL);
-  return{
-    salesId:currentUser?.id||'',salesName:currentUser?.name||'',
-    centerName:currentUser?.centerName||'',branchName:currentUser?.branchName||'',
-    guestName:el('guestName')?.value||'',nationality:el('nationality')?.value||'',
-    contactNo:phone,hotel:el('hotel')?.value||'',roomNo:el('roomNo')?.value||'',
-    activeDate:ds,time:el('tripTime')?.value||'',
-    trip:el('tripName')?.value||'',invoiceCurrency:cur,
-    item0:items[0],item1:items[1],item2:items[2],item3:items[3],item4:items[4],
-    item5:items[5],item6:items[6],item7:items[7],item8:items[8],item9:items[9],
-    cashUSD:cU,cashEUR:cE,cashGBP:cG,cashLE:cL,
-    visaUSD:vU,visaEUR:vE,visaGBP:vG,visaLE:vL,
-    notes:el('notes')?.value||'',discount:disc,
-    actualPrice,paymentPrice:paid,rest:R2(actualPrice-disc-paid),
-    adultCount:+el('adultCount')?.value||0,
-    childCount:+el('childCount')?.value||0,
-    infantCount:+el('infantCount')?.value||0,
-    activitiesText:acts.join(' | '),
-    signatureData:signatureData||'',
-    cost:tripHasCost,state:'pending',
+  // معالجة رقم الهاتف بشكل صحيح ومهني
+  let phoneSign = el('phoneCode')?.value || '+';  // فقط علامة +
+  let phoneNumberRaw = el('phoneNumber')?.value || '';
+  let phoneNumberDigits = phoneNumberRaw.replace(/\D/g, ''); // أرقام فقط
+  
+  // تخزين الأرقام فقط (بدون + أو 00)
+  let fullPhoneForSheet = phoneNumberDigits;
+  
+  let acts = [], i = 0;
+  while (el(`qty_${i}`)) {
+    const q = +el(`qty_${i}`).value || 0;
+    if (q > 0 && tripDef[i]) acts.push(`${tripDef[i]}×${q}`);
+    i++;
+  }
+  const items = Array.from({ length: 10 }, (_, j) => +(el(`qty_${j}`)?.value) || 0);
+  let actualPrice = 0;
+  items.forEach((q, j) => { if (q && tripPrices[j]) actualPrice += q * tripPrices[j]; });
+  const cU = +el('cashUSD')?.value || 0, cE = +el('cashEUR')?.value || 0, cG = +el('cashGBP')?.value || 0, cL = +el('cashLE')?.value || 0;
+  const vU = +el('visaUSD')?.value || 0, vE = +el('visaEUR')?.value || 0, vG = +el('visaGBP')?.value || 0, vL = +el('visaLE')?.value || 0;
+  const disc = +el('discount')?.value || 0;
+  const cur = el('invoiceCurrency')?.value || '';
+  const ds = el('activeDate')?.value;
+  let paid = 0;
+  const raw = ds ? await getRate(ds) : C.rate;
+  const r = rateFields(raw);
+  if (r) {
+    const LE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL + vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
+    if (cur === '$') paid = R2(LE / r.cash.USD);
+    else if (cur === '€') paid = R2(LE / r.cash.EUR);
+    else if (cur === '£') paid = R2(LE / r.cash.GBP);
+    else paid = R2(LE);
+  } else paid = directPaid(cur, cU, cE, cG, cL, vU, vE, vG, vL);
+  
+  return {
+    salesId: currentUser?.id || '',
+    salesName: currentUser?.name || '',
+    centerName: currentUser?.centerName || '',
+    branchName: currentUser?.branchName || '',
+    guestName: el('guestName')?.value || '',
+    nationality: el('nationality')?.value || '',
+    contactNo: fullPhoneForSheet,  // ✅ الرقم المخزن في الشيت (أرقام فقط)
+    hotel: el('hotel')?.value || '',
+    roomNo: el('roomNo')?.value || '',
+    activeDate: ds,
+    time: el('tripTime')?.value || '',
+    trip: el('tripName')?.value || '',
+    invoiceCurrency: cur,
+    item0: items[0], item1: items[1], item2: items[2], item3: items[3], item4: items[4],
+    item5: items[5], item6: items[6], item7: items[7], item8: items[8], item9: items[9],
+    cashUSD: cU, cashEUR: cE, cashGBP: cG, cashLE: cL,
+    visaUSD: vU, visaEUR: vE, visaGBP: vG, visaLE: vL,
+    notes: el('notes')?.value || '',
+    discount: disc,
+    actualPrice: actualPrice,
+    paymentPrice: paid,
+    rest: R2(actualPrice - disc - paid),
+    adultCount: +el('adultCount')?.value || 0,
+    childCount: +el('childCount')?.value || 0,
+    infantCount: +el('infantCount')?.value || 0,
+    activitiesText: acts.join(' | '),
+    signatureData: signatureData || '',
+    cost: tripHasCost,
+    state: 'pending',
   };
 }
 
