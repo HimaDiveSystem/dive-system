@@ -256,13 +256,7 @@ async function gasWithSig(action, params) {
     return gas(action, baseParams);
   }
  
-  // تقسيم التوقيع
-  const b64Full = sigData.substring(sigData.indexOf(',') + 1);
-  const prefix = sigData.substring(0, sigData.indexOf(',') + 1);
-  const mid = Math.floor(b64Full.length / 2);
-  const part1 = prefix + b64Full.substring(0, mid);
-  const part2 = b64Full.substring(mid);
- 
+  // ✅ إرسال التوقيع مع الفاتورة مباشرة (بدون تقسيم)
   const u = new URL(GAS);
   u.searchParams.set('action', action);
  
@@ -276,39 +270,19 @@ async function gasWithSig(action, params) {
     }
   });
  
-  u.searchParams.set('sigPart1', part1);
-  u.searchParams.set('sigPart2', part2);
+  // إضافة التوقيع كاملاً
+  u.searchParams.set('signatureData', sigData);
  
   const urlStr = u.toString();
   console.log('📡 saveInvoice URL length:', urlStr.length);
  
-  if (urlStr.length <= 8000) {
-    return fetch(urlStr, { method: 'GET', redirect: 'follow' })
-      .then(r => r.json());
-  }
- 
-  // إذا كان الرابط طويلاً، أرسل بدون توقيع ثم ارفعه منفصلاً
-  console.warn('⚠️ URL طويل جداً، سيتم إرسال التوقيع منفصلاً');
-  const saveResult = await gas(action, baseParams);
-  
-  if (saveResult?.success && saveResult.voucherNo) {
-    try {
-      const sigResult = await fetch(GAS, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'saveSignature',
-          voucherNo: saveResult.voucherNo,
-          sig: sigData
-        })
-      }).then(r => r.json());
-      console.log('📸 نتيجة رفع التوقيع المنفصل:', sigResult);
-    } catch(e) {
-      console.warn('⚠️ فشل رفع التوقيع المنفصل:', e);
-    }
-  }
-  
-  return saveResult;
+  // إرسال مباشر عبر GET
+  return fetch(urlStr, { method: 'GET', redirect: 'follow' })
+    .then(r => r.json())
+    .catch(err => {
+      console.error('❌ saveInvoice failed:', err);
+      throw err;
+    });
 }
  /* ───────────────────────────────────────────────────────────
    INIT ── Zero blocking. Form renders synchronously.
@@ -843,7 +817,26 @@ function onClockClick(e){const wrap=document.getElementById('ckWrap');if(!wrap)r
 function openSigModal(){document.getElementById('signatureModal').classList.add('open');sigCanvas=document.getElementById('signatureCanvas');sigCtx=sigCanvas.getContext('2d');sigCtx.clearRect(0,0,sigCanvas.width,sigCanvas.height);sigCtx.strokeStyle='#0f1f3d';sigCtx.lineWidth=2.5;sigCtx.lineCap='round';sigCtx.lineJoin='round';sigCanvas.addEventListener('touchstart',tStart,{passive:false});sigCanvas.addEventListener('touchmove',tMove,{passive:false});sigCanvas.addEventListener('touchend',()=>isDrawing=false);sigCanvas.addEventListener('mousedown',mDown);sigCanvas.addEventListener('mousemove',mMove);sigCanvas.addEventListener('mouseup',()=>isDrawing=false);sigCanvas.addEventListener('mouseleave',()=>isDrawing=false);}
 function closeSigModal(){document.getElementById('signatureModal').classList.remove('open');}
 function clearSigCanvas(){if(sigCtx)sigCtx.clearRect(0,0,sigCanvas.width,sigCanvas.height);}
-function confirmSignature(){if(!sigCanvas)return;signatureData=sigCanvas.toDataURL('image/png');const sp=document.getElementById('sigPreview');if(sp){sp.style.display='block';sp.innerHTML=`<img src="${signatureData}" alt="Signature">`;}closeSigModal();}
+function confirmSignature() {
+  if (!sigCanvas) return;
+  
+  // إنشاء canvas أصغر
+  const tempCanvas = document.createElement('canvas');
+  const ctx = tempCanvas.getContext('2d');
+  tempCanvas.width = 300;   // تصغير العرض
+  tempCanvas.height = 120;  // تصغير الارتفاع
+  ctx.drawImage(sigCanvas, 0, 0, tempCanvas.width, tempCanvas.height);
+  
+  // حفظ بتنسيق JPEG بجودة 70%
+  signatureData = tempCanvas.toDataURL('image/jpeg', 0.7);
+  
+  const sp = document.getElementById('sigPreview');
+  if (sp) {
+    sp.style.display = 'block';
+    sp.innerHTML = `<img src="${signatureData}" alt="Signature">`;
+  }
+  closeSigModal();
+}
 function getPos(c,e){const r=c.getBoundingClientRect();return{x:(e.clientX-r.left)*(c.width/r.width),y:(e.clientY-r.top)*(c.height/r.height)};}
 function mDown(e){isDrawing=true;const p=getPos(sigCanvas,e);lastX=p.x;lastY=p.y;}
 function mMove(e){if(!isDrawing)return;const p=getPos(sigCanvas,e);sigCtx.beginPath();sigCtx.moveTo(lastX,lastY);sigCtx.lineTo(p.x,p.y);sigCtx.stroke();lastX=p.x;lastY=p.y;}
