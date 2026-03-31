@@ -246,63 +246,52 @@ function gas(action, params = {}) {
       throw err;
     });
 }
-  async function gasWithSig(action, params) {
+ // تعريف gasWithSig قبل استخدامها
+async function gasWithSig(action, params) {
   const sigData = params.signatureData || '';
   const baseParams = { ...params };
   delete baseParams.signatureData;
  
   if (!sigData || !sigData.startsWith('data:image')) {
-    // لا يوجد توقيع → إرسال عادي
     return gas(action, baseParams);
   }
  
-  // ✅ تقسيم التوقيع إلى جزأين
-  // نحذف "data:image/png;base64," ونُرسل الـ base64 فقط مقسوماً
-  const prefix = sigData.substring(0, sigData.indexOf(',') + 1); // "data:image/png;base64,"
-  const b64Full = sigData.substring(sigData.indexOf(',') + 1);   // الـ base64 الصافي
- 
-  // نقسم في المنتصف
+  // تقسيم التوقيع
+  const b64Full = sigData.substring(sigData.indexOf(',') + 1);
+  const prefix = sigData.substring(0, sigData.indexOf(',') + 1);
   const mid = Math.floor(b64Full.length / 2);
-  const part1 = prefix + b64Full.substring(0, mid);  // الجزء الأول مع prefix
-  const part2 = b64Full.substring(mid);               // الجزء الثاني
- 
-  console.log('📤 إرسال الفاتورة مع توقيع مقسم:',
-    'Part1:', part1.length, 'chars |',
-    'Part2:', part2.length, 'chars'
-  );
+  const part1 = prefix + b64Full.substring(0, mid);
+  const part2 = b64Full.substring(mid);
  
   const u = new URL(GAS);
   u.searchParams.set('action', action);
  
-  // إضافة معاملات الفاتورة
   Object.entries(baseParams).forEach(([k, v]) => {
-    if (v === undefined || v === null || v === '') return;
-    if (typeof v === 'object') {
-      u.searchParams.set(k, JSON.stringify(v));
-    } else {
-      u.searchParams.set(k, String(v));
+    if (v !== undefined && v !== null && v !== '') {
+      if (typeof v === 'object') {
+        u.searchParams.set(k, JSON.stringify(v));
+      } else {
+        u.searchParams.set(k, String(v));
+      }
     }
   });
  
-  // إضافة التوقيع المقسم
   u.searchParams.set('sigPart1', part1);
   u.searchParams.set('sigPart2', part2);
  
   const urlStr = u.toString();
   console.log('📡 saveInvoice URL length:', urlStr.length);
  
-  // إذا كان الرابط أقل من 8000 حرف، أرسله مباشرة
   if (urlStr.length <= 8000) {
     return fetch(urlStr, { method: 'GET', redirect: 'follow' })
       .then(r => r.json());
   }
  
-  // إذا كان أطول → أرسل الفاتورة بدون توقيع أولاً، ثم ارفع التوقيع منفصلاً
+  // إذا كان الرابط طويلاً، أرسل بدون توقيع ثم ارفعه منفصلاً
   console.warn('⚠️ URL طويل جداً، سيتم إرسال التوقيع منفصلاً');
   const saveResult = await gas(action, baseParams);
   
   if (saveResult?.success && saveResult.voucherNo) {
-    // رفع التوقيع منفصلاً عبر POST
     try {
       const sigResult = await fetch(GAS, {
         method: 'POST',
@@ -312,8 +301,7 @@ function gas(action, params = {}) {
           voucherNo: saveResult.voucherNo,
           sig: sigData
         })
-      }).then(r => r.json()).catch(() => ({ success: false }));
-      
+      }).then(r => r.json());
       console.log('📸 نتيجة رفع التوقيع المنفصل:', sigResult);
     } catch(e) {
       console.warn('⚠️ فشل رفع التوقيع المنفصل:', e);
