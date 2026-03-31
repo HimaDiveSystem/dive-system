@@ -222,43 +222,107 @@ const C={
    FETCH HELPER — single GET to GAS
 ─────────────────────────────────────────────────────────── */
 function gas(action, params = {}) {
-  // استخدام GET لجميع الطلبات (لتجنب CORS)
   const u = new URL(GAS);
   u.searchParams.set('action', action);
-  
-  // إضافة جميع المعاملات إلى الرابط
+ 
   Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== '') {
-      if (typeof v === 'object') {
-        u.searchParams.set(k, JSON.stringify(v));
-      } else {
-        u.searchParams.set(k, String(v));
-      }
+    if (v === undefined || v === null || v === '') return;
+    // ✅ هذه الحقول لا تُرسل عبر GET (تُعالَج بشكل خاص)
+    if (k === 'signatureData' || k === 'sigPart1' || k === 'sigPart2') return;
+    if (typeof v === 'object') {
+      u.searchParams.set(k, JSON.stringify(v));
+    } else {
+      u.searchParams.set(k, String(v));
     }
   });
-  
-  const urlString = u.toString();
-  console.log(`📡 ${action} - URL length: ${urlString.length}`);
-  
-  // إذا كان الرابط طويلاً جداً (لـ saveInvoice مع التوقيع)، نحاول
-  if (urlString.length > 1800 && action === 'saveInvoice') {
-    console.warn('⚠️ URL太长، يتم حذف signatureData مؤقتاً');
-    const newParams = { ...params };
-    delete newParams.signatureData;
-    return gas(action, newParams);
-  }
-  
-  return fetch(urlString, { method: 'GET', redirect: 'follow' })
-    .then(r => { 
-      if (!r.ok) throw new Error('HTTP ' + r.status); 
-      return r.json(); 
+ 
+  return fetch(u.toString(), { method: 'GET', redirect: 'follow' })
+    .then(r => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
     })
     .catch(err => {
       console.error(`❌ ${action} failed:`, err);
       throw err;
     });
 }
-/* ───────────────────────────────────────────────────────────
+  async function gasWithSig(action, params) {
+  const sigData = params.signatureData || '';
+  const baseParams = { ...params };
+  delete baseParams.signatureData;
+ 
+  if (!sigData || !sigData.startsWith('data:image')) {
+    // لا يوجد توقيع → إرسال عادي
+    return gas(action, baseParams);
+  }
+ 
+  // ✅ تقسيم التوقيع إلى جزأين
+  // نحذف "data:image/png;base64," ونُرسل الـ base64 فقط مقسوماً
+  const prefix = sigData.substring(0, sigData.indexOf(',') + 1); // "data:image/png;base64,"
+  const b64Full = sigData.substring(sigData.indexOf(',') + 1);   // الـ base64 الصافي
+ 
+  // نقسم في المنتصف
+  const mid = Math.floor(b64Full.length / 2);
+  const part1 = prefix + b64Full.substring(0, mid);  // الجزء الأول مع prefix
+  const part2 = b64Full.substring(mid);               // الجزء الثاني
+ 
+  console.log('📤 إرسال الفاتورة مع توقيع مقسم:',
+    'Part1:', part1.length, 'chars |',
+    'Part2:', part2.length, 'chars'
+  );
+ 
+  const u = new URL(GAS);
+  u.searchParams.set('action', action);
+ 
+  // إضافة معاملات الفاتورة
+  Object.entries(baseParams).forEach(([k, v]) => {
+    if (v === undefined || v === null || v === '') return;
+    if (typeof v === 'object') {
+      u.searchParams.set(k, JSON.stringify(v));
+    } else {
+      u.searchParams.set(k, String(v));
+    }
+  });
+ 
+  // إضافة التوقيع المقسم
+  u.searchParams.set('sigPart1', part1);
+  u.searchParams.set('sigPart2', part2);
+ 
+  const urlStr = u.toString();
+  console.log('📡 saveInvoice URL length:', urlStr.length);
+ 
+  // إذا كان الرابط أقل من 8000 حرف، أرسله مباشرة
+  if (urlStr.length <= 8000) {
+    return fetch(urlStr, { method: 'GET', redirect: 'follow' })
+      .then(r => r.json());
+  }
+ 
+  // إذا كان أطول → أرسل الفاتورة بدون توقيع أولاً، ثم ارفع التوقيع منفصلاً
+  console.warn('⚠️ URL طويل جداً، سيتم إرسال التوقيع منفصلاً');
+  const saveResult = await gas(action, baseParams);
+  
+  if (saveResult?.success && saveResult.voucherNo) {
+    // رفع التوقيع منفصلاً عبر POST
+    try {
+      const sigResult = await fetch(GAS, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'saveSignature',
+          voucherNo: saveResult.voucherNo,
+          sig: sigData
+        })
+      }).then(r => r.json()).catch(() => ({ success: false }));
+      
+      console.log('📸 نتيجة رفع التوقيع المنفصل:', sigResult);
+    } catch(e) {
+      console.warn('⚠️ فشل رفع التوقيع المنفصل:', e);
+    }
+  }
+  
+  return saveResult;
+}
+ /* ───────────────────────────────────────────────────────────
    INIT ── Zero blocking. Form renders synchronously.
    Every GAS call fires AFTER the form is already visible.
 ─────────────────────────────────────────────────────────── */
@@ -680,52 +744,36 @@ function gas(action, params = {}) {
 // دالة saveAndGeneratePDF المعدلة
 async function saveAndGeneratePDF(inv) {
   showPDFOv('💾 Saving invoice...');
-
-  // حفظ الفاتورة بدون توقيع
-  const invWithoutSig = { ...inv };
-  const signatureToUpload = invWithoutSig.signatureData || '';
-  delete invWithoutSig.signatureData;
-
-  const save = await gas('saveInvoice', invWithoutSig);
+ 
+  // ✅ الخطوة 1: حفظ الفاتورة مع التوقيع (مقسم أو مدمج)
+  const save = await gasWithSig('saveInvoice', inv);
   if (!save?.success) throw new Error(save?.message || 'Save failed');
   const voucherNo = save.voucherNo;
-
-  // رفع التوقيع بشكل منفصل (إذا وجد)
-  if (signatureToUpload && signatureToUpload.startsWith('data:image')) {
-    showPDFOv('✍️ Saving signature...');
-    try {
-      // ✅ استخدم saveSignature (موجودة في Code.gs وتستخدم POST)
-      const sigRes = await fetch(GAS, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'saveSignature',
-          voucherNo: voucherNo,
-          sig: signatureToUpload
-        })
-      }).then(r => r.json());
-      
-      if (sigRes.success) {
-        console.log('✅ تم حفظ التوقيع');
-      }
-    } catch(e) {
-      console.warn('⚠️ فشل حفظ التوقيع:', e);
-    }
-    
-    // انتظار قليلاً
-    await new Promise(r => setTimeout(r, 2000));
+  const invoiceRow = save.invoiceRow || 0;
+  
+  console.log('✅ تم حفظ الفاتورة:', voucherNo, '| صف:', invoiceRow);
+ 
+  // ✅ الخطوة 2: انتظار حتى يتم كتابة الرابط في الشيت
+  // (saveInvoice الآن يرفع التوقيع ويكتب الرابط قبل الإرجاع)
+  // لكن نضيف انتظاراً صغيراً للتأكد من اكتمال flush
+  if (inv.signatureData && inv.signatureData.startsWith('data:image')) {
+    showPDFOv('✍️ Finalizing signature...');
+    await new Promise(r => setTimeout(r, 1500));
   }
-
+ 
+  // ✅ الخطوة 3: إنشاء PDF
   showPDFOv('📄 Generating PDF...');
   const pdf = await gas('saveAndGenerateSinglePDF', { voucherNo });
   hidePDFOv();
-  
+ 
   if (!pdf?.success) {
     showAlert('Saved but PDF failed: ' + (pdf?.message || ''), '⚠️');
     return null;
   }
   return { voucherNo, url: pdf.url };
 }
+ 
+
 async function saveInvoice(){
   const inv=await validate();if(!inv)return;setBtns(true);
   try{const res=await saveAndGeneratePDF(inv);if(res){const all=[...sessionVouchers,{voucherNo:res.voucherNo,url:res.url}];sessionVouchers=[];clearFormFull();showPDFsModal(all);}}
