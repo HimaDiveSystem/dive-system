@@ -274,18 +274,190 @@ async function getTripCategory(tripName){
   }catch(e){return'';}
 }
 
-async function openStateModal(voucherNo){
+  async function openStateModal(voucherNo){
   currentActionVoucher=voucherNo;
   currentActionField='state';
-  document.getElementById('quickModalTitle').textContent='تغيير حالة الفاتورة';
-  document.getElementById('quickModalBody').innerHTML=`
-    <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;padding:8px;">
-      <div class="status-option status-pending" onclick="selectState('pending')">⏳ قيد الانتظار</div>
-      <div class="status-option status-confirmed" onclick="selectState('Confirmed')">✅ مؤكد</div>
-      <div class="status-option status-cancel" onclick="selectState('cancel')">❌ ملغي</div>
+  
+  // جلب بيانات الفاتورة
+  const invoice = filtInv.find(i => i.voucherNo === voucherNo);
+  const hasPayments = (invoice.paymentPrice || 0) > 0;
+  
+  if (!hasPayments || invoice.state === 'cancel') {
+    // إذا لم يكن هناك مدفوعات أو الفاتورة ملغية، افتح نافذة الحالة العادية
+    document.getElementById('quickModalTitle').textContent='تغيير حالة الفاتورة';
+    document.getElementById('quickModalBody').innerHTML=`
+      <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;padding:8px;">
+        <div class="status-option status-pending" onclick="selectState('pending')">⏳ قيد الانتظار</div>
+        <div class="status-option status-confirmed" onclick="selectState('Confirmed')">✅ مؤكد</div>
+        <div class="status-option status-cancel" onclick="selectState('cancel')">❌ ملغي</div>
+      </div>
+    `;
+    document.getElementById('quickModal').classList.add('open');
+  } else {
+    // إذا كان هناك مدفوعات، افتح نافذة الإلغاء والاسترداد
+    openRefundModal(voucherNo, invoice);
+  }
+}
+  function openRefundModal(voucherNo, invoice) {
+  // بناء HTML لنافذة الإلغاء والاسترداد
+  const currency = invoice.invoiceCurrency || 'LE';
+  const html = `
+    <div style="text-align:center;margin-bottom:20px">
+      <div style="font-size:28px;font-weight:900;color:var(--red)">⚠️ إلغاء الفاتورة</div>
+      <div style="font-size:14px;color:var(--gray-500)">رقم الفاتورة: ${voucherNo}</div>
+      <div style="margin-top:12px;background:#fef2f2;padding:10px;border-radius:12px">
+        <div>المبلغ المحصل: <strong>${invoice.paymentPrice} ${currency}</strong></div>
+        <div>تاريخ الحجز: ${invoice.issueDate}</div>
+      </div>
+    </div>
+    
+    <div class="payment-label">💰 المبالغ المستردة للعميل</div>
+    <div class="payment-grid">
+      <div class="payment-card"><label>USD $</label><input type="number" id="refundUSD" step="0.01" value="0" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>EUR €</label><input type="number" id="refundEUR" step="0.01" value="0" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>GBP £</label><input type="number" id="refundGBP" step="0.01" value="0" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>EGP LE</label><input type="number" id="refundLE" step="0.01" value="0" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>Visa $</label><input type="number" id="refundVisaUSD" step="0.01" value="0" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>Visa €</label><input type="number" id="refundVisaEUR" step="0.01" value="0" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>Visa £</label><input type="number" id="refundVisaGBP" step="0.01" value="0" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>Visa LE</label><input type="number" id="refundVisaLE" step="0.01" value="0" oninput="updateRefundTotal()"></div>
+    </div>
+    
+    <div style="background:#f1f5f9;border-radius:12px;padding:12px;margin:12px 0;text-align:center">
+      <span style="font-weight:600">إجمالي المبلغ المسترد (${currency}):</span>
+      <span id="refundTotalDisplay" style="font-size:20px;font-weight:900;color:var(--red);margin-left:8px">0.00</span>
+    </div>
+    
+    <div style="display:flex;gap:10px;margin-top:16px">
+      <button class="btn btn-danger" onclick="submitFullRefund()" style="flex:1">💰 رد الكامل</button>
+      <button class="btn btn-success" onclick="submitPartialRefund()" style="flex:1">💾 رد جزئي</button>
+      <button class="btn btn-clear" onclick="closeQuickModal()" style="flex:1">إلغاء</button>
     </div>
   `;
+  
+  document.getElementById('quickModalTitle').textContent = 'إلغاء الفاتورة واسترداد المبلغ';
+  document.getElementById('quickModalBody').innerHTML = html;
   document.getElementById('quickModal').classList.add('open');
+}
+
+function updateRefundTotal() {
+  // حساب إجمالي المبلغ المسترد (يتم تحويله إلى عملة الفاتورة باستخدام سعر الصرف)
+  // سيتم إضافة هذه الدالة لاحقاً
+  console.log('updateRefundTotal called');
+}
+
+function submitFullRefund() {
+  // إرسال طلب رد الكامل
+  const refundData = { isFullRefund: true, amounts: {} };
+  processRefundRequest(refundData);
+}
+
+function submitPartialRefund() {
+  // جمع المبالغ المدخلة
+  const amounts = {
+    cashUSD: parseFloat(document.getElementById('refundUSD')?.value) || 0,
+    cashEUR: parseFloat(document.getElementById('refundEUR')?.value) || 0,
+    cashGBP: parseFloat(document.getElementById('refundGBP')?.value) || 0,
+    cashLE: parseFloat(document.getElementById('refundLE')?.value) || 0,
+    visaUSD: parseFloat(document.getElementById('refundVisaUSD')?.value) || 0,
+    visaEUR: parseFloat(document.getElementById('refundVisaEUR')?.value) || 0,
+    visaGBP: parseFloat(document.getElementById('refundVisaGBP')?.value) || 0,
+    visaLE: parseFloat(document.getElementById('refundVisaLE')?.value) || 0
+  };
+  
+  processRefundRequest({ isFullRefund: false, amounts: amounts });
+}
+
+async function processRefundRequest(refundData) {
+  showToast('جاري معالجة الإلغاء...', 'info');
+  try {
+    const res = await fetch(`${GAS_URL}?action=processRefund&voucherNo=${currentActionVoucher}&refundData=${encodeURIComponent(JSON.stringify(refundData))}&userId=${currentUser?.id || ''}`);
+    const result = await res.json();
+    
+    if (result.success) {
+      showToast(result.message, 'success');
+      closeQuickModal();
+      loadInv(); // إعادة تحميل البيانات
+    } else {
+      showToast(result.message, 'error');
+    }
+  } catch(e) {
+    showToast('خطأ: ' + e.message, 'error');
+  }
+}
+  async function updateRefundTotal() {
+  // جلب بيانات الفاتورة
+  const invoice = filtInv.find(i => i.voucherNo === currentActionVoucher);
+  if (!invoice) return;
+  
+  const currency = invoice.invoiceCurrency || 'LE';
+  const activeDate = invoice.activeDate;
+  
+  // قراءة المبالغ المدخلة
+  const cU = Number(document.getElementById('refundUSD')?.value) || 0;
+  const cE = Number(document.getElementById('refundEUR')?.value) || 0;
+  const cG = Number(document.getElementById('refundGBP')?.value) || 0;
+  const cL = Number(document.getElementById('refundLE')?.value) || 0;
+  const vU = Number(document.getElementById('refundVisaUSD')?.value) || 0;
+  const vE = Number(document.getElementById('refundVisaEUR')?.value) || 0;
+  const vG = Number(document.getElementById('refundVisaGBP')?.value) || 0;
+  const vL = Number(document.getElementById('refundVisaLE')?.value) || 0;
+  
+  let totalRefund = 0;
+  
+  // إذا كان هناك مبالغ مدخلة ولدينا تاريخ تنفيذ
+  if (activeDate && (cU + cE + cG + cL + vU + vE + vG + vL) > 0) {
+    try {
+      // جلب سعر الصرف لتاريخ التنفيذ
+      const rateRes = await fetch(`${GAS_URL}?action=getExchangeRate&dateStr=${encodeURIComponent(activeDate)}`);
+      const r = await rateRes.json();
+      
+      if (r && r.cash) {
+        // تحويل جميع العملات إلى LE أولاً
+        const totalLE = cU * r.cash.USD + 
+                        cE * r.cash.EUR + 
+                        cG * r.cash.GBP + 
+                        cL +
+                        vU * r.visa.USD + 
+                        vE * r.visa.EUR + 
+                        vG * r.visa.GBP + 
+                        vL * (r.visa.LE || 0.975);
+        
+        // تحويل من LE إلى عملة الفاتورة
+        if (currency === '$') totalRefund = R2(totalLE / r.cash.USD);
+        else if (currency === '€') totalRefund = R2(totalLE / r.cash.EUR);
+        else if (currency === '£') totalRefund = R2(totalLE / r.cash.GBP);
+        else totalRefund = R2(totalLE);
+        
+        console.log(`💰 تحويل: ${totalLE.toFixed(2)} LE → ${totalRefund.toFixed(2)} ${currency}`);
+      } else {
+        // إذا لم يوجد سعر صرف، استخدم الجمع المباشر
+        totalRefund = cU + cE + cG + cL + vU + vE + vG + vL;
+      }
+    } catch(e) {
+      console.warn('خطأ في جلب سعر الصرف:', e);
+      totalRefund = cU + cE + cG + cL + vU + vE + vG + vL;
+    }
+  } else {
+    // جمع مباشر
+    totalRefund = cU + cE + cG + cL + vU + vE + vG + vL;
+  }
+  
+  // تحديث عرض الإجمالي
+  const totalDisplay = document.getElementById('refundTotalDisplay');
+  if (totalDisplay) {
+    totalDisplay.textContent = totalRefund.toFixed(2);
+    
+    // تغيير اللون إذا تجاوز المبلغ المحصل
+    const paymentPrice = invoice.paymentPrice || 0;
+    if (totalRefund > paymentPrice) {
+      totalDisplay.style.color = '#dc2626'; // أحمر للتحذير
+      totalDisplay.title = `⚠️ المبلغ المسترد (${totalRefund}) أكبر من المبلغ المحصل (${paymentPrice})`;
+    } else {
+      totalDisplay.style.color = '#16a34a'; // أخضر
+      totalDisplay.title = '';
+    }
+  }
 }
 function selectState(state){closeQuickModal();updateInvoiceField(currentActionVoucher,'state',state);}
 
