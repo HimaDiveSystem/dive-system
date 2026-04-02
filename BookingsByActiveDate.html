@@ -320,6 +320,8 @@ function selectStateWithCheck(state, hasPayments) {
 }
  function openRefundModal(voucherNo, invoice) {
   const currency = invoice.invoiceCurrency || 'LE';
+  
+  // عرض المدفوعات الأصلية في الحقول
   const html = `
     <div style="text-align:center;margin-bottom:20px">
       <div style="font-size:28px;font-weight:900;color:var(--red)">⚠️ إلغاء الفاتورة</div>
@@ -332,19 +334,19 @@ function selectStateWithCheck(state, hasPayments) {
     
     <div class="payment-label">💰 المبالغ المستردة للعميل</div>
     <div class="payment-grid">
-      <div class="payment-card"><label>USD $</label><input type="number" id="refundUSD" step="0.01" placeholder="0" oninput="updateRefundTotal()" value=""></div>
-      <div class="payment-card"><label>EUR €</label><input type="number" id="refundEUR" step="0.01" placeholder="0" oninput="updateRefundTotal()" value=""></div>
-      <div class="payment-card"><label>GBP £</label><input type="number" id="refundGBP" step="0.01" placeholder="0" oninput="updateRefundTotal()" value=""></div>
-      <div class="payment-card"><label>EGP LE</label><input type="number" id="refundLE" step="0.01" placeholder="0" oninput="updateRefundTotal()" value=""></div>
-      <div class="payment-card"><label>Visa $</label><input type="number" id="refundVisaUSD" step="0.01" placeholder="0" oninput="updateRefundTotal()" value=""></div>
-      <div class="payment-card"><label>Visa €</label><input type="number" id="refundVisaEUR" step="0.01" placeholder="0" oninput="updateRefundTotal()" value=""></div>
-      <div class="payment-card"><label>Visa £</label><input type="number" id="refundVisaGBP" step="0.01" placeholder="0" oninput="updateRefundTotal()" value=""></div>
-      <div class="payment-card"><label>Visa LE</label><input type="number" id="refundVisaLE" step="0.01" placeholder="0" oninput="updateRefundTotal()" value=""></div>
+      <div class="payment-card"><label>USD $</label><input type="number" id="refundUSD" step="0.01" placeholder="0" value="${invoice.cashUSD || 0}" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>EUR €</label><input type="number" id="refundEUR" step="0.01" placeholder="0" value="${invoice.cashEUR || 0}" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>GBP £</label><input type="number" id="refundGBP" step="0.01" placeholder="0" value="${invoice.cashGBP || 0}" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>EGP LE</label><input type="number" id="refundLE" step="0.01" placeholder="0" value="${invoice.cashLE || 0}" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>Visa $</label><input type="number" id="refundVisaUSD" step="0.01" placeholder="0" value="${invoice.visaUSD || 0}" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>Visa €</label><input type="number" id="refundVisaEUR" step="0.01" placeholder="0" value="${invoice.visaEUR || 0}" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>Visa £</label><input type="number" id="refundVisaGBP" step="0.01" placeholder="0" value="${invoice.visaGBP || 0}" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>Visa LE</label><input type="number" id="refundVisaLE" step="0.01" placeholder="0" value="${invoice.visaLE || 0}" oninput="updateRefundTotal()"></div>
     </div>
     
     <div style="background:#f1f5f9;border-radius:12px;padding:12px;margin:12px 0;text-align:center">
       <span style="font-weight:600">إجمالي المبلغ المسترد (${currency}):</span>
-      <span id="refundTotalDisplay" style="font-size:20px;font-weight:900;color:var(--red);margin-left:8px">0.00</span>
+      <span id="refundTotalDisplay" style="font-size:20px;font-weight:900;color:var(--red);margin-left:8px">${invoice.paymentPrice}</span>
     </div>
     
     <div style="display:flex;gap:10px;margin-top:16px">
@@ -401,10 +403,8 @@ async function processRefundRequest(refundData) {
   let refundTimer = null;
 
 async function updateRefundTotal() {
-  // إلغاء أي طلب سابق
   if (refundTimer) clearTimeout(refundTimer);
   
-  // تأخير التنفيذ 500ms لتجنب الكثير من الطلبات
   refundTimer = setTimeout(async () => {
     const invoice = filtInv.find(i => i.voucherNo === currentActionVoucher);
     if (!invoice) return;
@@ -412,6 +412,7 @@ async function updateRefundTotal() {
     const currency = invoice.invoiceCurrency || 'LE';
     const activeDate = invoice.activeDate;
     
+    // قراءة المبالغ المدخلة فقط (وليست المبالغ الأصلية)
     const cU = Number(document.getElementById('refundUSD')?.value) || 0;
     const cE = Number(document.getElementById('refundEUR')?.value) || 0;
     const cG = Number(document.getElementById('refundGBP')?.value) || 0;
@@ -425,22 +426,12 @@ async function updateRefundTotal() {
     
     if (activeDate && (cU + cE + cG + cL + vU + vE + vG + vL) > 0) {
       try {
-        // إظهار مؤشر تحميل
-        const totalDisplay = document.getElementById('refundTotalDisplay');
-        if (totalDisplay) totalDisplay.textContent = 'جاري الحساب...';
-        
         const rateRes = await fetch(`${GAS_URL}?action=getExchangeRate&dateStr=${encodeURIComponent(activeDate)}`);
         const r = await rateRes.json();
         
         if (r && r.cash) {
-          const totalLE = cU * r.cash.USD + 
-                          cE * r.cash.EUR + 
-                          cG * r.cash.GBP + 
-                          cL +
-                          vU * r.visa.USD + 
-                          vE * r.visa.EUR + 
-                          vG * r.visa.GBP + 
-                          vL * (r.visa.LE || 0.975);
+          const totalLE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
+                          vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
           
           if (currency === '$') totalRefund = R2(totalLE / r.cash.USD);
           else if (currency === '€') totalRefund = R2(totalLE / r.cash.EUR);
@@ -450,7 +441,6 @@ async function updateRefundTotal() {
           totalRefund = cU + cE + cG + cL + vU + vE + vG + vL;
         }
       } catch(e) {
-        console.warn('خطأ في جلب سعر الصرف:', e);
         totalRefund = cU + cE + cG + cL + vU + vE + vG + vL;
       }
     } else {
