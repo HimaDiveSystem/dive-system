@@ -337,12 +337,11 @@ function selectStateWithCheck(state, hasPayments) {
     updateInvoiceField(currentActionVoucher, 'state', state);
   }
 }
-async function openRefundModal(voucherNo, invoice) {
-  const currency = invoice.invoiceCurrency || 'LE';
-  const activeDate = invoice.activeDate;
+
   
   // جلب سعر الصرف لتاريخ الفاتورة
- let cachedExchangeRate = null;
+// متغير لتخزين سعر الصرف المستخدم
+let cachedExchangeRate = null;
 
 async function openRefundModal(voucherNo, invoice) {
   const currency = invoice.invoiceCurrency || 'LE';
@@ -378,7 +377,7 @@ async function openRefundModal(voucherNo, invoice) {
     else actualPayment = R2(totalLE);
   }
   
-  // بناء HTML بدون أصفار في الحقول
+  // بناء HTML
   const html = `
     <div style="text-align:center;margin-bottom:20px">
       <div style="font-size:28px;font-weight:900;color:var(--red)">⚠️ إلغاء الفاتورة</div>
@@ -429,62 +428,12 @@ async function openRefundModal(voucherNo, invoice) {
   document.getElementById('quickModal').classList.add('open');
 }
 
-function submitFullRefund() {
-  // إرسال طلب رد الكامل
-  const refundData = { isFullRefund: true, amounts: {} };
-  processRefundRequest(refundData);
-}
-
-function submitPartialRefund() {
-  // جمع المبالغ المدخلة (فقط القيم التي تم إدخالها)
-  const amounts = {
-    cashUSD: parseFloat(document.getElementById('refundUSD')?.value) || 0,
-    cashEUR: parseFloat(document.getElementById('refundEUR')?.value) || 0,
-    cashGBP: parseFloat(document.getElementById('refundGBP')?.value) || 0,
-    cashLE: parseFloat(document.getElementById('refundLE')?.value) || 0,
-    visaUSD: parseFloat(document.getElementById('refundVisaUSD')?.value) || 0,
-    visaEUR: parseFloat(document.getElementById('refundVisaEUR')?.value) || 0,
-    visaGBP: parseFloat(document.getElementById('refundVisaGBP')?.value) || 0,
-    visaLE: parseFloat(document.getElementById('refundVisaLE')?.value) || 0
-  };
-  
-  // التحقق من وجود مبالغ مستردة
-  const total = amounts.cashUSD + amounts.cashEUR + amounts.cashGBP + amounts.cashLE +
-                amounts.visaUSD + amounts.visaEUR + amounts.visaGBP + amounts.visaLE;
-  
-  if (total <= 0) {
-    showToast('الرجاء إدخال المبالغ المستردة', 'error');
-    return;
-  }
-  
-  processRefundRequest({ isFullRefund: false, amounts: amounts });
-}
-
-async function processRefundRequest(refundData) {
-  showToast('جاري معالجة الإلغاء...', 'info');
-  try {
-    const res = await fetch(`${GAS_URL}?action=processRefund&voucherNo=${currentActionVoucher}&refundData=${encodeURIComponent(JSON.stringify(refundData))}&userId=${currentUser?.id || ''}`);
-    const result = await res.json();
-    
-    if (result.success) {
-      showToast(result.message, 'success');
-      closeQuickModal();
-      loadInv(); // إعادة تحميل البيانات
-    } else {
-      showToast(result.message, 'error');
-    }
-  } catch(e) {
-    showToast('خطأ: ' + e.message, 'error');
-  }
-}
-  let refundTimer = null;
-
+// دالة حساب المبلغ المسترد
 function updateRefundTotal() {
   const invoice = filtInv.find(i => i.voucherNo === currentActionVoucher);
   if (!invoice) return;
   
   const currency = invoice.invoiceCurrency || 'LE';
-  const activeDate = invoice.activeDate;
   
   const cU = Number(document.getElementById('refundUSD')?.value) || 0;
   const cE = Number(document.getElementById('refundEUR')?.value) || 0;
@@ -497,7 +446,7 @@ function updateRefundTotal() {
   
   let totalRefund = 0;
   
-  if (activeDate && cachedExchangeRate && cachedExchangeRate.cash) {
+  if (cachedExchangeRate && cachedExchangeRate.cash) {
     const totalLE = cU * cachedExchangeRate.cash.USD + 
                     cE * cachedExchangeRate.cash.EUR + 
                     cG * cachedExchangeRate.cash.GBP + 
@@ -526,9 +475,54 @@ function updateRefundTotal() {
     }
   }
 }
-وتعديل دالة submitPartialRefund لاستخدام المبالغ المدخلة:
-javascript
-  // جمع المبالغ المدخلة (فقط القيم التي تم إد
+function submitFullRefund() {
+  // إرسال طلب رد الكامل
+  const refundData = { isFullRefund: true, amounts: {} };
+  processRefundRequest(refundData);
+}
+
+function submitPartialRefund() {
+  const amounts = {
+    cashUSD: parseFloat(document.getElementById('refundUSD')?.value) || 0,
+    cashEUR: parseFloat(document.getElementById('refundEUR')?.value) || 0,
+    cashGBP: parseFloat(document.getElementById('refundGBP')?.value) || 0,
+    cashLE: parseFloat(document.getElementById('refundLE')?.value) || 0,
+    visaUSD: parseFloat(document.getElementById('refundVisaUSD')?.value) || 0,
+    visaEUR: parseFloat(document.getElementById('refundVisaEUR')?.value) || 0,
+    visaGBP: parseFloat(document.getElementById('refundVisaGBP')?.value) || 0,
+    visaLE: parseFloat(document.getElementById('refundVisaLE')?.value) || 0
+  };
+  
+  const total = amounts.cashUSD + amounts.cashEUR + amounts.cashGBP + amounts.cashLE +
+                amounts.visaUSD + amounts.visaEUR + amounts.visaGBP + amounts.visaLE;
+  
+  if (total <= 0) {
+    showToast('الرجاء إدخال المبالغ المستردة', 'error');
+    return;
+  }
+  
+  processRefundRequest({ isFullRefund: false, amounts: amounts });
+}
+  
+async function processRefundRequest(refundData) {
+  showToast('جاري معالجة الإلغاء...', 'info');
+  try {
+    const res = await fetch(`${GAS_URL}?action=processRefund&voucherNo=${currentActionVoucher}&refundData=${encodeURIComponent(JSON.stringify(refundData))}&userId=${currentUser?.id || ''}`);
+    const result = await res.json();
+    
+    if (result.success) {
+      showToast(result.message, 'success');
+      closeQuickModal();
+      loadInv(); // إعادة تحميل البيانات
+    } else {
+      showToast(result.message, 'error');
+    }
+  } catch(e) {
+    showToast('خطأ: ' + e.message, 'error');
+  }
+}
+  let refundTimer = null;
+
 function selectState(state){closeQuickModal();updateInvoiceField(currentActionVoucher,'state',state);}
 
 // استبدل دالة openPartyModal مؤقتاً بهذه النسخة مع logging
