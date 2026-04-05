@@ -343,11 +343,12 @@ function selectStateWithCheck(state, hasPayments) {
 // متغير لتخزين سعر الصرف المستخدم
 let cachedExchangeRate = null;
 
+// استبدل دالة openRefundModal الموجودة بهذه النسخة
 async function openRefundModal(voucherNo, invoice) {
   const currency = invoice.invoiceCurrency || 'LE';
   const activeDate = invoice.activeDate;
   
-  // جلب سعر الصرف مرة واحدة عند فتح النافذة
+  // جلب سعر الصرف
   cachedExchangeRate = null;
   if (activeDate) {
     try {
@@ -358,62 +359,79 @@ async function openRefundModal(voucherNo, invoice) {
     }
   }
   
-  // حساب المبلغ المحصل الفعلي
+  // حساب المبلغ المحصل الفعلي من PaymentPrice في الشيت
   let actualPayment = invoice.paymentPrice || 0;
+  
+  // قراءة المدفوعات الفعلية من الفاتورة
+  const cashUSD = invoice.cashUSD || 0;
+  const cashEUR = invoice.cashEUR || 0;
+  const cashGBP = invoice.cashGBP || 0;
+  const cashLE = invoice.cashLE || 0;
+  const visaUSD = invoice.visaUSD || 0;
+  const visaEUR = invoice.visaEUR || 0;
+  const visaGBP = invoice.visaGBP || 0;
+  const visaLE = invoice.visaLE || 0;
+  
+  // حساب إجمالي المبلغ المسترد الأولي (نفس المدفوعات)
+  let initialTotal = 0;
   if (cachedExchangeRate && cachedExchangeRate.cash) {
-    let totalLE = 0;
-    if (invoice.cashUSD) totalLE += invoice.cashUSD * cachedExchangeRate.cash.USD;
-    if (invoice.cashEUR) totalLE += invoice.cashEUR * cachedExchangeRate.cash.EUR;
-    if (invoice.cashGBP) totalLE += invoice.cashGBP * cachedExchangeRate.cash.GBP;
-    if (invoice.cashLE) totalLE += invoice.cashLE;
-    if (invoice.visaUSD) totalLE += invoice.visaUSD * cachedExchangeRate.visa.USD;
-    if (invoice.visaEUR) totalLE += invoice.visaEUR * cachedExchangeRate.visa.EUR;
-    if (invoice.visaGBP) totalLE += invoice.visaGBP * cachedExchangeRate.visa.GBP;
-    if (invoice.visaLE) totalLE += invoice.visaLE * (cachedExchangeRate.visa.LE || 0.975);
+    const totalLE = cashUSD * cachedExchangeRate.cash.USD + 
+                    cashEUR * cachedExchangeRate.cash.EUR + 
+                    cashGBP * cachedExchangeRate.cash.GBP + 
+                    cashLE +
+                    visaUSD * cachedExchangeRate.visa.USD + 
+                    visaEUR * cachedExchangeRate.visa.EUR + 
+                    visaGBP * cachedExchangeRate.visa.GBP + 
+                    visaLE * (cachedExchangeRate.visa.LE || 0.975);
     
-    if (currency === '$') actualPayment = R2(totalLE / cachedExchangeRate.cash.USD);
-    else if (currency === '€') actualPayment = R2(totalLE / cachedExchangeRate.cash.EUR);
-    else if (currency === '£') actualPayment = R2(totalLE / cachedExchangeRate.cash.GBP);
-    else actualPayment = R2(totalLE);
+    if (currency === '$') initialTotal = R2(totalLE / cachedExchangeRate.cash.USD);
+    else if (currency === '€') initialTotal = R2(totalLE / cachedExchangeRate.cash.EUR);
+    else if (currency === '£') initialTotal = R2(totalLE / cachedExchangeRate.cash.GBP);
+    else initialTotal = R2(totalLE);
+  } else {
+    initialTotal = cashUSD + cashEUR + cashGBP + cashLE + visaUSD + visaEUR + visaGBP + visaLE;
   }
   
-  // بناء HTML
   const html = `
     <div style="text-align:center;margin-bottom:20px">
       <div style="font-size:28px;font-weight:900;color:var(--red)">⚠️ إلغاء الفاتورة</div>
       <div style="font-size:14px;color:var(--gray-500)">رقم الفاتورة: ${voucherNo}</div>
       <div style="margin-top:12px;background:#fef2f2;padding:10px;border-radius:12px">
         <div>المبلغ المحصل: <strong>${actualPayment.toFixed(2)} ${currency}</strong></div>
-        <div>تفاصيل المدفوعات:</div>
-        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;font-size:11px">
-          ${invoice.cashUSD ? `<span>💰 $${invoice.cashUSD}</span>` : ''}
-          ${invoice.cashEUR ? `<span>💰 €${invoice.cashEUR}</span>` : ''}
-          ${invoice.cashGBP ? `<span>💰 £${invoice.cashGBP}</span>` : ''}
-          ${invoice.cashLE ? `<span>💰 LE${invoice.cashLE}</span>` : ''}
-          ${invoice.visaUSD ? `<span>💳 V$${invoice.visaUSD}</span>` : ''}
-          ${invoice.visaEUR ? `<span>💳 V€${invoice.visaEUR}</span>` : ''}
-          ${invoice.visaGBP ? `<span>💳 V£${invoice.visaGBP}</span>` : ''}
-          ${invoice.visaLE ? `<span>💳 VLE${invoice.visaLE}</span>` : ''}
-        </div>
         <div style="margin-top:6px">تاريخ الحجز: ${invoice.issueDate}</div>
       </div>
     </div>
     
+    <!-- المدفوعات الفعلية -->
+    <div class="payment-label" style="background:var(--navy);color:var(--gold);padding:6px 12px;border-radius:20px;display:inline-block;margin-bottom:10px">
+      💵 المدفوعات الفعلية
+    </div>
+    <div class="payment-grid" style="margin-bottom:16px;background:#f0fdf4;padding:8px;border-radius:12px">
+      <div class="payment-card" style="background:#f0fdf4"><label>USD $</label><div style="font-size:16px;font-weight:700">${cashUSD}</div></div>
+      <div class="payment-card" style="background:#f0fdf4"><label>EUR €</label><div style="font-size:16px;font-weight:700">${cashEUR}</div></div>
+      <div class="payment-card" style="background:#f0fdf4"><label>GBP £</label><div style="font-size:16px;font-weight:700">${cashGBP}</div></div>
+      <div class="payment-card" style="background:#f0fdf4"><label>EGP LE</label><div style="font-size:16px;font-weight:700">${cashLE}</div></div>
+      <div class="payment-card" style="background:#f0fdf4"><label>Visa $</label><div style="font-size:16px;font-weight:700">${visaUSD}</div></div>
+      <div class="payment-card" style="background:#f0fdf4"><label>Visa €</label><div style="font-size:16px;font-weight:700">${visaEUR}</div></div>
+      <div class="payment-card" style="background:#f0fdf4"><label>Visa £</label><div style="font-size:16px;font-weight:700">${visaGBP}</div></div>
+      <div class="payment-card" style="background:#f0fdf4"><label>Visa LE</label><div style="font-size:16px;font-weight:700">${visaLE}</div></div>
+    </div>
+    
     <div class="payment-label">💰 المبالغ المستردة للعميل</div>
     <div class="payment-grid">
-      <div class="payment-card"><label>USD $</label><input type="number" id="refundUSD" step="0.01" placeholder="0" value="" oninput="updateRefundTotal()"></div>
-      <div class="payment-card"><label>EUR €</label><input type="number" id="refundEUR" step="0.01" placeholder="0" value="" oninput="updateRefundTotal()"></div>
-      <div class="payment-card"><label>GBP £</label><input type="number" id="refundGBP" step="0.01" placeholder="0" value="" oninput="updateRefundTotal()"></div>
-      <div class="payment-card"><label>EGP LE</label><input type="number" id="refundLE" step="0.01" placeholder="0" value="" oninput="updateRefundTotal()"></div>
-      <div class="payment-card"><label>Visa $</label><input type="number" id="refundVisaUSD" step="0.01" placeholder="0" value="" oninput="updateRefundTotal()"></div>
-      <div class="payment-card"><label>Visa €</label><input type="number" id="refundVisaEUR" step="0.01" placeholder="0" value="" oninput="updateRefundTotal()"></div>
-      <div class="payment-card"><label>Visa £</label><input type="number" id="refundVisaGBP" step="0.01" placeholder="0" value="" oninput="updateRefundTotal()"></div>
-      <div class="payment-card"><label>Visa LE</label><input type="number" id="refundVisaLE" step="0.01" placeholder="0" value="" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>USD $</label><input type="number" id="refundUSD" step="0.01" placeholder="0" value="${cashUSD}" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>EUR €</label><input type="number" id="refundEUR" step="0.01" placeholder="0" value="${cashEUR}" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>GBP £</label><input type="number" id="refundGBP" step="0.01" placeholder="0" value="${cashGBP}" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>EGP LE</label><input type="number" id="refundLE" step="0.01" placeholder="0" value="${cashLE}" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>Visa $</label><input type="number" id="refundVisaUSD" step="0.01" placeholder="0" value="${visaUSD}" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>Visa €</label><input type="number" id="refundVisaEUR" step="0.01" placeholder="0" value="${visaEUR}" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>Visa £</label><input type="number" id="refundVisaGBP" step="0.01" placeholder="0" value="${visaGBP}" oninput="updateRefundTotal()"></div>
+      <div class="payment-card"><label>Visa LE</label><input type="number" id="refundVisaLE" step="0.01" placeholder="0" value="${visaLE}" oninput="updateRefundTotal()"></div>
     </div>
     
     <div style="background:#f1f5f9;border-radius:12px;padding:12px;margin:12px 0;text-align:center">
       <span style="font-weight:600">إجمالي المبلغ المسترد (${currency}):</span>
-      <span id="refundTotalDisplay" style="font-size:20px;font-weight:900;color:var(--red);margin-left:8px">0.00</span>
+      <span id="refundTotalDisplay" style="font-size:20px;font-weight:900;color:var(--red);margin-left:8px">${initialTotal.toFixed(2)}</span>
     </div>
     
     <div style="display:flex;gap:10px;margin-top:16px">
@@ -427,7 +445,6 @@ async function openRefundModal(voucherNo, invoice) {
   document.getElementById('quickModalBody').innerHTML = html;
   document.getElementById('quickModal').classList.add('open');
 }
-
 // دالة حساب المبلغ المسترد
 function updateRefundTotal() {
   const invoice = filtInv.find(i => i.voucherNo === currentActionVoucher);
@@ -511,7 +528,8 @@ async function processRefundRequest(refundData) {
   
   showToast('جاري معالجة الإلغاء...', 'info');
   try {
-    const url = `${GAS_URL}?action=processRefund&voucherNo=${currentActionVoucher}&refundData=${encodeURIComponent(JSON.stringify(refundData))}&userId=${currentUser?.id || ''}`;
+    // ✅ استخدام الدالة الجديدة processRefundV3
+    const url = `${GAS_URL}?action=processRefundV3&voucherNo=${currentActionVoucher}&refundData=${encodeURIComponent(JSON.stringify(refundData))}&userId=${currentUser?.id || ''}`;
     console.log('🔵 URL:', url);
     
     const res = await fetch(url);
