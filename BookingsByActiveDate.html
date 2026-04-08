@@ -270,7 +270,13 @@ function escapeHtml(str){
   });
 }
   function formatDate(d){const dd=new Date(d);return `${String(dd.getDate()).padStart(2,'0')}/${MN[dd.getMonth()]}/${dd.getFullYear()}`;}
-
+function convertDateToDisplay(isoDate) {
+  if(!isoDate) return '';
+  if(/^\d{1,2}\/[A-Za-z]{3}\/\d{4}$/.test(isoDate)) return isoDate;
+  const d = new Date(isoDate);
+  if(isNaN(d.getTime())) return isoDate;
+  return `${String(d.getDate()).padStart(2,'0')}/${MN[d.getMonth()]}/${d.getFullYear()}`;
+}
 function showToast(msg,type){
   const toast=document.createElement('div');
   toast.style.cssText=`position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:${type==='success'?'#16a34a':type==='error'?'#dc2626':'#3b82f6'};color:white;padding:12px 24px;border-radius:40px;font-weight:600;z-index:2000;box-shadow:0 4px 12px rgba(0,0,0,0.2);animation:fadeInUp 0.3s ease;`;
@@ -750,31 +756,28 @@ function goBack(){window.location.href=DASH[currentUser?.type]||'Dashboard.html'
 function editInvoice(v){sessionStorage.setItem('currentUser',JSON.stringify(currentUser));window.location.href=`EditInvoice.html?voucherNo=${v}&from=activeDate`;}
 function deleteInvoice(){showAlert('Delete — under development','⚠️');}
 
-  async function loadInv(){
+ async function loadInv(){
   document.getElementById('tblCont').innerHTML='<div class="loader-wrap"><div class="spinner"></div>Loading...</div>';
   try {
     const res = await fetch(GAS_URL+'?action=getAllInvoicesWithCategory');
     let data = await res.json();
     if(!Array.isArray(data)) data = [];
     
-    // ✅ تأكد من أن جميع الفواتير لها tripCategory
-    for(let i = 0; i < data.length; i++) {
-      if(!data[i].tripCategory && data[i].trip) {
-        // محاولة جلب التصنيف من TripDefinitions
-        try {
-          const tripRes = await fetch(`${GAS_URL}?action=getTripDefinition&tripName=${encodeURIComponent(data[i].trip)}`);
-          const tripDef = await tripRes.json();
-          data[i].tripCategory = tripDef?.category || '';
-        } catch(e) {
-          data[i].tripCategory = '';
-        }
+    // ✅ تحويل تنسيق التواريخ من ISO إلى dd/MMM/yyyy
+    data.forEach(inv => {
+      if(inv.activeDate) {
+        inv.activeDate = convertDateToDisplay(inv.activeDate);
       }
-    }
+      if(inv.issueDate) {
+        inv.issueDate = convertDateToDisplay(inv.issueDate);
+      }
+    });
     
     const ub = currentUser?.branchName, ut = currentUser?.type;
     allInv = (ub && ut !== 'Admin' && ut !== 'Owner') ? data.filter(i => i.branchName === ub) : data;
     
-    console.log('✅ loadInv - INV0005 category:', allInv.find(i => i.voucherNo === 'INV0005')?.tripCategory);
+    console.log('loadInv - allInv length:', allInv.length);
+    console.log('loadInv - first activeDate:', allInv[0]?.activeDate);
     
     filtInv = [...allInv];
     doSort();
