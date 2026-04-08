@@ -810,30 +810,60 @@ function doSort(){filtInv.sort((a,b)=>{let va=a[sortCol]??'',vb=b[sortCol]??'';i
 function setSort(col){sortDir=sortCol===col?(sortDir==='asc'?'desc':'asc'):'asc';sortCol=col;doSort();renderAll();}
 function debounce(){clearTimeout(ftimer);ftimer=setTimeout(apply,300);}
 function apply(){
-  if(!valDates())return;
-  const fISO=document.getElementById('fFromNat').value,tISO=document.getElementById('fToNat').value;
-  const q=document.getElementById('fSearch').value.toLowerCase().trim();
-  let fTs=null,tTs=null;
-  if(fISO){const[y,m,d]=fISO.split('-').map(Number);fTs=new Date(y,m-1,d).getTime();}
-  if(tISO){const[y,m,d]=tISO.split('-').map(Number);tTs=new Date(y,m-1,d,23,59,59,999).getTime();}
-  const st=document.getElementById("fState").value.toLowerCase();
-  filtInv=allInv.filter(inv=>{
-    const ts=parseDt(inv.activeDate);
-    if(fTs!==null&&(ts===null||ts<fTs))return false;
-    if(tTs!==null&&(ts===null||ts>tTs))return false;
-    if(st&&(inv.state||"").trim().toLowerCase()!==st)return false;
-    if(q){const s=[inv.voucherNo,inv.guestName,inv.trip,inv.salesName,inv.contactNo,inv.hotel].map(x=>x||'').join(' ').toLowerCase();if(!s.includes(q))return false;}
+  if(!valDates()) return;
+  const fISO = document.getElementById('fFromNat').value, tISO = document.getElementById('fToNat').value;
+  const q = document.getElementById('fSearch').value.toLowerCase().trim();
+  let fTs = null, tTs = null;
+  if(fISO){ const [y,m,d] = fISO.split('-').map(Number); fTs = new Date(y,m-1,d).getTime(); }
+  if(tISO){ const [y,m,d] = tISO.split('-').map(Number); tTs = new Date(y,m-1,d,23,59,59,999).getTime(); }
+  const st = document.getElementById("fState").value.toLowerCase();
+  
+  filtInv = allInv.filter(inv => {
+    const ts = parseDt(inv.ActiveDate);
+    if(fTs !== null && (ts === null || ts < fTs)) return false;
+    if(tTs !== null && (ts === null || ts > tTs)) return false;
+    
+    // معالجة فلتر الحالة - دعم Refund
+    if(st) {
+      if(st === 'refund') {
+        // حالة Refund: تحقق من عمود Refund
+        if(!inv.Refund || inv.Refund === '') return false;
+      } else {
+        // الحالات الأخرى: تحقق من State
+        const invState = (inv.State || "").trim().toLowerCase();
+        if(invState !== st) return false;
+      }
+    }
+    
+    if(q) {
+      const s = [inv.VoucherNo, inv.GuestName, inv.Trip, inv.SalesName, inv.ContactNo, inv.Hotel].map(x=>x||'').join(' ').toLowerCase();
+      if(!s.includes(q)) return false;
+    }
     return true;
   });
-  pg=1;doSort();renderAll();
+  
+  pg = 1;
+  doSort();
+  renderAll();
 }
 function reset(){document.getElementById('fState').value='';['fFromTxt','fToTxt','fSearch'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});['fFromNat','fToNat'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});document.getElementById('errTo').textContent='';filtInv=[...allInv];doSort();renderAll();}
 
 function fmtDate(s){if(!s)return'';if(/^\d{1,2}\/[A-Za-z]{3}\/\d{4}$/.test(s))return s;try{const d=new Date(s);return`${String(d.getDate()).padStart(2,'0')}/${MN[d.getMonth()]}/${d.getFullYear()}`;}catch{return s;}}
 function fmtTime(t){if(!t)return'';const m=String(t).match(/(\d{1,2}):(\d{2})/);return m?`${m[1].padStart(2,'0')}:${m[2]}`:String(t).substring(0,5);}
 function fmtRest(inv){const r=parseFloat(inv.rest)||0;const c=inv.invoiceCurrency||'';if(r===0)return`<span class="rest-zero">✓</span>`;return`<span class="rest-pos">${r} ${c}</span>`;}
-function fmtSt(s){const v=(s||'').trim().toLowerCase();if(v==='confirmed')return'<span class="st-confirmed">✅ Confirmed</span>';if(v==='pending')return'<span class="st-pending">⏳ Pending</span>';if(v==='cancel')return'<span class="st-cancel">❌ Cancel</span>';if(v==='refund')return'<span class="st-refund">💰 Refund</span>';return s||'';}
-  function fmtPax(inv){return`A:${inv.adultCount||0} C:${inv.childCount||0} I:${inv.infantCount||0}`;}
+function fmtSt(inv){
+  // إذا كانت الفاتورة مستردة (يوجد قيمة في عمود Refund)
+  if(inv.Refund && inv.Refund !== '') {
+    return '<span class="st-refund">💰 Refund</span>';
+  }
+  
+  const v = (inv.State || '').trim().toLowerCase();
+  if(v === 'confirmed') return '<span class="st-confirmed">✅ Confirmed</span>';
+  if(v === 'pending') return '<span class="st-pending">⏳ Pending</span>';
+  if(v === 'cancel') return '<span class="st-cancel">❌ Cancel</span>';
+  return inv.State || '';
+}
+    function fmtPax(inv){return`A:${inv.adultCount||0} C:${inv.childCount||0} I:${inv.infantCount||0}`;}
 function buildTotals(data){
   const s = k => data.reduce((a,i) => a + (Number(i[k]) || 0), 0);
   const f = v => (v && v !== 0) ? v.toFixed(2).replace(/\.00$/, '') : '';
@@ -982,7 +1012,7 @@ function renderTable(){
       <td class="acts-cell">${inv.Notes || ''}</td>
       <td>${inv.Supplier || '—'}</td>
       <td>${inv.Customer || '—'}</td>
-      <td onclick="openStateModal('${inv.VoucherNo}')" style="cursor:pointer">${fmtSt(inv.State)}</td>
+      <td onclick="openStateModal('${inv.VoucherNo}')" style="cursor:pointer">${fmtSt(inv)}</td>
       <td>${inv['InvoiceCurrency '] || ''}</td>
       <td class="amt">${inv.Cost || ''}</td>
       <td class="amt">${inv['Discount '] || ''}</td>
