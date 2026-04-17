@@ -674,6 +674,7 @@ async function submitCollection() {
 
 // ─── تحميل الفاتورة ──────────────────────────────────────
 async function loadInvoice() {
+  console.time('loadInvoice');
   const params = new URLSearchParams(location.search);
   const voucherNo = params.get('voucherNo');
   openFrom = params.get('from') || 'today';
@@ -683,24 +684,19 @@ async function loadInvoice() {
   try {
     await loadSuppliersAndTrips();
 
-    // نجلب كل الفواتير مرة واحدة (تحتوي على الأصل والتحصيلات)
     const allData = await gas('getAllInvoices', { includeCollection: 'true' });
     const invoices = Array.isArray(allData) ? allData : [];
 
-    // الفاتورة الأصلية فقط (ليست تحصيل)
     const inv = invoices.find(i => i.voucherNo === voucherNo && i.receiptType !== 'Collection');
     if (!inv) throw new Error('الفاتورة غير موجودة: ' + voucherNo);
 
-    // نسخ أصلية قبل أي تعديل
     currentInvoice  = { ...inv };
     originalInvoice = { ...inv };
 
-    // ✅ إذا كان activeDate فارغاً، استخدم issueDate كتاريخ تنفيذ
     if (!currentInvoice.activeDate && currentInvoice.issueDate) {
       currentInvoice.activeDate = currentInvoice.issueDate;
     }
 
-    // ── حساب إجمالي المدفوعات (الأصل + التحصيلات) ──
     const totalPayments = await getTotalPaymentsForInvoice(voucherNo);
     if (totalPayments) {
       currentInvoice.paymentPrice = totalPayments.paymentPrice;
@@ -718,11 +714,11 @@ async function loadInvoice() {
     document.getElementById('userNameDisplay').textContent = currentUser?.name || 'User';
     document.getElementById('voucherDisplay').textContent  = voucherNo;
 
-    // ── تحديد قواعد التعديل حسب التاريخ ──
+    // ✅ التصحيح: استخدام toDateString() للمقارنة
     const issueDate = parseDate(currentInvoice.issueDate);
     const today     = new Date(); today.setHours(0,0,0,0);
-    const isIssueDateToday = issueDate && issueDate.getTime() === today.getTime();
-    const isPastDate = issueDate && issueDate < today;
+    const isIssueDateToday = issueDate && issueDate.toDateString() === today.toDateString();
+    const isPastDate = issueDate && issueDate < today && !isIssueDateToday;
 
     let warnHtml = '';
     let paymentsReadonly = false;
@@ -737,7 +733,6 @@ async function loadInvoice() {
 
     const paymentsAttr = paymentsReadonly ? 'readonly' : '';
 
-    // ── قوائم الرحلات والعملاء ──
     const currentCategory = getTripCategory(currentInvoice.trip);
     const customers = getCustomersByCategory(currentCategory);
     const suppliers = getSuppliersByCategory(currentCategory);
@@ -748,7 +743,6 @@ async function loadInvoice() {
     const supOpts = '<option value="">-- اختر --</option>' + suppliers.map(s => `<option value="${esc(s.customerName)}" ${s.customerName === currentInvoice.supplier ? 'selected' : ''}>${esc(s.customerName)}</option>`).join('');
     const custOpts = '<option value="">-- اختر --</option>' + customers.map(c => `<option value="${esc(c.customerName)}" ${c.customerName === currentInvoice.customer ? 'selected' : ''}>${esc(c.customerName)}</option>`).join('');
 
-    // ── بنود الرحلة ──
     const tripData = await gas('getTripData', { tripName: currentInvoice.trip, currency: currentInvoice.invoiceCurrency });
     let tRows = '';
     if (tripData?.items) {
@@ -765,10 +759,8 @@ async function loadInvoice() {
       }).join('');
     }
 
-    // ── زر التحصيل: مغلق إذا (لا يوجد متبقٍ) أو (تاريخ إصدار = اليوم) ──
     const disableCollectionBtn = (currentInvoice.rest <= 0.01) || isIssueDateToday;
 
-    // ── بناء الفورم ──
     const formHtml = `
       ${warnHtml}
       <div class="card">
@@ -882,11 +874,9 @@ async function loadInvoice() {
     document.getElementById('formContent').style.display  = 'block';
     document.getElementById('formContent').innerHTML = formHtml;
 
-    // ربط زر التحصيل
     document.getElementById('collectionBtn')?.addEventListener('click', openCollectionModal);
-
-    // حساب الإجماليات بعد بناء الفورم
     await updateTotals();
+    console.timeEnd('loadInvoice');
 
   } catch(err) {
     hidePDF();
