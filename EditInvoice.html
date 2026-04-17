@@ -342,43 +342,66 @@ async function getTotalPaymentsForInvoice(voucherNo) {
 
 // ─── تحديث الإجماليات في الفورم ──────────────────────────
 async function updateTotals() {
-  // استخدام القيم من currentInvoice (التي تحتوي على إجمالي التحصيلات)
+  // ✅ قراءة القيم من الحقول مباشرة (وليس من currentInvoice)
+  const cashUSD = parseFloat(document.getElementById('cashUSD')?.value) || 0;
+  const cashEUR = parseFloat(document.getElementById('cashEUR')?.value) || 0;
+  const cashGBP = parseFloat(document.getElementById('cashGBP')?.value) || 0;
+  const cashLE = parseFloat(document.getElementById('cashLE')?.value) || 0;
+  const visaUSD = parseFloat(document.getElementById('visaUSD')?.value) || 0;
+  const visaEUR = parseFloat(document.getElementById('visaEUR')?.value) || 0;
+  const visaGBP = parseFloat(document.getElementById('visaGBP')?.value) || 0;
+  const visaLE = parseFloat(document.getElementById('visaLE')?.value) || 0;
+  
+  // تحديث currentInvoice بالقيم الجديدة
+  currentInvoice.cashUSD = cashUSD;
+  currentInvoice.cashEUR = cashEUR;
+  currentInvoice.cashGBP = cashGBP;
+  currentInvoice.cashLE = cashLE;
+  currentInvoice.visaUSD = visaUSD;
+  currentInvoice.visaEUR = visaEUR;
+  currentInvoice.visaGBP = visaGBP;
+  currentInvoice.visaLE = visaLE;
+  
+  // حساب إجمالي المدفوعات
   const actualPrice = currentInvoice?.actualPrice || 0;
-  const discount = currentInvoice?.discount || 0;
-  const paid = currentInvoice?.paymentPrice || 0;
-  const rest = R2(actualPrice - discount - paid);
+  const discount = parseFloat(document.getElementById('discount')?.value) || currentInvoice?.discount || 0;
+  currentInvoice.discount = discount;
   
-  // تحديث حقول العملات المعروضة
-  const cashUSD = document.getElementById('cashUSD');
-  const cashEUR = document.getElementById('cashEUR');
-  const cashGBP = document.getElementById('cashGBP');
-  const cashLE = document.getElementById('cashLE');
-  const visaUSD = document.getElementById('visaUSD');
-  const visaEUR = document.getElementById('visaEUR');
-  const visaGBP = document.getElementById('visaGBP');
-  const visaLE = document.getElementById('visaLE');
+  // حساب المبلغ المدفوع بعملة الفاتورة
+  const activeDateInput = document.getElementById('activeDate')?.value;
+  const currency = document.getElementById('invoiceCurrency')?.value || currentInvoice?.invoiceCurrency || 'LE';
+  let paid = 0;
   
-  if (cashUSD) cashUSD.value = dV(currentInvoice?.cashUSD || 0);
-  if (cashEUR) cashEUR.value = dV(currentInvoice?.cashEUR || 0);
-  if (cashGBP) cashGBP.value = dV(currentInvoice?.cashGBP || 0);
-  if (cashLE) cashLE.value = dV(currentInvoice?.cashLE || 0);
-  if (visaUSD) visaUSD.value = dV(currentInvoice?.visaUSD || 0);
-  if (visaEUR) visaEUR.value = dV(currentInvoice?.visaEUR || 0);
-  if (visaGBP) visaGBP.value = dV(currentInvoice?.visaGBP || 0);
-  if (visaLE) visaLE.value = dV(currentInvoice?.visaLE || 0);
+  if (activeDateInput && (cashUSD + cashEUR + cashGBP + cashLE + visaUSD + visaEUR + visaGBP + visaLE) > 0) {
+    const raw = await getRate(activeDateInput);
+    const r = rateFields(raw);
+    if (r) {
+      const totalLE = cashUSD * r.cash.USD + cashEUR * r.cash.EUR + cashGBP * r.cash.GBP + cashLE +
+                      visaUSD * r.visa.USD + visaEUR * r.visa.EUR + visaGBP * r.visa.GBP + visaLE * (r.visa.LE || 0.975);
+      if (currency === '$') paid = totalLE / r.cash.USD;
+      else if (currency === '€') paid = totalLE / r.cash.EUR;
+      else if (currency === '£') paid = totalLE / r.cash.GBP;
+      else paid = totalLE;
+    } else {
+      paid = cashUSD + cashEUR + cashGBP + cashLE + visaUSD + visaEUR + visaGBP + visaLE;
+    }
+  } else {
+    paid = cashUSD + cashEUR + cashGBP + cashLE + visaUSD + visaEUR + visaGBP + visaLE;
+  }
   
-  // تحديث العناوين
-  const actualPriceEl = document.getElementById('displayActualPrice');
+  paid = Math.round(paid * 100) / 100;
+  const rest = Math.max(0, Math.round((actualPrice - discount - paid) * 100) / 100);
+  
+  // تحديث currentInvoice
+  currentInvoice.paymentPrice = paid;
+  currentInvoice.rest = rest;
+  
+  // تحديث العرض
   const paymentPriceEl = document.getElementById('displayPaymentPrice');
   const restEl = document.getElementById('displayRest');
-  const currencyEl = document.getElementById('actualPriceCurrency');
-  const restCurrencyEl = document.getElementById('restCurrency');
   
-  if (actualPriceEl) actualPriceEl.textContent = actualPrice.toFixed(2);
   if (paymentPriceEl) paymentPriceEl.textContent = paid.toFixed(2);
   if (restEl) restEl.textContent = rest.toFixed(2);
-  if (currencyEl) currencyEl.textContent = currentInvoice?.invoiceCurrency || '';
-  if (restCurrencyEl) restCurrencyEl.textContent = currentInvoice?.invoiceCurrency || '';
 }
 function updateItemTotal(idx, price) {
   const qty = parseFloat(document.getElementById(`qty_${idx}`)?.value) || 0;
