@@ -229,13 +229,28 @@ function calculateTotalFromItems() {
   return total;
 }
 function getCurrentDiscount() { return parseFloat(document.getElementById('discount')?.value) || 0; }
-
+// دالة لمسح الـ Cache (يمكن استدعاؤها بعد حفظ التعديلات)
+function clearInvoicesCache() {
+  cachedInvoicesData = null;
+  console.log('🗑️ تم مسح cache الفواتير');
+}
 // ─── جمع كل مدفوعات فاتورة (الأصل + التحصيلات) ────────────
 // يعتمد على getAllInvoices بدلاً من getInvoiceByVoucher لأن
 // response الأخيرة يستخدم أسماء الأعمدة الإنجليزية المحوّلة
+let cachedInvoicesData = null;
+
 async function getTotalPaymentsForInvoice(voucherNo) {
   try {
-    const allData = await gas('getAllInvoices', { includeCollection: 'true' });
+    // استخدام cache إذا كان موجوداً
+    if (!cachedInvoicesData) {
+      console.log('📦 جلب الفواتير من الخادم...');
+      cachedInvoicesData = await gas('getAllInvoices', { includeCollection: 'true' });
+      console.log('✅ تم تخزين الفواتير مؤقتاً');
+    } else {
+      console.log('📦 استخدام الفواتير المخزنة مؤقتاً');
+    }
+    
+    const allData = cachedInvoicesData;
     if (!Array.isArray(allData)) return null;
 
     const original = allData.find(r => r.voucherNo === voucherNo && r.receiptType !== 'Collection');
@@ -343,6 +358,7 @@ async function getTotalPaymentsForInvoice(voucherNo) {
 // ─── تحديث الإجماليات في الفورم ──────────────────────────
 async function updateTotals() {
   // ✅ قراءة القيم من الحقول مباشرة (وليس من currentInvoice)
+  console.log('📌 NationArrange الحالي:', currentInvoice?.nationArrange);
   const cashUSD = parseFloat(document.getElementById('cashUSD')?.value) || 0;
   const cashEUR = parseFloat(document.getElementById('cashEUR')?.value) || 0;
   const cashGBP = parseFloat(document.getElementById('cashGBP')?.value) || 0;
@@ -714,7 +730,11 @@ async function loadInvoice() {
     if (!inv) throw new Error('الفاتورة غير موجودة: ' + voucherNo);
 
     currentInvoice  = { ...inv };
-    originalInvoice = { ...inv };
+originalInvoice = { ...inv };
+
+// ✅ إضافة NationArrange إلى currentInvoice
+currentInvoice.nationArrange = inv.NationArrange || inv.nationArrange || '';
+originalInvoice.nationArrange = inv.NationArrange || inv.nationArrange || '';
 
     if (!currentInvoice.activeDate && currentInvoice.issueDate) {
       currentInvoice.activeDate = currentInvoice.issueDate;
@@ -984,7 +1004,8 @@ async function collectEditedData() {
     centerName:   currentInvoice.centerName,
     branchName:   currentInvoice.branchName,
     salesName:    currentInvoice.salesName,
-    cost:         currentInvoice.cost || ''
+    cost:         currentInvoice.cost || '',
+     nationArrange: currentInvoice.nationArrange || '' 
   };
 }
 
