@@ -156,9 +156,18 @@ function closeAlert() { document.getElementById('alertModal').classList.remove('
 function showPDF(m) { document.getElementById('pdfMsg').textContent = m; document.getElementById('pdfOverlay').classList.add('show'); }
 function hidePDF() { document.getElementById('pdfOverlay').classList.remove('show'); }
 function goBack() {
-  const returnUrl = sessionStorage.getItem('returnUrl');
-  if (returnUrl) location.href = returnUrl;
-  else location.href = DASH[currentUser?.type] || 'Dashboard.html';
+  // محاولة الرجوع للصفحة السابقة في التاريخ
+  if (document.referrer && document.referrer !== window.location.href) {
+    window.history.back();
+  } else {
+    const returnUrl = sessionStorage.getItem('returnUrl');
+    if (returnUrl && returnUrl !== window.location.href) {
+      location.href = returnUrl;
+    } else {
+      // الرجوع الافتراضي حسب نوع المستخدم
+      location.href = DASH[currentUser?.type] || 'Dashboard.html';
+    }
+  }
 }
 
 async function gas(action, params = {}) {
@@ -711,23 +720,25 @@ async function loadInvoice() {
     document.getElementById('voucherDisplay').textContent  = voucherNo;
 
     // ── تحديد قواعد التعديل حسب التاريخ ──
-    const issueDate = parseDate(currentInvoice.issueDate);
-    const today     = new Date(); today.setHours(0,0,0,0);
-    // هل تاريخ إصدار الفاتورة = اليوم؟ → نسمح بتعديل المدفوعات، لكن نُغلق زر التحصيل
-    const isIssueDateToday = issueDate && issueDate.getTime() === today.getTime();
-    // هل تاريخ الفاتورة ماضٍ (قبل اليوم)؟ → نمنع تعديل المدفوعات
-    const isPastDate = issueDate && issueDate < today;
+    // ── تحديد قواعد التعديل حسب التاريخ ──
+const issueDate = parseDate(currentInvoice.issueDate);
+const today     = new Date(); today.setHours(0,0,0,0);
+const isIssueDateToday = issueDate && issueDate.getTime() === today.getTime();
+const isPastDate = issueDate && issueDate < today;
 
-    let warnHtml = '';
-    if (isPastDate) {
-      warnHtml = `<div class="warning-bar">⚠️ تاريخ الفاتورة (${currentInvoice.issueDate}) قد مضى — التعديل على المدفوعات غير مسموح لحماية بيانات الخزينة.</div>`;
-    } else if (isIssueDateToday) {
-      warnHtml = `<div class="warning-bar info">ℹ️ فاتورة اليوم — يمكن تعديل المدفوعات مباشرة. زر التحصيل معطّل لفواتير نفس اليوم.</div>`;
-    }
+let warnHtml = '';
+let paymentsReadonly = false;
 
-    // حقول المدفوعات: مقيّدة فقط لفواتير الماضي
-    const disPayments = isPastDate ? 'disabled' : '';
+if (isPastDate) {
+  warnHtml = `<div class="warning-bar">⚠️ تاريخ الفاتورة (${currentInvoice.issueDate}) قد مضى — التعديل على المدفوعات غير مسموح لحماية بيانات الخزينة.</div>`;
+  paymentsReadonly = true;  // منع التعديل
+} else if (isIssueDateToday) {
+  warnHtml = `<div class="warning-bar info">ℹ️ فاتورة اليوم — يمكن تعديل المدفوعات مباشرة. زر التحصيل معطّل لفواتير نفس اليوم.</div>`;
+  paymentsReadonly = false; // السماح بالتعديل
+}
 
+// استخدام readonly بدلاً من disabled
+const paymentsAttr = paymentsReadonly ? 'readonly' : '';
     // ── قوائم الرحلات والعملاء ──
     const currentCategory = getTripCategory(currentInvoice.trip);
     const customers = getCustomersByCategory(currentCategory);
@@ -825,25 +836,25 @@ async function loadInvoice() {
           </div>
         </div>
 
-        <div class="payment-section">
-          <div class="payment-label">💵 كاش (إجمالي كل التحصيلات)</div>
-          <div class="payment-grid">
-            <div class="payment-card"><label>USD $</label><input type="number" id="cashUSD" step="0.01" value="${dV(currentInvoice.cashUSD)}" oninput="updateTotals()" ${disPayments}></div>
-            <div class="payment-card"><label>EUR €</label><input type="number" id="cashEUR" step="0.01" value="${dV(currentInvoice.cashEUR)}" oninput="updateTotals()" ${disPayments}></div>
-            <div class="payment-card"><label>GBP £</label><input type="number" id="cashGBP" step="0.01" value="${dV(currentInvoice.cashGBP)}" oninput="updateTotals()" ${disPayments}></div>
-            <div class="payment-card"><label>EGP LE</label><input type="number" id="cashLE"  step="0.01" value="${dV(currentInvoice.cashLE)}"  oninput="updateTotals()" ${disPayments}></div>
-          </div>
-        </div>
-        <div class="payment-section">
-          <div class="payment-label">💳 فيزا / بطاقة (إجمالي كل التحصيلات)</div>
-          <div class="payment-grid">
-            <div class="payment-card"><label>Visa $</label><input type="number" id="visaUSD" step="0.01" value="${dV(currentInvoice.visaUSD)}" oninput="updateTotals()" ${disPayments}></div>
-            <div class="payment-card"><label>Visa €</label><input type="number" id="visaEUR" step="0.01" value="${dV(currentInvoice.visaEUR)}" oninput="updateTotals()" ${disPayments}></div>
-            <div class="payment-card"><label>Visa £</label><input type="number" id="visaGBP" step="0.01" value="${dV(currentInvoice.visaGBP)}" oninput="updateTotals()" ${disPayments}></div>
-            <div class="payment-card"><label>Visa LE</label><input type="number" id="visaLE"  step="0.01" value="${dV(currentInvoice.visaLE)}"  oninput="updateTotals()" ${disPayments}></div>
-          </div>
-        </div>
-
+      // داخل formHtml، نفس القسم ولكن مع تغيير ${disPayments} إلى ${paymentsAttr}
+<div class="payment-section">
+  <div class="payment-label">💵 كاش (إجمالي كل التحصيلات)</div>
+  <div class="payment-grid">
+    <div class="payment-card"><label>USD $</label><input type="number" id="cashUSD" step="0.01" value="${dV(currentInvoice.cashUSD)}" oninput="updateTotals()" ${paymentsAttr}></div>
+    <div class="payment-card"><label>EUR €</label><input type="number" id="cashEUR" step="0.01" value="${dV(currentInvoice.cashEUR)}" oninput="updateTotals()" ${paymentsAttr}></div>
+    <div class="payment-card"><label>GBP £</label><input type="number" id="cashGBP" step="0.01" value="${dV(currentInvoice.cashGBP)}" oninput="updateTotals()" ${paymentsAttr}></div>
+    <div class="payment-card"><label>EGP LE</label><input type="number" id="cashLE"  step="0.01" value="${dV(currentInvoice.cashLE)}"  oninput="updateTotals()" ${paymentsAttr}></div>
+  </div>
+</div>
+<div class="payment-section">
+  <div class="payment-label">💳 فيزا / بطاقة (إجمالي كل التحصيلات)</div>
+  <div class="payment-grid">
+    <div class="payment-card"><label>Visa $</label><input type="number" id="visaUSD" step="0.01" value="${dV(currentInvoice.visaUSD)}" oninput="updateTotals()" ${paymentsAttr}></div>
+    <div class="payment-card"><label>Visa €</label><input type="number" id="visaEUR" step="0.01" value="${dV(currentInvoice.visaEUR)}" oninput="updateTotals()" ${paymentsAttr}></div>
+    <div class="payment-card"><label>Visa £</label><input type="number" id="visaGBP" step="0.01" value="${dV(currentInvoice.visaGBP)}" oninput="updateTotals()" ${paymentsAttr}></div>
+    <div class="payment-card"><label>Visa LE</label><input type="number" id="visaLE"  step="0.01" value="${dV(currentInvoice.visaLE)}"  oninput="updateTotals()" ${paymentsAttr}></div>
+  </div>
+</div>
         <div class="card-body" style="padding-top:0">
           <div class="form-group"><label>ملاحظات</label><textarea id="notes" rows="2">${esc(currentInvoice.notes)}</textarea></div>
         </div>
@@ -1056,7 +1067,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   if (!ud) { location.href = 'index.html'; return; }
   try { currentUser = JSON.parse(ud); } catch { location.href = 'index.html'; return; }
-  if (!sessionStorage.getItem('returnUrl') && document.referrer) sessionStorage.setItem('returnUrl', document.referrer);
+  // ✅ تخزين الصفحة السابقة للرجوع إليها
+  if (!sessionStorage.getItem('returnUrl') && document.referrer) {
+    sessionStorage.setItem('returnUrl', document.referrer);
+  }
   loadInvoice();
 });
 
