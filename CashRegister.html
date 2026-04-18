@@ -32,7 +32,7 @@
     .back-btn:hover{border-color:var(--gold);color:var(--gold);}
 
     .page{max-width:1200px;margin:0 auto;padding:20px 16px 60px;}
-     .toast.warning{background:linear-gradient(135deg,#ea580c,#c2410c);}
+    .toast.warning{background:linear-gradient(135deg,#ea580c,#c2410c);}
     .date-bar{background:var(--card);border-radius:var(--radius);border:1px solid var(--border);box-shadow:var(--shadow);padding:14px 18px;margin-bottom:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
     .date-bar label{font-size:13px;font-weight:700;color:var(--text-lt);white-space:nowrap;}
     .date-input-wrap{display:flex;align-items:center;gap:5px;}
@@ -199,7 +199,6 @@ const CASH_CURS=[
 
 let currentUser=null;
 let currentDateISO='';
-let allInvoices=[],allRevenues=[],allExpenses=[];
 let systemTotals={invoices:{},revenues:{},income:{},expenses:{},balance:{}};
 let savedCountData=null;
 let hasChanges=false;
@@ -315,8 +314,7 @@ document.addEventListener('DOMContentLoaded',async()=>{
     bc.textContent='📍 '+(currentUser.branchName||'');bc.style.display='';
   }
   initCurrentDate();
-  await prefetchAll();
-  loadData();
+  loadData(); // مباشرة بدون prefetchAll
 });
 
 async function loadBranchList(){
@@ -328,79 +326,65 @@ async function loadBranchList(){
   }catch(e){console.warn('branches:',e);}
 }
 
-async function prefetchAll(){
-  try{
-    const [inv,rev,exp]=await Promise.all([
-      callGAS('getAllInvoices'),
-      callGAS('getAllRevenues'),
-      callGAS('getAllExpenses'),
-    ]);
-    allInvoices=Array.isArray(inv)?inv:[];
-    allRevenues=Array.isArray(rev)?rev:[];
-    allExpenses=Array.isArray(exp)?exp:[];
-  }catch(e){
-    document.getElementById('mainContent').innerHTML=`<div class="load-state">⚠️ Failed to load data: ${e.message}</div>`;
+async function loadData() {
+  if (!currentDateISO) {
+    document.getElementById('mainContent').innerHTML = '<div class="load-state">Please select a date</div>';
+    return;
+  }
+  
+  document.getElementById('mainContent').innerHTML = '<div class="load-state"><div class="spinner"></div><br>جاري تحميل البيانات...</div>';
+  
+  const selBranch = document.getElementById('branchSel')?.value || '';
+  const branchToUse = (currentUser?.type === 'Owner' || currentUser?.type === 'Admin') ? selBranch : (currentUser?.branchName || '');
+  
+  try {
+    // استدعاء الدالة الرئيسية للحصول على كل البيانات المحسوبة
+    const data = await callGAS('getDailyCashData', {
+      dateISO: currentDateISO,
+      branchName: branchToUse
+    });
+    
+    if (data && data.success) {
+      systemTotals = {
+        invoices: data.invoices,
+        revenues: data.revenues,
+        income: data.income,
+        expenses: data.expenses,
+        balance: data.balance
+      };
+      
+      // جلب الرصيد التراكمي من شيت Cash_Sum
+      const cumulativeRes = await callGAS('getCumulativeBalanceForDate', {
+        dateISO: currentDateISO,
+        branchName: branchToUse
+      });
+      
+      if (cumulativeRes && cumulativeRes.success && cumulativeRes.balance) {
+        systemTotals.balance = cumulativeRes.balance;
+      }
+      
+      renderPage();
+      await loadSavedCount();
+    } else {
+      throw new Error(data?.message || 'فشل تحميل البيانات');
+    }
+    
+  } catch(e) {
+    console.error('loadData error:', e);
+    document.getElementById('mainContent').innerHTML = `<div class="load-state">⚠️ خطأ: ${e.message}</div>`;
   }
 }
 
-function sumCur(rows,type){
-  const r={USD:0,EUR:0,GBP:0,LE:0,VUSD:0,VEUR:0,VGBP:0,VLE:0};
-  rows.forEach(row=>{
-    if(type==='invoice'){
-      r.USD += parseFloat(row.cashUSD)||0; r.EUR += parseFloat(row.cashEUR)||0;
-      r.GBP += parseFloat(row.cashGBP)||0; r.LE  += parseFloat(row.cashLE)||0;
-      r.VUSD+= parseFloat(row.visaUSD)||0; r.VEUR+= parseFloat(row.visaEUR)||0;
-      r.VGBP+= parseFloat(row.visaGBP)||0; r.VLE += parseFloat(row.visaLE)||0;
-    }else{
-      r.USD += parseFloat(row.USD||row['$']||row.cashUSD)||0;
-      r.EUR += parseFloat(row.EUR||row['€']||row.cashEUR)||0;
-      r.GBP += parseFloat(row.GBP||row['£']||row.cashGBP)||0;
-      r.LE  += parseFloat(row.LE||row.cashLE)||0;
-      r.VUSD+= parseFloat(row.VisaUSD||row.visaUSD||row['Visa$'])||0;
-      r.VEUR+= parseFloat(row.VisaEUR||row.visaEUR||row['Visa€'])||0;
-      r.VGBP+= parseFloat(row.VisaGBP||row.visaGBP||row['Visa£'])||0;
-      r.VLE += parseFloat(row.VisaLE||row.visaLE||row['VisaLE'])||0;
-    }
-  });
-  Object.keys(r).forEach(k=>r[k]=roundTwo(r[k]));return r;
-}
-
-function loadData(){
-  if(!currentDateISO){document.getElementById('mainContent').innerHTML='<div class="load-state">Please select a date</div>';return;}
-  const selBranch=document.getElementById('branchSel')?.value||'';
-  const userBranch=currentUser?.branchName||'';
-  const isOwner=currentUser?.type==='Owner'||currentUser?.type==='Admin';
-  const branchOK=(inv)=>{if(isOwner){if(!selBranch)return true;return inv.branchName===selBranch;}return inv.branchName===userBranch;};
-
-  const dayInv=allInvoices.filter(inv=>toDDMMMYYYY(inv.issueDate) === currentDateISO && branchOK(inv));
-  const dayRev=allRevenues.filter(r=>toDDMMMYYYY(r.date) === currentDateISO && branchOK(r));
-  const dayExp=allExpenses.filter(e=>toDDMMMYYYY(e.date) === currentDateISO && branchOK(e));
-
-  const invT=sumCur(dayInv,'invoice');
-  const revT=sumCur(dayRev,'revenue');
-  const expT=sumCur(dayExp,'expense');
-  const incT={};CURRENCIES.forEach(c=>{incT[c.key]=roundTwo((invT[c.key]||0)+(revT[c.key]||0));});
-  const balT={};CURRENCIES.forEach(c=>{balT[c.key]=roundTwo((incT[c.key]||0)-(expT[c.key]||0));});
-
-  systemTotals={invoices:invT,revenues:revT,income:incT,expenses:expT,balance:balT};
-  renderPage(dayInv.length,dayRev.length,dayExp.length);
-  
-  // ✅ جلب الرصيد التراكمي من شيت Cash_Sum
-  updateCashSumSheet();
-  
-  loadSavedCount();
-}
-
-function renderPage(invCnt,revCnt,expCnt){
+function renderPage(){
   const dt=currentDateISO;
   const ch=()=>CURRENCIES.map(c=>`<div class="cur-header-cell"><span class="flag">${c.flag}</span><span class="code">${c.label}</span></div>`).join('');
   document.getElementById('mainContent').innerHTML=`
   <div class="cur-headers">${ch()}</div>
-  <div class="section-card"><div class="section-head sh-inv"><h3>🧾 Invoices <small style="font-size:11px;opacity:.7">(${dt})</small></h3><span class="sh-badge">${invCnt} invoices</span></div><div class="section-body"><div class="cur-grid">${curRow('invoices')}</div></div></div>
-  <div class="section-card"><div class="section-head sh-rev"><h3>💵 Other Revenues</h3><span class="sh-badge">${revCnt} entries</span></div><div class="section-body"><div class="cur-grid">${curRow('revenues')}</div></div></div>
-  <div class="section-card"><div class="section-head sh-tin"><h3>📈 Total Income</h3><span class="sh-badge">Invoices + Revenue</span></div><div class="section-body"><div class="cur-grid">${curRow('income')}</div></div></div>
-  <div class="section-card"><div class="section-head sh-exp"><h3>📉 Expenses</h3><span class="sh-badge">${expCnt} entries</span></div><div class="section-body"><div class="cur-grid">${curRow('expenses')}</div></div></div>
-  <div class="section-card"><div class="section-head sh-bal"><h3>💰 Daily Cash Balance</h3><span class="sh-badge">Income − Expenses</span></div><div class="section-body"><div class="cur-grid">${curRow('balance')}</div><div class="balance-note">※ Net daily movement</div></div></div>
+  <div class="section-card"><div class="section-head sh-inv"><h3>🧾 Invoices <small style="font-size:11px;opacity:.7">(${dt})</small></h3></div><div class="section-body"><div class="cur-grid">${curRow('invoices')}</div></div></div>
+  <div class="section-card"><div class="section-head sh-rev"><h3>💵 Other Revenues</h3></div><div class="section-body"><div class="cur-grid">${curRow('revenues')}</div></div></div>
+  <div class="section-card"><div class="section-head sh-tin"><h3>📈 Total Income</h3></div><div class="section-body"><div class="cur-grid">${curRow('income')}</div></div></div>
+  <div class="section-card"><div class="section-head sh-exp"><h3>📉 Expenses</h3></div><div class="section-body"><div class="cur-grid">${curRow('expenses')}</div></div></div>
+  <div class="section-card"><div class="section-head sh-bal"><h3>💰 Daily Cash Balance</h3></div><div class="section-body"><div class="cur-grid">${curRow('balance')}</div><div class="balance-note">※ Net daily movement</div></div></div>
   <div class="section-card"><div class="section-head sh-cnt"><h3>🏧 Physical Cash Count & Verification</h3><span class="sh-badge" id="lastSaveLabel">Not saved yet</span></div><div class="section-body"><div class="counter-grid" id="counterGrid"></div><div class="counter-footer"><textarea class="counter-notes" id="countNotes" rows="2" placeholder="Notes about cash count..."></textarea><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><button class="save-count-btn" id="saveCountBtn" onclick="saveCashCount()">💾 Save Count to Sheet</button><div class="save-info" id="saveInfo"></div></div></div></div></div>`;
   buildCounters();
   resetCounters();
@@ -438,7 +422,6 @@ function calcCur(curKey){
   const actEl=document.getElementById(`${curKey}_act`);
   if(actEl)actEl.textContent=total>0?fmtN(total):'—';
   
-  // ✅ استخدام systemTotals.balance (الرصيد التراكمي)
   const sysVal=systemTotals.balance?.[curKey]||0;
   const diff=roundTwo(total-sysVal);
   const dEl=document.getElementById(`${curKey}_dif`);
@@ -461,6 +444,7 @@ function calcCur(curKey){
     if(dBox)dBox.className='sum-box dif defi';
   }
 }
+
 function resetCounters(){
   CASH_CURS.forEach(cur=>{
     cur.denoms.forEach(d=>{
@@ -625,34 +609,28 @@ async function saveCashCount(){
 }
   
 async function updateCashSumSheet() {
-  // ✅ استخدام الرصيد التراكمي بدلاً من الرصيد اليومي
   try {
     const branchToUse = currentUser?.branchName || document.getElementById('branchSel')?.value || '';
     
-    // جلب الرصيد التراكمي من شيت Cash_Sum
     const cumulativeRes = await callGAS('getCumulativeBalanceForDate', {
       dateISO: currentDateISO,
       branchName: branchToUse
     });
     
     if (cumulativeRes && cumulativeRes.success && cumulativeRes.balance) {
-      // تحديث systemTotals.balance بالرصيد التراكمي
       systemTotals.balance = cumulativeRes.balance;
       
-      // إعادة حساب الفروقات في العداد
       CASH_CURS.forEach(cur => {
         calcCur(cur.key);
       });
       
       console.log('✅ تم تحديث الرصيد التراكمي:', cumulativeRes.balance);
       
-      // تحديث واجهة العداد لعرض الرصيد التراكمي
       CASH_CURS.forEach(cur => {
         const sysEl = document.getElementById(`${cur.key}_sys`);
         const cumulativeValue = cumulativeRes.balance[cur.key] || 0;
         if (sysEl) {
           sysEl.textContent = cumulativeValue !== 0 ? fmtN(cumulativeValue) : '—';
-          // تغيير النص ليظهر أنه رصيد تراكمي
           const sysBox = sysEl.closest('.sum-box');
           if (sysBox) {
             const labelEl = sysBox.querySelector('label');
@@ -662,51 +640,7 @@ async function updateCashSumSheet() {
       });
     } else {
       console.warn('⚠️ لم يتم العثور على رصيد تراكمي لهذا التاريخ');
-      // إظهار رسالة للمستخدم
-      const toastMsg = `⚠️ لا يوجد رصيد تراكمي مسجل لتاريخ ${currentDateISO} في شيت Cash_Sum`;
-      showToast(toastMsg, 'warning', 4000);
-    }
-    
-    // تحديث شيت Cash_Sum بالبيانات الحالية (اختياري - يتم تلقائياً عند فتح الملف)
-    try {
-      await callGAS('updateCashSum', {
-        dateISO: currentDateISO,
-        branchName: branchToUse,
-        invUSD: systemTotals.invoices.USD || 0,
-        invEUR: systemTotals.invoices.EUR || 0,
-        invGBP: systemTotals.invoices.GBP || 0,
-        invLE: systemTotals.invoices.LE || 0,
-        invVUSD: systemTotals.invoices.VUSD || 0,
-        invVEUR: systemTotals.invoices.VEUR || 0,
-        invVGBP: systemTotals.invoices.VGBP || 0,
-        invVLE: systemTotals.invoices.VLE || 0,
-        revUSD: systemTotals.revenues.USD || 0,
-        revEUR: systemTotals.revenues.EUR || 0,
-        revGBP: systemTotals.revenues.GBP || 0,
-        revLE: systemTotals.revenues.LE || 0,
-        revVUSD: systemTotals.revenues.VUSD || 0,
-        revVEUR: systemTotals.revenues.VEUR || 0,
-        revVGBP: systemTotals.revenues.VGBP || 0,
-        revVLE: systemTotals.revenues.VLE || 0,
-        expUSD: systemTotals.expenses.USD || 0,
-        expEUR: systemTotals.expenses.EUR || 0,
-        expGBP: systemTotals.expenses.GBP || 0,
-        expLE: systemTotals.expenses.LE || 0,
-        expVUSD: systemTotals.expenses.VUSD || 0,
-        expVEUR: systemTotals.expenses.VEUR || 0,
-        expVGBP: systemTotals.expenses.VGBP || 0,
-        expVLE: systemTotals.expenses.VLE || 0,
-        balUSD: systemTotals.balance.USD || 0,
-        balEUR: systemTotals.balance.EUR || 0,
-        balGBP: systemTotals.balance.GBP || 0,
-        balLE: systemTotals.balance.LE || 0,
-        balVUSD: systemTotals.balance.VUSD || 0,
-        balVEUR: systemTotals.balance.VEUR || 0,
-        balVGBP: systemTotals.balance.VGBP || 0,
-        balVLE: systemTotals.balance.VLE || 0,
-      });
-    } catch(e) {
-      console.warn('updateCashSum call failed:', e);
+      showToast(`⚠️ لا يوجد رصيد تراكمي مسجل لتاريخ ${currentDateISO} في شيت Cash_Sum`, 'warning', 4000);
     }
     
   } catch(e) {
@@ -714,6 +648,7 @@ async function updateCashSumSheet() {
     showToast('❌ فشل تحديث الرصيد التراكمي: ' + e.message, 'error');
   }
 }
+
 async function loadSavedCount(){
   try{
     const branchToUse = currentUser?.branchName || document.getElementById('branchSel')?.value || '';
