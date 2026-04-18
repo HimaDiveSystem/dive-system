@@ -32,7 +32,7 @@
     .back-btn:hover{border-color:var(--gold);color:var(--gold);}
 
     .page{max-width:1200px;margin:0 auto;padding:20px 16px 60px;}
-
+     .toast.warning{background:linear-gradient(135deg,#ea580c,#c2410c);}
     .date-bar{background:var(--card);border-radius:var(--radius);border:1px solid var(--border);box-shadow:var(--shadow);padding:14px 18px;margin-bottom:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
     .date-bar label{font-size:13px;font-weight:700;color:var(--text-lt);white-space:nowrap;}
     .date-input-wrap{display:flex;align-items:center;gap:5px;}
@@ -175,7 +175,7 @@
 </div>
 
 <script>
-const GAS_URL='https://script.google.com/macros/s/AKfycbwe1Q9pjAJRk9CfWsK5YGjD5uVAbJkMhAVgw6akKkFIR9sz15V78C88Vs5dumKE-SwF/exec';
+const GAS_URL='https://script.google.com/macros/s/AKfycbwXjfHfc5rpqUyh7jXI1VjIxuaziEU5q-rCff9Z0p0KMUnP5GcOq3nWQ0VFVw2KNFgz/exec';
 const MN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const DASH={Admin:'Dashboard.html',Owner:'OwnerDashboard.html',Sales:'SalesDashboard.html',Accountant:'AccountantDashboard.html'};
 
@@ -385,6 +385,9 @@ function loadData(){
   systemTotals={invoices:invT,revenues:revT,income:incT,expenses:expT,balance:balT};
   renderPage(dayInv.length,dayRev.length,dayExp.length);
   
+  // ✅ جلب الرصيد التراكمي من شيت Cash_Sum
+  updateCashSumSheet();
+  
   loadSavedCount();
 }
 
@@ -415,7 +418,7 @@ function buildCounters(){
   grid.innerHTML=CASH_CURS.map(cur=>{
     const sysVal=systemTotals.balance[cur.key]||0;
     const denomHtml=cur.denoms.map(d=>d?`<div class="denom-cell"><div class="d-label">${d}</div><input type="number" class="d-input" id="${cur.key}_d${d}" min="0" placeholder="0" oninput="calcCur('${cur.key}');markUnsaved()" onfocus="this.select()"><div class="d-sub" id="${cur.key}_s${d}"></div></div>`:'<div class="denom-cell"></div>').join('');
-    return`<div class="counter-row" style="border-left-color:${cur.color}"><div class="crh"><span class="cur-flag-big">${cur.flag}</span><span class="cur-name" style="color:${cur.color}">${cur.name}</span><div class="cr-summary"><div class="sum-box sys"><label>System Balance</label><div class="sv" id="${cur.key}_sys">${sysVal?fmtN(sysVal):'—'}</div></div><div class="sum-box act"><label>Actual Count</label><div class="sv" id="${cur.key}_act">—</div></div><div class="sum-box dif zero" id="${cur.key}_difBox"><label>Difference</label><div class="sv" id="${cur.key}_dif">—</div></div></div></div><div class="denom-grid">${denomHtml}</div></div>`;
+    return`<div class="counter-row" style="border-left-color:${cur.color}"><div class="crh"><span class="cur-flag-big">${cur.flag}</span><span class="cur-name" style="color:${cur.color}">${cur.name}</span><div class="cr-summary"><div class="sum-box sys"><label>Cumulative Balance</label><div class="sv" id="${cur.key}_sys">${sysVal?fmtN(sysVal):'—'}</div></div><div class="sum-box act"><label>Actual Count</label><div class="sv" id="${cur.key}_act">—</div></div><div class="sum-box dif zero" id="${cur.key}_difBox"><label>Difference</label><div class="sv" id="${cur.key}_dif">—</div></div></div></div><div class="denom-grid">${denomHtml}</div></div>`;
   }).join('');
 }
 
@@ -434,16 +437,30 @@ function calcCur(curKey){
   total=roundTwo(total);
   const actEl=document.getElementById(`${curKey}_act`);
   if(actEl)actEl.textContent=total>0?fmtN(total):'—';
+  
+  // ✅ استخدام systemTotals.balance (الرصيد التراكمي)
   const sysVal=systemTotals.balance?.[curKey]||0;
   const diff=roundTwo(total-sysVal);
   const dEl=document.getElementById(`${curKey}_dif`);
   const dBox=document.getElementById(`${curKey}_difBox`);
-  if(!total){if(dEl)dEl.textContent='—';if(dBox)dBox.className='sum-box dif zero';return;}
-  if(diff===0){if(dEl)dEl.textContent='✓ Balanced';if(dBox)dBox.className='sum-box dif zero';}
-  else if(diff>0){if(dEl)dEl.textContent=`+${fmtN(diff)} Surplus`;if(dBox)dBox.className='sum-box dif surp';}
-  else{if(dEl)dEl.textContent=`−${fmtN(Math.abs(diff))} Deficit`;if(dBox)dBox.className='sum-box dif defi';}
+  if(!total && sysVal===0){
+    if(dEl)dEl.textContent='—';
+    if(dBox)dBox.className='sum-box dif zero';
+    return;
+  }
+  if(diff===0){
+    if(dEl)dEl.textContent='✓ Balanced';
+    if(dBox)dBox.className='sum-box dif zero';
+  }
+  else if(diff>0){
+    if(dEl)dEl.textContent=`+${fmtN(diff)} Surplus`;
+    if(dBox)dBox.className='sum-box dif surp';
+  }
+  else{
+    if(dEl)dEl.textContent=`−${fmtN(Math.abs(diff))} Deficit`;
+    if(dBox)dBox.className='sum-box dif defi';
+  }
 }
-
 function resetCounters(){
   CASH_CURS.forEach(cur=>{
     cur.denoms.forEach(d=>{
@@ -607,27 +624,96 @@ async function saveCashCount(){
   }
 }
   
-async function updateCashSumSheet(){
-  const inv=systemTotals.invoices;
-  const rev=systemTotals.revenues;
-  const exp=systemTotals.expenses;
-  const bal=systemTotals.balance;
-  try{
-    await callGAS('updateCashSum',{
-      dateISO:currentDateISO,
-      branchName:currentUser?.branchName||document.getElementById('branchSel')?.value||'',
-      invUSD:inv.USD||0, invEUR:inv.EUR||0, invGBP:inv.GBP||0, invLE:inv.LE||0,
-      invVUSD:inv.VUSD||0, invVEUR:inv.VEUR||0, invVGBP:inv.VGBP||0, invVLE:inv.VLE||0,
-      revUSD:rev.USD||0, revEUR:rev.EUR||0, revGBP:rev.GBP||0, revLE:rev.LE||0,
-      revVUSD:rev.VUSD||0, revVEUR:rev.VEUR||0, revVGBP:rev.VGBP||0, revVLE:rev.VLE||0,
-      expUSD:exp.USD||0, expEUR:exp.EUR||0, expGBP:exp.GBP||0, expLE:exp.LE||0,
-      expVUSD:exp.VUSD||0, expVEUR:exp.VEUR||0, expVGBP:exp.VGBP||0, expVLE:exp.VLE||0,
-      balUSD:bal.USD||0, balEUR:bal.EUR||0, balGBP:bal.GBP||0, balLE:bal.LE||0,
-      balVUSD:bal.VUSD||0, balVEUR:bal.VEUR||0, balVGBP:bal.VGBP||0, balVLE:bal.VLE||0,
+async function updateCashSumSheet() {
+  // ✅ استخدام الرصيد التراكمي بدلاً من الرصيد اليومي
+  try {
+    const branchToUse = currentUser?.branchName || document.getElementById('branchSel')?.value || '';
+    
+    // جلب الرصيد التراكمي من شيت Cash_Sum
+    const cumulativeRes = await callGAS('getCumulativeBalanceForDate', {
+      dateISO: currentDateISO,
+      branchName: branchToUse
     });
-  }catch(e){console.warn('updateCashSum:',e);}
+    
+    if (cumulativeRes && cumulativeRes.success && cumulativeRes.balance) {
+      // تحديث systemTotals.balance بالرصيد التراكمي
+      systemTotals.balance = cumulativeRes.balance;
+      
+      // إعادة حساب الفروقات في العداد
+      CASH_CURS.forEach(cur => {
+        calcCur(cur.key);
+      });
+      
+      console.log('✅ تم تحديث الرصيد التراكمي:', cumulativeRes.balance);
+      
+      // تحديث واجهة العداد لعرض الرصيد التراكمي
+      CASH_CURS.forEach(cur => {
+        const sysEl = document.getElementById(`${cur.key}_sys`);
+        const cumulativeValue = cumulativeRes.balance[cur.key] || 0;
+        if (sysEl) {
+          sysEl.textContent = cumulativeValue !== 0 ? fmtN(cumulativeValue) : '—';
+          // تغيير النص ليظهر أنه رصيد تراكمي
+          const sysBox = sysEl.closest('.sum-box');
+          if (sysBox) {
+            const labelEl = sysBox.querySelector('label');
+            if (labelEl) labelEl.textContent = 'Cumulative Balance';
+          }
+        }
+      });
+    } else {
+      console.warn('⚠️ لم يتم العثور على رصيد تراكمي لهذا التاريخ');
+      // إظهار رسالة للمستخدم
+      const toastMsg = `⚠️ لا يوجد رصيد تراكمي مسجل لتاريخ ${currentDateISO} في شيت Cash_Sum`;
+      showToast(toastMsg, 'warning', 4000);
+    }
+    
+    // تحديث شيت Cash_Sum بالبيانات الحالية (اختياري - يتم تلقائياً عند فتح الملف)
+    try {
+      await callGAS('updateCashSum', {
+        dateISO: currentDateISO,
+        branchName: branchToUse,
+        invUSD: systemTotals.invoices.USD || 0,
+        invEUR: systemTotals.invoices.EUR || 0,
+        invGBP: systemTotals.invoices.GBP || 0,
+        invLE: systemTotals.invoices.LE || 0,
+        invVUSD: systemTotals.invoices.VUSD || 0,
+        invVEUR: systemTotals.invoices.VEUR || 0,
+        invVGBP: systemTotals.invoices.VGBP || 0,
+        invVLE: systemTotals.invoices.VLE || 0,
+        revUSD: systemTotals.revenues.USD || 0,
+        revEUR: systemTotals.revenues.EUR || 0,
+        revGBP: systemTotals.revenues.GBP || 0,
+        revLE: systemTotals.revenues.LE || 0,
+        revVUSD: systemTotals.revenues.VUSD || 0,
+        revVEUR: systemTotals.revenues.VEUR || 0,
+        revVGBP: systemTotals.revenues.VGBP || 0,
+        revVLE: systemTotals.revenues.VLE || 0,
+        expUSD: systemTotals.expenses.USD || 0,
+        expEUR: systemTotals.expenses.EUR || 0,
+        expGBP: systemTotals.expenses.GBP || 0,
+        expLE: systemTotals.expenses.LE || 0,
+        expVUSD: systemTotals.expenses.VUSD || 0,
+        expVEUR: systemTotals.expenses.VEUR || 0,
+        expVGBP: systemTotals.expenses.VGBP || 0,
+        expVLE: systemTotals.expenses.VLE || 0,
+        balUSD: systemTotals.balance.USD || 0,
+        balEUR: systemTotals.balance.EUR || 0,
+        balGBP: systemTotals.balance.GBP || 0,
+        balLE: systemTotals.balance.LE || 0,
+        balVUSD: systemTotals.balance.VUSD || 0,
+        balVEUR: systemTotals.balance.VEUR || 0,
+        balVGBP: systemTotals.balance.VGBP || 0,
+        balVLE: systemTotals.balance.VLE || 0,
+      });
+    } catch(e) {
+      console.warn('updateCashSum call failed:', e);
+    }
+    
+  } catch(e) {
+    console.error('❌ updateCashSumSheet error:', e);
+    showToast('❌ فشل تحديث الرصيد التراكمي: ' + e.message, 'error');
+  }
 }
-
 async function loadSavedCount(){
   try{
     const branchToUse = currentUser?.branchName || document.getElementById('branchSel')?.value || '';
