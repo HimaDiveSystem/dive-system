@@ -175,6 +175,7 @@
 </div>
 
 <script>
+// ⚠️ قم بتحديث هذا الرابط إلى رابط التطبيق المنشور الجديد ⚠️
 const GAS_URL='https://script.google.com/macros/s/AKfycbzZqrtAc8UBauMrzriGi7Q18rni4JeLFI-rqLSkctRjT3Qvx3rtblQiBXpDvu2BJbJx/exec';
 const MN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const DASH={Admin:'Dashboard.html',Owner:'OwnerDashboard.html',Sales:'SalesDashboard.html',Accountant:'AccountantDashboard.html'};
@@ -292,41 +293,15 @@ function showToast(msg,type='info',dur=3000){
   clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),dur);
 }
 
-function callGAS(action, params = {}) {
-  return new Promise((resolve, reject) => {
-    const callbackName = 'jsonp_callback_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
-    const url = new URL(GAS_URL);
-    url.searchParams.set('action', action);
-    url.searchParams.set('callback', callbackName);
-    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v ?? '')));
-    
-    // إعداد timeout
-    const timeout = setTimeout(() => {
-      if (window[callbackName]) {
-        delete window[callbackName];
-        document.body.removeChild(script);
-        reject(new Error('JSONP request timeout'));
-      }
-    }, 30000);
-    
-    window[callbackName] = function(data) {
-      clearTimeout(timeout);
-      delete window[callbackName];
-      document.body.removeChild(script);
-      resolve(data);
-    };
-    
-    const script = document.createElement('script');
-    script.src = url.toString();
-    script.onerror = () => {
-      clearTimeout(timeout);
-      delete window[callbackName];
-      if (document.body.contains(script)) document.body.removeChild(script);
-      reject(new Error('JSONP request failed'));
-    };
-    document.body.appendChild(script);
-  });
+async function callGAS(action, params = {}) {
+  const url = new URL(GAS_URL);
+  url.searchParams.set('action', action);
+  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v ?? '')));
+  const response = await fetch(url.toString(), { mode: 'cors' });
+  if (!response.ok) throw new Error('HTTP ' + response.status);
+  return response.json();
 }
+
 function goBack(){window.location.href=DASH[currentUser?.type]||'AccountantDashboard.html';}
 
 function roundTwo(n){return Math.round((n+Number.EPSILON)*100)/100;}
@@ -343,19 +318,18 @@ document.addEventListener('DOMContentLoaded',async()=>{
   const permResult = await callGAS('getUserBranchPermission', { userType: currentUser.type });
   canViewAllBranches = permResult.canViewAll;
   
-  // داخل DOMContentLoaded، استبدل هذا الجزء:
-if (canViewAllBranches) {
-  // جلب فروع المركز فقط (وليس كل الفروع)
-  allBranches = await callGAS('getBranchesForCenter', { centerId: currentUser.centerId });
-  const branchSel = document.getElementById('branchSel');
-  branchSel.innerHTML = '<option value="">-- اختر فرع --</option>';
-  allBranches.forEach(b => {
-    const opt = document.createElement('option');
-    opt.value = b;
-    opt.textContent = b;
-    branchSel.appendChild(opt);
-  });
-  document.getElementById('branchSelWrap').style.display = 'block';
+  if (canViewAllBranches) {
+    // جلب قائمة الفروع
+    allBranches = await callGAS('getBranchesForCenter', { centerId: currentUser.centerId });
+    const branchSel = document.getElementById('branchSel');
+    branchSel.innerHTML = '<option value="">-- اختر فرع --</option>';
+    allBranches.forEach(b => {
+      const opt = document.createElement('option');
+      opt.value = b;
+      opt.textContent = b;
+      branchSel.appendChild(opt);
+    });
+    document.getElementById('branchSelWrap').style.display = 'block';
   } else {
     // مستخدم عادي - يستخدم فرعه مباشرة
     selectedBranch = currentUser.branchName;
@@ -413,15 +387,6 @@ async function updateCashSumAndReload() {
   } catch(e) {
     showToast('❌ خطأ: ' + e.message, 'error');
   }
-}
-
-async function loadBranchList(){
-  try{
-    const data=await callGAS('getBranchesByCenter',{centerId:currentUser.centerId||''});
-    const arr=Array.isArray(data)?data:(data.branches||[]);
-    const sel=document.getElementById('branchSel');
-    arr.forEach(b=>{const o=document.createElement('option');o.value=b.name||b;o.textContent=b.name||b;sel.appendChild(o);});
-  }catch(e){console.warn('branches:',e);}
 }
 
 async function prefetchAll(){
@@ -706,21 +671,7 @@ async function saveCashCount(){
   }
   showToast('💾 Saving to Cash_Count sheet...','info',10000);
   try{
-    const params = new URLSearchParams();
-    params.append('action', 'saveCashCount');
-    params.append('dateISO', currentData.dateISO);
-    params.append('branchName', currentData.branchName);
-    params.append('notes', currentData.notes);
-    params.append('savedBy', currentData.savedBy);
-    params.append('denomJSON', JSON.stringify(currentData.denominations));
-    params.append('totalsJSON', JSON.stringify(currentData.totals));
-    params.append('sysBalJSON', JSON.stringify(currentData.systemBalance));
-    params.append('diffJSON', JSON.stringify(currentData.difference));
-    
-    const url = `${GAS_URL}?${params.toString()}`;
-    const res = await fetch(url, { redirect: 'follow' });
-    const result = await res.json();
-    
+    const result = await callGAS('saveCashCount', currentData);
     if(result?.success){
       savedCountData=currentData;
       hasChanges=false;
