@@ -162,8 +162,8 @@
       <button class="spin-btn" onclick="spinDate(1)"  title="Next day">▶</button>
     </div>
     <div id="branchSelWrap" style="display:none">
-      <select class="branch-sel" id="branchSel" onchange="loadData()">
-        <option value="">🏢 All Branches</option>
+      <select class="branch-sel" id="branchSel" onchange="onBranchChange()">
+        <option value="">-- اختر فرع --</option>
       </select>
     </div>
     <button class="load-btn" onclick="loadData()">🔄 Load</button>
@@ -200,7 +200,10 @@ const CASH_CURS=[
 let currentUser=null;
 let currentDateISO='';
 let allInvoices=[],allRevenues=[],allExpenses=[];
-let systemTotals={invoices:{},revenues:{},income:{},expenses:{},balance:{}};
+let allBranches=[];
+let selectedBranch='';
+let canViewAllBranches=false;
+let systemTotals={invoices:{},revenues:{},income:{},expenses:{},balance:{},accumulatedBalance:{}};
 let savedCountData=null;
 let hasChanges=false;
 
@@ -242,7 +245,7 @@ function onNatPick() {
     currentDateISO = `${day}/${monthName}/${year}`;
     document.getElementById('dateTxt').value = currentDateISO;
     document.getElementById('dateNat').classList.remove('vis');
-    loadData();
+    updateCashSumAndReload();
   }
 }
 
@@ -277,7 +280,7 @@ function spinDate(d) {
     const newYear = dateObj.getFullYear();
     currentDateISO = `${newDay}/${newMonth}/${newYear}`;
     document.getElementById('dateTxt').value = currentDateISO;
-    loadData();
+    updateCashSumAndReload();
   }
 }
 
@@ -309,18 +312,81 @@ document.addEventListener('DOMContentLoaded',async()=>{
   if(!ud){location.href='index.html';return;}
   try{currentUser=JSON.parse(ud);}catch{location.href='index.html';return;}
   document.getElementById('userChip').textContent=currentUser.name||'User';
-  const isOwner=currentUser.type==='Owner'||currentUser.type==='Admin';
-  if(isOwner){
-    document.getElementById('branchSelWrap').style.display='block';
-    loadBranchList();
-  }else{
-    const bc=document.getElementById('branchChip');
+  
+  // التحقق من صلاحية رؤية جميع الفروع
+  const permResult = await callGAS('getUserBranchPermission', { userType: currentUser.type });
+  canViewAllBranches = permResult.canViewAll;
+  
+  if (canViewAllBranches) {
+    // جلب قائمة الفروع
+    allBranches = await callGAS('getAllBranchesForCashSum', {});
+    const branchSel = document.getElementById('branchSel');
+    branchSel.innerHTML = '<option value="">-- اختر فرع --</option>';
+    allBranches.forEach(b => {
+      const opt = document.createElement('option');
+      opt.value = b;
+      opt.textContent = b;
+      branchSel.appendChild(opt);
+    });
+    document.getElementById('branchSelWrap').style.display = 'block';
+  } else {
+    // مستخدم عادي - يستخدم فرعه مباشرة
+    selectedBranch = currentUser.branchName;
+    const bc = document.getElementById('branchChip');
     bc.textContent='📍 '+(currentUser.branchName||'');bc.style.display='';
+    document.getElementById('branchSelWrap').style.display = 'none';
   }
+  
   initCurrentDate();
   await prefetchAll();
-  loadData();
+  
+  if (!canViewAllBranches && selectedBranch) {
+    await updateCashSumAndReload();
+  } else if (canViewAllBranches) {
+    // انتظر اختيار الفرع
+    document.getElementById('mainContent').innerHTML = '<div class="load-state">الرجاء اختيار فرع من القائمة أعلاه</div>';
+  }
 });
+
+async function onBranchChange() {
+  selectedBranch = document.getElementById('branchSel').value;
+  if (selectedBranch) {
+    await updateCashSumAndReload();
+  }
+}
+
+async function updateCashSumAndReload() {
+  if (!selectedBranch && canViewAllBranches) {
+    showToast('الرجاء اختيار فرع أولاً', 'info');
+    return;
+  }
+  if (!selectedBranch && !canViewAllBranches) {
+    selectedBranch = currentUser.branchName;
+  }
+  if (!currentDateISO) {
+    showToast('الرجاء اختيار تاريخ أولاً', 'info');
+    return;
+  }
+  
+  showToast('جاري تحديث بيانات الخزينة...', 'info', 5000);
+  
+  try {
+    const updateResult = await callGAS('updateCashSumForCurrentUser', {
+      userType: currentUser.type,
+      userBranch: currentUser.branchName,
+      selectedBranch: selectedBranch
+    });
+    
+    if (updateResult.success) {
+      console.log('✅ تم تحديث Cash_Sum:', updateResult);
+      await loadData();
+    } else {
+      showToast('❌ فشل التحديث: ' + (updateResult.message || ''), 'error');
+    }
+  } catch(e) {
+    showToast('❌ خطأ: ' + e.message, 'error');
+  }
+}
 
 async function loadBranchList(){
   try{
@@ -341,6 +407,7 @@ async function prefetchAll(){
     allInvoices=Array.isArray(inv)?inv:[];
     allRevenues=Array.isArray(rev)?rev:[];
     allExpenses=Array.isArray(exp)?exp:[];
+    console.log('✅ prefetchAll completed');
   }catch(e){
     document.getElementById('mainContent').innerHTML=`<div class="load-state">⚠️ Failed to load data: ${e.message}</div>`;
   }
@@ -374,25 +441,21 @@ async function loadData() {
     return;
   }
   
-  const selBranch = document.getElementById('branchSel')?.value || '';
-  const userBranch = currentUser?.branchName || '';
-  const isOwner = currentUser?.type === 'Owner' || currentUser?.type === 'Admin';
-  const branchOK = (item) => {
-    if (isOwner) {
-      if (!selBranch) return true;
-      return item.branchName === selBranch;
-    }
-    return item.branchName === userBranch;
-  };
-
-  // استخدام الفرع الصحيح
-  const targetBranch = isOwner ? (selBranch || userBranch) : userBranch;
-
+  if (!selectedBranch && canViewAllBranches) {
+    document.getElementById('mainContent').innerHTML = '<div class="load-state">الرجاء اختيار فرع أولاً</div>';
+    return;
+  }
+  if (!selectedBranch && !canViewAllBranches) {
+    selectedBranch = currentUser.branchName;
+  }
+  
+  const targetBranch = selectedBranch;
+  
   // تصفية البيانات حسب اليوم والفرع
-  const dayInv = allInvoices.filter(inv => toDDMMMYYYY(inv.issueDate) === currentDateISO && branchOK(inv));
-  const dayRev = allRevenues.filter(r => toDDMMMYYYY(r.date) === currentDateISO && branchOK(r));
-  const dayExp = allExpenses.filter(e => toDDMMMYYYY(e.date) === currentDateISO && branchOK(e));
-
+  const dayInv = allInvoices.filter(inv => toDDMMMYYYY(inv.issueDate) === currentDateISO && inv.branchName === targetBranch);
+  const dayRev = allRevenues.filter(r => toDDMMMYYYY(r.date) === currentDateISO && r.branchName === targetBranch);
+  const dayExp = allExpenses.filter(e => toDDMMMYYYY(e.date) === currentDateISO && e.branchName === targetBranch);
+  
   const invT = sumCur(dayInv, 'invoice');
   const revT = sumCur(dayRev, 'revenue');
   const expT = sumCur(dayExp, 'expense');
@@ -405,17 +468,15 @@ async function loadData() {
   });
 
   systemTotals = { invoices: invT, revenues: revT, income: incT, expenses: expT, balance: balT };
-
-  // ✅ جلب الرصيد التراكمي من Cash_Sum بدلاً من الرصيد اليومي
+  
+  // جلب الرصيد التراكمي من Cash_Sum
   try {
     const cashSumData = await callGAS('getCashSumData', { dateISO: currentDateISO, branchName: targetBranch });
     if (cashSumData?.success && cashSumData.accumulatedBalance) {
       systemTotals.accumulatedBalance = cashSumData.accumulatedBalance;
-      // استخدام الرصيد التراكمي للمقارنة مع العد الفعلي
       systemTotals.balance = cashSumData.accumulatedBalance;
       console.log('✅ تم جلب الرصيد التراكمي:', cashSumData.accumulatedBalance);
     } else {
-      // إذا لم توجد بيانات، استخدم الرصيد اليومي المحسوب
       systemTotals.accumulatedBalance = balT;
       systemTotals.balance = balT;
       console.log('⚠️ لا توجد بيانات تراكمية، استخدام الرصيد اليومي');
@@ -425,10 +486,11 @@ async function loadData() {
     systemTotals.accumulatedBalance = balT;
     systemTotals.balance = balT;
   }
-
+  
   renderPage(dayInv.length, dayRev.length, dayExp.length);
   loadSavedCount();
 }
+
 function renderPage(invCnt,revCnt,expCnt){
   const dt=currentDateISO;
   const ch=()=>CURRENCIES.map(c=>`<div class="cur-header-cell"><span class="flag">${c.flag}</span><span class="code">${c.label}</span></div>`).join('');
@@ -568,7 +630,7 @@ function markSavedStatus(){
 function collectCountData(){
   const out={
     dateISO: currentDateISO,
-    branchName: currentUser?.branchName||document.getElementById('branchSel')?.value||'',
+    branchName: selectedBranch,
     notes: document.getElementById('countNotes')?.value||'',
     savedBy: currentUser?.name||'',
     savedAt: new Date().toISOString(),
@@ -637,7 +699,6 @@ async function saveCashCount(){
       hasChanges=false;
       markSavedStatus();
       showToast('✅ Cash count saved successfully!','success');
-      await updateCashSumSheet();
     }else{
       showToast('❌ Save failed: '+(result?.message||''),'error');
     }
@@ -647,31 +708,11 @@ async function saveCashCount(){
     if(btn)btn.disabled=false;
   }
 }
-  
-async function updateCashSumSheet(){
-  const inv=systemTotals.invoices;
-  const rev=systemTotals.revenues;
-  const exp=systemTotals.expenses;
-  const bal=systemTotals.balance;
-  try{
-    await callGAS('updateCashSum',{
-      dateISO:currentDateISO,
-      branchName:currentUser?.branchName||document.getElementById('branchSel')?.value||'',
-      invUSD:inv.USD||0, invEUR:inv.EUR||0, invGBP:inv.GBP||0, invLE:inv.LE||0,
-      invVUSD:inv.VUSD||0, invVEUR:inv.VEUR||0, invVGBP:inv.VGBP||0, invVLE:inv.VLE||0,
-      revUSD:rev.USD||0, revEUR:rev.EUR||0, revGBP:rev.GBP||0, revLE:rev.LE||0,
-      revVUSD:rev.VUSD||0, revVEUR:rev.VEUR||0, revVGBP:rev.VGBP||0, revVLE:rev.VLE||0,
-      expUSD:exp.USD||0, expEUR:exp.EUR||0, expGBP:exp.GBP||0, expLE:exp.LE||0,
-      expVUSD:exp.VUSD||0, expVEUR:exp.VEUR||0, expVGBP:exp.VGBP||0, expVLE:exp.VLE||0,
-      balUSD:bal.USD||0, balEUR:bal.EUR||0, balGBP:bal.GBP||0, balLE:bal.LE||0,
-      balVUSD:bal.VUSD||0, balVEUR:bal.VEUR||0, balVGBP:bal.VGBP||0, balVLE:bal.VLE||0,
-    });
-  }catch(e){console.warn('updateCashSum:',e);}
-}
 
 async function loadSavedCount(){
   try{
-    const branchToUse = currentUser?.branchName || document.getElementById('branchSel')?.value || '';
+    const branchToUse = selectedBranch;
+    if(!branchToUse) return;
     const res=await callGAS('getCashCount',{
       dateISO:currentDateISO,
       branchName:branchToUse,
@@ -708,6 +749,7 @@ window.spinDate=spinDate;
 window.onNatPick=onNatPick;
 window.onDateTxt=onDateTxt;
 window.onDateBlur=onDateBlur;
+window.onBranchChange=onBranchChange;
 </script>
 </body>
 </html>
