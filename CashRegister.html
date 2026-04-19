@@ -175,7 +175,7 @@
 </div>
 
 <script>
-const GAS_URL='https://script.google.com/macros/s/AKfycbwe1Q9pjAJRk9CfWsK5YGjD5uVAbJkMhAVgw6akKkFIR9sz15V78C88Vs5dumKE-SwF/exec';
+const GAS_URL='https://script.google.com/macros/s/AKfycbyqMz-Qbanodayi83whgCHqqcukCNWe4W50fYeDzjdaajh1futSqWGH_7fB9o2PuukP/exec';
 const MN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const DASH={Admin:'Dashboard.html',Owner:'OwnerDashboard.html',Sales:'SalesDashboard.html',Accountant:'AccountantDashboard.html'};
 
@@ -289,10 +289,13 @@ function showToast(msg,type='info',dur=3000){
   clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),dur);
 }
 
-async function callGAS(action,params={}){
-  const url=new URL(GAS_URL);url.searchParams.set('action',action);
-  Object.entries(params).forEach(([k,v])=>url.searchParams.set(k,String(v??'')));
-  const r=await fetch(url.toString(),{redirect:'follow'});if(!r.ok)throw new Error('HTTP '+r.status);return r.json();
+async function callGAS(action, params = {}) {
+  const url = new URL(GAS_URL);
+  url.searchParams.set('action', action);
+  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v ?? '')));
+  const r = await fetch(url.toString(), { redirect: 'follow' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
 }
 
 function goBack(){window.location.href=DASH[currentUser?.type]||'AccountantDashboard.html';}
@@ -365,29 +368,67 @@ function sumCur(rows,type){
   Object.keys(r).forEach(k=>r[k]=roundTwo(r[k]));return r;
 }
 
-function loadData(){
-  if(!currentDateISO){document.getElementById('mainContent').innerHTML='<div class="load-state">Please select a date</div>';return;}
-  const selBranch=document.getElementById('branchSel')?.value||'';
-  const userBranch=currentUser?.branchName||'';
-  const isOwner=currentUser?.type==='Owner'||currentUser?.type==='Admin';
-  const branchOK=(inv)=>{if(isOwner){if(!selBranch)return true;return inv.branchName===selBranch;}return inv.branchName===userBranch;};
-
-  const dayInv=allInvoices.filter(inv=>toDDMMMYYYY(inv.issueDate) === currentDateISO && branchOK(inv));
-  const dayRev=allRevenues.filter(r=>toDDMMMYYYY(r.date) === currentDateISO && branchOK(r));
-  const dayExp=allExpenses.filter(e=>toDDMMMYYYY(e.date) === currentDateISO && branchOK(e));
-
-  const invT=sumCur(dayInv,'invoice');
-  const revT=sumCur(dayRev,'revenue');
-  const expT=sumCur(dayExp,'expense');
-  const incT={};CURRENCIES.forEach(c=>{incT[c.key]=roundTwo((invT[c.key]||0)+(revT[c.key]||0));});
-  const balT={};CURRENCIES.forEach(c=>{balT[c.key]=roundTwo((incT[c.key]||0)-(expT[c.key]||0));});
-
-  systemTotals={invoices:invT,revenues:revT,income:incT,expenses:expT,balance:balT};
-  renderPage(dayInv.length,dayRev.length,dayExp.length);
+async function loadData() {
+  if (!currentDateISO) {
+    document.getElementById('mainContent').innerHTML = '<div class="load-state">Please select a date</div>';
+    return;
+  }
   
+  const selBranch = document.getElementById('branchSel')?.value || '';
+  const userBranch = currentUser?.branchName || '';
+  const isOwner = currentUser?.type === 'Owner' || currentUser?.type === 'Admin';
+  const branchOK = (item) => {
+    if (isOwner) {
+      if (!selBranch) return true;
+      return item.branchName === selBranch;
+    }
+    return item.branchName === userBranch;
+  };
+
+  // استخدام الفرع الصحيح
+  const targetBranch = isOwner ? (selBranch || userBranch) : userBranch;
+
+  // تصفية البيانات حسب اليوم والفرع
+  const dayInv = allInvoices.filter(inv => toDDMMMYYYY(inv.issueDate) === currentDateISO && branchOK(inv));
+  const dayRev = allRevenues.filter(r => toDDMMMYYYY(r.date) === currentDateISO && branchOK(r));
+  const dayExp = allExpenses.filter(e => toDDMMMYYYY(e.date) === currentDateISO && branchOK(e));
+
+  const invT = sumCur(dayInv, 'invoice');
+  const revT = sumCur(dayRev, 'revenue');
+  const expT = sumCur(dayExp, 'expense');
+  const incT = {};
+  const balT = {};
+
+  CURRENCIES.forEach(c => {
+    incT[c.key] = roundTwo((invT[c.key] || 0) + (revT[c.key] || 0));
+    balT[c.key] = roundTwo((incT[c.key] || 0) - (expT[c.key] || 0));
+  });
+
+  systemTotals = { invoices: invT, revenues: revT, income: incT, expenses: expT, balance: balT };
+
+  // ✅ جلب الرصيد التراكمي من Cash_Sum بدلاً من الرصيد اليومي
+  try {
+    const cashSumData = await callGAS('getCashSumData', { dateISO: currentDateISO, branchName: targetBranch });
+    if (cashSumData?.success && cashSumData.accumulatedBalance) {
+      systemTotals.accumulatedBalance = cashSumData.accumulatedBalance;
+      // استخدام الرصيد التراكمي للمقارنة مع العد الفعلي
+      systemTotals.balance = cashSumData.accumulatedBalance;
+      console.log('✅ تم جلب الرصيد التراكمي:', cashSumData.accumulatedBalance);
+    } else {
+      // إذا لم توجد بيانات، استخدم الرصيد اليومي المحسوب
+      systemTotals.accumulatedBalance = balT;
+      systemTotals.balance = balT;
+      console.log('⚠️ لا توجد بيانات تراكمية، استخدام الرصيد اليومي');
+    }
+  } catch(e) {
+    console.warn('❌ فشل جلب الرصيد التراكمي:', e);
+    systemTotals.accumulatedBalance = balT;
+    systemTotals.balance = balT;
+  }
+
+  renderPage(dayInv.length, dayRev.length, dayExp.length);
   loadSavedCount();
 }
-
 function renderPage(invCnt,revCnt,expCnt){
   const dt=currentDateISO;
   const ch=()=>CURRENCIES.map(c=>`<div class="cur-header-cell"><span class="flag">${c.flag}</span><span class="code">${c.label}</span></div>`).join('');
