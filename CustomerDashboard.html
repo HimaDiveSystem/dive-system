@@ -129,10 +129,9 @@
 
 <script>
 const GAS_URL='https://script.google.com/macros/s/AKfycbzZqrtAc8UBauMrzriGi7Q18rni4JeLFI-rqLSkctRjT3Qvx3rtblQiBXpDvu2BJbJx/exec';
-
 let currentUser = null;
-let viewingCustomer = null;     // العميل الذي يتم عرض بياناته
-let loggedInUser = null;        // المستخدم الحالي (قد يكون محاسب أو صاحب مركز)
+let viewingCustomer = null;
+let loggedInUser = null;
 let customerAccount = null;
 let sheetData = [];
 let tripGroups = [];
@@ -168,27 +167,16 @@ function gas(action, params={}) {
 
 // ====================== دوال مساعدة ======================
 function doLogout(){
-  console.log('🔍 [Customer] بدء تسجيل الخروج');
-  
   let returnUrl = sessionStorage.getItem('returnUrl');
-  console.log('📦 [Customer] returnUrl من sessionStorage:', returnUrl);
-  
   if (!returnUrl && document.referrer) {
     returnUrl = document.referrer;
-    console.log('📎 [Customer] returnUrl من referrer:', returnUrl);
   }
-  
   if (!returnUrl) {
     const userType = loggedInUser?.type || 'Customer';
     const dashboardPage = DASHBOARDS[userType] || 'Dashboard.html';
     returnUrl = dashboardPage;
-    console.log('🏠 [Customer] returnUrl افتراضي:', returnUrl);
   }
-  
   sessionStorage.removeItem('returnUrl');
-  console.log('🗑️ [Customer] تم مسح returnUrl فقط');
-  console.log('🔁 [Customer] التوجيه إلى:', returnUrl);
-  
   location.href = returnUrl;
 }
 
@@ -231,83 +219,6 @@ function parseDateToObj(v){
   return null;
 }
 
-// ====================== تحديث البيانات بدون إعادة تحميل ======================
-async function refreshData() {
-  try {
-    if (!customerAccount) return false;
-    
-    const sheetName = customerAccount.customerName + '_' + customerAccount.category + '_' + customerAccount.customerType;
-    
-    const refreshBtn = document.getElementById('refreshDataBtn');
-    if (refreshBtn) {
-      refreshBtn.innerHTML = '⏳ جاري...';
-      refreshBtn.disabled = true;
-    }
-    
-    const res = await gas('getAccountSheetData', { sheetName });
-    if (res?.success && Array.isArray(res.data)) {
-      sheetData = res.data;
-      console.log('✅ تم تحديث البيانات بنجاح');
-    }
-    
-    const startDate = document.getElementById('fStart')?.value || '';
-    const endDate = document.getElementById('fEnd')?.value || '';
-    renderPage(startDate, endDate);
-    
-    return true;
-  } catch(e) {
-    console.error('❌ خطأ في تحديث البيانات:', e);
-    showAlert('خطأ في تحديث البيانات: ' + e.message, '❌');
-    return false;
-  } finally {
-    const refreshBtn = document.getElementById('refreshDataBtn');
-    if (refreshBtn) {
-      refreshBtn.innerHTML = '🔄 تحديث';
-      refreshBtn.disabled = false;
-    }
-  }
-}
-
-async function updateTotalsAndRefresh() {
-  try {
-    const activeTab = document.querySelector('.tab-btn.active');
-    let originalText = '';
-    if (activeTab) {
-      originalText = activeTab.textContent;
-      activeTab.textContent = '⏳ جاري التحديث...';
-      activeTab.disabled = true;
-    }
-    
-    const totalsBtn = document.getElementById('updateTotalsBtn');
-    if (totalsBtn) {
-      totalsBtn.innerHTML = '⏳ جاري...';
-      totalsBtn.disabled = true;
-    }
-    
-    const totalsResult = await gas('writeDailyTotalsToSheet', { customerId: customerAccount.customerId });
-    console.log('📊 نتيجة تحديث الإجماليات:', totalsResult);
-    
-    await refreshData();
-    
-    if (activeTab) {
-      activeTab.textContent = originalText;
-      activeTab.disabled = false;
-    }
-    
-    return totalsResult;
-  } catch(e) {
-    console.error('❌ خطأ:', e);
-    showAlert('خطأ: ' + e.message, '❌');
-    return null;
-  } finally {
-    const totalsBtn = document.getElementById('updateTotalsBtn');
-    if (totalsBtn) {
-      totalsBtn.innerHTML = '🔄 تحديث الإجماليات';
-      totalsBtn.disabled = false;
-    }
-  }
-}
-
 // ====================== تحليل هيكل الشيت ======================
 function parseSheetStructure() {
   if(!sheetData||sheetData.length<4) return;
@@ -319,35 +230,33 @@ function parseSheetStructure() {
   priceGroups = [];
   sumCurrencies = [];
 
-  let jFirst = 1;
-  let jEnd = 78;
-
-  for (let j = jFirst; j < Math.min(jEnd, lastCol); j++) {
-    const v2 = (row2[j] || '').toString().trim();
-    if (v2.startsWith('المجموع') || v2.startsWith('Total')) {
-      let cur = v2.replace('المجموع ', '').replace('Total ', '').trim();
-      if (cur === '$') cur = 'USD';
-      if (cur === '€') cur = 'EUR';
-      if (cur === '£') cur = 'GBP';
-      if (cur) sumCurrencies.push({col:j,currency:cur});
-    }
-  }
-
-  if(sumCurrencies.length === 0){
-    for(let j=jFirst; j<Math.min(78,lastCol); j++){
-      const v2 = (row2[j] || '').toString().trim();
-      if(v2.startsWith('المجموع') || v2.startsWith('Total')){
-        let cur = v2.replace('المجموع ', '').replace('Total ', '').trim();
-        if (cur === '$') cur = 'USD';
-        if (cur === '€') cur = 'EUR';
-        if (cur === '£') cur = 'GBP';
-        if(cur) sumCurrencies.push({col:j,currency:cur});
+  // البحث عن أعمدة المجاميع من الصف الثاني
+  for (let j = 0; j < row2.length; j++) {
+    const header = (row2[j] || '').toString().trim();
+    if (header.startsWith('المجموع') || header.startsWith('Total')) {
+      let currency = header.replace('المجموع ', '').replace('Total ', '').trim();
+      if (currency === '$') currency = 'USD';
+      if (currency === '€') currency = 'EUR';
+      if (currency === '£') currency = 'GBP';
+      if (currency) {
+        sumCurrencies.push({ col: j, currency: currency });
       }
     }
   }
 
+  // إذا لم يتم العثور على أعمدة مجاميع، استخدم العملات الافتراضية
+  if (sumCurrencies.length === 0) {
+    sumCurrencies = [
+      { col: -1, currency: 'LE' },
+      { col: -1, currency: 'USD' },
+      { col: -1, currency: 'EUR' },
+      { col: -1, currency: 'GBP' }
+    ];
+  }
+
+  // تجميع الرحلات والبنود
   let curTrip = null;
-  for (let j = jFirst; j < jEnd; j++) {
+  for (let j = 1; j < 78 && j < row2.length; j++) {
     const v2 = (row2[j] || '').toString().trim();
     const v3 = (row3[j] || '').toString().trim();
     if (v2 && v2 !== '' && !v2.startsWith('المجموع') && !v2.startsWith('Total')) {
@@ -359,6 +268,7 @@ function parseSheetStructure() {
     }
   }
 
+  // تجميع أعمدة الأسعار
   let curPriceTrip = null;
   for (let j = 80; j < lastCol; j++) {
     const v2 = (row2[j] || '').toString().trim();
@@ -402,7 +312,7 @@ function renderPricesTab(rows) {
         tds+=`<td>${price>0?`<span class="${curClass(currency)}">${price} ${currency}</span>`:'-'}</td>`;
       }
     }
-    tbody+=`<tr><td>${dateStr}</td>${tds}</tr>`;
+    tbody+=`<tr><td style="font-weight:600">${dateStr}</td>${tds}</tr>`;
   }
 
   return `
@@ -412,7 +322,7 @@ function renderPricesTab(rows) {
           <tr class="row-trip">${trTrip}</tr>
           <tr class="row-item">${trItem}</tr>
         </thead>
-        <tbody>${tbody||'<tr><td colspan="100" class="no-data">لا توجد بيانات</td></td>'}</tbody>
+        <tbody>${tbody||'<tr><td colspan="100" class="no-data">لا توجد بيانات<\/td></tr>'}</tbody>
       </table>
     </div>`;
 }
@@ -420,9 +330,9 @@ function renderPricesTab(rows) {
 function renderTotalsTab(rows) {
   if(!tripGroups.length) return '<div class="no-data">لا توجد بيانات بنود</div>';
 
+  // استخدام العملات من sumCurrencies
   const currencies = sumCurrencies.map(s => s.currency);
-  if(!currencies.length) currencies.push('LE');
-
+  
   let trTrip = '<th class="th-date" rowspan="2">التاريخ</th>';
   let trItem = '';
 
@@ -438,14 +348,52 @@ function renderTotalsTab(rows) {
   }
 
   let tbody = '';
+  // حساب الإجماليات لكل صف
   for(const row of rows){
     const dateStr = fmtDate(row[0]);
     if(!dateStr) continue;
 
+    // حساب إجمالي اليوم من أعمدة المجاميع إذا وجدت، أو حسابها من البنود
     const dayTotals = {};
-    for(const col of sumCurrencies){
-      const val = parseFloat(row[col.col]) || 0;
-      dayTotals[col.currency] = val;
+    for(const cur of currencies) dayTotals[cur] = 0;
+    
+    // محاولة قراءة من أعمدة المجاميع أولاً
+    let hasSumColumns = false;
+    for(const sc of sumCurrencies) {
+      if (sc.col >= 0 && row[sc.col] !== undefined) {
+        const val = parseFloat(row[sc.col]) || 0;
+        dayTotals[sc.currency] = val;
+        if (val > 0) hasSumColumns = true;
+      }
+    }
+    
+    // إذا لم توجد أعمدة مجاميع، قم بحساب الإجمالي من الأسعار × الكميات
+    if (!hasSumColumns) {
+      // حساب الإجمالي من الأسعار والكميات
+      const priceMap = {};
+      for(const g of priceGroups){
+        for(const it of g.items){
+          const cell = (row[it.col] || '').toString().trim();
+          const {price, currency} = parseCell(cell);
+          if (price > 0) {
+            priceMap[`${g.name}_${it.name}`] = { price, currency };
+          }
+        }
+      }
+      
+      for(const g of tripGroups){
+        for(const it of g.items){
+          const qty = parseInt(row[it.col]) || 0;
+          if (qty > 0) {
+            const priceKey = `${g.name}_${it.name}`;
+            const priceInfo = priceMap[priceKey];
+            if (priceInfo) {
+              const total = priceInfo.price * qty;
+              dayTotals[priceInfo.currency] = (dayTotals[priceInfo.currency] || 0) + total;
+            }
+          }
+        }
+      }
     }
 
     let tds = '';
@@ -465,12 +413,55 @@ function renderTotalsTab(rows) {
     tbody += `<tr><td style="font-weight:600">${dateStr}</td>${tds}${sumTds}</tr>`;
   }
 
+  // حساب الإجمالي الكلي
   const grandTotals = {};
   for(const cur of currencies) grandTotals[cur] = 0;
+  
   for(const row of rows){
-    for(const col of sumCurrencies){
-      const val = parseFloat(row[col.col]) || 0;
-      grandTotals[col.currency] += val;
+    for(const sc of sumCurrencies) {
+      if (sc.col >= 0 && row[sc.col] !== undefined) {
+        const val = parseFloat(row[sc.col]) || 0;
+        grandTotals[sc.currency] += val;
+      }
+    }
+  }
+  
+  // إذا لم توجد أعمدة مجاميع، قم بحساب الإجمالي الكلي من البنود
+  let hasGrandTotal = false;
+  for(const cur of currencies) {
+    if (grandTotals[cur] > 0) hasGrandTotal = true;
+  }
+  
+  if (!hasGrandTotal && rows.length > 0) {
+    // إعادة حساب الإجمالي الكلي من البنود والأسعار
+    for(const cur of currencies) grandTotals[cur] = 0;
+    
+    for(const row of rows){
+      // حساب الأسعار لكل بند
+      const priceMap = {};
+      for(const g of priceGroups){
+        for(const it of g.items){
+          const cell = (row[it.col] || '').toString().trim();
+          const {price, currency} = parseCell(cell);
+          if (price > 0) {
+            priceMap[`${g.name}_${it.name}`] = { price, currency };
+          }
+        }
+      }
+      
+      for(const g of tripGroups){
+        for(const it of g.items){
+          const qty = parseInt(row[it.col]) || 0;
+          if (qty > 0) {
+            const priceKey = `${g.name}_${it.name}`;
+            const priceInfo = priceMap[priceKey];
+            if (priceInfo) {
+              const total = priceInfo.price * qty;
+              grandTotals[priceInfo.currency] += total;
+            }
+          }
+        }
+      }
     }
   }
 
@@ -478,10 +469,10 @@ function renderTotalsTab(rows) {
   let grandTds = '';
   for(const cur of currencies){
     const v = grandTotals[cur] || 0;
-    grandTds += `<td style="background:#1a3260;color:var(--gold);font-size:13px"><strong>${v.toLocaleString()} ${cur}</strong></td>`;
+    grandTds += `<td style="background:#1a3260;color:var(--gold);font-size:13px"><strong>${v > 0 ? v.toLocaleString() : '-'} ${cur}</strong></td>`;
   }
   const emptyCell = '<td style="color:#94a3b8">-</td>';
-  tbody += `<tr class="total-row"><td>الإجمالي الكلي<\/td>${emptyCell.repeat(totalCols)}${grandTds}</tr>`;
+  tbody += `<tr class="total-row"><td><strong>الإجمالي الكلي</strong><\/td>${emptyCell.repeat(totalCols)}${grandTds}</tr>`;
 
   return `
     <div class="table-wrap">
@@ -499,14 +490,51 @@ function renderSummaryTab(rows) {
   if(!sumCurrencies.length) return '<div class="no-data">لا توجد بيانات كافية</div>';
   
   const totals = {};
-  for(const col of sumCurrencies){
-    totals[col.currency] = 0;
+  for(const sc of sumCurrencies){
+    totals[sc.currency] = 0;
   }
   
   for(const row of rows){
-    for(const col of sumCurrencies){
-      const val = parseFloat(row[col.col]) || 0;
-      totals[col.currency] += val;
+    for(const sc of sumCurrencies){
+      if (sc.col >= 0 && row[sc.col] !== undefined) {
+        const val = parseFloat(row[sc.col]) || 0;
+        totals[sc.currency] += val;
+      }
+    }
+  }
+  
+  // إذا لم توجد بيانات في أعمدة المجاميع، حاول الحساب من البنود
+  let hasTotals = false;
+  for(const cur in totals) if (totals[cur] > 0) hasTotals = true;
+  
+  if (!hasTotals && rows.length > 0) {
+    for(const cur in totals) totals[cur] = 0;
+    
+    for(const row of rows){
+      const priceMap = {};
+      for(const g of priceGroups){
+        for(const it of g.items){
+          const cell = (row[it.col] || '').toString().trim();
+          const {price, currency} = parseCell(cell);
+          if (price > 0) {
+            priceMap[`${g.name}_${it.name}`] = { price, currency };
+          }
+        }
+      }
+      
+      for(const g of tripGroups){
+        for(const it of g.items){
+          const qty = parseInt(row[it.col]) || 0;
+          if (qty > 0) {
+            const priceKey = `${g.name}_${it.name}`;
+            const priceInfo = priceMap[priceKey];
+            if (priceInfo) {
+              const total = priceInfo.price * qty;
+              totals[priceInfo.currency] += total;
+            }
+          }
+        }
+      }
     }
   }
   
@@ -596,22 +624,11 @@ function renderPage(startISO, endISO) {
       </div>
     </div>
 
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px;">
-      <div class="tabs" style="margin-bottom:0;border-bottom:none;padding-bottom:0">
-        <button class="tab-btn active" onclick="switchTab('prices',event)">📋 جدول الأسعار</button>
-        <button class="tab-btn" onclick="switchTab('totals',event)">💰 الإجماليات اليومية</button>
-        <button class="tab-btn" onclick="switchTab('summary',event)">📊 إجمالي العملات</button>
-      </div>
-      <div>
-        <button class="btn btn-navy" id="updateTotalsBtn" onclick="updateTotalsAndRefresh()" style="background:var(--navy);color:var(--gold);">
-          🔄 تحديث الإجماليات
-        </button>
-        <button class="btn btn-gray" id="refreshDataBtn" onclick="refreshData()" style="margin-right:8px">
-          🔄 تحديث
-        </button>
-      </div>
+    <div class="tabs" style="margin-bottom:16px;">
+      <button class="tab-btn active" onclick="switchTab('prices',event)">📋 جدول الأسعار</button>
+      <button class="tab-btn" onclick="switchTab('totals',event)">💰 الإجماليات اليومية</button>
+      <button class="tab-btn" onclick="switchTab('summary',event)">📊 إجمالي العملات</button>
     </div>
-    <hr style="border:none;border-top:2px solid var(--border);margin-bottom:16px;">
 
     <div id="tabPrices" class="tab-pane active">
       <div class="card">
@@ -652,28 +669,7 @@ async function switchTab(name, event){
   btns.forEach(b => b.classList.remove('active'));
   if(event?.target) event.target.classList.add('active');
   
-  // قبل عرض التبويب، قم بتحديث الإجماليات إذا كان التبويب هو totals أو summary
-  if (name === 'totals' || name === 'summary') {
-    const targetBtn = event?.target;
-    const originalText = targetBtn ? targetBtn.textContent : '';
-    if (targetBtn) {
-      targetBtn.textContent = '⏳ جاري التحديث...';
-      targetBtn.disabled = true;
-    }
-    
-    try {
-      const totalsResult = await gas('writeDailyTotalsToSheet', { customerId: customerAccount.customerId });
-      console.log('📊 تحديث الإجماليات:', totalsResult);
-      await refreshData();
-    } catch(e) {
-      console.error('خطأ في تحديث الإجماليات:', e);
-    } finally {
-      if (targetBtn) {
-        targetBtn.textContent = originalText;
-        targetBtn.disabled = false;
-      }
-    }
-  }
+  // ✅ تم إزالة تحديث الإجماليات عند تغيير التبويب - فقط عرض البيانات الموجودة
   
   ['prices','totals','summary'].forEach(t => {
     const el = document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1));
@@ -735,9 +731,7 @@ async function loadAll(){
     }
     sheetData = res.data;
 
-    const totalsResult = await gas('writeDailyTotalsToSheet', { customerId: customerAccount.customerId });
-    console.log('📊 نتيجة تحديث الإجماليات:', totalsResult);
-
+    // ✅ تم إزالة استدعاء writeDailyTotalsToSheet - فقط عرض البيانات الموجودة
     renderPage('','');
 
   } catch(e){
@@ -776,6 +770,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('userChip').textContent = loggedInUser.name || 'User';
   await loadAll();
 });
+
 function goBackToDashboard() {
   const userType = loggedInUser?.type || currentUser?.type || 'Accountant';
   
@@ -795,7 +790,6 @@ function goBackToDashboard() {
   
   // ✅ الحالة 4: إذا كان returnUrl يحتوي على ManageSupplierCustomers.html
   if (returnUrl && returnUrl.includes('ManageSupplierCustomers.html')) {
-    // العودة إلى ManageSupplierCustomers.html مع الحفاظ على user
     const userParam = encodeURIComponent(JSON.stringify(loggedInUser || currentUser));
     location.href = `ManageSupplierCustomers.html?user=${userParam}`;
     return;
@@ -813,6 +807,7 @@ function goBackToDashboard() {
   const userParam = encodeURIComponent(JSON.stringify(loggedInUser || currentUser));
   location.href = `${dashboardPage}?user=${userParam}`;
 }
+
 // ====================== دوال عامة ======================
 window.doLogout = doLogout;
 window.closeAlert = closeAlert;
@@ -823,8 +818,6 @@ window.loadAll = loadAll;
 window.openEditCustomer = openEditCustomer;
 window.goBackToDashboard = goBackToDashboard;
 window.addNewInvoice = addNewInvoice;
-window.refreshData = refreshData;
-window.updateTotalsAndRefresh = updateTotalsAndRefresh;
 </script>
 </body>
 </html>
