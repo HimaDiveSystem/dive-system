@@ -115,7 +115,7 @@
             margin-bottom: 10px;
         }
         
-        /* Gallery Upload - FIXED */
+        /* Gallery Upload */
         .upload-area {
             border: 2px dashed #1e2b4f;
             border-radius: 12px;
@@ -151,7 +151,7 @@
             word-break: break-all;
         }
         
-        /* Manual Entry - FIXED with labels */
+        /* Manual Entry */
         .manual-form {
             background: white;
             border-radius: 12px;
@@ -372,6 +372,19 @@
             font-size: 14px;
         }
         
+        /* Raw Text */
+        .raw-text {
+            background: #f0f0f0;
+            border-radius: 10px;
+            padding: 10px;
+            margin-top: 10px;
+            font-size: 10px;
+            color: #666;
+            word-break: break-all;
+            max-height: 100px;
+            overflow-y: auto;
+        }
+        
         /* Loading */
         .loading-overlay {
             display: none;
@@ -471,7 +484,7 @@
                 </div>
             </div>
 
-            <!-- Gallery Section - FIXED: This now opens gallery NOT camera -->
+            <!-- Gallery Section -->
             <div class="section" id="gallerySection">
                 <div class="upload-area" onclick="document.getElementById('imageUpload').click()">
                     <div class="upload-icon">📁</div>
@@ -518,7 +531,7 @@
                 </div>
             </div>
 
-            <!-- Manual Entry Section - FIXED with proper labels -->
+            <!-- Manual Entry Section -->
             <div class="section" id="manualSection">
                 <div class="manual-form">
                     <div class="form-group">
@@ -558,9 +571,10 @@
             <div class="result-box" id="resultBox" style="display:none;">
                 <div class="result-item"><span class="result-label">Name:</span> <span id="resName">-</span></div>
                 <div class="result-item"><span class="result-label">Nationality:</span> <span id="resNationality">-</span></div>
-                <div class="result-item"><span class="result-label">Passport:</span> <span id="resPassport">-</span></div>
+                <div class="result-item"><span class="result-label">Passport No.:</span> <span id="resPassport">-</span></div>
                 <div class="result-item"><span class="result-label">Birthdate:</span> <span id="resBirthdate">-</span></div>
                 <div class="result-item"><span class="result-label">Age:</span> <span id="resAge">-</span></div>
+                <div class="raw-text" id="rawText"></div>
                 <div class="button-group">
                     <button class="btn btn-success" onclick="goToActivity()">▶ Next</button>
                     <button class="btn btn-secondary" onclick="resetAll()">↻ New</button>
@@ -611,13 +625,14 @@
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
 
     <script>
-        // GAS URL - الآن أصبحت موجودة
-        const GAS_URL = 'https://script.google.com/macros/s/AKfycbwe1Q9pjAJRk9CfWsK5YGjD5uVAbJkMhAVgw6akKkFIR9sz15V78C88Vs5dumKE-SwF/exec';
-        
+        // GAS URL
+        const GAS_URL='https://script.google.com/macros/s/AKfycbzZqrtAc8UBauMrzriGi7Q18rni4JeLFI-rqLSkctRjT3Qvx3rtblQiBXpDvu2BJbJx/exec';
+       
         let currentUser = null;
         let stream = null;
         let isCameraStarted = false;
         let extractedData = {};
+        let rawOcrText = '';
         
         // Image variables
         let img = new Image();
@@ -633,6 +648,198 @@
         const wrapper = document.getElementById('imageWrapper');
         const zoomSlider = document.getElementById('zoomSlider');
 
+        // ========== IMPROVED DATA EXTRACTION FUNCTIONS ==========
+        
+        function cleanText(text) {
+            return text.replace(/[^\x20-\x7E\u0600-\u06FF\n]/g, ' ').replace(/\s+/g, ' ').trim();
+        }
+
+        function extractName(text) {
+            // Patterns for English names
+            const engPatterns = [
+                /(?:Name|Full Name|Surname|Given Name)[:\s]*([A-Z][A-Z\s]{2,30}[A-Z])/i,
+                /([A-Z][a-z]+ [A-Z][a-z]+(?: [A-Z][a-z]+)?)/,
+                /([A-Z]{2,}\s+[A-Z]{2,})/
+            ];
+            
+            // Patterns for Arabic names
+            const araPatterns = [
+                /(?:الاسم|الإسم|الاسم الكامل)[:\s]*([\u0600-\u06FF\s]{3,30})/i,
+                /([\u0600-\u06FF]{3,}\s+[\u0600-\u06FF]{3,})/
+            ];
+            
+            for (let p of engPatterns) {
+                const match = text.match(p);
+                if (match && match[1] && match[1].length > 3) {
+                    return match[1].trim();
+                }
+            }
+            
+            for (let p of araPatterns) {
+                const match = text.match(p);
+                if (match && match[1] && match[1].length > 3) {
+                    return match[1].trim();
+                }
+            }
+            
+            return null;
+        }
+
+        function extractNationality(text) {
+            const nationalityMap = {
+                'مصري': 'Egyptian', 'مصر': 'Egyptian', 'EGYPT': 'Egyptian',
+                'سعودي': 'Saudi', 'SAUDI': 'Saudi', 'المملكة العربية السعودية': 'Saudi',
+                'أردني': 'Jordanian', 'JORDAN': 'Jordanian',
+                'إماراتي': 'Emirati', 'UAE': 'Emirati',
+                'كويتي': 'Kuwaiti', 'KUWAIT': 'Kuwaiti',
+                'بحريني': 'Bahraini', 'BAHRAIN': 'Bahraini',
+                'قطري': 'Qatari', 'QATAR': 'Qatari',
+                'عماني': 'Omani', 'OMAN': 'Omani',
+                'ليبي': 'Libyan', 'LIBYA': 'Libyan',
+                'تونسي': 'Tunisian', 'TUNISIA': 'Tunisian',
+                'جزائري': 'Algerian', 'ALGERIA': 'Algerian',
+                'مغربي': 'Moroccan', 'MOROCCO': 'Moroccan',
+                'سوداني': 'Sudanese', 'SUDAN': 'Sudanese',
+                'فلسطيني': 'Palestinian', 'PALESTINE': 'Palestinian',
+                'لبناني': 'Lebanese', 'LEBANON': 'Lebanese',
+                'سوري': 'Syrian', 'SYRIA': 'Syrian',
+                'عراقي': 'Iraqi', 'IRAQ': 'Iraqi',
+                'يمني': 'Yemeni', 'YEMEN': 'Yemeni',
+                'روسي': 'Russian', 'RUSSIA': 'Russian',
+                'أمريكي': 'American', 'USA': 'American',
+                'بريطاني': 'British', 'UK': 'British',
+                'فرنسي': 'French', 'FRANCE': 'French',
+                'ألماني': 'German', 'GERMANY': 'German',
+                'إيطالي': 'Italian', 'ITALY': 'Italian',
+                'إسباني': 'Spanish', 'SPAIN': 'Spanish',
+                'صيني': 'Chinese', 'CHINA': 'Chinese',
+                'هندي': 'Indian', 'INDIA': 'Indian'
+            };
+            
+            const textUpper = text.toUpperCase();
+            
+            // Search for Nationality/الجنسية labels
+            const labelPatterns = [
+                /(?:Nationality|الجنسية)[:\s]*([A-Za-z\u0600-\u06FF\s]{3,25})/i,
+                /(?:NATION|NAT\.?)[:\s]*([A-Z]{3,15})/i
+            ];
+            
+            for (let p of labelPatterns) {
+                const match = text.match(p);
+                if (match && match[1]) {
+                    const found = match[1].trim();
+                    for (let [ar, en] of Object.entries(nationalityMap)) {
+                        if (found.toUpperCase().includes(ar.toUpperCase()) || 
+                            found.toUpperCase().includes(en.toUpperCase())) {
+                            return en;
+                        }
+                    }
+                    if (found.length < 25) return found;
+                }
+            }
+            
+            // Search in nationality map
+            for (let [ar, en] of Object.entries(nationalityMap)) {
+                if (textUpper.includes(ar.toUpperCase()) || textUpper.includes(en.toUpperCase())) {
+                    return en;
+                }
+            }
+            
+            return null;
+        }
+
+        function extractPassportNumber(text) {
+            // Passport number patterns
+            const patterns = [
+                /(?:Passport No\.?|Passport Number|رقم الجواز|رقم جواز السفر)[:\s]*([A-Z0-9]{6,12})/i,
+                /(?:PASSPORT|P\/SPT|P\/PORT|DOCUMENT)[:\s]*([A-Z0-9]{6,12})/i,
+                /(?:NO\.?|NUMBER|#)[:\s]*([A-Z0-9]{6,12})/i,
+                /\b([A-Z][0-9]{7,9})\b/i,
+                /\b([0-9]{7,10})\b/
+            ];
+            
+            for (let p of patterns) {
+                const match = text.match(p);
+                if (match && match[1] && match[1].length >= 6) {
+                    return match[1].trim();
+                }
+            }
+            
+            return null;
+        }
+
+        function extractBirthdate(text) {
+            // Date patterns (DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY)
+            const patterns = [
+                /(?:Birth Date|Date of Birth|DOB|تاريخ الميلاد)[:\s]*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/i,
+                /(?:BIRTH|DOB)[:\s]*(\d{2}[\/\-\.]\d{2}[\/\-\.]\d{4})/i,
+                /\b(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})\b/
+            ];
+            
+            for (let p of patterns) {
+                const match = text.match(p);
+                if (match && match[1]) {
+                    let date = match[1];
+                    // Convert to YYYY-MM-DD format
+                    let parts = date.split(/[\/\-\.]/);
+                    if (parts.length === 3) {
+                        let day = parts[0].padStart(2, '0');
+                        let month = parts[1].padStart(2, '0');
+                        let year = parts[2];
+                        if (year.length === 4) {
+                            return `${year}-${month}-${day}`;
+                        }
+                    }
+                    return date;
+                }
+            }
+            
+            return null;
+        }
+
+        function calculateAge(birthdate) {
+            if (!birthdate) return 'Not detected';
+            try {
+                let d, m, y;
+                if (birthdate.includes('-')) {
+                    [y, m, d] = birthdate.split('-');
+                } else if (birthdate.includes('/')) {
+                    [d, m, y] = birthdate.split('/');
+                } else {
+                    return 'Not detected';
+                }
+                
+                const birth = new Date(parseInt(y), parseInt(m)-1, parseInt(d));
+                const today = new Date();
+                let age = today.getFullYear() - birth.getFullYear();
+                if (today < new Date(today.getFullYear(), birth.getMonth(), birth.getDate())) {
+                    age--;
+                }
+                return age + ' years';
+            } catch {
+                return 'Not detected';
+            }
+        }
+
+        function extractAllData(text) {
+            const clean = cleanText(text);
+            console.log('Cleaned OCR Text:', clean);
+            
+            const name = extractName(clean);
+            const nationality = extractNationality(clean);
+            const passport = extractPassportNumber(clean);
+            const birthdate = extractBirthdate(clean);
+            const age = calculateAge(birthdate);
+            
+            return {
+                name: name || 'Not detected',
+                nationality: nationality || 'Not detected',
+                passport: passport || 'Not detected',
+                birthdate: birthdate || 'Not detected',
+                age: age
+            };
+        }
+
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
             const userData = sessionStorage.getItem('currentUser');
@@ -644,6 +851,7 @@
             document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
             
             setupEvents();
+            selectOption('scan');
         });
 
         function setupEvents() {
@@ -728,6 +936,9 @@
         // ===== CAMERA =====
         async function startCamera() {
             try {
+                if (stream) {
+                    stream.getTracks().forEach(t => t.stop());
+                }
                 stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: 'environment' } 
                 });
@@ -748,7 +959,7 @@
             loadImageToCrop(canvas.toDataURL('image/jpeg'));
         }
 
-        // ===== GALLERY - FIXED: This now opens gallery NOT camera =====
+        // ===== GALLERY =====
         document.getElementById('imageUpload').addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (!file) return;
@@ -806,15 +1017,6 @@
             }
         }
 
-        function resetView() {
-            scale = 1;
-            translateX = 0;
-            translateY = 0;
-            zoomSlider.value = scale;
-            updateZoomPercent();
-            updateImageTransform();
-        }
-
         // ===== SCAN VISIBLE AREA =====
         async function scanVisibleArea() {
             if (!currentImageData) {
@@ -822,7 +1024,7 @@
                 return;
             }
 
-            showLoading(true, 'Scanning...');
+            showLoading(true, 'Scanning with OCR...');
 
             try {
                 const frame = document.querySelector('.crop-frame').getBoundingClientRect();
@@ -846,13 +1048,20 @@
                 
                 const visibleData = tempCanvas.toDataURL('image/jpeg');
                 
+                // Run OCR with Arabic + English
                 const result = await Tesseract.recognize(
                     visibleData,
                     'ara+eng',
-                    { logger: m => console.log(m) }
+                    { 
+                        logger: m => console.log(m),
+                        tessedit_pageseg_mode: '6'  // Assume uniform text block
+                    }
                 );
                 
-                extractedData = extractData(result.data.text);
+                rawOcrText = result.data.text;
+                console.log('Raw OCR:', rawOcrText);
+                
+                extractedData = extractAllData(rawOcrText);
                 showResults(extractedData);
                 
             } catch (error) {
@@ -867,85 +1076,14 @@
             document.getElementById('gallerySection').classList.add('active');
         }
 
-        // ===== DATA EXTRACTION =====
-        function extractData(text) {
-            console.log('Scanned:', text);
-            
-            const nationalityMap = {
-                'مصري': 'Egyptian', 'سعودي': 'Saudi', 'أردني': 'Jordanian',
-                'روسي': 'Russian', 'روسيا': 'Russian', 'RUSSIAN': 'Russian'
-            };
-            
-            return {
-                name: extractName(text) || 'Not detected',
-                nationality: extractNationality(text, nationalityMap) || 'Not detected',
-                passport: extractPassport(text) || 'Not detected',
-                birthdate: extractBirthdate(text) || 'Not detected'
-            };
-        }
-
-        function extractName(text) {
-            const patterns = [
-                /[A-Z][A-Z\s]+\/[A-Z][A-Z\s]+/g,
-                /[A-Z][a-z]+\s+[A-Z][a-z]+/g,
-                /[أ-ي]{3,}\s+[أ-ي]{3,}/g
-            ];
-            for (let p of patterns) {
-                const match = text.match(p);
-                if (match) return match[0];
-            }
-            return null;
-        }
-
-        function extractNationality(text, map) {
-            for (let [k, v] of Object.entries(map)) {
-                if (text.toUpperCase().includes(k.toUpperCase())) return v;
-            }
-            return null;
-        }
-
-        function extractPassport(text) {
-            const match = text.match(/[A-Z0-9]{6,9}/g);
-            return match ? match[0] : null;
-        }
-
-        function extractBirthdate(text) {
-            const match = text.match(/\d{2}[.\/]\d{2}[.\/]\d{4}/g);
-            return match ? match[0] : null;
-        }
-
-        function calculateAge(birthdate) {
-            if (!birthdate || birthdate === 'Not detected') return 'Not detected';
-            try {
-                const parts = birthdate.split(/[.\/]/);
-                if (parts.length !== 3) return 'Not detected';
-                
-                let d, m, y;
-                if (parts[2].length === 4) {
-                    [d, m, y] = parts;
-                } else {
-                    [m, d, y] = parts;
-                }
-                
-                const birth = new Date(y, m-1, d);
-                const today = new Date();
-                let age = today.getFullYear() - birth.getFullYear();
-                if (today < new Date(today.getFullYear(), birth.getMonth(), birth.getDate())) age--;
-                return age + ' years';
-            } catch {
-                return 'Not detected';
-            }
-        }
-
         // ===== RESULTS =====
         function showResults(data) {
-            const age = calculateAge(data.birthdate);
-            
             document.getElementById('resName').textContent = data.name;
             document.getElementById('resNationality').textContent = data.nationality;
             document.getElementById('resPassport').textContent = data.passport;
             document.getElementById('resBirthdate').textContent = data.birthdate;
-            document.getElementById('resAge').textContent = age;
+            document.getElementById('resAge').textContent = data.age;
+            document.getElementById('rawText').textContent = '📄 Raw OCR: ' + (rawOcrText.substring(0, 300) || 'No text detected');
             
             hideAllSections();
             document.getElementById('resultBox').style.display = 'block';
@@ -955,7 +1093,7 @@
         function calcManualAge() {
             const date = document.getElementById('manualBirthdate').value;
             if (date) {
-                const age = calculateAge(date.replace(/-/g, '.'));
+                const age = calculateAge(date);
                 document.getElementById('manualAge').value = age;
             }
         }
@@ -975,7 +1113,8 @@
                 name: name,
                 nationality: nationality,
                 passport: passport,
-                birthdate: birthdate
+                birthdate: birthdate,
+                age: calculateAge(birthdate)
             };
             
             showResults(extractedData);
@@ -998,12 +1137,19 @@
             if (stream) {
                 stream.getTracks().forEach(t => t.stop());
             }
-            // Reset form
+            // Reset forms
             document.getElementById('manualName').value = '';
             document.getElementById('manualNationality').value = '';
             document.getElementById('manualPassport').value = '';
             document.getElementById('manualBirthdate').value = '';
             document.getElementById('manualAge').value = '';
+            document.getElementById('activitySelect').value = '';
+            document.getElementById('activityDate').value = '';
+            document.getElementById('pickupTime').value = '';
+            document.getElementById('roomNumber').value = '';
+            document.getElementById('activityText').value = '';
+            
+            selectOption('scan');
         }
 
         function saveAll() {
@@ -1028,14 +1174,6 @@
             };
             
             console.log('Saving to GAS:', completeData);
-            
-            // Here you can send to GAS_URL
-            // fetch(GAS_URL, {
-            //     method: 'POST',
-            //     mode: 'no-cors',
-            //     headers: {'Content-Type': 'application/json'},
-            //     body: JSON.stringify(completeData)
-            // });
             
             showAlert('Data saved successfully!');
             setTimeout(() => window.location.href = 'SalesDashboard.html', 1500);
