@@ -331,7 +331,6 @@ function renderPricesTab(rows) {
 function renderTotalsTab(rows) {
   if(!tripGroups.length) return '<div class="no-data">لا توجد بيانات بنود</div>';
 
-  // استخدام العملات من sumCurrencies
   const currencies = sumCurrencies.map(s => s.currency);
   
   let trTrip = '<th class="th-date" rowspan="2">التاريخ</th>';
@@ -349,16 +348,16 @@ function renderTotalsTab(rows) {
   }
 
   let tbody = '';
-  // حساب الإجماليات لكل صف
+  // مصفوفة لتخزين إجمالي الكميات لكل بند
+  const grandQuantities = {};
+  
   for(const row of rows){
     const dateStr = fmtDate(row[0]);
     if(!dateStr) continue;
 
-    // حساب إجمالي اليوم من أعمدة المجاميع إذا وجدت، أو حسابها من البنود
     const dayTotals = {};
     for(const cur of currencies) dayTotals[cur] = 0;
     
-    // محاولة قراءة من أعمدة المجاميع أولاً
     let hasSumColumns = false;
     for(const sc of sumCurrencies) {
       if (sc.col >= 0 && row[sc.col] !== undefined) {
@@ -368,9 +367,7 @@ function renderTotalsTab(rows) {
       }
     }
     
-    // إذا لم توجد أعمدة مجاميع، قم بحساب الإجمالي من الأسعار × الكميات
     if (!hasSumColumns) {
-      // حساب الإجمالي من الأسعار والكميات
       const priceMap = {};
       for(const g of priceGroups){
         for(const it of g.items){
@@ -397,11 +394,16 @@ function renderTotalsTab(rows) {
       }
     }
 
+    // جمع الكميات للإجمالي الكلي
     let tds = '';
     for(const g of tripGroups){
       for(const it of g.items){
         const qty = parseInt(row[it.col]) || 0;
         tds += `<td style="${qty>0?'background:#f0fdf4;font-weight:700;color:#166534':'color:#cbd5e1'}">${qty>0?qty:'-'}</td>`;
+        
+        // ✅ إضافة إلى الإجمالي الكلي للكميات
+        const key = `${g.name}_${it.name}`;
+        grandQuantities[key] = (grandQuantities[key] || 0) + qty;
       }
     }
 
@@ -414,7 +416,7 @@ function renderTotalsTab(rows) {
     tbody += `<tr><td style="font-weight:600">${dateStr}</td>${tds}${sumTds}</tr>`;
   }
 
-  // حساب الإجمالي الكلي
+  // حساب الإجمالي الكلي للعملات
   const grandTotals = {};
   for(const cur of currencies) grandTotals[cur] = 0;
   
@@ -427,18 +429,15 @@ function renderTotalsTab(rows) {
     }
   }
   
-  // إذا لم توجد أعمدة مجاميع، قم بحساب الإجمالي الكلي من البنود
   let hasGrandTotal = false;
   for(const cur of currencies) {
     if (grandTotals[cur] > 0) hasGrandTotal = true;
   }
   
   if (!hasGrandTotal && rows.length > 0) {
-    // إعادة حساب الإجمالي الكلي من البنود والأسعار
     for(const cur of currencies) grandTotals[cur] = 0;
     
     for(const row of rows){
-      // حساب الأسعار لكل بند
       const priceMap = {};
       for(const g of priceGroups){
         for(const it of g.items){
@@ -466,27 +465,39 @@ function renderTotalsTab(rows) {
     }
   }
 
+  // بناء صف الإجمالي الكلي مع الكميات
   const totalCols = tripGroups.reduce((s,g)=>s+g.items.length,0);
-  let grandTds = '';
+  
+  // بناء خلايا الكميات للإجمالي الكلي
+  let grandQtyCells = '';
+  for(const g of tripGroups){
+    for(const it of g.items){
+      const key = `${g.name}_${it.name}`;
+      const totalQty = grandQuantities[key] || 0;
+      grandQtyCells += `<td style="background:#1a3260;color:var(--gold);font-size:13px"><strong>${totalQty > 0 ? totalQty : '-'}</strong></td>`;
+    }
+  }
+  
+  // بناء خلايا العملات للإجمالي الكلي
+  let grandCurrencyCells = '';
   for(const cur of currencies){
     const v = grandTotals[cur] || 0;
-    grandTds += `<td style="background:#1a3260;color:var(--gold);font-size:13px"><strong>${v > 0 ? v.toLocaleString() : '-'} ${cur}</strong></td>`;
+    grandCurrencyCells += `<td style="background:#1a3260;color:var(--gold);font-size:13px"><strong>${v > 0 ? v.toLocaleString() : '-'} ${cur}</strong></td>`;
   }
-  const emptyCell = '<td style="color:#94a3b8">-</td>';
-  tbody += `<tr class="total-row"><td><strong>الإجمالي الكلي</strong><\/td>${emptyCell.repeat(totalCols)}${grandTds}</tr>`;
+  
+  tbody += `<tr class="total-row"><td><strong>الإجمالي الكلي</strong><\/td>${grandQtyCells}${grandCurrencyCells}</tr>`;
 
   return `
     <div class="table-wrap">
       <table class="dt">
         <thead>
-          <tr class="row-trip">${trTrip}<tr>
+          <tr class="row-trip">${trTrip}</tr>
           <tr class="row-item">${trItem}</tr>
         </thead>
         <tbody>${tbody}</tbody>
       </table>
     </div>`;
 }
-
 function renderSummaryTab(rows) {
   if(!sumCurrencies.length) return '<div class="no-data">لا توجد بيانات كافية</div>';
   
