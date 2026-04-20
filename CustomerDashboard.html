@@ -17,9 +17,9 @@
     body{font-family:'Cairo',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
     .header{background:linear-gradient(135deg,var(--navy),var(--navy2));color:white;padding:13px 22px;
       display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:100;
-      box-shadow:0 2px 12px rgba(15,31,61,.25);}
+      box-shadow:0 2px 12px rgba(15,31,61,.25);flex-wrap:wrap;gap:10px;}
     .header h2{color:var(--gold);font-size:18px;font-weight:900;}
-    .header-right{display:flex;align-items:center;gap:8px;}
+    .header-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
     .user-chip{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:40px;
       padding:4px 13px;color:white;font-size:12px;font-weight:600;}
     .back-btn{background:transparent;border:2px solid rgba(255,255,255,.3);color:white;padding:4px 13px;
@@ -28,6 +28,9 @@
     .edit-btn{background:var(--gold);border:none;color:var(--navy);padding:4px 13px;
       border-radius:40px;cursor:pointer;font-weight:700;font-size:12px;font-family:'Cairo',sans-serif;transition:all .2s;margin-right:8px;}
     .edit-btn:hover{background:#e6b800;transform:translateY(-1px);}
+    .refresh-btn{background:var(--green);border:none;color:white;padding:4px 13px;
+      border-radius:40px;cursor:pointer;font-weight:700;font-size:12px;font-family:'Cairo',sans-serif;transition:all .2s;}
+    .refresh-btn:hover{background:#128a3a;transform:translateY(-1px);}
     .page{max-width:1400px;margin:0 auto;padding:20px 16px 50px;}
     .card{background:var(--card);border-radius:var(--radius);border:1px solid var(--border);
       box-shadow:var(--shadow);margin-bottom:18px;overflow:hidden;}
@@ -48,13 +51,11 @@
     .btn-navy{background:linear-gradient(135deg,var(--navy),var(--navy2));color:var(--gold);}
     .btn-green{background:var(--green);color:white;}
     .btn-gray{background:#f1f5f9;color:var(--text);}
-    /* Tabs */
     .tabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;border-bottom:2px solid var(--border);padding-bottom:10px;}
     .tab-btn{padding:8px 20px;background:#f0f4f8;border:none;border-radius:40px;font-size:13px;font-weight:700;
       font-family:'Cairo',sans-serif;cursor:pointer;color:var(--text-lt);transition:all .2s;}
     .tab-btn.active{background:linear-gradient(135deg,var(--navy),var(--navy2));color:var(--gold);}
     .tab-pane{display:none;} .tab-pane.active{display:block;}
-    /* Tables */
     .table-wrap{overflow-x:auto;max-height:70vh;}
     table.dt{width:100%;border-collapse:collapse;font-size:12px;}
     table.dt thead{position:sticky;top:0;z-index:10;}
@@ -96,6 +97,10 @@
     .info-bar{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px 14px;
       font-size:12px;color:#166534;margin-bottom:14px;}
     .customer-info-header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;}
+    .branch-selector{background:#f8fafc;border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin-bottom:16px;}
+    .branch-selector h4{font-size:13px;color:var(--navy);margin-bottom:10px;}
+    .branch-check-group{display:flex;flex-wrap:wrap;gap:12px;}
+    .branch-check-group label{display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;}
     @media(max-width:640px){
       table.dt{font-size:10px;}
       table.dt thead tr.row-trip th,table.dt thead tr.row-item th,table.dt tbody td{padding:5px 4px;}
@@ -109,7 +114,8 @@
   <h2>🏢 لوحة العميل</h2>
   <div class="header-right">
     <span class="user-chip" id="userChip">...</span>
-      <button class="back-btn" onclick="goBackToDashboard()">← خروج</button>
+    <button class="refresh-btn" id="refreshDataBtn" onclick="refreshCustomerData()">🔄 تحديث البيانات</button>
+    <button class="back-btn" onclick="goBackToDashboard()">← خروج</button>
   </div>
 </div>
 
@@ -138,15 +144,22 @@ let sheetData = [];
 let tripGroups = [];
 let priceGroups = [];
 let sumCurrencies = [];
+let availableBranches = [];
+let selectedBranches = [];
 
-// خريطة الصفحات حسب نوع المستخدم
+// خريطة الصفحات حسب نوع المستخدم للخروج
 const DASHBOARDS = {
   Admin: 'Dashboard.html',
   Owner: 'OwnerDashboard.html',
   Sales: 'SalesDashboard.html',
   Accountant: 'AccountantDashboard.html',
+  AccountantManager: 'AccountantDashboard.html',
+  FinancialManager: 'AccountantDashboard.html',
   Customer: 'CustomerDashboard.html'
 };
+
+// المستخدمون غير المحدودين (يمكنهم اختيار فروع متعددة)
+const UNLIMITED_TYPES = ['Admin', 'Owner', 'AccountantManager', 'FinancialManager'];
 
 // ====================== اتصال JSONP ======================
 function gas(action, params={}) {
@@ -167,20 +180,6 @@ function gas(action, params={}) {
 }
 
 // ====================== دوال مساعدة ======================
-function doLogout(){
-  let returnUrl = sessionStorage.getItem('returnUrl');
-  if (!returnUrl && document.referrer) {
-    returnUrl = document.referrer;
-  }
-  if (!returnUrl) {
-    const userType = loggedInUser?.type || 'Customer';
-    const dashboardPage = DASHBOARDS[userType] || 'Dashboard.html';
-    returnUrl = dashboardPage;
-  }
-  sessionStorage.removeItem('returnUrl');
-  location.href = returnUrl;
-}
-
 function showAlert(msg,icon){
   document.getElementById('alertIcon').textContent=icon||'ℹ️';
   document.getElementById('alertMsg').textContent=msg;
@@ -231,36 +230,26 @@ function parseSheetStructure() {
   priceGroups = [];
   sumCurrencies = [];
 
-  // البحث عن أعمدة المجاميع من الصف الثاني
   for (let j = 0; j < row2.length; j++) {
     const header = (row2[j] || '').toString().trim();
-    if (header.startsWith('المجموع') || header.startsWith('Total')) {
-      let currency = header.replace('المجموع ', '').replace('Total ', '').trim();
+    if (header.startsWith('Total') || header.startsWith('المجموع')) {
+      let currency = header.replace('Total ', '').replace('المجموع ', '').trim();
       if (currency === '$') currency = 'USD';
       if (currency === '€') currency = 'EUR';
       if (currency === '£') currency = 'GBP';
-      if (currency) {
-        sumCurrencies.push({ col: j, currency: currency });
-      }
+      if (currency) sumCurrencies.push({ col: j, currency: currency });
     }
   }
 
-  // إذا لم يتم العثور على أعمدة مجاميع، استخدم العملات الافتراضية
   if (sumCurrencies.length === 0) {
-    sumCurrencies = [
-      { col: -1, currency: 'LE' },
-      { col: -1, currency: 'USD' },
-      { col: -1, currency: 'EUR' },
-      { col: -1, currency: 'GBP' }
-    ];
+    sumCurrencies = [{ col: -1, currency: 'LE' }];
   }
 
-  // تجميع الرحلات والبنود
   let curTrip = null;
   for (let j = 1; j < 78 && j < row2.length; j++) {
     const v2 = (row2[j] || '').toString().trim();
     const v3 = (row3[j] || '').toString().trim();
-    if (v2 && v2 !== '' && !v2.startsWith('المجموع') && !v2.startsWith('Total')) {
+    if (v2 && v2 !== '' && !v2.startsWith('Total') && !v2.startsWith('المجموع')) {
       curTrip = { name: v2, items: [] };
       tripGroups.push(curTrip);
     }
@@ -269,7 +258,6 @@ function parseSheetStructure() {
     }
   }
 
-  // تجميع أعمدة الأسعار
   let curPriceTrip = null;
   for (let j = 80; j < lastCol; j++) {
     const v2 = (row2[j] || '').toString().trim();
@@ -286,21 +274,16 @@ function parseSheetStructure() {
   }
 }
 
-// ====================== تصيير الجداول ======================
+// ====================== دوال العرض (مختصرة) ======================
 function renderPricesTab(rows) {
   if(!priceGroups.length) return '<div class="no-data">لا توجد بيانات أسعار</div>';
-
   let trTrip = '<th class="th-date" rowspan="2">التاريخ</th>';
   let trItem = '';
-
   for(const g of priceGroups){
     const span = g.items.length;
     trTrip += `<th colspan="${span}" style="text-align:center">${g.name}</th>`;
-    for(const it of g.items){
-      trItem += `<th>${it.name}</th>`;
-    }
+    for(const it of g.items) trItem += `<th>${it.name}</th>`;
   }
-
   let tbody='';
   for(const row of rows){
     const dateStr=fmtDate(row[0]);
@@ -315,160 +298,70 @@ function renderPricesTab(rows) {
     }
     tbody+=`<tr><td style="font-weight:600">${dateStr}</td>${tds}</tr>`;
   }
-
-  return `
-    <div class="table-wrap">
-      <table class="dt">
-        <thead>
-          <tr class="row-trip">${trTrip}</tr>
-          <tr class="row-item">${trItem}</tr>
-        </thead>
-        <tbody>${tbody||'<tr><td colspan="100" class="no-data">لا توجد بيانات<\/td></tr>'}</tbody>
-      </table>
-    </div>`;
+  return `<div class="table-wrap"><table class="dt"><thead><tr class="row-trip">${trTrip}<\/tr><tr class="row-item">${trItem}<\/tr><\/thead><tbody>${tbody||'<tr><td colspan="100" class="no-data">لا توجد بيانات<\/td><\/tr>'}<\/tbody><\/table><\/div>`;
 }
 
 function renderTotalsTab(rows) {
   if(!tripGroups.length) return '<div class="no-data">لا توجد بيانات بنود</div>';
-
-  const currencies = sumCurrencies.map(s => s.currency);
-  
   let trTrip = '<th class="th-date" rowspan="2">التاريخ</th>';
   let trItem = '';
-
   for(const g of tripGroups){
     const span = g.items.length;
     trTrip += `<th colspan="${span}" style="text-align:center">${g.name}</th>`;
-    for(const it of g.items){
-      trItem += `<th>${it.name}</th>`;
-    }
+    for(const it of g.items) trItem += `<th>${it.name}</th>`;
   }
-  for(const cur of currencies){
-    trTrip += `<th class="th-sum" rowspan="2">المجموع<br><span class="${curClass(cur)}">${cur}</span></th>`;
+  for(const cur of sumCurrencies){
+    trTrip += `<th class="th-sum" rowspan="2">المجموع<br><span class="${curClass(cur.currency)}">${cur.currency}</span></th>`;
   }
-
   let tbody = '';
-  // مصفوفة لتخزين إجمالي الكميات لكل بند
   const grandQuantities = {};
-  
   for(const row of rows){
     const dateStr = fmtDate(row[0]);
     if(!dateStr) continue;
-
     const dayTotals = {};
-    for(const cur of currencies) dayTotals[cur] = 0;
-    
+    for(const sc of sumCurrencies) dayTotals[sc.currency] = 0;
     let hasSumColumns = false;
     for(const sc of sumCurrencies) {
-      if (sc.col >= 0 && row[sc.col] !== undefined) {
-        const val = parseFloat(row[sc.col]) || 0;
-        dayTotals[sc.currency] = val;
-        if (val > 0) hasSumColumns = true;
-      }
+      if (sc.col >= 0 && row[sc.col] !== undefined && parseFloat(row[sc.col]) > 0) hasSumColumns = true;
     }
-    
     if (!hasSumColumns) {
       const priceMap = {};
       for(const g of priceGroups){
         for(const it of g.items){
           const cell = (row[it.col] || '').toString().trim();
           const {price, currency} = parseCell(cell);
-          if (price > 0) {
-            priceMap[`${g.name}_${it.name}`] = { price, currency };
-          }
+          if (price > 0) priceMap[`${g.name}_${it.name}`] = { price, currency };
         }
       }
-      
       for(const g of tripGroups){
         for(const it of g.items){
           const qty = parseInt(row[it.col]) || 0;
           if (qty > 0) {
             const priceKey = `${g.name}_${it.name}`;
             const priceInfo = priceMap[priceKey];
-            if (priceInfo) {
-              const total = priceInfo.price * qty;
-              dayTotals[priceInfo.currency] = (dayTotals[priceInfo.currency] || 0) + total;
-            }
+            if (priceInfo) dayTotals[priceInfo.currency] = (dayTotals[priceInfo.currency] || 0) + (priceInfo.price * qty);
           }
         }
       }
+    } else {
+      for(const sc of sumCurrencies) dayTotals[sc.currency] = parseFloat(row[sc.col]) || 0;
     }
-
-    // جمع الكميات للإجمالي الكلي
     let tds = '';
     for(const g of tripGroups){
       for(const it of g.items){
         const qty = parseInt(row[it.col]) || 0;
         tds += `<td style="${qty>0?'background:#f0fdf4;font-weight:700;color:#166534':'color:#cbd5e1'}">${qty>0?qty:'-'}</td>`;
-        
-        // ✅ إضافة إلى الإجمالي الكلي للكميات
         const key = `${g.name}_${it.name}`;
         grandQuantities[key] = (grandQuantities[key] || 0) + qty;
       }
     }
-
     let sumTds = '';
-    for(const cur of currencies){
-      const val = dayTotals[cur] || 0;
-      sumTds += `<td style="background:#e6f0ff;font-weight:700">${val>0?`${val.toLocaleString()} <span class="${curClass(cur)}">${cur}</span>`:'-'}</td>`;
+    for(const cur of sumCurrencies){
+      const val = dayTotals[cur.currency] || 0;
+      sumTds += `<td style="background:#e6f0ff;font-weight:700">${val>0?`${Math.round(val).toLocaleString()} <span class="${curClass(cur.currency)}">${cur.currency}</span>`:'-'}</td>`;
     }
-
-    tbody += `<tr><td style="font-weight:600">${dateStr}</td>${tds}${sumTds}</tr>`;
+    tbody += `<td><td style="font-weight:600">${dateStr}</td>${tds}${sumTds}</tr>`;
   }
-
-  // حساب الإجمالي الكلي للعملات
-  const grandTotals = {};
-  for(const cur of currencies) grandTotals[cur] = 0;
-  
-  for(const row of rows){
-    for(const sc of sumCurrencies) {
-      if (sc.col >= 0 && row[sc.col] !== undefined) {
-        const val = parseFloat(row[sc.col]) || 0;
-        grandTotals[sc.currency] += val;
-      }
-    }
-  }
-  
-  let hasGrandTotal = false;
-  for(const cur of currencies) {
-    if (grandTotals[cur] > 0) hasGrandTotal = true;
-  }
-  
-  if (!hasGrandTotal && rows.length > 0) {
-    for(const cur of currencies) grandTotals[cur] = 0;
-    
-    for(const row of rows){
-      const priceMap = {};
-      for(const g of priceGroups){
-        for(const it of g.items){
-          const cell = (row[it.col] || '').toString().trim();
-          const {price, currency} = parseCell(cell);
-          if (price > 0) {
-            priceMap[`${g.name}_${it.name}`] = { price, currency };
-          }
-        }
-      }
-      
-      for(const g of tripGroups){
-        for(const it of g.items){
-          const qty = parseInt(row[it.col]) || 0;
-          if (qty > 0) {
-            const priceKey = `${g.name}_${it.name}`;
-            const priceInfo = priceMap[priceKey];
-            if (priceInfo) {
-              const total = priceInfo.price * qty;
-              grandTotals[priceInfo.currency] += total;
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // بناء صف الإجمالي الكلي مع الكميات
-  const totalCols = tripGroups.reduce((s,g)=>s+g.items.length,0);
-  
-  // بناء خلايا الكميات للإجمالي الكلي
   let grandQtyCells = '';
   for(const g of tripGroups){
     for(const it of g.items){
@@ -477,102 +370,87 @@ function renderTotalsTab(rows) {
       grandQtyCells += `<td style="background:#1a3260;color:var(--gold);font-size:13px"><strong>${totalQty > 0 ? totalQty : '-'}</strong></td>`;
     }
   }
-  
-  // بناء خلايا العملات للإجمالي الكلي
   let grandCurrencyCells = '';
-  for(const cur of currencies){
-    const v = grandTotals[cur] || 0;
-    grandCurrencyCells += `<td style="background:#1a3260;color:var(--gold);font-size:13px"><strong>${v > 0 ? v.toLocaleString() : '-'} ${cur}</strong></td>`;
-  }
-  
-  tbody += `<tr class="total-row"><td><strong>الإجمالي الكلي</strong><\/td>${grandQtyCells}${grandCurrencyCells}</tr>`;
-
-  return `
-    <div class="table-wrap">
-      <table class="dt">
-        <thead>
-          <tr class="row-trip">${trTrip}</tr>
-          <tr class="row-item">${trItem}</tr>
-        </thead>
-        <tbody>${tbody}</tbody>
-      </table>
-    </div>`;
-}
-function renderSummaryTab(rows) {
-  if(!sumCurrencies.length) return '<div class="no-data">لا توجد بيانات كافية</div>';
-  
-  const totals = {};
-  for(const sc of sumCurrencies){
-    totals[sc.currency] = 0;
-  }
-  
+  const grandTotals = {};
+  for(const cur of sumCurrencies) grandTotals[cur.currency] = 0;
   for(const row of rows){
-    for(const sc of sumCurrencies){
-      if (sc.col >= 0 && row[sc.col] !== undefined) {
-        const val = parseFloat(row[sc.col]) || 0;
-        totals[sc.currency] += val;
-      }
-    }
+    for(const sc of sumCurrencies) grandTotals[sc.currency] += parseFloat(row[sc.col]) || 0;
   }
-  
-  // إذا لم توجد بيانات في أعمدة المجاميع، حاول الحساب من البنود
-  let hasTotals = false;
-  for(const cur in totals) if (totals[cur] > 0) hasTotals = true;
-  
-  if (!hasTotals && rows.length > 0) {
-    for(const cur in totals) totals[cur] = 0;
-    
-    for(const row of rows){
-      const priceMap = {};
-      for(const g of priceGroups){
-        for(const it of g.items){
-          const cell = (row[it.col] || '').toString().trim();
-          const {price, currency} = parseCell(cell);
-          if (price > 0) {
-            priceMap[`${g.name}_${it.name}`] = { price, currency };
-          }
-        }
-      }
-      
-      for(const g of tripGroups){
-        for(const it of g.items){
-          const qty = parseInt(row[it.col]) || 0;
-          if (qty > 0) {
-            const priceKey = `${g.name}_${it.name}`;
-            const priceInfo = priceMap[priceKey];
-            if (priceInfo) {
-              const total = priceInfo.price * qty;
-              totals[priceInfo.currency] += total;
-            }
-          }
-        }
-      }
-    }
+  for(const cur of sumCurrencies){
+    const v = grandTotals[cur.currency] || 0;
+    grandCurrencyCells += `<td style="background:#1a3260;color:var(--gold);font-size:13px"><strong>${v > 0 ? Math.round(v).toLocaleString() : '-'} ${cur.currency}</strong></td>`;
   }
-  
+  tbody += `<tr class="total-row"><td><strong>الإجمالي الكلي</strong><\/td>${grandQtyCells}${grandCurrencyCells}<\/tr>`;
+  return `<div class="table-wrap"><table class="dt"><thead><tr class="row-trip">${trTrip}<\/tr><tr class="row-item">${trItem}<\/tr><\/thead><tbody>${tbody}<\/tbody><\/table><\/div>`;
+}
+
+function renderSummaryTab(rows) {
+  const totals = {};
+  for(const sc of sumCurrencies) totals[sc.currency] = 0;
+  for(const row of rows){
+    for(const sc of sumCurrencies) totals[sc.currency] += parseFloat(row[sc.col]) || 0;
+  }
   const activeCurrencies = Object.keys(totals).filter(cur => totals[cur] > 0);
   if(activeCurrencies.length === 0) return '<div class="no-data">لا توجد بيانات كافية</div>';
-  
   let html = '<div class="summary-wrap">';
   for(const cur of activeCurrencies){
     const val = totals[cur];
-    let curName = cur;
-    let symbol = '';
+    let curName = cur, symbol = '';
     if(cur === 'USD') { curName = 'دولار أمريكي'; symbol = '$'; }
     else if(cur === 'EUR') { curName = 'يورو'; symbol = '€'; }
     else if(cur === 'GBP') { curName = 'جنيه إسترليني'; symbol = '£'; }
     else if(cur === 'LE') { curName = 'جنيه مصري'; symbol = 'ج.م'; }
-    
-    html += `<div class="total-card">
-      <div>
-        <div class="tc-cur">${curName}</div>
-        <div class="tc-val">${val.toLocaleString()} ${symbol || cur}</div>
-      </div>
-      <span class="badge-cur cur-${cur}" style="font-size:20px;padding:6px 12px;">${cur}</span>
-    </div>`;
+    html += `<div class="total-card"><div><div class="tc-cur">${curName}</div><div class="tc-val">${Math.round(val).toLocaleString()} ${symbol || cur}</div></div><span class="badge-cur cur-${cur}" style="font-size:20px;padding:6px 12px;">${cur}</span></div>`;
   }
   html += '</div>';
   return html;
+}
+
+// ====================== تحديث البيانات من Invoices ======================
+async function refreshCustomerData() {
+  if(!customerAccount || !customerAccount.customerId) {
+    showAlert('لا يوجد حساب عميل محدد', '⚠️');
+    return;
+  }
+  
+  showAlert('جاري تحديث البيانات من الفواتير...', '🔄');
+  
+  try {
+    const isUnlimited = UNLIMITED_TYPES.includes(loggedInUser?.type);
+    let branchesParam = [];
+    
+    if(isUnlimited && selectedBranches.length > 0) {
+      branchesParam = selectedBranches;
+    } else if(!isUnlimited && loggedInUser?.branchName) {
+      branchesParam = [loggedInUser.branchName];
+    }
+    
+    const result = await gas('collectAndUpdateCustomerSheet', {
+      customerId: customerAccount.customerId,
+      userId: loggedInUser?.id || '',
+      selectedBranches: JSON.stringify(branchesParam)
+    });
+    
+    if(result && result.success) {
+      showAlert(`✅ تم تحديث البيانات بنجاح!\nتم تحديث ${result.updatedDates || 0} تاريخ`, '✅');
+      await loadSheetDataOnly(); // إعادة تحميل بيانات الشيت فقط
+      renderPage('', '');
+    } else {
+      showAlert('❌ فشل التحديث: ' + (result?.message || 'خطأ غير معروف'), '❌');
+    }
+  } catch(e) {
+    console.error('refreshCustomerData error:', e);
+    showAlert('خطأ في التحديث: ' + e.message, '❌');
+  }
+}
+
+async function loadSheetDataOnly() {
+  const sheetName = customerAccount.customerName + '_' + customerAccount.category + '_' + customerAccount.customerType;
+  const res = await gas('getAccountSheetData', {sheetName});
+  if(res?.success && Array.isArray(res.data)) {
+    sheetData = res.data;
+    parseSheetStructure();
+  }
 }
 
 // ====================== التصيير الرئيسي ======================
@@ -601,7 +479,26 @@ function renderPage(startISO, endISO) {
   }
 
   const acc = customerAccount;
-  const isManager = (loggedInUser?.type === 'Accountant' || loggedInUser?.type === 'Owner' || loggedInUser?.type === 'Admin');
+  const isUnlimited = UNLIMITED_TYPES.includes(loggedInUser?.type);
+  const isManager = (loggedInUser?.type === 'Accountant' || loggedInUser?.type === 'Owner' || loggedInUser?.type === 'Admin' || loggedInUser?.type === 'AccountantManager' || loggedInUser?.type === 'FinancialManager');
+  
+  let branchSelectorHtml = '';
+  if(isUnlimited && availableBranches.length > 0) {
+    let checkboxes = '';
+    availableBranches.forEach(branch => {
+      const isChecked = selectedBranches.includes(branch.name) ? 'checked' : '';
+      checkboxes += `<label><input type="checkbox" class="branch-check" value="${branch.name}" ${isChecked} onchange="updateSelectedBranches()"> ${branch.name}</label>`;
+    });
+    branchSelectorHtml = `
+      <div class="branch-selector">
+        <h4>🏢 اختيار الفروع (يمكنك اختيار أكثر من فرع)</h4>
+        <div class="branch-check-group" id="branchCheckGroup">
+          ${checkboxes}
+        </div>
+        <button class="btn btn-navy" style="margin-top:10px;padding:4px 12px;font-size:11px;" onclick="applyBranchFilterAndRefresh()">تطبيق الفروع وتحديث البيانات</button>
+      </div>
+    `;
+  }
   
   const infoBar = acc ? `
     <div class="customer-info-header">
@@ -623,6 +520,7 @@ function renderPage(startISO, endISO) {
   ` : '';
 
   document.getElementById('mainContent').innerHTML=`
+    ${branchSelectorHtml}
     ${infoBar}
     <div class="card">
       <div class="card-head"><span class="ch-icon">🔍</span><h3>فلترة حسب التاريخ</h3></div>
@@ -664,6 +562,16 @@ function renderPage(startISO, endISO) {
     </div>`;
 }
 
+function updateSelectedBranches() {
+  const checkboxes = document.querySelectorAll('.branch-check');
+  selectedBranches = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.value);
+}
+
+async function applyBranchFilterAndRefresh() {
+  updateSelectedBranches();
+  await refreshCustomerData();
+}
+
 function applyFilter(){
   const s=document.getElementById('fStart')?.value||'';
   const e=document.getElementById('fEnd')?.value||'';
@@ -676,12 +584,10 @@ function resetFilter(){
   renderPage('', ''); 
 }
 
-// ✅ تبويب بسيط - فقط عرض البيانات المخزنة، لا تحديثات
 function switchTab(name, event){
   const btns = document.querySelectorAll('.tab-btn');
   btns.forEach(b => b.classList.remove('active'));
   if(event?.target) event.target.classList.add('active');
-  
   ['prices','totals','summary'].forEach(t => {
     const el = document.getElementById('tab'+t.charAt(0).toUpperCase()+t.slice(1));
     if(el) el.classList[t===name?'add':'remove']('active');
@@ -702,16 +608,31 @@ function addNewInvoice() {
     showAlert('لا يمكن إضافة فاتورة لهذا العميل', '⚠️');
     return;
   }
-  
   const returnUrl = window.location.href;
   sessionStorage.setItem('returnUrl', returnUrl);
-  
   const userParam = encodeURIComponent(JSON.stringify(loggedInUser));
-  
   location.href = `CustomerInvoice.html?customer=${encodeURIComponent(customerAccount.customerName)}&returnUrl=${encodeURIComponent(returnUrl)}&user=${userParam}`;
 }
 
-// ====================== تحميل البيانات (مرة واحدة فقط) ======================
+function goBackToDashboard() {
+  const userType = loggedInUser?.type || currentUser?.type || 'Accountant';
+  if (userType === 'Customer') {
+    location.href = 'index.html';
+    return;
+  }
+  let returnUrl = sessionStorage.getItem('returnUrl');
+  if (!returnUrl && document.referrer) returnUrl = document.referrer;
+  if (returnUrl && returnUrl.includes('ManageSupplierCustomers.html')) {
+    const userParam = encodeURIComponent(JSON.stringify(loggedInUser || currentUser));
+    location.href = `ManageSupplierCustomers.html?user=${userParam}`;
+    return;
+  }
+  const dashboardPage = DASHBOARDS[userType] || 'Dashboard.html';
+  const userParam = encodeURIComponent(JSON.stringify(loggedInUser || currentUser));
+  location.href = `${dashboardPage}?user=${userParam}`;
+}
+
+// ====================== تحميل البيانات ======================
 async function loadAll(){
   document.getElementById('mainContent').innerHTML='<div class="loader"><div class="spinner"></div>جاري جلب الحساب...</div>';
   try{
@@ -732,6 +653,20 @@ async function loadAll(){
       return;
     }
 
+    // جلب الفروع للمستخدمين غير المحدودين
+    const isUnlimited = UNLIMITED_TYPES.includes(loggedInUser?.type);
+    if(isUnlimited && loggedInUser?.centerId) {
+      const branchesRes = await gas('getBranchesByCenterId', { centerId: loggedInUser.centerId });
+      if(Array.isArray(branchesRes)) {
+        availableBranches = branchesRes;
+        if(availableBranches.length > 0 && selectedBranches.length === 0) {
+          selectedBranches = [availableBranches[0].name];
+        }
+      }
+    } else if(!isUnlimited && loggedInUser?.branchName) {
+      selectedBranches = [loggedInUser.branchName];
+    }
+
     const sheetName = customerAccount.customerName + '_' + customerAccount.category + '_' + customerAccount.customerType;
     document.getElementById('mainContent').innerHTML=`<div class="loader"><div class="spinner"></div>جاري جلب شيت "${sheetName}"...</div>`;
 
@@ -741,9 +676,9 @@ async function loadAll(){
       return;
     }
     sheetData = res.data;
-
-    // ✅ لا توجد تحديثات - فقط عرض البيانات الموجودة
-    renderPage('','');
+    
+    // تجميع البيانات من Invoices تلقائياً
+    await refreshCustomerData();
 
   } catch(e){
     console.error('loadAll error:',e);
@@ -782,40 +717,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadAll();
 });
 
-function goBackToDashboard() {
-  const userType = loggedInUser?.type || currentUser?.type || 'Accountant';
-  
-  if (userType === 'Customer') {
-    location.href = 'index.html';
-    return;
-  }
-  
-  let returnUrl = sessionStorage.getItem('returnUrl');
-  
-  if (!returnUrl && document.referrer) {
-    returnUrl = document.referrer;
-  }
-  
-  if (returnUrl && returnUrl.includes('ManageSupplierCustomers.html')) {
-    const userParam = encodeURIComponent(JSON.stringify(loggedInUser || currentUser));
-    location.href = `ManageSupplierCustomers.html?user=${userParam}`;
-    return;
-  }
-  
-  const DASHBOARDS = {
-    Admin: 'Dashboard.html',
-    Owner: 'OwnerDashboard.html',
-    Sales: 'SalesDashboard.html',
-    Accountant: 'AccountantDashboard.html'
-  };
-  
-  const dashboardPage = DASHBOARDS[userType] || 'Dashboard.html';
-  const userParam = encodeURIComponent(JSON.stringify(loggedInUser || currentUser));
-  location.href = `${dashboardPage}?user=${userParam}`;
-}
-
-// ====================== دوال عامة ======================
-window.doLogout = doLogout;
+window.doLogout = goBackToDashboard;
 window.closeAlert = closeAlert;
 window.switchTab = switchTab;
 window.applyFilter = applyFilter;
@@ -824,6 +726,9 @@ window.loadAll = loadAll;
 window.openEditCustomer = openEditCustomer;
 window.goBackToDashboard = goBackToDashboard;
 window.addNewInvoice = addNewInvoice;
+window.refreshCustomerData = refreshCustomerData;
+window.updateSelectedBranches = updateSelectedBranches;
+window.applyBranchFilterAndRefresh = applyBranchFilterAndRefresh;
 </script>
 </body>
 </html>
