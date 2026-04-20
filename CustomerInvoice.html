@@ -92,6 +92,9 @@
     .ck-set{background:linear-gradient(135deg,var(--green),#15803d);color:white;}
     @keyframes pop{from{transform:scale(.8);opacity:0}to{transform:scale(1);opacity:1}}
     @media(max-width:640px){.ck-svg-wrap{width:200px;height:200px;}.ck-time-big{font-size:44px;}}
+    .error-box{background:#fee2e2;border:1px solid var(--red);border-radius:12px;padding:20px;text-align:center;margin:20px;}
+    .error-box .err-icon{font-size:48px;margin-bottom:12px;}
+    .error-box .err-msg{color:var(--red);font-size:14px;margin-bottom:16px;}
   </style>
 </head>
 <body>
@@ -154,7 +157,6 @@
 
 <script>
 const GAS_URL='https://script.google.com/macros/s/AKfycbzZqrtAc8UBauMrzriGi7Q18rni4JeLFI-rqLSkctRjT3Qvx3rtblQiBXpDvu2BJbJx/exec';
-
 let currentUser = null;
 let selectedCustomer = null;
 let allCustomers = [];
@@ -164,7 +166,7 @@ let allNationalities = [];
 let allHotels = [];
 let currentTripItems = [];
 let activitiesQuantities = [];
-let returnUrl = null; // رابط العودة
+let returnUrl = null;
 
 // ====================== الساعة ======================
 let ckHour = null, ckMin = null, ckMode = 'hour';
@@ -387,27 +389,43 @@ function formatActivitiesText(items, quantities) {
 // ====================== جلب بيانات العميل ======================
 async function loadCustomerData(customerNameFromUrl) {
   try {
+    console.log('🟢 loadCustomerData - بدء التحميل للعميل:', customerNameFromUrl);
     const res = await gas('getAllSuppliersCustomers');
+    console.log('🟢 getAllSuppliersCustomers response:', res);
     allCustomers = Array.isArray(res) ? res.filter(c => c.customerType === 'Customer') : [];
+    console.log('🟢 عدد العملاء:', allCustomers.length);
     
-    // إذا كان هناك اسم عميل من رابط الصفحة
     if (customerNameFromUrl) {
       selectedCustomer = allCustomers.find(c => c.customerName === customerNameFromUrl);
+      console.log('🟢 البحث عن عميل بالاسم:', customerNameFromUrl, 'النتيجة:', selectedCustomer);
     }
-    // إذا لم يتم العثور وكان المستخدم من نوع Customer
     else if (currentUser?.type === 'Customer') {
       selectedCustomer = allCustomers.find(c => 
         c.loginEmail === currentUser?.email || c.customerName === currentUser?.name
       );
+      console.log('🟢 البحث عن عميل للمستخدم الحالي:', currentUser?.name, 'النتيجة:', selectedCustomer);
     }
     
     if (selectedCustomer) {
       customerTrips = selectedCustomer.assignedTrips ? 
         selectedCustomer.assignedTrips.split('|').filter(Boolean) : [];
+      console.log('🟢 الرحلات الأصلية للعميل:', customerTrips);
+      
+      // ✅ معالجة Submarine: إذا كان النشاط من نوع Submarine، نعرض اسم رحلة واحد فقط
+      if (selectedCustomer.category === 'Submarine') {
+        console.log('🟢 عميل من نوع Submarine - تحويل الرحلات إلى اسم واحد');
+        if (customerTrips.length > 0) {
+          customerTrips = ['Submarine'];
+          console.log('🟢 الرحلات بعد التحويل:', customerTrips);
+        }
+      }
+    } else {
+      console.warn('⚠️ لم يتم العثور على العميل:', customerNameFromUrl);
     }
     return true;
   } catch (e) {
-    console.error('loadCustomerData error:', e);
+    console.error('❌ loadCustomerData error:', e);
+    showAlert('فشل تحميل بيانات العميل: ' + e.message, '❌');
     return false;
   }
 }
@@ -417,9 +435,10 @@ async function loadTripsData() {
   try {
     const res = await gas('getAllTrips');
     allTrips = Array.isArray(res) ? res : [];
+    console.log('🟢 getAllTrips response:', allTrips.length, 'رحلة');
     return true;
   } catch (e) {
-    console.error('loadTripsData error:', e);
+    console.error('❌ loadTripsData error:', e);
     return false;
   }
 }
@@ -433,8 +452,9 @@ async function loadLookups() {
     ]);
     allNationalities = Array.isArray(nationalitiesRes) ? nationalitiesRes : [];
     allHotels = Array.isArray(hotelsRes) ? hotelsRes : [];
+    console.log('🟢 الجنسيات:', allNationalities.length, 'فنادق:', allHotels.length);
   } catch (e) {
-    console.error('loadLookups error:', e);
+    console.error('❌ loadLookups error:', e);
   }
 }
 
@@ -449,14 +469,16 @@ function onCustomerChange() {
   
   selectedCustomer = allCustomers.find(c => c.customerName === customerName);
   if (selectedCustomer) {
-  customerTrips = selectedCustomer.assignedTrips ? 
-    selectedCustomer.assignedTrips.split('|').filter(Boolean) : [];
-  
-  // ✅ إذا كان العميل من نوع Submarine، نعرض اسم رحلة واحد فقط
-  if (selectedCustomer.category === 'Submarine') {
-    if (customerTrips.length > 0) {
-      customerTrips = ['Submarine'];  // اسم موحد بدلاً من الأسماء الأربعة
+    customerTrips = selectedCustomer.assignedTrips ? 
+      selectedCustomer.assignedTrips.split('|').filter(Boolean) : [];
+    
+    // ✅ معالجة Submarine
+    if (selectedCustomer.category === 'Submarine') {
+      if (customerTrips.length > 0) {
+        customerTrips = ['Submarine'];
+      }
     }
+    renderTripsList();
   }
 }
 
@@ -468,22 +490,20 @@ function renderTripsList() {
   let tripsList = [];
   if (selectedCustomer && selectedCustomer.customerName) {
     tripsList = customerTrips;
-    
-    // ✅ تأكيد لـ Submarine
-    if (selectedCustomer.category === 'Submarine' && tripsList.length === 1 && tripsList[0] === 'Submarine') {
-      // نستخدم القائمة كما هي (اسم واحد)
-    }
+    console.log('🟢 renderTripsList - customerTrips:', tripsList);
   } else {
     tripsList = allTrips.map(t => t.name || t).filter(Boolean);
   }
   
   tripsSelect.innerHTML = '<option value="">-- اختر الرحلة --</option>' +
     tripsList.map(t => `<option value="${t}">${t}</option>`).join('');
+  console.log('🟢 renderTripsList - تم عرض', tripsList.length, 'رحلات');
 }
 
 // ====================== عند تغيير الرحلة ======================
 async function onTripChange() {
   const tripName = document.getElementById('tripName')?.value;
+  console.log('🟢 onTripChange - الرحلة المختارة:', tripName);
   if (!tripName) {
     document.getElementById('tripItemsContainer').innerHTML = '<div class="no-data" style="padding:20px">اختر رحلة لعرض بنودها</div>';
     return;
@@ -491,7 +511,8 @@ async function onTripChange() {
   
   try {
     const tripData = await gas('getTripData', { tripName, currency: '$' });
-    if (tripData && tripData.items) {
+    console.log('🟢 getTripData response:', tripData);
+    if (tripData && tripData.items && tripData.items.length > 0) {
       currentTripItems = tripData.items;
       activitiesQuantities = new Array(currentTripItems.length).fill(0);
       renderTripTable();
@@ -501,6 +522,7 @@ async function onTripChange() {
       document.getElementById('tripItemsContainer').innerHTML = '<div class="no-data" style="padding:20px">لا توجد بيانات للرحلة</div>';
     }
   } catch (e) {
+    console.error('❌ onTripChange error:', e);
     showAlert('خطأ في تحميل بيانات الرحلة: ' + e.message, '❌');
   }
 }
@@ -514,9 +536,9 @@ function renderTripTable() {
   let rows = '';
   for (let i = 0; i < currentTripItems.length; i++) {
     const item = currentTripItems[i];
-    rows += <tr><td style="font-weight:600;text-align:right">${item}</td>
-              <td><input type="number" id="qty_${i}" min="0" placeholder="0" value="${activitiesQuantities[i] || ''}" oninput="updateActivitiesText()" class="fc" style="width:80px"></td>
-            `;
+    rows += `<tr><td style="font-weight:600;text-align:right">${item}</td>
+               <td><input type="number" id="qty_${i}" min="0" placeholder="0" value="${activitiesQuantities[i] || ''}" oninput="updateActivitiesText()" class="fc" style="width:80px"></td>
+            </tr>`;
   }
   
   document.getElementById('tripItemsContainer').innerHTML = `
@@ -674,13 +696,30 @@ function clearForm(){
   updateCurrencyVisibility();
 }
 
+function showError(message) {
+  document.getElementById('mainContent').innerHTML = `
+    <div class="error-box">
+      <div class="err-icon">❌</div>
+      <div class="err-msg">${message}</div>
+      <button class="btn btn-back" onclick="goBack()">← رجوع</button>
+    </div>
+  `;
+}
+
 // ====================== عرض النموذج ======================
 function renderForm(customerNameFromUrl) {
   const isCustomerUser = currentUser?.type === 'Customer';
   const customerDefault = customerNameFromUrl || (isCustomerUser && selectedCustomer ? selectedCustomer.customerName : '');
   
   const customersOptions = allCustomers.map(c => `<option value="${c.customerName}" ${customerDefault === c.customerName ? 'selected' : ''}>${c.customerName}</option>`).join('');
-  const tripsOptions = customerTrips.map(t => `<option value="${t}">${t}</option>`).join('');
+  
+  let tripsOptions = '';
+  if (selectedCustomer && selectedCustomer.category === 'Submarine') {
+    tripsOptions = '<option value="Submarine">Submarine</option>';
+  } else {
+    tripsOptions = customerTrips.map(t => `<option value="${t}">${t}</option>`).join('');
+  }
+  
   const nationalitiesOptions = allNationalities.map(n => `<option value="${n}">${n}</option>`).join('');
   const hotelsOptions = allHotels.map(h => `<option value="${h}">${h}</option>`).join('');
   
@@ -813,25 +852,31 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (!ud) { location.href = 'index.html'; return; }
   try { currentUser = JSON.parse(ud); } catch(e) { location.href = 'index.html'; return; }
   
-  // قراءة اسم العميل من رابط الصفحة
   const urlParams = new URLSearchParams(location.search);
   const customerName = urlParams.get('customer');
-  
-  // قراءة رابط العودة من الرابط أو من sessionStorage
   returnUrl = urlParams.get('returnUrl') || sessionStorage.getItem('returnUrl');
   
-  // حفظ رابط العودة إذا لم يكن موجوداً
   if (returnUrl && !sessionStorage.getItem('returnUrl')) {
     sessionStorage.setItem('returnUrl', returnUrl);
   }
   
   document.getElementById('userChip').textContent = currentUser.name || 'User';
   
-  await loadCustomerData(customerName);
-  await loadTripsData();
-  await loadLookups();
-  
-  renderForm(customerName);
+  // تحميل البيانات بالتسلسل الصحيح
+  try {
+    const customerLoaded = await loadCustomerData(customerName);
+    if (!customerLoaded || !selectedCustomer) {
+      showError('لم يتم العثور على العميل المطلوب');
+      return;
+    }
+    
+    await loadTripsData();
+    await loadLookups();
+    renderForm(customerName);
+  } catch(e) {
+    console.error('❌ خطأ في التهيئة:', e);
+    showError('حدث خطأ أثناء تحميل الصفحة: ' + e.message);
+  }
 });
 
 // ====================== دوال عامة ======================
