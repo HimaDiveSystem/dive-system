@@ -115,6 +115,11 @@
     .st-confirmed{display:inline-block;padding:2px 7px;border-radius:12px;font-size:10px;font-weight:700;background:#dcfce7;color:#166534;}
     .st-cancel{display:inline-block;padding:2px 7px;border-radius:12px;font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;}
     .st-refund{display:inline-block;padding:2px 7px;border-radius:12px;font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;}
+    .customer-selector{background:white;border-bottom:1px solid var(--border);padding:8px 20px;display:flex;align-items:center;gap:15px;flex-wrap:wrap;}
+    .customer-selector label{font-size:12px;font-weight:700;color:var(--navy);}
+    .customer-selector select{padding:6px 12px;border:2px solid var(--border);border-radius:20px;font-family:'Cairo',sans-serif;font-size:12px;background:white;min-width:200px;}
+    .customer-selector .clear-cust{background:#f1f5f9;border:1px solid var(--border);border-radius:20px;padding:4px 12px;font-size:11px;cursor:pointer;}
+    .customer-selector .clear-cust:hover{background:#e2e8f0;}
     #deleteConfirmModal .quick-modal-content{animation:pop 0.3s cubic-bezier(0.34,1.56,0.64,1);}
     @keyframes pop{from{opacity:0;transform:scale(0.9);}to{opacity:1;transform:scale(1);}}
     @keyframes fadeInUp{from{opacity:0;transform:translateX(-50%) translateY(20px);}to{opacity:1;transform:translateX(-50%) translateY(0);}}
@@ -130,6 +135,14 @@
     <span class="user-chip" id="userNameDisplay"></span>
     <button class="back-btn" onclick="goBack()">← Back</button>
   </div>
+</div>
+
+<div class="customer-selector" id="customerSelector">
+  <label>👥 تصفية حسب العميل/المنفذ:</label>
+  <select id="customerFilterSelect" onchange="onCustomerFilterChange()">
+    <option value="">-- جميع العملاء والمنفذين --</option>
+  </select>
+  <button class="clear-cust" onclick="clearCustomerFilter()">✖️ إلغاء التصفية</button>
 </div>
 
 <div class="filter-bar">
@@ -181,7 +194,7 @@
 <div class="pagination" id="pagination"></div>
 <div class="summary-sec" id="summarySec" style="display:none">
   <div class="summary-title">🗺️ Trips Summary</div>
-  <div style="overflow-x:auto"><table class="summary-table" id="summaryTbl"></table></div>
+  <div style="overflow-x:auto"><table class="summary-table" id="summaryTbl"></td></div>
 </div>
 
 <div id="alertModal" class="a-modal">
@@ -230,7 +243,7 @@ const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','D
 const DASH = {Admin:'Dashboard.html',Owner:'OwnerDashboard.html',Sales:'SalesDashboard.html',Accountant:'AccountantDashboard.html'};
 const ALLOWED = ['Admin','Owner','Sales','Accountant','FinancialManager','CenterManager','BranchManager'];
 
-let currentUser = null, allInv = [], filtInv = [];
+let currentUser = null, allInv = [], filtInv = [], allCustomers = [];
 let pg = 1;
 const PS = 20;
 let sortCol = 'activeDate', sortDir = 'asc';
@@ -239,6 +252,7 @@ let currentActionVoucher = null;
 let currentRestAmount = null;
 let pendingDeleteVoucher = null;
 let cachedExchangeRate = null;
+let selectedCustomerId = null; // for filtering by customer/supplier
 
 // ── Date formatting helpers ──
 function fmtDDMMMYYYY(s) {
@@ -305,13 +319,12 @@ function fmtSt(inv) {
   return escHtml(inv.State || inv.state || '');
 }
 
-// ── Rest column display - same as BookingsToday ──
+// ── Rest column display ──
 function fmtRest(inv) {
   const restRaw = inv.Rest !== undefined ? inv.Rest : inv.rest;
   const restNum = parseFloat(restRaw);
   const currency = (inv['InvoiceCurrency '] || inv.invoiceCurrency || '').trim();
 
-  // If rest is text (like 'تم الالغاء'), display as text
   if (isNaN(restNum)) {
     return `<span style="font-size:10px;color:var(--text-lt);">${escHtml(restRaw)}</span>`;
   }
@@ -326,18 +339,72 @@ function canCollect(inv) {
   const restRaw = inv.Rest !== undefined ? inv.Rest : inv.rest;
   const restNum = parseFloat(restRaw);
 
-  // No collection if rest is text
   if (isNaN(restNum)) return false;
-  // No collection if rest is 0 or negative
   if (restNum <= 0) return false;
 
-  // No collection if issue date is today
   const issueDateStr = inv.IssueDate || inv.issueDate || '';
   const todayStr = todayDDMMMYYYY();
   if (issueDateStr === todayStr) return false;
 
   return true;
 }
+
+// ── Load customers/suppliers from backend ──
+async function loadCustomersAndSuppliers() {
+  try {
+    const res = await fetch(GAS_URL + '?action=getAllSuppliersCustomers');
+    const data = await res.json();
+    if (Array.isArray(data)) {
+      allCustomers = data;
+      const selectEl = document.getElementById('customerFilterSelect');
+      let options = '<option value="">-- جميع العملاء والمنفذين --</option>';
+      allCustomers.forEach(cust => {
+        const typeLabel = cust.customerType === 'Customer' ? '👤 عميل' : '🏢 منفذ';
+        options += `<option value="${escHtml(cust.customerId)}|${escHtml(cust.customerType)}|${escHtml(cust.customerName)}">${typeLabel}: ${escHtml(cust.customerName)} (${escHtml(cust.category || '-')})</option>`;
+      });
+      selectEl.innerHTML = options;
+    }
+  } catch(e) {
+    console.error('loadCustomersAndSuppliers error:', e);
+  }
+}
+
+// ── Handle customer filter change ──
+function onCustomerFilterChange() {
+  const val = document.getElementById('customerFilterSelect').value;
+  if (!val) {
+    selectedCustomerId = null;
+  } else {
+    const parts = val.split('|');
+    selectedCustomerId = parts[0];
+  }
+  apply(); // re-apply filters
+}
+
+function clearCustomerFilter() {
+  document.getElementById('customerFilterSelect').value = '';
+  selectedCustomerId = null;
+  apply();
+}
+
+// ── Filter invoices by selected customer/supplier ──
+function filterByCustomer(invoices) {
+  if (!selectedCustomerId) return invoices;
+  const selectedCust = allCustomers.find(c => c.customerId === selectedCustomerId);
+  if (!selectedCust) return invoices;
+  const isCustomer = selectedCust.customerType === 'Customer';
+  const custName = selectedCust.customerName;
+  return invoices.filter(inv => {
+    const invCustomer = inv.Customer || inv.customer || '';
+    const invSupplier = inv.Supplier || inv.supplier || '';
+    if (isCustomer) {
+      return invCustomer === custName;
+    } else {
+      return invSupplier === custName;
+    }
+  });
+}
+
 function buildTotals(data) {
   const s = (key) => data.reduce((sum, row) => sum + (Number(row[key]) || 0), 0);
   const f = (v) => (v && v !== 0) ? v.toFixed(2).replace(/\.00$/, '') : '0';
@@ -353,8 +420,9 @@ function buildTotals(data) {
     <td class="amt"><span class="tl">V£</span><span class="tv">${f(s('Visa£'))}</span></td>
     <td class="amt"><span class="tl">VLE</span><span class="tv">${f(s('VisaLE'))}</span></td>
     <td colspan="3"><span class="tl">الإجمالي</span></td>
-  </td>`;
+  </tr>`;
 }
+
 // ── State change modal ──
 async function openStateModal(voucherNo) {
   currentActionVoucher = voucherNo;
@@ -389,9 +457,7 @@ function selectStateWithCheck(state, hasPayments) {
   }
 }
 
-function selectState(state) { closeQuickModal(); updateInvoiceField(currentActionVoucher, 'state', state); }
-
-// ── Normalize invoice fields (handle both capitalized and lowercase keys) ──
+// ── Normalize invoice fields ──
 function normalizeInv(inv) {
   if (!inv) return {};
   return {
@@ -444,7 +510,7 @@ async function updateInvoiceField(voucherNo, field, value) {
   } catch(e) { showToast('خطأ: ' + e.message, 'error'); }
 }
 
-// ── Refund modal ──
+// ── Refund modal functions (unchanged from original) ──
 async function openRefundModal(voucherNo, inv) {
   const currency = inv.invoiceCurrency || 'LE';
   const activeDate = inv.activeDate;
@@ -590,7 +656,7 @@ async function submitPartialRefund() {
   } catch(e) { showToast('خطأ: ' + e.message, 'error'); }
 }
 
-  // ── Collection modal ──
+// ── Collection modal (unchanged, kept from original) ──
 async function openCollectionQuickModal(inv) {
   const voucherNo = inv.VoucherNo || inv.voucherNo;
   const restRaw = inv.Rest !== undefined ? inv.Rest : inv.rest;
@@ -599,7 +665,6 @@ async function openCollectionQuickModal(inv) {
   const activeDate = inv.ActiveDate || inv.activeDate || '';
   const issueDateStr = inv.IssueDate || inv.issueDate || '';
 
-  // Guard: prevent collection if not allowed
   if (!canCollect(inv)) {
     if (isNaN(restNum) || restNum <= 0) {
       showToast('لا يوجد مبلغ متبقي على هذه الفاتورة', 'error');
@@ -653,7 +718,6 @@ async function openCollectionQuickModal(inv) {
       <button class="btn btn-danger" onclick="closeCollectionQuickModal()">إلغاء</button>
     </div>`;
 
-  // Store current active date for rate lookup
   document.getElementById('collectionModal').dataset.activeDate = activeDate;
   document.getElementById('collectionModal').dataset.currency = currency;
   document.getElementById('collectionModal').classList.add('open');
@@ -672,7 +736,6 @@ async function updateCollPreview() {
   const vG = parseFloat(document.getElementById('collVisaGBP')?.value) || 0;
   const vL = parseFloat(document.getElementById('collVisaLE')?.value) || 0;
 
-  // Fetch rate if not cached
   if (!collRateCache && activeDate) {
     try {
       const r = await fetch(`${GAS_URL}?action=getExchangeRate&dateStr=${encodeURIComponent(activeDate)}`);
@@ -720,9 +783,7 @@ async function submitCollection() {
   if (cs) { const p = cs.split('|'); if (p.length === 2) { cid = p[0]; cname = p[1]; } }
 
   const ni = normalizeInv(inv);
-  // Issue date for collection = today formatted dd/MMM/yyyy
   const collectionIssueDate = todayDDMMMYYYY();
-  // Time = current time hh:mm
   const now = new Date();
   const collectionTime = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
 
@@ -802,25 +863,20 @@ async function loadInv() {
 
     // Normalize dates and fix keys
     data.forEach(inv => {
-      // Normalize ActiveDate
       const ad = inv.ActiveDate || inv.activeDate;
       if (ad) {
         const fmt = fmtDDMMMYYYY(ad);
         inv.ActiveDate = fmt;
         inv.activeDate = fmt;
       }
-      // Normalize IssueDate
       const id = inv.IssueDate || inv.issueDate;
       if (id) {
         const fmt = fmtDDMMMYYYY(id);
         inv.IssueDate = fmt;
         inv.issueDate = fmt;
       }
-      // Normalize Time
       const t = inv.Time || inv.time;
       if (t) { const ft = fmtTime(t); inv.Time = ft; inv.time = ft; }
-
-      // Normalize branchName
       if (inv.BranchName && !inv.branchName) inv.branchName = inv.BranchName;
     });
 
@@ -830,6 +886,9 @@ async function loadInv() {
     } else {
       allInv = data;
     }
+
+    // Apply customer filter
+    allInv = filterByCustomer(allInv);
 
     filtInv = [...allInv];
     doSort();
@@ -869,13 +928,10 @@ function apply() {
     const ts = parseDt(inv.ActiveDate || inv.activeDate);
     if (fTs !== null && (ts === null || ts < fTs)) return false;
     if (tTs !== null && (ts === null || ts > tTs)) return false;
-
-    // State filter — 'refund' means State column = 'Refund'
     if (st) {
       const invState = (inv.State || inv.state || '').trim().toLowerCase();
       if (invState !== st) return false;
     }
-
     if (q) {
       const s = [inv.VoucherNo, inv.GuestName, inv.Trip, inv.SalesName, inv.ContactNo, inv.Hotel]
         .map(x => x || '').join(' ').toLowerCase();
@@ -922,7 +978,7 @@ function renderTable() {
     ['Pax','الأفراد'],['ActivitiesText','الأنشطة'],['Actions','إجراءات']
   ];
 
-  let h = '<table><thead><tr>';
+  let h = '<tr><thead><tr>';
   cols.forEach(([c, l]) => { h += `<th onclick="setSort('${c}')">${l}</th>`; });
   h += '</tr></thead><tbody>';
 
@@ -985,7 +1041,7 @@ function renderTable() {
       </div></td>
     </tr>`;
   });
-h += buildTotals(filtInv);
+  h += buildTotals(filtInv);
   h += '</tbody></table>';
   cont.innerHTML = h;
   renderPag();
@@ -1026,7 +1082,7 @@ function buildSummary(data) {
 }
 
 // ── Init ──
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
   document.getElementById('confirmDeleteBtn').onclick = executeDelete;
 
   let ud = sessionStorage.getItem('currentUser');
@@ -1040,6 +1096,10 @@ document.addEventListener('DOMContentLoaded', function() {
   const t = todayISO();
   document.getElementById('fFromNat').value = t; document.getElementById('fFromTxt').value = isoToTxt(t);
   document.getElementById('fToNat').value = t; document.getElementById('fToTxt').value = isoToTxt(t);
+  
+  // Load customers and suppliers first
+  await loadCustomersAndSuppliers();
+  
   window.addEventListener('scroll', hideAll);
   loadInv();
 });
