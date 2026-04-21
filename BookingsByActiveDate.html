@@ -1081,7 +1081,7 @@ function renderAll() { renderTable(); buildSummary(filtInv); }
 function renderTable() {
   const cont = document.getElementById('tblCont');
   if (!filtInv.length) {
-    cont.innerHTML = '<div class="no-data">No bookings found</div>';
+    cont.innerHTML = '<div class="no-data">لا توجد حجوزات</div>';
     document.getElementById('pagination').innerHTML = '';
     document.getElementById('summarySec').style.display = 'none';
     return;
@@ -1089,92 +1089,130 @@ function renderTable() {
   const start = (pg - 1) * PS;
   const pdata = filtInv.slice(start, start + PS);
 
-  const cols = [
-    ['Rest','المتبقي'],['VoucherNo','رقم الفاتورة'],['IssueDate','تاريخ الحجز'],
-    ['ActiveDate','تاريخ التنفيذ'],['Time','الوقت'],['Trip','الرحلة'],
-    ['Sgl','Item1'],['Dbl','Item2'],['Trpl','Item3'],['Extra','Item4'],
-    ['Camel','Item5'],['Dinner','Item6'],['VIPDinner','Item7'],['StarGazing','Item8'],
-    ['PrivateTrip','Item9'],['PrivateTransfer','Item10'],
-    ['$','$'],['€','€'],['£','£'],['LE','LE'],
-    ['Visa$','Visa$'],['Visa€','Visa€'],['Visa£','Visa£'],['VisaLE','VisaLE'],
-    ['Hotel','الفندق'],['RoomNo','الغرفة'],['Nationality','الجنسية'],
-    ['GuestName','اسم العميل'],['ContactNo','الهاتف'],['Notes','ملاحظات'],
-    ['Supplier','المورد'],['Customer','العميل'],['State','الحالة'],
-    ['InvoiceCurrency ','العملة'],['Cost','التكلفة'],['Discount ','الخصم'],
-    ['Pax','الأفراد'],['ActivitiesText','الأنشطة'],['Actions','إجراءات']
+  // بناء رأس الجدول مع حدود واضحة
+  let html = '<table style="border-collapse: collapse; width: 100%; min-width: 2200px;">';
+  html += '<thead>';
+  html += '<tr style="background: linear-gradient(135deg, #0f1f3d, #1a3260); color: #f5c842;">';
+  
+  // العناوين
+  const headers = [
+    'المتبقي', 'رقم الفاتورة', 'تاريخ الحجز', 'تاريخ التنفيذ', 'الوقت', 'الرحلة',
+    'Item1', 'Item2', 'Item3', 'Item4', 'Item5', 'Item6', 'Item7', 'Item8', 'Item9', 'Item10',
+    '$', '€', '£', 'LE', 'Visa$', 'Visa€', 'Visa£', 'VisaLE',
+    'الفندق', 'الغرفة', 'الجنسية', 'اسم العميل', 'الهاتف', 'ملاحظات',
+    'المورد', 'العميل', 'الحالة', 'العملة', 'التكلفة', 'الخصم',
+    'الأفراد', 'الأنشطة', 'إجراءات'
   ];
+  
+  headers.forEach(h => {
+    html += `<th style="border: 1px solid #cbd5e1; padding: 10px 8px; text-align: center; font-weight: 700; white-space: nowrap;">${h}</th>`;
+  });
+  html += '</tr></thead><tbody>';
 
-  let h = '<tr><thead><tr>';
-  cols.forEach(([c, l]) => { h += `<th onclick="setSort('${c}')">${l}</th>`; });
-  h += '</tr></thead><tbody>';
-
+  // بناء صفوف البيانات
   pdata.forEach(inv => {
     const vn = inv.VoucherNo || inv.voucherNo || '';
     const rest = inv.Rest !== undefined ? inv.Rest : inv.rest;
     const currency = (inv.InvoiceCurrency || inv.invoiceCurrency || '').trim();
-    const issueDate = inv.IssueDate || inv.issueDate || '';
-    const state = inv.State || inv.state || '';  // ✅ استخراج الحالة هنا
+    const issueDate = fmtDate(inv.IssueDate || inv.issueDate || '');
+    const activeDate = fmtDate(inv.ActiveDate || inv.activeDate || '');
+    const time = fmtTime(inv.Time || inv.time || '');
+    const trip = inv.Trip || inv.trip || '';
+    const hotel = inv.Hotel || inv.hotel || '';
+    const roomNo = inv.RoomNo || inv.roomNo || '';
+    const nationality = inv.Nationality || inv.nationality || '';
+    const guestName = inv.GuestName || inv.guestName || '';
+    const contactNo = inv.ContactNo || inv.contactNo || '';
+    const notes = inv.Notes || inv.notes || '';
+    const supplier = inv.Supplier || inv.supplier || '';
+    const customer = inv.Customer || inv.customer || '';
+    const state = inv.State || inv.state || '';
+    const cost = inv.Cost || inv.cost || '';
+    const discount = inv.Discount || inv.discount || '';
+    const adult = inv.Adult || inv.adultCount || 0;
+    const child = inv.Children || inv.childCount || 0;
+    const infant = inv.Infants || inv.infantCount || 0;
+    const activitiesText = inv.ActivitiesText || inv.activitiesText || '';
+    const pdfLink = inv.Invoice_PDF || '';
     
     const allowColl = canCollect(rest, issueDate);
-    const restHtml = fmtRest(rest, currency);
-    const restCell = allowColl
-      ? `<td onclick="openCollectionQuickModalByVoucher('${escHtml(vn)}')" style="cursor:pointer" title="انقر للتحصيل">${restHtml}</td>`
-      : `<td title="لا يمكن التحصيل">${restHtml}</td>`;
-
-    const dollar = inv['$'] ? inv['$'] : '';
-    const euro = inv['€'] ? inv['€'] : '';
-    const pound = inv['£'] ? inv['£'] : '';
-    const le = inv.LE ? inv.LE : '';
-    const visaDollar = inv['Visa$'] ? inv['Visa$'] : '';
-    const visaEuro = inv['Visa€'] ? inv['Visa€'] : '';
-    const visaPound = inv['Visa£'] ? inv['Visa£'] : '';
-    const visaLe = inv.VisaLE ? inv.VisaLE : '';
-
-    const paxHtml = `A:${inv.Adult||0} C:${inv.Children||0} I:${inv.Infants||0}`;
-    const pdf = (inv.Invoice_PDF && inv.Invoice_PDF.startsWith('http'))
-      ? `<a href="${escHtml(inv.Invoice_PDF)}" target="_blank" class="act-btn act-pdf">🖨️</a>`
-      : `<span class="act-btn act-na">📄</span>`;
-
-    h += `<tr>
-      ${restCell}
-      <td><span class="vlink" onclick="editInvoice('${escHtml(vn)}')">${escHtml(vn)}</span></td>
-      <td>${escHtml(inv.IssueDate || inv.issueDate || '')}</td>
-      <td>${escHtml(inv.ActiveDate || inv.activeDate || '')}</td>
-      <td>${escHtml(fmtTime(inv.Time || inv.time || ''))}</td>
-      <td>${escHtml(inv.Trip || inv.trip || '')}</td>
-      <td class="amt">${escHtml(inv.Sgl || '')}</td><td class="amt">${escHtml(inv.Dbl || '')}</td>
-      <td class="amt">${escHtml(inv.Trpl || '')}</td><td class="amt">${escHtml(inv.Extra || '')}</td>
-      <td class="amt">${escHtml(inv.Camel || '')}</td><td class="amt">${escHtml(inv.Dinner || '')}</td>
-      <td class="amt">${escHtml(inv.VIPDinner || '')}</td><td class="amt">${escHtml(inv.StarGazing || '')}</td>
-      <td class="amt">${escHtml(inv.PrivateTrip || '')}</td><td class="amt">${escHtml(inv.PrivateTransfer || '')}</td>
-      <td class="amt">${escHtml(dollar)}</td><td class="amt">${escHtml(euro)}</td>
-      <td class="amt">${escHtml(pound)}</td><td class="amt">${escHtml(le)}</td>
-      <td class="amt">${escHtml(visaDollar)}</td><td class="amt">${escHtml(visaEuro)}</td>
-      <td class="amt">${escHtml(visaPound)}</td><td class="amt">${escHtml(visaLe)}</td>
-      <td>${escHtml(inv.Hotel || '')}</td>
-      <td>${escHtml(inv.RoomNo || '')}</td>
-      <td>${escHtml(inv.Nationality || '')}</td>
-      <td>${escHtml(inv.GuestName || '')}</td>
-      <td>${escHtml(inv.ContactNo || '')}</td>
-      <td class="acts-cell">${escHtml(inv.Notes || '')}</td>
-      <td>${escHtml(inv.Supplier || '—')}</td>
-      <td>${escHtml(inv.Customer || '—')}</td>
-      <td onclick="openStateModal('${escHtml(vn)}')" style="cursor:pointer">${fmtSt(state)}</td>  <!-- ✅ تمرير state فقط -->
-      <td>${escHtml((inv['InvoiceCurrency '] || inv.invoiceCurrency || '').trim())}</td>
-      <td class="amt">${escHtml(inv.Cost || '')}</td>
-      <td class="amt">${escHtml(inv['Discount '] || '')}</td>
-      <td>${escHtml(paxHtml)}</td>
-      <td class="acts-cell">${escHtml(inv.ActivitiesText || '')}</td>
-      <td><div class="act-btns">
-        <button class="act-btn act-edit" onclick="editInvoice('${escHtml(vn)}')">✏️</button>
-        <button class="act-btn act-del" onclick="showDeleteConfirmModal('${escHtml(vn)}')">🗑️</button>
-        ${pdf}
-      </div></td>
-    </tr>`;
+    const restNum = parseFloat(rest);
+    let restDisplay = '';
+    if (isNaN(restNum)) restDisplay = `<span style="color:#64748b;">${esc(rest)}</span>`;
+    else if (restNum <= 0) restDisplay = '<span style="color:#16a34a; font-weight:700;">✓</span>';
+    else restDisplay = `<span style="color:#dc2626; font-weight:700;">${restNum} ${esc(currency)}</span>`;
+    
+    const restCell = allowColl 
+      ? `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; cursor:pointer; background:#f0fdf4;" onclick="openCollectionQuickModalByVoucher('${esc(vn)}')" title="انقر للتحصيل">${restDisplay}</td>`
+      : `<td style="border: 1px solid #cbd5e1; padding: 8px 6px;">${restDisplay}</td>`;
+    
+    // حالة الفاتورة
+    let stateDisplay = '';
+    const stateLower = (state || '').toString().toLowerCase();
+    if (stateLower === 'refund') stateDisplay = '<span style="background:#fef3c7; color:#92400e; padding:2px 7px; border-radius:12px;">💰 Refund</span>';
+    else if (stateLower === 'confirmed') stateDisplay = '<span style="background:#dcfce7; color:#166534; padding:2px 7px; border-radius:12px;">✅ Confirmed</span>';
+    else if (stateLower === 'pending') stateDisplay = '<span style="background:#fef9c3; color:#854d0e; padding:2px 7px; border-radius:12px;">⏳ Pending</span>';
+    else if (stateLower === 'cancel') stateDisplay = '<span style="background:#fee2e2; color:#991b1b; padding:2px 7px; border-radius:12px;">❌ Cancel</span>';
+    else stateDisplay = esc(state);
+    
+    const pdfBtn = pdfLink && pdfLink.startsWith('http') 
+      ? `<a href="${pdfLink}" target="_blank" style="background:#ea580c; color:white; padding:4px 8px; border-radius:12px; text-decoration:none; font-size:10px;">🖨️</a>`
+      : `<span style="background:#cbd5e1; color:#64748b; padding:4px 8px; border-radius:12px; font-size:10px;">📄</span>`;
+    
+    html += `<tr style="border-bottom: 1px solid #e2e8f0;" onmouseover="this.style.backgroundColor='#f0f6ff'" onmouseout="this.style.backgroundColor='white'">`;
+    html += restCell;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px;"><span style="color:#2563eb; font-weight:700; cursor:pointer;" onclick="editInvoice('${esc(vn)}')">${esc(vn)}</span></td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px;">${issueDate}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px;">${activeDate}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px;">${time}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px;">${esc(trip)}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(inv.Sgl || '')}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(inv.Dbl || '')}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(inv.Trpl || '')}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(inv.Extra || '')}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(inv.Camel || '')}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(inv.Dinner || '')}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(inv.VIPDinner || '')}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(inv.StarGazing || '')}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(inv.PrivateTrip || '')}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(inv.PrivateTransfer || '')}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(inv.$ || '')}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(inv['€'] || '')}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(inv['£'] || '')}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(inv.LE || '')}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(inv['Visa$'] || '')}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(inv['Visa€'] || '')}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(inv['Visa£'] || '')}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(inv.VisaLE || '')}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px;">${esc(hotel)}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px;">${esc(roomNo)}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px;">${esc(nationality)}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px;">${esc(guestName)}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px;">${esc(contactNo)}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; max-width:200px; white-space:normal; word-break:break-word;">${esc(notes)}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; cursor:pointer; background:#f0f4ff;" onclick="showSupplierList('${esc(vn)}', '${esc(trip)}', '${esc(supplier)}')">${esc(supplier) || '—'}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; cursor:pointer; background:#f0f4ff;" onclick="showCustomerList('${esc(vn)}', '${esc(trip)}', '${esc(customer)}')">${esc(customer) || '—'}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; cursor:pointer;" onclick="openStateModal('${esc(vn)}')">${stateDisplay}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px;">${esc(currency)}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(cost)}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:right;">${esc(discount)}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px;">A:${adult} C:${child} I:${infant}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; max-width:200px; white-space:normal; word-break:break-word;">${esc(activitiesText)}</td>`;
+    html += `<td style="border: 1px solid #cbd5e1; padding: 8px 6px; text-align:center;">
+      <div style="display:flex; gap:4px; justify-content:center;">
+        <button style="background:#3b82f6; color:white; padding:4px 8px; border:none; border-radius:12px; cursor:pointer;" onclick="editInvoice('${esc(vn)}')">✏️</button>
+        <button style="background:#dc2626; color:white; padding:4px 8px; border:none; border-radius:12px; cursor:pointer;" onclick="showDeleteConfirmModal('${esc(vn)}')">🗑️</button>
+        ${pdfBtn}
+      </div>
+    </td>`;
+    html += '</tr>';
   });
-  h += buildTotals(filtInv);
-  h += '</tbody></table>';
-  cont.innerHTML = h;
+  
+  // صف الإجماليات
+  html += buildTotals(pdata);
+  
+  html += '</tbody></table>';
+  cont.innerHTML = html;
   renderPag();
 }
   function escHtml(s) {
