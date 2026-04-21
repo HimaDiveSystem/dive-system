@@ -293,6 +293,44 @@ let pendingDeleteVoucher = null;
 let cachedExchangeRate = null;
 let selectedCustomerFilter = null;
 let selectedCategoryFilter = null;
+function gas(action, params = {}) {
+  return new Promise((resolve, reject) => {
+    const callbackName = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+    const url = new URL(GAS_URL);
+    url.searchParams.set('action', action);
+    url.searchParams.set('callback', callbackName);
+    url.searchParams.set('_t', Date.now());
+    
+    Object.keys(params).forEach(key => {
+      if (params[key] !== undefined && params[key] !== null) {
+        url.searchParams.set(key, String(params[key]));
+      }
+    });
+    
+    window[callbackName] = function(data) {
+      delete window[callbackName];
+      document.body.removeChild(script);
+      resolve(data);
+    };
+    
+    const script = document.createElement('script');
+    script.src = url.toString();
+    script.onerror = function() {
+      delete window[callbackName];
+      document.body.removeChild(script);
+      reject(new Error('JSONP request failed'));
+    };
+    document.body.appendChild(script);
+    
+    setTimeout(() => {
+      if (window[callbackName]) {
+        delete window[callbackName];
+        document.body.removeChild(script);
+        reject(new Error('Timeout'));
+      }
+    }, 15000);
+  });
+}
 
 // ── Date formatting helpers ──
 function fmtDDMMMYYYY(s) {
@@ -393,30 +431,43 @@ function canCollect(inv) {
 async function loadCustomersAndSuppliers() {
   try {
     const data = await gas('getAllSuppliersCustomers');
+    console.log('Customers data:', data);
+    
     if (Array.isArray(data)) {
       allCustomers = data;
       const selectEl = document.getElementById('customerFilterSelect');
       let options = '<option value="">-- جميع العملاء والمنفذين --</option>';
       const categoriesSet = new Set();
+      
       allCustomers.forEach(cust => {
         const typeLabel = cust.customerType === 'Customer' ? '👤 عميل' : '🏢 منفذ';
-        options += `<option value="${cust.customerType}|${escHtml(cust.customerName)}">${typeLabel}: ${escHtml(cust.customerName)} (${escHtml(cust.category || '-')})</option>`;
+        options += `<option value="${cust.customerType}|${cust.customerName}">${typeLabel}: ${cust.customerName} (${cust.category || '-'})</option>`;
         if (cust.category) categoriesSet.add(cust.category);
       });
-      selectEl.innerHTML = options;
       
+      selectEl.innerHTML = options;
+      console.log('Options loaded:', options);
+      
+      // تعبئة قائمة الأنشطة
       const catSelect = document.getElementById('categoryFilterSelect');
       let catOptions = '<option value="">-- جميع الأنشطة --</option>';
       Array.from(categoriesSet).sort().forEach(cat => {
-        catOptions += `<option value="${escHtml(cat)}">${escHtml(cat)}</option>`;
+        catOptions += `<option value="${cat}">${cat}</option>`;
       });
       catSelect.innerHTML = catOptions;
+      
+      if (allCustomers.length > 0) {
+        showToast(`تم تحميل ${allCustomers.length} عميل/منفذ`, 'success');
+      }
+    } else {
+      console.error('Data is not an array:', data);
+      showToast('خطأ في تحميل العملاء', 'error');
     }
   } catch(e) {
     console.error('loadCustomersAndSuppliers error:', e);
+    showToast('فشل تحميل العملاء: ' + e.message, 'error');
   }
-}      
-     
+}     
 
 // ── Handle customer filter change ──
 function onCustomerFilterChange() {
