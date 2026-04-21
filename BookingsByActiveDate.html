@@ -392,51 +392,31 @@ function canCollect(inv) {
 // ── Load customers/suppliers from backend ──
 async function loadCustomersAndSuppliers() {
   try {
-    return new Promise((resolve) => {
-      const callbackName = 'jsonp_callback_' + Date.now();
-      const script = document.createElement('script');
-      const url = GAS_URL + '?action=getAllSuppliersCustomers&callback=' + callbackName;
+    const data = await gas('getAllSuppliersCustomers');
+    if (Array.isArray(data)) {
+      allCustomers = data;
+      const selectEl = document.getElementById('customerFilterSelect');
+      let options = '<option value="">-- جميع العملاء والمنفذين --</option>';
+      const categoriesSet = new Set();
+      allCustomers.forEach(cust => {
+        const typeLabel = cust.customerType === 'Customer' ? '👤 عميل' : '🏢 منفذ';
+        options += `<option value="${cust.customerType}|${escHtml(cust.customerName)}">${typeLabel}: ${escHtml(cust.customerName)} (${escHtml(cust.category || '-')})</option>`;
+        if (cust.category) categoriesSet.add(cust.category);
+      });
+      selectEl.innerHTML = options;
       
-      window[callbackName] = function(data) {
-        delete window[callbackName];
-        document.body.removeChild(script);
-        
-        if (Array.isArray(data)) {
-          allCustomers = data;
-          const selectEl = document.getElementById('customerFilterSelect');
-          let options = '<option value="">-- جميع العملاء والمنفذين --</option>';
-          const categoriesSet = new Set();
-          allCustomers.forEach(cust => {
-            const typeLabel = cust.customerType === 'Customer' ? '👤 عميل' : '🏢 منفذ';
-            options += `<option value="${cust.customerType}|${escHtml(cust.customerName)}">${typeLabel}: ${escHtml(cust.customerName)} (${escHtml(cust.category || '-')})</option>`;
-            if (cust.category) categoriesSet.add(cust.category);
-          });
-          selectEl.innerHTML = options;
-          
-          // تعبئة قائمة الأنشطة
-          const catSelect = document.getElementById('categoryFilterSelect');
-          let catOptions = '<option value="">-- جميع الأنشطة --</option>';
-          Array.from(categoriesSet).sort().forEach(cat => {
-            catOptions += `<option value="${escHtml(cat)}">${escHtml(cat)}</option>`;
-          });
-          catSelect.innerHTML = catOptions;
-        }
-        resolve();
-      };
-      
-      script.src = url;
-      script.onerror = function() {
-        delete window[callbackName];
-        document.body.removeChild(script);
-        console.error('Failed to load customers');
-        resolve();
-      };
-      document.body.appendChild(script);
-    });
+      const catSelect = document.getElementById('categoryFilterSelect');
+      let catOptions = '<option value="">-- جميع الأنشطة --</option>';
+      Array.from(categoriesSet).sort().forEach(cat => {
+        catOptions += `<option value="${escHtml(cat)}">${escHtml(cat)}</option>`;
+      });
+      catSelect.innerHTML = catOptions;
+    }
   } catch(e) {
     console.error('loadCustomersAndSuppliers error:', e);
   }
-}
+}      
+     
 
 // ── Handle customer filter change ──
 function onCustomerFilterChange() {
@@ -465,23 +445,32 @@ function clearAllFilters() {
 }
 
 function buildTotals(data) {
-  const s = (key) => data.reduce((sum, row) => sum + (Number(row[key]) || 0), 0);
-  const f = (v) => (v && v !== 0) ? v.toFixed(2).replace(/\.00$/, '') : '0';
+  // جمع القيم من الأعمدة المختلفة
+  const sumCashUSD = data.reduce((s, inv) => s + (parseFloat(inv['$'] || inv.cashUSD || 0)), 0);
+  const sumCashEUR = data.reduce((s, inv) => s + (parseFloat(inv['€'] || inv.cashEUR || 0)), 0);
+  const sumCashGBP = data.reduce((s, inv) => s + (parseFloat(inv['£'] || inv.cashGBP || 0)), 0);
+  const sumCashLE = data.reduce((s, inv) => s + (parseFloat(inv.LE || inv.cashLE || 0)), 0);
+  const sumVisaUSD = data.reduce((s, inv) => s + (parseFloat(inv['Visa$'] || inv.visaUSD || 0)), 0);
+  const sumVisaEUR = data.reduce((s, inv) => s + (parseFloat(inv['Visa€'] || inv.visaEUR || 0)), 0);
+  const sumVisaGBP = data.reduce((s, inv) => s + (parseFloat(inv['Visa£'] || inv.visaGBP || 0)), 0);
+  const sumVisaLE = data.reduce((s, inv) => s + (parseFloat(inv.VisaLE || inv.visaLE || 0)), 0);
+
+  const formatNum = (n) => n === 0 ? '0' : n.toFixed(2).replace(/\.00$/, '');
 
   return `<tr class="totals-row">
-    <td colspan="7" style="text-align:center"><span class="tv">${data.length} فاتورة</span></td>
-    <td class="amt"><span class="tl">$</span><span class="tv">${f(s('$'))}</span></td>
-    <td class="amt"><span class="tl">€</span><span class="tv">${f(s('€'))}</span></td>
-    <td class="amt"><span class="tl">£</span><span class="tv">${f(s('£'))}</span></td>
-    <td class="amt"><span class="tl">LE</span><span class="tv">${f(s('LE'))}</span></td>
-    <td class="amt"><span class="tl">V$</span><span class="tv">${f(s('Visa$'))}</span></td>
-    <td class="amt"><span class="tl">V€</span><span class="tv">${f(s('Visa€'))}</span></td>
-    <td class="amt"><span class="tl">V£</span><span class="tv">${f(s('Visa£'))}</span></td>
-    <td class="amt"><span class="tl">VLE</span><span class="tv">${f(s('VisaLE'))}</span></td>
-    <td colspan="3"><span class="tl">الإجمالي</span></td>
+    <td colspan="7" style="text-align:center"><strong>${data.length} فاتورة</strong></td>
+    <td class="amt"><strong>${formatNum(sumCashUSD)}</strong></td>
+    <td class="amt"><strong>${formatNum(sumCashEUR)}</strong></td>
+    <td class="amt"><strong>${formatNum(sumCashGBP)}</strong></td>
+    <td class="amt"><strong>${formatNum(sumCashLE)}</strong></td>
+    <td class="amt"><strong>${formatNum(sumVisaUSD)}</strong></td>
+    <td class="amt"><strong>${formatNum(sumVisaEUR)}</strong></td>
+    <td class="amt"><strong>${formatNum(sumVisaGBP)}</strong></td>
+    <td class="amt"><strong>${formatNum(sumVisaLE)}</strong></td>
+    <td colspan="3"></td>
   </tr>`;
 }
-
+  
 // ── State change modal ──
 async function openStateModal(voucherNo) {
   currentActionVoucher = voucherNo; 
@@ -1049,77 +1038,120 @@ function renderTable() {
   const start = (pg - 1) * PS;
   const pdata = filtInv.slice(start, start + PS);
 
-  const cols = [
-    ['Rest','المتبقي'],['VoucherNo','رقم الفاتورة'],['IssueDate','تاريخ الإصدار'],
-    ['ActiveDate','تاريخ التنفيذ'],['Time','الوقت'],['Trip','الرحلة'],
-    ['Sgl','Item1'],['Dbl','Item2'],['Trpl','Item3'],['Extra','Item4'],
-    ['Camel','Item5'],['Dinner','Item6'],['VIPDinner','Item7'],['StarGazing','Item8'],
-    ['PrivateTrip','Item9'],['PrivateTransfer','Item10'],
-    ['$','$'],['€','€'],['£','£'],['LE','LE'],
-    ['Visa$','Visa$'],['Visa€','Visa€'],['Visa£','Visa£'],['VisaLE','VisaLE'],
-    ['Hotel','الفندق'],['RoomNo','الغرفة'],['Nationality','الجنسية'],
-    ['GuestName','اسم العميل'],['ContactNo','الهاتف'],['Notes','ملاحظات'],
-    ['Supplier','المورد'],['Customer','العميل'],['State','الحالة'],
-    ['InvoiceCurrency ','العملة'],['Cost','التكلفة'],['Discount ','الخصم'],
-    ['Pax','الأفراد'],['ActivitiesText','الأنشطة'],['Actions','إجراءات']
+  // تعريف الأعمدة - تأكد من وجودها
+  const columns = [
+    { key: 'Rest', label: 'المتبقي' },
+    { key: 'VoucherNo', label: 'رقم الفاتورة' },
+    { key: 'IssueDate', label: 'تاريخ الإصدار' },
+    { key: 'ActiveDate', label: 'تاريخ التنفيذ' },
+    { key: 'Time', label: 'الوقت' },
+    { key: 'Trip', label: 'الرحلة' },
+    { key: 'Sgl', label: 'Item1' },
+    { key: 'Dbl', label: 'Item2' },
+    { key: 'Trpl', label: 'Item3' },
+    { key: 'Extra', label: 'Item4' },
+    { key: 'Camel', label: 'Item5' },
+    { key: 'Dinner', label: 'Item6' },
+    { key: 'VIPDinner', label: 'Item7' },
+    { key: 'StarGazing', label: 'Item8' },
+    { key: 'PrivateTrip', label: 'Item9' },
+    { key: 'PrivateTransfer', label: 'Item10' },
+    { key: '$', label: '$' },
+    { key: '€', label: '€' },
+    { key: '£', label: '£' },
+    { key: 'LE', label: 'LE' },
+    { key: 'Visa$', label: 'Visa$' },
+    { key: 'Visa€', label: 'Visa€' },
+    { key: 'Visa£', label: 'Visa£' },
+    { key: 'VisaLE', label: 'VisaLE' },
+    { key: 'Hotel', label: 'الفندق' },
+    { key: 'RoomNo', label: 'الغرفة' },
+    { key: 'Nationality', label: 'الجنسية' },
+    { key: 'GuestName', label: 'اسم العميل' },
+    { key: 'ContactNo', label: 'الهاتف' },
+    { key: 'Notes', label: 'ملاحظات' },
+    { key: 'Supplier', label: 'المورد' },
+    { key: 'Customer', label: 'العميل' },
+    { key: 'State', label: 'الحالة' },
+    { key: 'InvoiceCurrency', label: 'العملة' },
+    { key: 'Cost', label: 'التكلفة' },
+    { key: 'Discount', label: 'الخصم' },
+    { key: 'Pax', label: 'الأفراد' },
+    { key: 'ActivitiesText', label: 'الأنشطة' },
+    { key: 'Actions', label: 'إجراءات' }
   ];
 
-  let h = '</table><thead><tr>';
-  cols.forEach(([c, l]) => { h += `<th onclick="setSort('${c}')">${l}</th>`; });
-  h += '</tr></thead><tbody>';
+  // بناء رأس الجدول
+  let thead = '<thead><tr>';
+  columns.forEach(col => {
+    thead += `<th onclick="setSort('${col.key}')">${col.label}</th>`;
+  });
+  thead += '</tr></thead>';
 
+  // بناء جسم الجدول
+  let tbody = '';
   pdata.forEach(inv => {
     const vn = inv.VoucherNo || inv.voucherNo || '';
     const allowColl = canCollect(inv);
     const restHtml = fmtRest(inv);
+    
     const restCell = allowColl
-      ? `<td onclick="openCollectionQuickModal(allInv.find(i=>(i.VoucherNo||i.voucherNo)==='${escHtml(vn)}'))" style="cursor:pointer" title="انقر للتحصيل">${restHtml}</td>`
-      : `<td title="لا يمكن التحصيل">${restHtml}</td>`;
+      ? `<td onclick="openCollectionQuickModal(allInv.find(i=>(i.VoucherNo||i.voucherNo)==='${escHtml(vn)}'))" style="cursor:pointer;background:#f0fdf4;" title="انقر للتحصيل">${restHtml}</td>`
+      : `<td>${restHtml}</td>`;
 
-    const dollar = inv['$'] ? inv['$'] : '';
-    const euro = inv['€'] ? inv['€'] : '';
-    const pound = inv['£'] ? inv['£'] : '';
-    const le = inv.LE ? inv.LE : '';
-    const visaDollar = inv['Visa$'] ? inv['Visa$'] : '';
-    const visaEuro = inv['Visa€'] ? inv['Visa€'] : '';
-    const visaPound = inv['Visa£'] ? inv['Visa£'] : '';
-    const visaLe = inv.VisaLE ? inv.VisaLE : '';
+    const dollar = inv['$'] || inv.cashUSD || '';
+    const euro = inv['€'] || inv.cashEUR || '';
+    const pound = inv['£'] || inv.cashGBP || '';
+    const le = inv.LE || inv.cashLE || '';
+    const visaDollar = inv['Visa$'] || inv.visaUSD || '';
+    const visaEuro = inv['Visa€'] || inv.visaEUR || '';
+    const visaPound = inv['Visa£'] || inv.visaGBP || '';
+    const visaLe = inv.VisaLE || inv.visaLE || '';
 
-    const paxHtml = `A:${inv.Adult||0} C:${inv.Children||0} I:${inv.Infants||0}`;
+    const paxHtml = `A:${inv.Adult || inv.adultCount || 0} C:${inv.Children || inv.childCount || 0} I:${inv.Infants || inv.infantCount || 0}`;
     const pdf = (inv.Invoice_PDF && inv.Invoice_PDF.startsWith('http'))
       ? `<a href="${escHtml(inv.Invoice_PDF)}" target="_blank" class="act-btn act-pdf">🖨️</a>`
       : `<span class="act-btn act-na">📄</span>`;
 
-    h += `<tr>
+    tbody += `<tr>
       ${restCell}
       <td><span class="vlink" onclick="editInvoice('${escHtml(vn)}')">${escHtml(vn)}</span></td>
       <td>${escHtml(inv.IssueDate || inv.issueDate || '')}</td>
       <td>${escHtml(inv.ActiveDate || inv.activeDate || '')}</td>
       <td>${escHtml(fmtTime(inv.Time || inv.time || ''))}</td>
       <td>${escHtml(inv.Trip || inv.trip || '')}</td>
-      <td class="amt">${escHtml(inv.Sgl || '')}</td><td class="amt">${escHtml(inv.Dbl || '')}</td>
-      <td class="amt">${escHtml(inv.Trpl || '')}</td><td class="amt">${escHtml(inv.Extra || '')}</td>
-      <td class="amt">${escHtml(inv.Camel || '')}</td><td class="amt">${escHtml(inv.Dinner || '')}</td>
-      <td class="amt">${escHtml(inv.VIPDinner || '')}</td><td class="amt">${escHtml(inv.StarGazing || '')}</td>
-      <td class="amt">${escHtml(inv.PrivateTrip || '')}</td><td class="amt">${escHtml(inv.PrivateTransfer || '')}</td>
-      <td class="amt">${escHtml(dollar)}</td><td class="amt">${escHtml(euro)}</td>
-      <td class="amt">${escHtml(pound)}</td><td class="amt">${escHtml(le)}</td>
-      <td class="amt">${escHtml(visaDollar)}</td><td class="amt">${escHtml(visaEuro)}</td>
-      <td class="amt">${escHtml(visaPound)}</td><td class="amt">${escHtml(visaLe)}</td>
-      <td>${escHtml(inv.Hotel || '')}</td>
-      <td>${escHtml(inv.RoomNo || '')}</td>
-      <td>${escHtml(inv.Nationality || '')}</td>
-      <td>${escHtml(inv.GuestName || '')}</td>
-      <td>${escHtml(inv.ContactNo || '')}</td>
-      <td class="acts-cell">${escHtml(inv.Notes || '')}</td>
-      <td>${escHtml(inv.Supplier || '—')}</td>
-      <td>${escHtml(inv.Customer || '—')}</td>
+      <td class="amt">${escHtml(inv.Sgl || inv.sgl || '')}</td>
+      <td class="amt">${escHtml(inv.Dbl || inv.dbl || '')}</td>
+      <td class="amt">${escHtml(inv.Trpl || inv.trpl || '')}</td>
+      <td class="amt">${escHtml(inv.Extra || inv.extra || '')}</td>
+      <td class="amt">${escHtml(inv.Camel || inv.camel || '')}</td>
+      <td class="amt">${escHtml(inv.Dinner || inv.dinner || '')}</td>
+      <td class="amt">${escHtml(inv.VIPDinner || inv.vipDinner || '')}</td>
+      <td class="amt">${escHtml(inv.StarGazing || inv.starGazing || '')}</td>
+      <td class="amt">${escHtml(inv.PrivateTrip || inv.privateTrip || '')}</td>
+      <td class="amt">${escHtml(inv.PrivateTransfer || inv.privateTransfer || '')}</td>
+      <td class="amt">${escHtml(dollar)}</td>
+      <td class="amt">${escHtml(euro)}</td>
+      <td class="amt">${escHtml(pound)}</td>
+      <td class="amt">${escHtml(le)}</td>
+      <td class="amt">${escHtml(visaDollar)}</td>
+      <td class="amt">${escHtml(visaEuro)}</td>
+      <td class="amt">${escHtml(visaPound)}</td>
+      <td class="amt">${escHtml(visaLe)}</td>
+      <td>${escHtml(inv.Hotel || inv.hotel || '')}</td>
+      <td>${escHtml(inv.RoomNo || inv.roomNo || '')}</td>
+      <td>${escHtml(inv.Nationality || inv.nationality || '')}</td>
+      <td>${escHtml(inv.GuestName || inv.guestName || '')}</td>
+      <td>${escHtml(inv.ContactNo || inv.contactNo || '')}</td>
+      <td class="acts-cell">${escHtml(inv.Notes || inv.notes || '')}</td>
+      <td>${escHtml(inv.Supplier || inv.supplier || '—')}</td>
+      <td>${escHtml(inv.Customer || inv.customer || '—')}</td>
       <td onclick="openStateModal('${escHtml(vn)}')" style="cursor:pointer">${fmtSt(inv)}</td>
       <td>${escHtml((inv['InvoiceCurrency '] || inv.invoiceCurrency || '').trim())}</td>
-      <td class="amt">${escHtml(inv.Cost || '')}</td>
-      <td class="amt">${escHtml(inv['Discount '] || '')}</td>
+      <td class="amt">${escHtml(inv.Cost || inv.cost || '')}</td>
+      <td class="amt">${escHtml(inv['Discount '] || inv.discount || '')}</td>
       <td>${escHtml(paxHtml)}</td>
-      <td class="acts-cell">${escHtml(inv.ActivitiesText || '')}</td>
+      <td class="acts-cell">${escHtml(inv.ActivitiesText || inv.activitiesText || '')}</td>
       <td><div class="act-btns">
         <button class="act-btn act-edit" onclick="editInvoice('${escHtml(vn)}')">✏️</button>
         <button class="act-btn act-del" onclick="showDeleteConfirmModal('${escHtml(vn)}')">🗑️</button>
@@ -1127,12 +1159,15 @@ function renderTable() {
       </div></td>
     </tr>`;
   });
-  h += buildTotals(filtInv);
-  h += '</tbody></table>';
-  cont.innerHTML = h;
+
+  // إضافة صف الإجماليات
+  tbody += buildTotals(filtInv);
+
+  // تجميع الجدول الكامل
+  const tableHtml = `<table class="dt">${thead}<tbody>${tbody}</tbody></table>`;
+  cont.innerHTML = tableHtml;
   renderPag();
 }
-
 function renderPag() {
   const total = Math.ceil(filtInv.length / PS);
   let pages = [];
