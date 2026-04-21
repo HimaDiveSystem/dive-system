@@ -68,7 +68,7 @@
     thead th{background:linear-gradient(135deg,var(--navy) 0%,var(--navy2) 100%);color:var(--gold);padding:10px 6px;font-weight:700;cursor:pointer;white-space:nowrap;border-right:1px solid rgba(255,255,255,.08);font-size:11px;}
     thead th:hover{background:rgba(255,255,255,.08);}
     
-    /* ====== تثبيت الأعمدة الأولى (3 أعمدة) ====== */
+    /* ====== تثبيت الأعمدة الأولى ====== */
     table td:first-child, table th:first-child { position: sticky; left: 0; background: inherit; z-index: 15; }
     table thead th:first-child { background: linear-gradient(135deg,var(--navy) 0%,var(--navy2) 100%); z-index: 25; }
     table tbody td:first-child { background: white; }
@@ -79,14 +79,16 @@
     table tbody td:nth-child(2) { background: white; }
     table tbody tr:hover td:nth-child(2) { background: #f0f6ff; }
     
-    table td:nth-child(3), table th:nth-child(3) { position: sticky; left: 140px; background: inherit; z-index: 15; }
-    table thead th:nth-child(3) { background: linear-gradient(135deg,var(--navy) 0%,var(--navy2) 100%); z-index: 25; }
-    table tbody td:nth-child(3) { background: white; }
-    table tbody tr:hover td:nth-child(3) { background: #f0f6ff; }
-    
-    /* ظل بسيط للتمييز */
-    table td:first-child, table td:nth-child(2), table td:nth-child(3) {
-      box-shadow: 2px 0 5px -2px rgba(0,0,0,0.1);
+    /* إزالة الخط الفاصل بين الأعمدة الملتصقة */
+    table td, table th {
+      border-left: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+    }
+    table td:first-child, table th:first-child {
+      border-right: 2px solid var(--border);
+    }
+    table td:nth-child(2), table th:nth-child(2) {
+      border-left: none;
     }
     
     tbody tr:hover td{background:#f0f6ff;}
@@ -97,6 +99,8 @@
     .vlink:hover{text-decoration:underline;}
     .rest-pos{color:var(--red);font-weight:700;}
     .rest-zero{color:var(--green);font-weight:700;}
+    .clickable-supplier, .clickable-customer{cursor:pointer;background:#f0f4ff;transition:all .2s;}
+    .clickable-supplier:hover, .clickable-customer:hover{background:#e0e8ff;transform:scale(1.02);}
     .totals-row td{background:#dbeafe;color:var(--navy);border-top:2px solid var(--navy);border-bottom:2px solid var(--navy);position:sticky;bottom:0;z-index:70;padding:8px 5px;font-size:11px;}
     .tl{font-size:9px;color:#475569;display:block;margin-bottom:1px;}
     .tv{font-size:12px;font-weight:800;color:var(--navy);}
@@ -114,6 +118,10 @@
     .quick-modal-header{font-size:16px;font-weight:800;color:var(--navy);margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid var(--gold);display:flex;justify-content:space-between;align-items:center;}
     .quick-modal-close{cursor:pointer;font-size:24px;color:var(--gray-500);}
     .quick-modal-close:hover{color:var(--red);}
+    .quick-option{padding:12px 16px;margin:6px 0;border-radius:12px;cursor:pointer;transition:all .2s;background:var(--gray-50);border:1px solid var(--gray-200);}
+    .quick-option:hover{background:var(--gray-100);border-color:var(--blue);}
+    .quick-option.selected{background:var(--navy);color:var(--gold);border-color:var(--gold);}
+    .quick-option .name{font-weight:700;font-size:14px;}
     .status-option{display:inline-block;padding:10px 16px;margin:4px;border-radius:30px;cursor:pointer;font-weight:600;transition:all .2s;}
     .status-pending{background:#fef9c3;color:#854d0e;}
     .status-confirmed{background:#dcfce7;color:#166534;}
@@ -233,7 +241,7 @@
 <div class="pagination" id="pagination"></div>
 <div class="summary-sec" id="summarySec" style="display:none">
   <div class="summary-title">🗺️ Trips Summary</div>
-  <div style="overflow-x:auto"><table class="summary-table" id="summaryTbl"></table></div>
+  <div style="overflow-x:auto"><table class="summary-table" id="summaryTbl"></tr></div>
 </div>
 
 <div id="alertModal" class="a-modal">
@@ -293,6 +301,8 @@ let pendingDeleteVoucher = null;
 let cachedExchangeRate = null;
 let selectedCustomerFilter = null;
 let selectedCategoryFilter = null;
+
+// ── دالة الاتصال بـ Google Apps Script (JSONP) ──
 function gas(action, params = {}) {
   return new Promise((resolve, reject) => {
     const callbackName = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
@@ -431,7 +441,7 @@ function canCollect(inv) {
 async function loadCustomersAndSuppliers() {
   try {
     const data = await gas('getAllSuppliersCustomers');
-    console.log('Customers data:', data);
+    console.log('Customers data loaded:', data?.length);
     
     if (Array.isArray(data)) {
       allCustomers = data;
@@ -446,9 +456,7 @@ async function loadCustomersAndSuppliers() {
       });
       
       selectEl.innerHTML = options;
-      console.log('Options loaded:', options);
       
-      // تعبئة قائمة الأنشطة
       const catSelect = document.getElementById('categoryFilterSelect');
       let catOptions = '<option value="">-- جميع الأنشطة --</option>';
       Array.from(categoriesSet).sort().forEach(cat => {
@@ -459,44 +467,89 @@ async function loadCustomersAndSuppliers() {
       if (allCustomers.length > 0) {
         showToast(`تم تحميل ${allCustomers.length} عميل/منفذ`, 'success');
       }
-    } else {
-      console.error('Data is not an array:', data);
-      showToast('خطأ في تحميل العملاء', 'error');
     }
   } catch(e) {
     console.error('loadCustomersAndSuppliers error:', e);
-    showToast('فشل تحميل العملاء: ' + e.message, 'error');
   }
-}     
-
-// ── Handle customer filter change ──
-function onCustomerFilterChange() {
-  const val = document.getElementById('customerFilterSelect').value;
-  if (!val) {
-    selectedCustomerFilter = null;
-  } else {
-    const parts = val.split('|');
-    selectedCustomerFilter = { type: parts[0], name: parts[1] };
-  }
-  apply();
 }
 
-function onCategoryFilterChange() {
-  const val = document.getElementById('categoryFilterSelect').value;
-  selectedCategoryFilter = val || null;
-  apply();
+// ── جلب العملاء/المنفذين حسب الرحلة ──
+async function getCustomersByTrip(tripName, type) {
+  try {
+    const data = await gas('getAllSuppliersCustomers');
+    if (!Array.isArray(data)) return [];
+    
+    return data.filter(item => {
+      if (item.customerType !== type) return false;
+      if (!item.status) return false;
+      const assignedTrips = item.assignedTrips || '';
+      return assignedTrips.includes(tripName);
+    });
+  } catch(e) {
+    console.error('getCustomersByTrip error:', e);
+    return [];
+  }
 }
 
-function clearAllFilters() {
-  document.getElementById('customerFilterSelect').value = '';
-  document.getElementById('categoryFilterSelect').value = '';
-  selectedCustomerFilter = null;
-  selectedCategoryFilter = null;
-  apply();
+// ── عرض قائمة المنفذين ──
+async function showSupplierList(voucherNo, tripName, currentSupplier) {
+  const suppliers = await getCustomersByTrip(tripName, 'Supplier');
+  showSelectionModal(voucherNo, tripName, suppliers, currentSupplier, 'supplier');
+}
+
+// ── عرض قائمة العملاء ──
+async function showCustomerList(voucherNo, tripName, currentCustomer) {
+  const customers = await getCustomersByTrip(tripName, 'Customer');
+  showSelectionModal(voucherNo, tripName, customers, currentCustomer, 'customer');
+}
+
+// ── عرض المودال لاختيار العميل/المنفذ ──
+function showSelectionModal(voucherNo, tripName, items, currentValue, fieldType) {
+  if (!items.length) {
+    showAlert(`لا يوجد ${fieldType === 'supplier' ? 'منفذين' : 'عملاء'} مرتبطين برحلة "${tripName}"`, '⚠️');
+    return;
+  }
+  
+  let html = `<div style="text-align:center;margin-bottom:12px">
+    <div style="font-size:14px;font-weight:700">اختر ${fieldType === 'supplier' ? 'المنفذ' : 'العميل'}</div>
+    <div style="font-size:11px;color:gray">للرحلة: ${escHtml(tripName)}</div>
+  </div>`;
+  
+  items.forEach(item => {
+    const isSelected = (item.customerName === currentValue);
+    html += `<div class="quick-option ${isSelected ? 'selected' : ''}" onclick="updateInvoiceCustomer('${voucherNo}', '${fieldType}', '${escHtml(item.customerName)}')">
+      <div class="name">${escHtml(item.customerName)}</div>
+      <div style="font-size:10px;color:gray">📞 ${escHtml(item.phone || '-')} | 📧 ${escHtml(item.email || '-')}</div>
+    </div>`;
+  });
+  
+  document.getElementById('quickModalTitle').textContent = `اختر ${fieldType === 'supplier' ? 'المنفذ' : 'العميل'}`;
+  document.getElementById('quickModalBody').innerHTML = html;
+  document.getElementById('quickModal').classList.add('open');
+}
+
+// ── تحديث الفاتورة في Google Sheets ──
+async function updateInvoiceCustomer(voucherNo, fieldType, customerName) {
+  closeQuickModal();
+  const field = fieldType === 'supplier' ? 'supplier' : 'customer';
+  showToast(`جاري تحديث ${field === 'supplier' ? 'المنفذ' : 'العميل'}...`, 'info');
+  
+  try {
+    const url = `${GAS_URL}?action=updateInvoiceField&voucherNo=${encodeURIComponent(voucherNo)}&field=${encodeURIComponent(field)}&value=${encodeURIComponent(customerName)}`;
+    const res = await fetch(url);
+    const result = await res.json();
+    if (result.success) {
+      showToast(`تم تحديث ${field === 'supplier' ? 'المنفذ' : 'العميل'} بنجاح`, 'success');
+      loadInv();
+    } else {
+      showToast(result.message || 'فشل التحديث', 'error');
+    }
+  } catch(e) {
+    showToast('خطأ: ' + e.message, 'error');
+  }
 }
 
 function buildTotals(data) {
-  // جمع القيم من الأعمدة المختلفة
   const sumCashUSD = data.reduce((s, inv) => s + (parseFloat(inv['$'] || inv.cashUSD || 0)), 0);
   const sumCashEUR = data.reduce((s, inv) => s + (parseFloat(inv['€'] || inv.cashEUR || 0)), 0);
   const sumCashGBP = data.reduce((s, inv) => s + (parseFloat(inv['£'] || inv.cashGBP || 0)), 0);
@@ -519,9 +572,9 @@ function buildTotals(data) {
     <td class="amt"><strong>${formatNum(sumVisaGBP)}</strong></td>
     <td class="amt"><strong>${formatNum(sumVisaLE)}</strong></td>
     <td colspan="3"></td>
-  </tr>`;
+   </tr>`;
 }
-  
+
 // ── State change modal ──
 async function openStateModal(voucherNo) {
   currentActionVoucher = voucherNo; 
@@ -952,6 +1005,65 @@ async function executeDelete() {
   } catch(e) { showToast('خطأ: ' + e.message, 'error'); }
 }
 
+// ── Filter functions ──
+function onCustomerFilterChange() {
+  const val = document.getElementById('customerFilterSelect').value;
+  if (!val) {
+    selectedCustomerFilter = null;
+  } else {
+    const parts = val.split('|');
+    selectedCustomerFilter = { type: parts[0], name: parts[1] };
+  }
+  applyFilterToInvoices();
+}
+
+function onCategoryFilterChange() {
+  const val = document.getElementById('categoryFilterSelect').value;
+  selectedCategoryFilter = val || null;
+  applyFilterToInvoices();
+}
+
+function clearAllFilters() {
+  document.getElementById('customerFilterSelect').value = '';
+  document.getElementById('categoryFilterSelect').value = '';
+  selectedCustomerFilter = null;
+  selectedCategoryFilter = null;
+  applyFilterToInvoices();
+}
+
+function applyFilterToInvoices() {
+  let filtered = [...allInv];
+  
+  if (selectedCustomerFilter) {
+    const { type, name } = selectedCustomerFilter;
+    filtered = filtered.filter(inv => {
+      if (type === 'Customer') {
+        return (inv.Customer || inv.customer) === name;
+      } else {
+        return (inv.Supplier || inv.supplier) === name;
+      }
+    });
+  }
+  
+  if (selectedCategoryFilter) {
+    filtered = filtered.filter(inv => {
+      const tripName = inv.Trip || inv.trip || '';
+      const customerName = (inv.Customer || inv.customer || '').trim();
+      const supplierName = (inv.Supplier || inv.supplier || '').trim();
+      const foundCust = allCustomers.find(c => 
+        (c.customerType === 'Customer' && c.customerName === customerName) ||
+        (c.customerType === 'Supplier' && c.customerName === supplierName)
+      );
+      return foundCust && foundCust.category === selectedCategoryFilter;
+    });
+  }
+  
+  filtInv = filtered;
+  pg = 1;
+  doSort();
+  renderAll();
+}
+
 // ── Load invoices ──
 async function loadInv() {
   document.getElementById('tblCont').innerHTML = '<div class="loader-wrap"><div class="spinner"></div>Loading...</div>';
@@ -984,37 +1096,8 @@ async function loadInv() {
       baseData = data.filter(i => (i.BranchName || i.branchName) === ub);
     }
 
-    // تطبيق فلتر العميل/المنفذ
-    if (selectedCustomerFilter) {
-      const { type, name } = selectedCustomerFilter;
-      baseData = baseData.filter(inv => {
-        if (type === 'Customer') {
-          return (inv.Customer || inv.customer) === name;
-        } else {
-          return (inv.Supplier || inv.supplier) === name;
-        }
-      });
-    }
-
-    // تطبيق فلتر النشاط (حسب العمود Trip أو حسب العميل)
-    if (selectedCategoryFilter) {
-      baseData = baseData.filter(inv => {
-        const tripName = (inv.Trip || inv.trip || '').trim();
-        // البحث عن العميل المرتبط بهذه الفاتورة للتحقق من نشاطه
-        const customerName = (inv.Customer || inv.customer || '').trim();
-        const supplierName = (inv.Supplier || inv.supplier || '').trim();
-        const foundCust = allCustomers.find(c => 
-          (c.customerType === 'Customer' && c.customerName === customerName) ||
-          (c.customerType === 'Supplier' && c.customerName === supplierName)
-        );
-        return foundCust && foundCust.category === selectedCategoryFilter;
-      });
-    }
-
     allInv = baseData;
-    filtInv = [...allInv];
-    doSort();
-    renderAll();
+    applyFilterToInvoices();
   } catch(e) {
     document.getElementById('tblCont').innerHTML = `<div class="no-data">Error: ${escHtml(e.message)}</div>`;
   }
@@ -1049,6 +1132,30 @@ function apply() {
   if (tISO) { const [y,m,d] = tISO.split('-').map(Number); tTs = new Date(y,m-1,d,23,59,59,999).getTime(); }
   const st = document.getElementById('fState').value.toLowerCase();
 
+  // Apply filters
+  if (selectedCustomerFilter) {
+    const { type, name } = selectedCustomerFilter;
+    workingData = workingData.filter(inv => {
+      if (type === 'Customer') {
+        return (inv.Customer || inv.customer) === name;
+      } else {
+        return (inv.Supplier || inv.supplier) === name;
+      }
+    });
+  }
+  
+  if (selectedCategoryFilter) {
+    workingData = workingData.filter(inv => {
+      const customerName = (inv.Customer || inv.customer || '').trim();
+      const supplierName = (inv.Supplier || inv.supplier || '').trim();
+      const foundCust = allCustomers.find(c => 
+        (c.customerType === 'Customer' && c.customerName === customerName) ||
+        (c.customerType === 'Supplier' && c.customerName === supplierName)
+      );
+      return foundCust && foundCust.category === selectedCategoryFilter;
+    });
+  }
+
   filtInv = workingData.filter(inv => {
     const ts = parseDt(inv.ActiveDate || inv.activeDate);
     if (fTs !== null && (ts === null || ts < fTs)) return false;
@@ -1073,7 +1180,6 @@ function reset() {
   ['fFromNat','fToNat'].forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
   document.getElementById('errTo').textContent = '';
   clearAllFilters();
-  filtInv = [...allInv]; doSort(); renderAll();
 }
 
 // ── Render ──
@@ -1089,7 +1195,6 @@ function renderTable() {
   const start = (pg - 1) * PS;
   const pdata = filtInv.slice(start, start + PS);
 
-  // تعريف الأعمدة - تأكد من وجودها
   const columns = [
     { key: 'Rest', label: 'المتبقي' },
     { key: 'VoucherNo', label: 'رقم الفاتورة' },
@@ -1132,23 +1237,22 @@ function renderTable() {
     { key: 'Actions', label: 'إجراءات' }
   ];
 
-  // بناء رأس الجدول
   let thead = '<thead><tr>';
   columns.forEach(col => {
     thead += `<th onclick="setSort('${col.key}')">${col.label}</th>`;
   });
-  thead += '</tr></thead>';
+  thead += '</table></thead>';
 
-  // بناء جسم الجدول
   let tbody = '';
   pdata.forEach(inv => {
     const vn = inv.VoucherNo || inv.voucherNo || '';
+    const tripName = inv.Trip || inv.trip || '';
     const allowColl = canCollect(inv);
     const restHtml = fmtRest(inv);
     
     const restCell = allowColl
-      ? `<td onclick="openCollectionQuickModal(allInv.find(i=>(i.VoucherNo||i.voucherNo)==='${escHtml(vn)}'))" style="cursor:pointer;background:#f0fdf4;" title="انقر للتحصيل">${restHtml}</td>`
-      : `<td>${restHtml}</td>`;
+      ? `<td onclick="openCollectionQuickModal(allInv.find(i=>(i.VoucherNo||i.voucherNo)==='${escHtml(vn)}'))" style="cursor:pointer;background:#f0fdf4;" title="انقر للتحصيل">${restHtml}<\/td>`
+      : `<td>${restHtml}<\/td>`;
 
     const dollar = inv['$'] || inv.cashUSD || '';
     const euro = inv['€'] || inv.cashEUR || '';
@@ -1166,59 +1270,58 @@ function renderTable() {
 
     tbody += `<tr>
       ${restCell}
-      <td><span class="vlink" onclick="editInvoice('${escHtml(vn)}')">${escHtml(vn)}</span></td>
-      <td>${escHtml(inv.IssueDate || inv.issueDate || '')}</td>
-      <td>${escHtml(inv.ActiveDate || inv.activeDate || '')}</td>
-      <td>${escHtml(fmtTime(inv.Time || inv.time || ''))}</td>
-      <td>${escHtml(inv.Trip || inv.trip || '')}</td>
-      <td class="amt">${escHtml(inv.Sgl || inv.sgl || '')}</td>
-      <td class="amt">${escHtml(inv.Dbl || inv.dbl || '')}</td>
-      <td class="amt">${escHtml(inv.Trpl || inv.trpl || '')}</td>
-      <td class="amt">${escHtml(inv.Extra || inv.extra || '')}</td>
-      <td class="amt">${escHtml(inv.Camel || inv.camel || '')}</td>
-      <td class="amt">${escHtml(inv.Dinner || inv.dinner || '')}</td>
-      <td class="amt">${escHtml(inv.VIPDinner || inv.vipDinner || '')}</td>
-      <td class="amt">${escHtml(inv.StarGazing || inv.starGazing || '')}</td>
-      <td class="amt">${escHtml(inv.PrivateTrip || inv.privateTrip || '')}</td>
-      <td class="amt">${escHtml(inv.PrivateTransfer || inv.privateTransfer || '')}</td>
-      <td class="amt">${escHtml(dollar)}</td>
-      <td class="amt">${escHtml(euro)}</td>
-      <td class="amt">${escHtml(pound)}</td>
-      <td class="amt">${escHtml(le)}</td>
-      <td class="amt">${escHtml(visaDollar)}</td>
-      <td class="amt">${escHtml(visaEuro)}</td>
-      <td class="amt">${escHtml(visaPound)}</td>
-      <td class="amt">${escHtml(visaLe)}</td>
-      <td>${escHtml(inv.Hotel || inv.hotel || '')}</td>
-      <td>${escHtml(inv.RoomNo || inv.roomNo || '')}</td>
-      <td>${escHtml(inv.Nationality || inv.nationality || '')}</td>
-      <td>${escHtml(inv.GuestName || inv.guestName || '')}</td>
-      <td>${escHtml(inv.ContactNo || inv.contactNo || '')}</td>
-      <td class="acts-cell">${escHtml(inv.Notes || inv.notes || '')}</td>
-      <td>${escHtml(inv.Supplier || inv.supplier || '—')}</td>
-      <td>${escHtml(inv.Customer || inv.customer || '—')}</td>
-      <td onclick="openStateModal('${escHtml(vn)}')" style="cursor:pointer">${fmtSt(inv)}</td>
-      <td>${escHtml((inv['InvoiceCurrency '] || inv.invoiceCurrency || '').trim())}</td>
-      <td class="amt">${escHtml(inv.Cost || inv.cost || '')}</td>
-      <td class="amt">${escHtml(inv['Discount '] || inv.discount || '')}</td>
-      <td>${escHtml(paxHtml)}</td>
-      <td class="acts-cell">${escHtml(inv.ActivitiesText || inv.activitiesText || '')}</td>
+      <td><span class="vlink" onclick="editInvoice('${escHtml(vn)}')">${escHtml(vn)}</span><\/td>
+      <td>${escHtml(inv.IssueDate || inv.issueDate || '')}<\/td>
+      <td>${escHtml(inv.ActiveDate || inv.activeDate || '')}<\/td>
+      <td>${escHtml(fmtTime(inv.Time || inv.time || ''))}<\/td>
+      <td>${escHtml(tripName)}<\/td>
+      <td class="amt">${escHtml(inv.Sgl || inv.sgl || '')}<\/td>
+      <td class="amt">${escHtml(inv.Dbl || inv.dbl || '')}<\/td>
+      <td class="amt">${escHtml(inv.Trpl || inv.trpl || '')}<\/td>
+      <td class="amt">${escHtml(inv.Extra || inv.extra || '')}<\/td>
+      <td class="amt">${escHtml(inv.Camel || inv.camel || '')}<\/td>
+      <td class="amt">${escHtml(inv.Dinner || inv.dinner || '')}<\/td>
+      <td class="amt">${escHtml(inv.VIPDinner || inv.vipDinner || '')}<\/td>
+      <td class="amt">${escHtml(inv.StarGazing || inv.starGazing || '')}<\/td>
+      <td class="amt">${escHtml(inv.PrivateTrip || inv.privateTrip || '')}<\/td>
+      <td class="amt">${escHtml(inv.PrivateTransfer || inv.privateTransfer || '')}<\/td>
+      <td class="amt">${escHtml(dollar)}<\/td>
+      <td class="amt">${escHtml(euro)}<\/td>
+      <td class="amt">${escHtml(pound)}<\/td>
+      <td class="amt">${escHtml(le)}<\/td>
+      <td class="amt">${escHtml(visaDollar)}<\/td>
+      <td class="amt">${escHtml(visaEuro)}<\/td>
+      <td class="amt">${escHtml(visaPound)}<\/td>
+      <td class="amt">${escHtml(visaLe)}<\/td>
+      <td>${escHtml(inv.Hotel || inv.hotel || '')}<\/td>
+      <td>${escHtml(inv.RoomNo || inv.roomNo || '')}<\/td>
+      <td>${escHtml(inv.Nationality || inv.nationality || '')}<\/td>
+      <td>${escHtml(inv.GuestName || inv.guestName || '')}<\/td>
+      <td>${escHtml(inv.ContactNo || inv.contactNo || '')}<\/td>
+      <td class="acts-cell">${escHtml(inv.Notes || inv.notes || '')}<\/td>
+      <td class="clickable-supplier" onclick="showSupplierList('${escHtml(vn)}', '${escHtml(tripName)}', '${escHtml(inv.Supplier || inv.supplier || '')}')">${escHtml(inv.Supplier || inv.supplier || '—')}<\/td>
+      <td class="clickable-customer" onclick="showCustomerList('${escHtml(vn)}', '${escHtml(tripName)}', '${escHtml(inv.Customer || inv.customer || '')}')">${escHtml(inv.Customer || inv.customer || '—')}<\/td>
+      <td onclick="openStateModal('${escHtml(vn)}')" style="cursor:pointer">${fmtSt(inv)}<\/td>
+      <td>${escHtml((inv['InvoiceCurrency '] || inv.invoiceCurrency || '').trim())}<\/td>
+      <td class="amt">${escHtml(inv.Cost || inv.cost || '')}<\/td>
+      <td class="amt">${escHtml(inv['Discount '] || inv.discount || '')}<\/td>
+      <td>${escHtml(paxHtml)}<\/td>
+      <td class="acts-cell">${escHtml(inv.ActivitiesText || inv.activitiesText || '')}<\/td>
       <td><div class="act-btns">
         <button class="act-btn act-edit" onclick="editInvoice('${escHtml(vn)}')">✏️</button>
         <button class="act-btn act-del" onclick="showDeleteConfirmModal('${escHtml(vn)}')">🗑️</button>
         ${pdf}
-      </div></td>
-    </tr>`;
+      </div><\/td>
+    <\/tr>`;
   });
 
-  // إضافة صف الإجماليات
   tbody += buildTotals(filtInv);
 
-  // تجميع الجدول الكامل
-  const tableHtml = `<table class="dt">${thead}<tbody>${tbody}</tbody></table>`;
+  const tableHtml = `<table class="dt">${thead}<tbody>${tbody}</tbody><\/table>`;
   cont.innerHTML = tableHtml;
   renderPag();
 }
+
 function renderPag() {
   const total = Math.ceil(filtInv.length / PS);
   let pages = [];
@@ -1247,9 +1350,9 @@ function buildSummary(data) {
   let rows = '';
   Object.entries(trips).sort((a,b) => b[1].b - a[1].b).forEach(([tn, info]) => {
     const at = Object.entries(info.acts).map(([k,v]) => `${k}×${Number.isInteger(v)?v:v.toFixed(1)}`).join(' | ') || '—';
-    rows += `<tr><td><strong>${escHtml(tn)}</strong></td><td style="text-align:center"><span class="badge">${info.b}</span></td><td>${escHtml(at)}</td></tr>`;
+    rows += `<tr><td><strong>${escHtml(tn)}</strong><\/td><td style="text-align:center"><span class="badge">${info.b}</span><\/td><td>${escHtml(at)}<\/td><\/tr>`;
   });
-  document.getElementById('summaryTbl').innerHTML = `<thead><tr><th>Trip</th><th style="text-align:center">Bookings</th><th>Activities</th></tr></thead><tbody>${rows}</tbody>`;
+  document.getElementById('summaryTbl').innerHTML = `<thead><tr><th>Trip</th><th style="text-align:center">Bookings</th><th>Activities</th><\/tr><\/thead><tbody>${rows}<\/tbody>`;
   document.getElementById('summarySec').style.display = 'block';
 }
 
