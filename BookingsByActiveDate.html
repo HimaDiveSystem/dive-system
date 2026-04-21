@@ -7,6 +7,7 @@
   <title>Bookings by Active Date</title>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
   <style>
+    /* ====== نفس الأنماط الأصلية ====== */
     :root{
       --navy:#0f1f3d;--navy2:#1a3260;--gold:#f5c842;--gold2:#e6b800;
       --blue:#2563eb;--blue-lt:#3b82f6;--green:#16a34a;--red:#dc2626;--orange:#ea580c;
@@ -21,6 +22,11 @@
     .user-chip{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:40px;padding:4px 13px;color:white;font-size:12px;font-weight:600;}
     .back-btn{background:transparent;border:2px solid rgba(255,255,255,.3);color:white;padding:4px 13px;border-radius:40px;cursor:pointer;font-weight:700;font-size:12px;font-family:'Cairo',sans-serif;transition:all .2s;}
     .back-btn:hover{border-color:var(--gold);color:var(--gold);}
+    .customer-selector{background:white;border-bottom:2px solid var(--border);padding:8px 20px;display:flex;align-items:center;gap:15px;flex-wrap:wrap;}
+    .customer-selector label{font-size:12px;font-weight:700;color:var(--navy);}
+    .customer-selector select{padding:6px 12px;border:2px solid var(--border);border-radius:20px;font-family:'Cairo',sans-serif;font-size:12px;background:white;min-width:220px;}
+    .customer-selector .clear-cust{background:#f1f5f9;border:1px solid var(--border);border-radius:20px;padding:4px 12px;font-size:11px;cursor:pointer;}
+    .customer-selector .clear-cust:hover{background:#e2e8f0;}
     .filter-bar{background:white;border-bottom:2px solid var(--border);padding:10px 20px;position:sticky;top:52px;z-index:99;box-shadow:0 3px 8px rgba(0,0,0,.05);}
     .filter-row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;}
     .fg{display:flex;flex-direction:column;gap:3px;}
@@ -115,11 +121,6 @@
     .st-confirmed{display:inline-block;padding:2px 7px;border-radius:12px;font-size:10px;font-weight:700;background:#dcfce7;color:#166534;}
     .st-cancel{display:inline-block;padding:2px 7px;border-radius:12px;font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;}
     .st-refund{display:inline-block;padding:2px 7px;border-radius:12px;font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;}
-    .customer-selector{background:white;border-bottom:1px solid var(--border);padding:8px 20px;display:flex;align-items:center;gap:15px;flex-wrap:wrap;}
-    .customer-selector label{font-size:12px;font-weight:700;color:var(--navy);}
-    .customer-selector select{padding:6px 12px;border:2px solid var(--border);border-radius:20px;font-family:'Cairo',sans-serif;font-size:12px;background:white;min-width:200px;}
-    .customer-selector .clear-cust{background:#f1f5f9;border:1px solid var(--border);border-radius:20px;padding:4px 12px;font-size:11px;cursor:pointer;}
-    .customer-selector .clear-cust:hover{background:#e2e8f0;}
     #deleteConfirmModal .quick-modal-content{animation:pop 0.3s cubic-bezier(0.34,1.56,0.64,1);}
     @keyframes pop{from{opacity:0;transform:scale(0.9);}to{opacity:1;transform:scale(1);}}
     @keyframes fadeInUp{from{opacity:0;transform:translateX(-50%) translateY(20px);}to{opacity:1;transform:translateX(-50%) translateY(0);}}
@@ -252,7 +253,7 @@ let currentActionVoucher = null;
 let currentRestAmount = null;
 let pendingDeleteVoucher = null;
 let cachedExchangeRate = null;
-let selectedCustomerId = null; // for filtering by customer/supplier
+let selectedCustomerFilter = null; // { type: 'Customer', name: '...' } or { type: 'Supplier', name: '...' }
 
 // ── Date formatting helpers ──
 function fmtDDMMMYYYY(s) {
@@ -360,7 +361,8 @@ async function loadCustomersAndSuppliers() {
       let options = '<option value="">-- جميع العملاء والمنفذين --</option>';
       allCustomers.forEach(cust => {
         const typeLabel = cust.customerType === 'Customer' ? '👤 عميل' : '🏢 منفذ';
-        options += `<option value="${escHtml(cust.customerId)}|${escHtml(cust.customerType)}|${escHtml(cust.customerName)}">${typeLabel}: ${escHtml(cust.customerName)} (${escHtml(cust.category || '-')})</option>`;
+        // Store the type and name in the value
+        options += `<option value="${cust.customerType}|${escHtml(cust.customerName)}">${typeLabel}: ${escHtml(cust.customerName)} (${escHtml(cust.category || '-')})</option>`;
       });
       selectEl.innerHTML = options;
     }
@@ -373,34 +375,29 @@ async function loadCustomersAndSuppliers() {
 function onCustomerFilterChange() {
   const val = document.getElementById('customerFilterSelect').value;
   if (!val) {
-    selectedCustomerId = null;
+    selectedCustomerFilter = null;
   } else {
     const parts = val.split('|');
-    selectedCustomerId = parts[0];
+    selectedCustomerFilter = { type: parts[0], name: parts[1] };
   }
   apply(); // re-apply filters
 }
 
 function clearCustomerFilter() {
   document.getElementById('customerFilterSelect').value = '';
-  selectedCustomerId = null;
+  selectedCustomerFilter = null;
   apply();
 }
 
 // ── Filter invoices by selected customer/supplier ──
 function filterByCustomer(invoices) {
-  if (!selectedCustomerId) return invoices;
-  const selectedCust = allCustomers.find(c => c.customerId === selectedCustomerId);
-  if (!selectedCust) return invoices;
-  const isCustomer = selectedCust.customerType === 'Customer';
-  const custName = selectedCust.customerName;
+  if (!selectedCustomerFilter) return invoices;
+  const { type, name } = selectedCustomerFilter;
   return invoices.filter(inv => {
-    const invCustomer = inv.Customer || inv.customer || '';
-    const invSupplier = inv.Supplier || inv.supplier || '';
-    if (isCustomer) {
-      return invCustomer === custName;
+    if (type === 'Customer') {
+      return (inv.Customer || inv.customer) === name;
     } else {
-      return invSupplier === custName;
+      return (inv.Supplier || inv.supplier) === name;
     }
   });
 }
@@ -881,15 +878,13 @@ async function loadInv() {
     });
 
     const ub = currentUser?.branchName, ut = currentUser?.type;
+    let baseData = data;
     if (ub && ut !== 'Admin' && ut !== 'Owner') {
-      allInv = data.filter(i => (i.BranchName || i.branchName) === ub);
-    } else {
-      allInv = data;
+      baseData = data.filter(i => (i.BranchName || i.branchName) === ub);
     }
 
     // Apply customer filter
-    allInv = filterByCustomer(allInv);
-
+    allInv = filterByCustomer(baseData);
     filtInv = [...allInv];
     doSort();
     renderAll();
@@ -978,7 +973,7 @@ function renderTable() {
     ['Pax','الأفراد'],['ActivitiesText','الأنشطة'],['Actions','إجراءات']
   ];
 
-  let h = '<tr><thead><tr>';
+  let h = '<table><thead><tr>';
   cols.forEach(([c, l]) => { h += `<th onclick="setSort('${c}')">${l}</th>`; });
   h += '</tr></thead><tbody>';
 
@@ -1039,7 +1034,7 @@ function renderTable() {
         <button class="act-btn act-del" onclick="showDeleteConfirmModal('${escHtml(vn)}')">🗑️</button>
         ${pdf}
       </div></td>
-    </tr>`;
+    </table>`;
   });
   h += buildTotals(filtInv);
   h += '</tbody></table>';
