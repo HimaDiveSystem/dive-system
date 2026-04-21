@@ -804,13 +804,14 @@ async function updateCollectionPreview() {
   const vG = parseFloat(document.getElementById('collVisaGBP')?.value) || 0;
   const vL = parseFloat(document.getElementById('collVisaLE')?.value) || 0;
   
-  // جلب أسعار الصرف
   // جلب أسعار الصرف من الخادم
 let exchangeRates = null;
 if (activeDate) {
   const rateRes = await fetch(`${GAS_URL}?action=getExchangeRate&dateStr=${encodeURIComponent(activeDate)}`);
   exchangeRates = await rateRes.json();
 }
+
+let collected = 0;
 
 if (exchangeRates && exchangeRates.cash) {
   // تحويل جميع العملات إلى LE
@@ -829,12 +830,12 @@ if (exchangeRates && exchangeRates.cash) {
   else if (currency === '€') collected = totalLE / (exchangeRates.cash.EUR || 1);
   else if (currency === '£') collected = totalLE / (exchangeRates.cash.GBP || 1);
   else collected = totalLE;
-}    
-    collected = Math.round(collected * 100) / 100;
-  } else {
-    // إذا لم توجد أسعار صرف
-    collected = cU + cE + cG + cL + vU + vE + vG + vL;
-  }
+  
+  collected = Math.round(collected * 100) / 100;
+} else {
+  // إذا لم توجد أسعار صرف
+  collected = cU + cE + cG + cL + vU + vE + vG + vL;
+}
   
   // تحديث العرض
   document.getElementById('collTotalDisplay').textContent = collected.toFixed(2);
@@ -1033,32 +1034,14 @@ let ftimer2 = null;
 function debounce() { clearTimeout(ftimer2); ftimer2 = setTimeout(apply, 300); }
 function apply() {
   if (!valDates()) return;
-  let workingData = [...allInv];
   const fISO = document.getElementById('fFromNat').value, tISO = document.getElementById('fToNat').value;
   const q = document.getElementById('fSearch').value.toLowerCase().trim();
   let fTs = null, tTs = null;
   if (fISO) { const [y,m,d] = fISO.split('-').map(Number); fTs = new Date(y,m-1,d).getTime(); }
   if (tISO) { const [y,m,d] = tISO.split('-').map(Number); tTs = new Date(y,m-1,d,23,59,59,999).getTime(); }
   const st = document.getElementById('fState').value.toLowerCase();
-  if (selectedCustomerFilter) {
-    const { type, name } = selectedCustomerFilter;
-    workingData = workingData.filter(inv => {
-      if (type === 'Customer') return (inv.Customer || inv.customer) === name;
-      else return (inv.Supplier || inv.supplier) === name;
-    });
-  }
-  if (selectedCategoryFilter) {
-    workingData = workingData.filter(inv => {
-      const custName = (inv.Customer || inv.customer || '').trim();
-      const suppName = (inv.Supplier || inv.supplier || '').trim();
-      const foundCust = allCustomers.find(c => 
-        (c.customerType === 'Customer' && c.customerName === custName) ||
-        (c.customerType === 'Supplier' && c.customerName === suppName)
-      );
-      return foundCust && foundCust.category === selectedCategoryFilter;
-    });
-  }
-  filtInv = workingData.filter(inv => {
+
+  filtInv = allInv.filter(inv => {
     const ts = parseDt(inv.ActiveDate || inv.activeDate);
     if (fTs !== null && (ts === null || ts < fTs)) return false;
     if (tTs !== null && (ts === null || ts > tTs)) return false;
@@ -1067,19 +1050,21 @@ function apply() {
       if (invState !== st) return false;
     }
     if (q) {
-      const s = [inv.VoucherNo, inv.GuestName, inv.Trip, inv.SalesName, inv.ContactNo, inv.Hotel].map(x => x || '').join(' ').toLowerCase();
+      const s = [inv.VoucherNo, inv.GuestName, inv.Trip, inv.SalesName, inv.ContactNo, inv.Hotel]
+        .map(x => x || '').join(' ').toLowerCase();
       if (!s.includes(q)) return false;
     }
     return true;
   });
+
   pg = 1; doSort(); renderAll();
 }
-function reset() {
+  function reset() {
   document.getElementById('fState').value = '';
   ['fFromTxt','fToTxt','fSearch'].forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
   ['fFromNat','fToNat'].forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
   document.getElementById('errTo').textContent = '';
-  clearAllFilters();
+  filtInv = [...allInv]; doSort(); renderAll();
 }
 
 function renderAll() { renderTable(); buildSummary(filtInv); }
@@ -1087,128 +1072,95 @@ function renderAll() { renderTable(); buildSummary(filtInv); }
 function renderTable() {
   const cont = document.getElementById('tblCont');
   if (!filtInv.length) {
-    cont.innerHTML = '<div class="no-data">لا توجد حجوزات</div>';
+    cont.innerHTML = '<div class="no-data">No bookings found</div>';
     document.getElementById('pagination').innerHTML = '';
     document.getElementById('summarySec').style.display = 'none';
     return;
   }
   const start = (pg - 1) * PS;
   const pdata = filtInv.slice(start, start + PS);
-  
-  // تعريف أسماء الأعمدة بالترتيب المطلوب
-  const columnLabels = [
-    'المتبقي', 'رقم الفاتورة', 'تاريخ الحجز', 'تاريخ التنفيذ', 'الوقت', 'الرحلة',
-    'Item1', 'Item2', 'Item3', 'Item4', 'Item5', 'Item6', 'Item7', 'Item8', 'Item9', 'Item10',
-    '$', '€', '£', 'LE', 'Visa$', 'Visa€', 'Visa£', 'VisaLE',
-    'الفندق', 'الغرفة', 'الجنسية', 'اسم العميل', 'الهاتف', 'ملاحظات',
-    'المورد', 'العميل', 'الحالة', 'العملة', 'التكلفة', 'الخصم',
-    'الأفراد', 'الأنشطة', 'إجراءات'
+
+  const cols = [
+    ['Rest','المتبقي'],['VoucherNo','رقم الفاتورة'],['IssueDate','تاريخ الحجز'],
+    ['ActiveDate','تاريخ التنفيذ'],['Time','الوقت'],['Trip','الرحلة'],
+    ['Sgl','Item1'],['Dbl','Item2'],['Trpl','Item3'],['Extra','Item4'],
+    ['Camel','Item5'],['Dinner','Item6'],['VIPDinner','Item7'],['StarGazing','Item8'],
+    ['PrivateTrip','Item9'],['PrivateTransfer','Item10'],
+    ['$','$'],['€','€'],['£','£'],['LE','LE'],
+    ['Visa$','Visa$'],['Visa€','Visa€'],['Visa£','Visa£'],['VisaLE','VisaLE'],
+    ['Hotel','الفندق'],['RoomNo','الغرفة'],['Nationality','الجنسية'],
+    ['GuestName','اسم العميل'],['ContactNo','الهاتف'],['Notes','ملاحظات'],
+    ['Supplier','المورد'],['Customer','العميل'],['State','الحالة'],
+    ['InvoiceCurrency ','العملة'],['Cost','التكلفة'],['Discount ','الخصم'],
+    ['Pax','الأفراد'],['ActivitiesText','الأنشطة'],['Actions','إجراءات']
   ];
-  
-  // أسماء الحقول في البيانات (للترتيب والربط)
-  const columnFields = [
-    'Rest', 'VoucherNo', 'IssueDate', 'ActiveDate', 'Time', 'Trip',
-    'Sgl', 'Dbl', 'Trpl', 'Extra', 'Camel', 'Dinner', 'VIPDinner', 'StarGazing', 'PrivateTrip', 'PrivateTransfer',
-    '$', '€', '£', 'LE', 'Visa$', 'Visa€', 'Visa£', 'VisaLE',
-    'Hotel', 'RoomNo', 'Nationality', 'GuestName', 'ContactNo', 'Notes',
-    'Supplier', 'Customer', 'State', 'InvoiceCurrency', 'Cost', 'Discount',
-    'Pax', 'ActivitiesText', 'Actions'
-  ];
-  
-  // بناء رأس الجدول
-  let thead = '<thead><tr>';
-  for (let i = 0; i < columnLabels.length; i++) {
-    thead += `<th onclick="setSort('${columnFields[i]}')">${columnLabels[i]}</th>`;
-  }
-  thead += '</thead>';
-  
-  // بناء جسم الجدول
-  let tbody = '';
-  for (let inv of pdata) {
+
+  let h = '<table><thead><tr>';
+  cols.forEach(([c, l]) => { h += `<th onclick="setSort('${c}')">${l}</th>`; });
+  h += '</tr></thead><tbody>';
+
+  pdata.forEach(inv => {
     const vn = inv.VoucherNo || inv.voucherNo || '';
-    const trip = inv.Trip || inv.trip || '';
-    const rest = inv.Rest !== undefined ? inv.Rest : inv.rest;
-    const currency = (inv.InvoiceCurrency || inv.invoiceCurrency || '').trim();
-    const issueDate = fmtDate(inv.IssueDate || inv.issueDate || '');
-    const activeDate = fmtDate(inv.ActiveDate || inv.activeDate || '');
-    const time = fmtTime(inv.Time || inv.time || '');
-    const hotel = inv.Hotel || inv.hotel || '';
-    const roomNo = inv.RoomNo || inv.roomNo || '';
-    const nationality = inv.Nationality || inv.nationality || '';
-    const guestName = inv.GuestName || inv.guestName || '';
-    const contactNo = inv.ContactNo || inv.contactNo || '';
-    const notes = inv.Notes || inv.notes || '';
-    const supplier = inv.Supplier || inv.supplier || '';
-    const customer = inv.Customer || inv.customer || '';
-    const state = inv.State || inv.state || '';
-    const cost = inv.Cost || inv.cost || '';
-    const discount = inv.Discount || inv.discount || '';
-    const adult = inv.Adult || inv.adultCount || 0;
-    const child = inv.Children || inv.childCount || 0;
-    const infant = inv.Infants || inv.infantCount || 0;
-    const activitiesText = inv.ActivitiesText || inv.activitiesText || '';
-    const pdfLink = inv.Invoice_PDF || '';
-    
-    const allowColl = canCollect(rest, issueDate);
-    const restHtml = fmtRest(rest, currency);
-    
-    const restCell = allowColl 
-      ? `<td onclick="openCollectionQuickModalByVoucher('${vn}')" style="cursor:pointer;background:#f0fdf4;" title="انقر للتحصيل">${restHtml}<\/td>` 
-      : `<td>${restHtml}<\/td>`;
-    
-    const pdfBtn = pdfLink && pdfLink.startsWith('http') 
-      ? `<a href="${pdfLink}" target="_blank" class="act-btn act-pdf">🖨️<\/a>` 
-      : `<span class="act-btn act-na">📄<\/span>`;
-    
-    tbody += `<tr>
+    const allowColl = canCollect(inv);
+    const restHtml = fmtRest(inv);
+    const restCell = allowColl
+      ? `<td onclick="openCollectionQuickModalByVoucher('${escHtml(vn)}')" style="cursor:pointer" title="انقر للتحصيل">${restHtml}</td>`
+      : `<td title="لا يمكن التحصيل">${restHtml}</td>`;
+
+    const dollar = inv['$'] ? inv['$'] : '';
+    const euro = inv['€'] ? inv['€'] : '';
+    const pound = inv['£'] ? inv['£'] : '';
+    const le = inv.LE ? inv.LE : '';
+    const visaDollar = inv['Visa$'] ? inv['Visa$'] : '';
+    const visaEuro = inv['Visa€'] ? inv['Visa€'] : '';
+    const visaPound = inv['Visa£'] ? inv['Visa£'] : '';
+    const visaLe = inv.VisaLE ? inv.VisaLE : '';
+
+    const paxHtml = `A:${inv.Adult||0} C:${inv.Children||0} I:${inv.Infants||0}`;
+    const pdf = (inv.Invoice_PDF && inv.Invoice_PDF.startsWith('http'))
+      ? `<a href="${escHtml(inv.Invoice_PDF)}" target="_blank" class="act-btn act-pdf">🖨️</a>`
+      : `<span class="act-btn act-na">📄</span>`;
+
+    h += `<tr>
       ${restCell}
-      <td><span class="vlink" onclick="editInvoice('${vn}')">${vn}<\/span><\/td>
-      <td>${issueDate}<\/td>
-      <td>${activeDate}<\/td>
-      <td>${time}<\/td>
-      <td>${trip}<\/td>
-      <td class="amt">${inv.Sgl || ''}<\/td>
-      <td class="amt">${inv.Dbl || ''}<\/td>
-      <td class="amt">${inv.Trpl || ''}<\/td>
-      <td class="amt">${inv.Extra || ''}<\/td>
-      <td class="amt">${inv.Camel || ''}<\/td>
-      <td class="amt">${inv.Dinner || ''}<\/td>
-      <td class="amt">${inv.VIPDinner || ''}<\/td>
-      <td class="amt">${inv.StarGazing || ''}<\/td>
-      <td class="amt">${inv.PrivateTrip || ''}<\/td>
-      <td class="amt">${inv.PrivateTransfer || ''}<\/td>
-      <td class="amt">${inv.$ || ''}<\/td>
-      <td class="amt">${inv['€'] || ''}<\/td>
-      <td class="amt">${inv['£'] || ''}<\/td>
-      <td class="amt">${inv.LE || ''}<\/td>
-      <td class="amt">${inv['Visa$'] || ''}<\/td>
-      <td class="amt">${inv['Visa€'] || ''}<\/td>
-      <td class="amt">${inv['Visa£'] || ''}<\/td>
-      <td class="amt">${inv.VisaLE || ''}<\/td>
-      <td>${hotel}<\/td>
-      <td>${roomNo}<\/td>
-      <td>${nationality}<\/td>
-      <td>${guestName}<\/td>
-      <td>${contactNo}<\/td>
-      <td class="acts-cell">${notes}<\/td>
-      <td class="clickable-supplier" onclick="showSupplierList('${vn}', '${trip}', '${supplier}')">${supplier || '—'}<\/td>
-      <td class="clickable-customer" onclick="showCustomerList('${vn}', '${trip}', '${customer}')">${customer || '—'}<\/td>
-      <td class="status-cell" onclick="openStateModal('${vn}')">${fmtSt(state)}<\/td>
-      <td>${currency}<\/td>
-      <td class="amt">${cost}<\/td>
-      <td class="amt">${discount}<\/td>
-      <td>A:${adult} C:${child} I:${infant}<\/td>
-      <td class="acts-cell">${activitiesText}<\/td>
+      <td><span class="vlink" onclick="editInvoice('${escHtml(vn)}')">${escHtml(vn)}</span></td>
+      <td>${escHtml(inv.IssueDate || inv.issueDate || '')}</td>
+      <td>${escHtml(inv.ActiveDate || inv.activeDate || '')}</td>
+      <td>${escHtml(fmtTime(inv.Time || inv.time || ''))}</td>
+      <td>${escHtml(inv.Trip || inv.trip || '')}</td>
+      <td class="amt">${escHtml(inv.Sgl || '')}</td><td class="amt">${escHtml(inv.Dbl || '')}</td>
+      <td class="amt">${escHtml(inv.Trpl || '')}</td><td class="amt">${escHtml(inv.Extra || '')}</td>
+      <td class="amt">${escHtml(inv.Camel || '')}</td><td class="amt">${escHtml(inv.Dinner || '')}</td>
+      <td class="amt">${escHtml(inv.VIPDinner || '')}</td><td class="amt">${escHtml(inv.StarGazing || '')}</td>
+      <td class="amt">${escHtml(inv.PrivateTrip || '')}</td><td class="amt">${escHtml(inv.PrivateTransfer || '')}</td>
+      <td class="amt">${escHtml(dollar)}</td><td class="amt">${escHtml(euro)}</td>
+      <td class="amt">${escHtml(pound)}</td><td class="amt">${escHtml(le)}</td>
+      <td class="amt">${escHtml(visaDollar)}</td><td class="amt">${escHtml(visaEuro)}</td>
+      <td class="amt">${escHtml(visaPound)}</td><td class="amt">${escHtml(visaLe)}</td>
+      <td>${escHtml(inv.Hotel || '')}</td>
+      <td>${escHtml(inv.RoomNo || '')}</td>
+      <td>${escHtml(inv.Nationality || '')}</td>
+      <td>${escHtml(inv.GuestName || '')}</td>
+      <td>${escHtml(inv.ContactNo || '')}</td>
+      <td class="acts-cell">${escHtml(inv.Notes || '')}</td>
+      <td>${escHtml(inv.Supplier || '—')}</td>
+      <td>${escHtml(inv.Customer || '—')}</td>
+      <td onclick="openStateModal('${escHtml(vn)}')" style="cursor:pointer">${fmtSt(inv)}</td>
+      <td>${escHtml((inv['InvoiceCurrency '] || inv.invoiceCurrency || '').trim())}</td>
+      <td class="amt">${escHtml(inv.Cost || '')}</td>
+      <td class="amt">${escHtml(inv['Discount '] || '')}</td>
+      <td>${escHtml(paxHtml)}</td>
+      <td class="acts-cell">${escHtml(inv.ActivitiesText || '')}</td>
       <td><div class="act-btns">
-        <button class="act-btn act-edit" onclick="editInvoice('${vn}')">✏️<\/button>
-        <button class="act-btn act-del" onclick="showDeleteConfirmModal('${vn}')">🗑️<\/button>
-        ${pdfBtn}
-      <\/div><\/td>
+        <button class="act-btn act-edit" onclick="editInvoice('${escHtml(vn)}')">✏️</button>
+        <button class="act-btn act-del" onclick="showDeleteConfirmModal('${escHtml(vn)}')">🗑️</button>
+        ${pdf}
+      </div></td>
     </tr>`;
-  }
-  
-  tbody += buildTotals(pdata);
-  cont.innerHTML = `<table>${thead}<tbody>${tbody}</tbody></tr>`;
+  });
+  h += buildTotals(filtInv);
+  h += '</tbody></table>';
+  cont.innerHTML = h;
   renderPag();
 }
  function renderPag() {
