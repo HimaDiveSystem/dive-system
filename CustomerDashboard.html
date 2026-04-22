@@ -428,7 +428,7 @@ async function refreshCustomerData() {
     return;
   }
   
-  showAlert('جاري تجميع البيانات من الفواتير المؤكدة...', '🔄');
+  showAlert('جاري تحديث البيانات من الفواتير...', '🔄');
   
   try {
     const isUnlimited = UNLIMITED_TYPES.includes(loggedInUser?.type);
@@ -447,18 +447,25 @@ async function refreshCustomerData() {
     });
     
     if(result && result.success) {
-      showAlert(`✅ تم تجميع البيانات بنجاح!\nتم تحديث ${result.updatedDates || 0} تاريخ\nتمت معالجة ${result.totalInvoices || 0} فاتورة`, '✅');
-      await loadSheetDataOnly(); // إعادة تحميل بيانات الشيت فقط
-      renderPage('', '');
+      showAlert(`✅ تم تحديث البيانات بنجاح!\nتم تحديث ${result.updatedDates || 0} تاريخ`, '✅');
     } else {
-      showAlert('❌ فشل التجميع: ' + (result?.message || 'خطأ غير معروف'), '❌');
+      // ✅ لا نعرض رسالة خطأ، فقط ننبه أن التجميع لم يجد بيانات
+      console.log('⚠️ لا توجد فواتير مؤكدة للتجميع');
+      showAlert('⚠️ لا توجد فواتير مؤكدة للعميل في الفترة المحددة', '⚠️');
     }
+    
+    // ✅ دائماً نقوم بتحميل بيانات الشيت حتى لو لم توجد فواتير
+    await loadSheetDataOnly();
+    renderPage('', '');
+    
   } catch(e) {
     console.error('refreshCustomerData error:', e);
-    showAlert('خطأ في التجميع: ' + e.message, '❌');
+    showAlert('خطأ في التحديث: ' + e.message, '❌');
+    // ✅ حتى في حالة الخطأ، نحاول تحميل البيانات الموجودة
+    await loadSheetDataOnly();
+    renderPage('', '');
   }
 }
-
 async function loadSheetDataOnly() {
   if(!customerAccount) return;
   const sheetName = customerAccount.customerName + '_' + customerAccount.category + '_' + customerAccount.customerType;
@@ -686,23 +693,32 @@ async function loadAll(){
     const sheetName = customerAccount.customerName + '_' + customerAccount.category + '_' + customerAccount.customerType;
     document.getElementById('mainContent').innerHTML=`<div class="loader"><div class="spinner"></div>جاري جلب شيت "${sheetName}"...</div>`;
 
+    // ✅ تحميل بيانات الشيت أولاً
     const res = await gas('getAccountSheetData', {sheetName});
     if(!res?.success||!Array.isArray(res.data)||res.data.length<4){
       document.getElementById('mainContent').innerHTML=`<div class="card"><div class="card-body no-data">⚠️ ${res?.message||'لا توجد بيانات في الشيت'}</div></div>`;
       return;
     }
     sheetData = res.data;
-    parseSheetStructure();
     
-    // تجميع البيانات من Invoices تلقائياً عند فتح الصفحة
-    await refreshCustomerData();
+    // ✅ محاولة تجميع البيانات من Invoices (حتى لو فشلت، نعرض الشيت)
+    try {
+      await refreshCustomerData();
+    } catch(e) {
+      console.warn('⚠️ فشل تجميع البيانات، نعرض الشيت الحالي:', e);
+      // ✅ نعرض الشيت حتى لو فشل التجميع
+      renderPage('', '');
+    }
 
   } catch(e){
     console.error('loadAll error:',e);
     showAlert('خطأ في التحميل: '+e.message,'❌');
+    // ✅ نحاول عرض أي بيانات موجودة
+    if(sheetData && sheetData.length > 0) {
+      renderPage('', '');
+    }
   }
 }
-
 // ====================== تهيئة الصفحة ======================
 document.addEventListener('DOMContentLoaded', async () => {
   let ud = sessionStorage.getItem('currentUser');
