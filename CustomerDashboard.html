@@ -231,6 +231,9 @@ function parseSheetStructure() {
   priceGroups = [];
   sumCurrencies = [];
 
+  // البحث عن أعمدة المجاميع من نهاية الشيت (بدون تكرار)
+  const sumSet = new Set(); // لمنع التكرار
+  
   for (let j = 0; j < row2.length; j++) {
     const header = (row2[j] || '').toString().trim();
     if (header.startsWith('Total') || header.startsWith('المجموع')) {
@@ -238,19 +241,30 @@ function parseSheetStructure() {
       if (currency === '$') currency = 'USD';
       if (currency === '€') currency = 'EUR';
       if (currency === '£') currency = 'GBP';
-      if (currency) sumCurrencies.push({ col: j, currency: currency });
+      if (currency && !sumSet.has(currency)) {
+        sumSet.add(currency);
+        sumCurrencies.push({ col: j, currency: currency });
+      }
     }
   }
 
+  // إذا لم يتم العثور على أعمدة مجاميع، استخدم العملات الافتراضية
   if (sumCurrencies.length === 0) {
     sumCurrencies = [{ col: -1, currency: 'LE' }];
   }
 
+  // تجميع الرحلات والبنود (التوقف عند أول عمود Total)
   let curTrip = null;
-  for (let j = 1; j < 78 && j < row2.length; j++) {
+  for (let j = 1; j < row2.length && j < 78; j++) {
     const v2 = (row2[j] || '').toString().trim();
     const v3 = (row3[j] || '').toString().trim();
-    if (v2 && v2 !== '' && !v2.startsWith('Total') && !v2.startsWith('المجموع')) {
+    
+    // توقف عند أول عمود Total
+    if (v2.startsWith('Total') || v2.startsWith('المجموع')) {
+      break;
+    }
+    
+    if (v2 && v2 !== '') {
       curTrip = { name: v2, items: [] };
       tripGroups.push(curTrip);
     }
@@ -259,6 +273,7 @@ function parseSheetStructure() {
     }
   }
 
+  // تجميع أعمدة الأسعار (من العمود 80 فما فوق)
   let curPriceTrip = null;
   for (let j = 80; j < lastCol; j++) {
     const v2 = (row2[j] || '').toString().trim();
@@ -274,7 +289,6 @@ function parseSheetStructure() {
     }
   }
 }
-
 // ====================== دوال العرض ======================
 function renderPricesTab(rows) {
   if(!priceGroups.length) return '<div class="no-data">لا توجد بيانات أسعار</div>';
