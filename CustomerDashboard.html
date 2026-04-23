@@ -118,7 +118,12 @@
 <body>
 
 <div class="header">
-  <h2>🏢 لوحة العميل - التقارير المالية</h2>
+  <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
+    <h2 style="margin: 0;">🏢 لوحة العميل - التقارير المالية</h2>
+    <div id="customerNameDisplay" style="background: rgba(255,255,255,0.15); padding: 6px 16px; border-radius: 40px; font-size: 16px; font-weight: 700;">
+      🏢 <span id="customerNameSpan">...</span> | 🏄 <span id="customerCategorySpan">...</span>
+    </div>
+  </div>
   <div class="header-right">
     <span class="user-chip" id="userChip">...</span>
     <button class="refresh-btn" id="refreshDataBtn" onclick="refreshCustomerData()">🔄 تحديث البيانات</button>
@@ -246,6 +251,13 @@ function parseDateToObj(v){
   return null;
 }
 
+function updateHeaderCustomerInfo() {
+  if(customerAccount && customerAccount.customerName) {
+    document.getElementById('customerNameSpan').textContent = customerAccount.customerName;
+    document.getElementById('customerCategorySpan').textContent = customerAccount.category || '-';
+  }
+}
+
 // ====================== تحليل هيكل الشيت ======================
 function parseSheetStructure() {
   if(!sheetData||sheetData.length<4) return;
@@ -258,18 +270,12 @@ function parseSheetStructure() {
   sumCurrencies = [];
   paymentsData = [];
 
-  console.log('=== DEBUG parseSheetStructure ===');
-  console.log('lastCol:', lastCol);
-  console.log('row2 sample:', row2.slice(0, 30));
-  console.log('row3 sample:', row3.slice(0, 30));
-
   // البحث عن بداية جدول المدفوعات (عمود "Date")
   let paymentsStartCol = -1;
   for (let j = 0; j < row2.length; j++) {
     const header = (row2[j] || '').toString().trim();
     if (header === 'Date') {
       paymentsStartCol = j;
-      console.log('✅ found Date at col:', j);
       break;
     }
   }
@@ -292,6 +298,8 @@ function parseSheetStructure() {
     }
   }
 
+  if (sumCurrencies.length === 0) sumCurrencies = [{ col: -1, currency: 'LE' }];
+
   // 2. الرحلات والبنود
   let curTrip = null;
   for (let j = 1; j < endCol; j++) {
@@ -301,7 +309,6 @@ function parseSheetStructure() {
     if (v2 && v2 !== '' && !v2.startsWith('Total') && !v2.startsWith('المجموع') && v2 !== 'Date') {
       curTrip = { name: v2, items: [] };
       tripGroups.push(curTrip);
-      console.log('✅ found trip:', v2);
     }
     if (v3 && v3 !== '' && curTrip && !v3.startsWith('Total') && !v3.startsWith('المجموع')) {
       curTrip.items.push({ name: v3, col: j });
@@ -312,7 +319,6 @@ function parseSheetStructure() {
   let priceStartRow = -1;
   let priceStartCol = -1;
   
-  // البحث عن صف يحتوي على "PAX" (لشيت Submarine) أو "الشهر" (لشيت عادي)
   for (let i = 0; i < sheetData.length; i++) {
     const row = sheetData[i];
     for (let j = 0; j < row.length; j++) {
@@ -320,7 +326,6 @@ function parseSheetStructure() {
       if (cell === 'PAX' || cell === 'الشهر') {
         priceStartRow = i;
         priceStartCol = j;
-        console.log('✅ found price table at row:', priceStartRow, 'col:', priceStartCol, 'cell:', cell);
         break;
       }
     }
@@ -328,7 +333,6 @@ function parseSheetStructure() {
   }
   
   if (priceStartRow !== -1 && priceStartCol !== -1 && sheetData[priceStartRow + 1]) {
-    // قراءة أسماء الرحلات والبنود من الصف التالي
     const priceRow2 = sheetData[priceStartRow] || [];
     const priceRow3 = sheetData[priceStartRow + 1] || [];
     const priceRow4 = sheetData[priceStartRow + 2] || [];
@@ -341,10 +345,8 @@ function parseSheetStructure() {
       if (tripName && tripName !== '' && !tripName.startsWith('Total')) {
         curPriceTrip = { name: tripName, items: [] };
         priceGroups.push(curPriceTrip);
-        console.log('✅ found price trip:', tripName);
       }
       if (itemName && itemName !== '' && curPriceTrip && !itemName.startsWith('Total')) {
-        // قراءة السعر من الصف التالي (الأسعار الفعلية)
         const priceCell = priceRow4[j] || '';
         const { price, currency } = parseCell(priceCell);
         curPriceTrip.items.push({ 
@@ -359,7 +361,6 @@ function parseSheetStructure() {
 
   // 4. جدول المدفوعات
   if (paymentsStartCol !== -1 && sheetData.length > 3) {
-    console.log('✅ reading payments from col:', paymentsStartCol);
     for (let i = 3; i < sheetData.length; i++) {
       const row = sheetData[i];
       const dateVal = row[paymentsStartCol];
@@ -378,50 +379,9 @@ function parseSheetStructure() {
         });
       }
     }
-    console.log('✅ paymentsData length:', paymentsData.length);
   }
-  
-  console.log('final - tripGroups:', tripGroups.length, 'priceGroups:', priceGroups.length, 'sumCurrencies:', sumCurrencies.length, 'payments:', paymentsData.length);
 }
-  function renderPaymentsTab() {
-  // تعريف رؤوس الجدول
-  const headers = ['التاريخ', 'البيان', '$', '€', '£', 'LE', 'الحساب', 'اسم الحساب', 'الشهر', 'السنة'];
-  
-  let html = `<div class="table-wrap"><table class="dt"><thead>`;
-  html += `<tr class="row-trip">`;
-  for (let h of headers) {
-    html += `<th>${h}</th>`;
-  }
-  html += `</tr></thead><tbody>`;
-  
-  // إذا كانت هناك بيانات، اعرضها
-  if(paymentsData && paymentsData.length > 0) {
-    for(const p of paymentsData){
-      html += `<tr>`;
-      html += `<td>${p.date || '-'}</td>`;
-      html += `<td style="text-align:right">${p.details || '-'}</td>`;
-      html += `<td class="amt">${p.USD > 0 ? p.USD : '-'}</td>`;
-      html += `<td class="amt">${p.EUR > 0 ? p.EUR : '-'}</td>`;
-      html += `<td class="amt">${p.GBP > 0 ? p.GBP : '-'}</td>`;
-      html += `<td class="amt">${p.LE > 0 ? p.LE : '-'}</td>`;
-      html += `<td>${p.account || '-'}</td>`;
-      html += `<td>${p.accountName || '-'}</td>`;
-      html += `<td>${p.month || '-'}</td>`;
-      html += `<td>${p.year || '-'}</td>`;
-      html += `</tr>`;
-    }
-  } else {
-    // إذا لم تكن هناك بيانات، اعرض صفاً واحداً فارغاً
-    html += `<tr>`;
-    for (let i = 0; i < headers.length; i++) {
-      html += `<td style="text-align:center; color:#999;">-</td>`;
-    }
-    html += `</tr>`;
-  }
-  
-  html += `</tbody></table></div>`;
-  return html;
-}
+
 // ====================== دوال العرض ======================
 function renderPricesTab(rows) {
   if(!priceGroups.length) return '<div class="no-data">لا توجد بيانات أسعار</div>';
@@ -446,10 +406,10 @@ function renderPricesTab(rows) {
         let displayValue='-';
         if(price>0) displayValue=`<span class="${curClass(currency)}">${price} ${currency}</span>`;
         else if(cellStr&&cellStr!=='0'&&cellStr!=='-') displayValue=cellStr;
-        tds+=`<td style="text-align:center">${displayValue}</td>`;
+        tds+=`<td style="text-align:center">${displayValue}<\/td>`;
       }
     }
-    tbody+=`<tr><td style="font-weight:600;text-align:center">${dateStr}</td>${tds}</tr>`;
+    tbody+=`<tr><td style="font-weight:600;text-align:center">${dateStr}<\/td>${tds}<\/tr>`;
   }
   return `<div class="table-wrap"><table class="dt"><thead><tr class="row-trip">${trTrip}<\/tr><tr class="row-item">${trItem}<\/tr><\/thead><tbody>${tbody||'<tr><td colspan="100" class="no-data">لا توجد بيانات<\/td><\/tr>'}<\/tbody><\/table><\/div>`;
 }
@@ -506,7 +466,7 @@ function renderTotalsTab(rows) {
       for(const it of g.items){
         const qty=parseFloat(row[it.col])||0;
         const qtyDisplay=(qty>0&&Number.isInteger(qty))?qty:(qty>0?qty.toFixed(1):'-');
-        tds+=`<td style="${qty>0?'background:#f0fdf4;font-weight:700;color:#166534':'color:#cbd5e1'}">${qtyDisplay}</td>`;
+        tds+=`<td style="${qty>0?'background:#f0fdf4;font-weight:700;color:#166534':'color:#cbd5e1'}">${qtyDisplay}<\/td>`;
         const key=`${g.name}_${it.name}`;
         grandQuantities[key]=(grandQuantities[key]||0)+qty;
       }
@@ -514,9 +474,9 @@ function renderTotalsTab(rows) {
     let sumTds='';
     for(const cur of sumCurrencies){
       const val=dayTotals[cur.currency]||0;
-      sumTds+=`<td style="background:#e6f0ff;font-weight:700">${val>0?`${Math.round(val).toLocaleString()} <span class="${curClass(cur.currency)}">${cur.currency}</span>`:'-'}</td>`;
+      sumTds+=`<td style="background:#e6f0ff;font-weight:700">${val>0?`${Math.round(val).toLocaleString()} <span class="${curClass(cur.currency)}">${cur.currency}</span>`:'-'}<\/td>`;
     }
-    tbody+=`<tr><td style="font-weight:600;text-align:center">${dateStr}</td>${tds}${sumTds}</tr>`;
+    tbody+=`<tr><td style="font-weight:600;text-align:center">${dateStr}<\/td>${tds}${sumTds}<\/tr>`;
   }
   let grandQtyCells='';
   for(const g of tripGroups){
@@ -524,7 +484,7 @@ function renderTotalsTab(rows) {
       const key=`${g.name}_${it.name}`;
       const totalQty=grandQuantities[key]||0;
       const qtyDisplay=(totalQty>0&&Number.isInteger(totalQty))?totalQty:(totalQty>0?totalQty.toFixed(1):'-');
-      grandQtyCells+=`<td style="background:#1a3260;color:var(--gold);font-size:13px"><strong>${qtyDisplay}</strong></td>`;
+      grandQtyCells+=`<td style="background:#1a3260;color:var(--gold);font-size:13px"><strong>${qtyDisplay}</strong><\/td>`;
     }
   }
   let grandCurrencyCells='';
@@ -538,45 +498,47 @@ function renderTotalsTab(rows) {
   }
   for(const cur of sumCurrencies){
     const v=grandTotals[cur.currency]||0;
-    grandCurrencyCells+=`<td style="background:#1a3260;color:var(--gold);font-size:13px"><strong>${v>0?Math.round(v).toLocaleString():'-'} ${cur.currency}</strong></td>`;
+    grandCurrencyCells+=`<td style="background:#1a3260;color:var(--gold);font-size:13px"><strong>${v>0?Math.round(v).toLocaleString():'-'} ${cur.currency}</strong><\/td>`;
   }
-  tbody+=`<tr class="total-row"><td><strong>الإجمالي الكلي</strong></td>${grandQtyCells}${grandCurrencyCells}</tr>`;
+  tbody+=`<tr class="total-row"><td><strong>الإجمالي الكلي</strong><\/td>${grandQtyCells}${grandCurrencyCells}<\/tr>`;
   return `<div class="table-wrap"><table class="dt"><thead><tr class="row-trip">${trTrip}<\/tr><tr class="row-item">${trItem}<\/tr><\/thead><tbody>${tbody}<\/tbody><\/table><\/div>`;
 }
 
 function renderPaymentsTab() {
-  // إذا كانت paymentsData فارغة، نعرض رسالة بدلاً من الجدول
-  if(!paymentsData.length) {
-    return '<div class="no-data">⚠️ لا توجد مدفوعات أو تسديدات مسجلة للعميل في الفترة المحددة</div>';
-  }
+  const headers = ['التاريخ', 'البيان', '$', '€', '£', 'LE', 'الحساب', 'اسم الحساب', 'الشهر', 'السنة'];
   
-  let html = `<div class="table-wrap"><table class="dt"><thead>`;
-  html += `<tr class="row-trip"><th>التاريخ</th><th>البيان</th><th>$</th><th>€</th><th>£</th><th>LE</th><th>الحساب</th><th>اسم الحساب</th><th>الشهر</th><th>السنة</th>`;
-  html += `</thead><tbody>`;
+  let html = `<div class="table-wrap"><table class="dt"><thead><tr class="row-trip">`;
+  for (let h of headers) html += `<th>${h}</th>`;
+  html += `<\/tr><\/thead><tbody>`;
   
-  for(const p of paymentsData){
+  if(paymentsData && paymentsData.length > 0) {
+    for(const p of paymentsData){
+      html += `<tr>`;
+      html += `<td>${p.date || '-'}<\/td>`;
+      html += `<td style="text-align:right">${p.details || '-'}<\/td>`;
+      html += `<td class="amt">${p.USD > 0 ? p.USD : '-'}<\/td>`;
+      html += `<td class="amt">${p.EUR > 0 ? p.EUR : '-'}<\/td>`;
+      html += `<td class="amt">${p.GBP > 0 ? p.GBP : '-'}<\/td>`;
+      html += `<td class="amt">${p.LE > 0 ? p.LE : '-'}<\/td>`;
+      html += `<td>${p.account || '-'}<\/td>`;
+      html += `<td>${p.accountName || '-'}<\/td>`;
+      html += `<td>${p.month || '-'}<\/td>`;
+      html += `<td>${p.year || '-'}<\/td>`;
+      html += `<\/tr>`;
+    }
+  } else {
     html += `<tr>`;
-    html += `<td>${p.date}</td>`;
-    html += `<td style="text-align:right">${p.details}</td>`;
-    html += `<td class="amt">${p.USD > 0 ? p.USD : '-'}</td>`;
-    html += `<td class="amt">${p.EUR > 0 ? p.EUR : '-'}</td>`;
-    html += `<td class="amt">${p.GBP > 0 ? p.GBP : '-'}</td>`;
-    html += `<td class="amt">${p.LE > 0 ? p.LE : '-'}</td>`;
-    html += `<td>${p.account}</td>`;
-    html += `<td>${p.accountName}</td>`;
-    html += `<td>${p.month}</td>`;
-    html += `<td>${p.year}</td>`;
-    html += `</tr>`;
+    for (let i = 0; i < headers.length; i++) html += `<td style="text-align:center; color:#999;">-<\/td>`;
+    html += `<\/tr>`;
   }
   
-  html += `</tbody></table></div>`;
+  html += `</tbody><\/table><\/div>`;
   return html;
 }
 
 function renderFinancialSummary(rows) {
   if(!tripGroups.length && !paymentsData.length) return '<div class="no-data">لا توجد بيانات كافية</div>';
   
-  // حساب إجمالي المستحقات من أعمدة Total
   const totalsDue={};
   for(const cur of sumCurrencies) totalsDue[cur.currency]=0;
   for(const row of rows){
@@ -586,7 +548,6 @@ function renderFinancialSummary(rows) {
     }
   }
   
-  // حساب إجمالي المدفوعات من جدول المدفوعات
   const totalsPaid={USD:0,EUR:0,GBP:0,LE:0};
   for(const p of paymentsData){
     totalsPaid.USD+=p.USD||0;
@@ -595,7 +556,6 @@ function renderFinancialSummary(rows) {
     totalsPaid.LE+=p.LE||0;
   }
   
-  // حساب الرصيد
   const balance={};
   const allCurrencies=['USD','EUR','GBP','LE'];
   for(const cur of allCurrencies){
@@ -604,23 +564,28 @@ function renderFinancialSummary(rows) {
   
   let html=`<div class="financial-summary"><div class="fs-title">📊 الملخص المالي</div><div class="fs-grid">`;
   
-  // إجمالي المستحقات
   html+=`<div class="fs-card"><div class="label">💰 إجمالي المستحقات</div>`;
+  let hasDue=false;
   for(const cur of allCurrencies){
-    if(totalsDue[cur]>0) html+=`<div class="value">${Math.round(totalsDue[cur]).toLocaleString()} <span class="currency">${cur}</span></div>`;
+    if(totalsDue[cur]>0){
+      hasDue=true;
+      html+=`<div class="value">${Math.round(totalsDue[cur]).toLocaleString()} <span class="currency">${cur}</span></div>`;
+    }
   }
-  if(Object.values(totalsDue).every(v=>v===0)) html+=`<div class="value">-</div>`;
+  if(!hasDue) html+=`<div class="value">-</div>`;
   html+=`</div>`;
   
-  // إجمالي المدفوعات
   html+=`<div class="fs-card"><div class="label">💳 إجمالي المدفوعات</div>`;
+  let hasPaid=false;
   for(const cur of allCurrencies){
-    if(totalsPaid[cur]>0) html+=`<div class="value">${Math.round(totalsPaid[cur]).toLocaleString()} <span class="currency">${cur}</span></div>`;
+    if(totalsPaid[cur]>0){
+      hasPaid=true;
+      html+=`<div class="value">${Math.round(totalsPaid[cur]).toLocaleString()} <span class="currency">${cur}</span></div>`;
+    }
   }
-  if(Object.values(totalsPaid).every(v=>v===0)) html+=`<div class="value">-</div>`;
+  if(!hasPaid) html+=`<div class="value">-</div>`;
   html+=`</div>`;
   
-  // الرصيد المتبقي
   html+=`<div class="fs-card"><div class="label">⚖️ الرصيد المتبقي</div>`;
   let hasBalance=false;
   for(const cur of allCurrencies){
@@ -869,6 +834,8 @@ async function loadAll(){
       document.getElementById('mainContent').innerHTML=`<div class="card"><div class="card-body no-data">⚠️ لا يوجد حساب مرتبط بهذا المستخدم</div></div>`;
       return;
     }
+
+    updateHeaderCustomerInfo();
 
     const isUnlimited = UNLIMITED_TYPES.includes(loggedInUser?.type);
     if(isUnlimited && loggedInUser?.centerId) {
