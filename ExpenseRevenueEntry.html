@@ -120,6 +120,7 @@
     .alert-box{background:white;width:85%;max-width:320px;border-radius:18px;padding:20px;text-align:center;}
     .alert-icon{font-size:35px;margin-bottom:8px;}
     .alert-msg{color:var(--navy);font-size:13px;font-weight:600;margin-bottom:15px;}
+    
     .toast{position:fixed;bottom:20px;right:20px;padding:8px 16px;border-radius:8px;font-size:11px;font-weight:600;color:white;z-index:9998;box-shadow:0 3px 12px rgba(0,0,0,0.2);transform:translateY(50px);opacity:0;transition:0.3s;pointer-events:none;}
     .toast.show{transform:translateY(0);opacity:1;}
     .toast-success{background:var(--green);} .toast-error{background:var(--red);} .toast-info{background:var(--blue);}
@@ -213,17 +214,18 @@
   </div>
 </div>
 
-    <!-- Modal للتأكيد والأخطاء -->
+<!-- Modal -->
 <div id="alertModal" class="modal">
   <div class="alert-box">
     <div class="alert-icon" id="alertIcon">ℹ️</div>
     <div class="alert-msg" id="alertMsg"></div>
-    <div class="mbtns" id="mBtns" style="margin-top:16px; display:flex; gap:8px; justify-content:center;">
+    <div id="mBtns" style="margin-top:16px; display:flex; gap:8px; justify-content:center;">
       <button class="btn btn-primary" onclick="closeAlert()">موافق</button>
     </div>
   </div>
 </div>
-    <div class="toast" id="toast"></div>
+
+<div class="toast" id="toast"></div>
 
 <script>
 // ═══════════════════════════════════════════════════════════════════
@@ -232,44 +234,17 @@
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbzZqrtAc8UBauMrzriGi7Q18rni4JeLFI-rqLSkctRjT3Qvx3rtblQiBXpDvu2BJbJx/exec';
 const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const YEARS = ['2024','2025','2026','2027','2028','2029','2030'];
-// ═══════════════════════════════════════════════════════════════════
-// CONSOLE DIAGNOSTICS (ابدأ الاختبار)
-// ═══════════════════════════════════════════════════════════════════
-console.log('🚀 PAGE LOADED - بدء التشخيص');
+
+console.log('🚀 PAGE LOADED');
 console.log('GAS_URL:', GAS_URL);
 
-// مراقبة جميع اتصالات fetch
-const originalFetch = window.fetch;
-window.fetch = function(...args) {
-  console.log(`🌐 FETCH: ${args[0]}`);
-  console.log(`📦 PARAMS:`, args[1]);
-  return originalFetch.apply(this, args).then(response => {
-    console.log(`✅ RESPONSE STATUS: ${response.status}`);
-    return response;
-  }).catch(error => {
-    console.log(`❌ FETCH ERROR:`, error);
-    throw error;
-  });
-};
 let currentUser = null;
 let currentType = 'expense';
 let allRows = [], filteredRows = [];
 let sortCol = -1, sortDir = 1;
 let editRowNum = -1, selectedIdx = -1;
 let optionsCache = {};
-// ═══════════════════════════════════════════════════════════════════
-// تشخيص زر الحذف
-// ═══════════════════════════════════════════════════════════════════
-function testDeleteButton() {
-  console.log('🧪 اختبار زر الحذف - تم استدعاء الدالة');
-  alert('تم الضغط على زر الحذف (اختبار)');
-}
 
-// مراقبة جميع الأخطاء
-window.onerror = function(msg, url, line, col, error) {
-  console.log('❌ خطأ عام:', msg, 'في السطر', line);
-  return false;
-};
 // ═══════════════════════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════
@@ -289,13 +264,68 @@ function escapeHtml(str) { if(!str) return ''; return str.replace(/[&<>]/g, func
 function truncate(str, maxLen) { if(!str) return ''; if(str.length<=maxLen) return str; return str.substring(0,maxLen)+'...'; }
 
 function showToast(msg, type='success'){ const t=document.getElementById('toast'); t.textContent=msg; t.className=`toast toast-${type} show`; setTimeout(()=>t.className='toast',3000); }
-function showAlert(msg, icon='ℹ️'){ document.getElementById('alertIcon').textContent=icon; document.getElementById('alertMsg').textContent=msg; document.getElementById('alertModal').classList.add('open'); }
-function closeAlert() {
+
+// ═══════════════════════════════════════════════════════════════════
+// MODAL FUNCTIONS (تعريفها أولاً)
+// ═══════════════════════════════════════════════════════════════════
+let confirmCallback = null;
+
+function closeModal() {
   const modal = document.getElementById('alertModal');
   if (modal) {
     modal.classList.remove('open');
   }
+  // إعادة زر الـ modal إلى وضعه الطبيعي
+  const mBtns = document.getElementById('mBtns');
+  if (mBtns) {
+    mBtns.innerHTML = `<button class="btn btn-primary" onclick="closeAlert()">موافق</button>`;
+  }
 }
+
+function closeAlert() {
+  closeModal();
+}
+
+function showConfirmDialog(title, message, onConfirm) {
+  confirmCallback = onConfirm;
+  
+  const modal = document.getElementById('alertModal');
+  const alertIcon = document.getElementById('alertIcon');
+  const alertMsg = document.getElementById('alertMsg');
+  const mBtns = document.getElementById('mBtns');
+  
+  if (!modal || !alertIcon || !alertMsg || !mBtns) {
+    console.error('❌ Modal elements not found!');
+    if (confirm(message.replace(/<br>/g, '\n').replace(/<[^>]*>/g, ''))) {
+      onConfirm();
+    }
+    return;
+  }
+  
+  alertIcon.textContent = '🗑️';
+  alertMsg.innerHTML = `<div style="font-size:16px; font-weight:800; margin-bottom:8px;">${title}</div>${message}`;
+  
+  mBtns.innerHTML = `
+    <button class="btn btn-gray" onclick="closeConfirmModal()" style="background:#f8f9fa; color:#6c757d; border:2px solid #dee2e6; padding:7px 18px; border-radius:40px; font-weight:700; cursor:pointer;">إلغاء</button>
+    <button class="btn" onclick="confirmYes()" style="background:#dc2626; color:white; padding:7px 18px; border-radius:40px; font-weight:700; border:none; cursor:pointer;">تأكيد الحذف</button>
+  `;
+  
+  modal.classList.add('open');
+}
+
+function confirmYes() {
+  closeModal();
+  if (confirmCallback) {
+    confirmCallback();
+    confirmCallback = null;
+  }
+}
+
+function closeConfirmModal() {
+  closeModal();
+  confirmCallback = null;
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // DATE FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════
@@ -378,10 +408,7 @@ function pickCB(inp, ddId, val){ document.getElementById(inp).value = val; docum
 document.addEventListener('click', function(e){ if(!e.target.closest('.cbw')){ ['monthDD','yearDD','detailsDD','accDD','typeDD'].forEach(id=>document.getElementById(id)?.classList.remove('open')); } });
 
 // ═══════════════════════════════════════════════════════════════════
-// LOAD LIST - تعرض بيانات اليوم فقط عند التحميل الأول
-// ═══════════════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════════════
-// LOAD LIST - مع تشخيص
+// LOAD LIST
 // ═══════════════════════════════════════════════════════════════════
 function loadList(iso){
   const sheet = currentType==='expense' ? 'Expenses' : 'Other_Revenues';
@@ -392,13 +419,8 @@ function loadList(iso){
   
   gasGet({action:'getExpenseRevenueRows', sheet, date:dateTxt})
     .then(data => { 
-      console.log(`📊 loadList received data:`, data);
-      console.log(`📊 data type: ${Array.isArray(data) ? 'Array' : typeof data}, length: ${data?.length || 0}`);
-      
       allRows = Array.isArray(data) ? data : []; 
       filteredRows = [...allRows];
-      console.log(`✅ allRows length: ${allRows.length}`);
-      
       if(sortCol>=0) doSort();
       renderTable();
       renderTotals();
@@ -406,7 +428,6 @@ function loadList(iso){
       const todayISO = new Date().toISOString().split('T')[0];
       document.getElementById('fFromDate').value = todayISO;
       document.getElementById('fToDate').value = todayISO;
-      console.log(`✅ Load completed - set filter dates to: ${todayISO}`);
     })
     .catch(err => { 
       console.log(`❌ loadList error:`, err);
@@ -415,10 +436,7 @@ function loadList(iso){
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// APPLY DATE FILTER - تجلب البيانات حسب النطاق الزمني المطلوب
-// ═══════════════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════════════
-// APPLY DATE FILTER - مع تشخيص
+// APPLY DATE FILTER
 // ═══════════════════════════════════════════════════════════════════
 function applyDateFilter() {
   const fromDate = document.getElementById('fFromDate').value;
@@ -426,51 +444,31 @@ function applyDateFilter() {
   const searchText = document.getElementById('fSearch').value;
   const sheet = currentType === 'expense' ? 'Expenses' : 'Other_Revenues';
   
-  console.log(`🔍 applyDateFilter CALLED`);
-  console.log(`  - fromDate: ${fromDate}`);
-  console.log(`  - toDate: ${toDate}`);
-  console.log(`  - searchText: ${searchText}`);
-  console.log(`  - sheet: ${sheet}`);
-  
   let fromDD = fromDate ? isoToDD(fromDate) : '';
   let toDD = toDate ? isoToDD(toDate) : '';
   
-  // إذا لم يتم تحديد تاريخ، استخدم تاريخ اليوم
   if (!fromDD && !toDD) {
     const today = todayISO();
     fromDD = isoToDD(today);
     toDD = isoToDD(today);
-    console.log(`  - No dates, using today: ${fromDD}`);
   } else if (!fromDD && toDD) {
     fromDD = toDD;
-    console.log(`  - Only toDate, using from=to: ${fromDD}`);
   } else if (fromDD && !toDD) {
     toDD = fromDD;
-    console.log(`  - Only fromDate, using to=from: ${toDD}`);
   }
-  
-  console.log(`  - FINAL fromDD: ${fromDD}, toDD: ${toDD}`);
   
   document.getElementById('tableWrap').innerHTML = '<div class="loader"><div class="spinner"></div>جاري البحث...</div>';
   
-  // جلب البيانات حسب النطاق الزمني
   gasGet({action: 'getExpenseRevenueRows', sheet, dateFrom: fromDD, dateTo: toDD})
     .then(data => {
-      console.log(`📊 applyDateFilter received data:`, data);
-      console.log(`📊 data type: ${Array.isArray(data) ? 'Array' : typeof data}`);
-      
       if (Array.isArray(data)) {
-        console.log(`📊 Initial data count: ${data.length}`);
         let rows = data;
         
-        // فلترة حسب النص (إن وجد)
         if (searchText) {
-          const beforeCount = rows.length;
           rows = rows.filter(r => {
             const str = [r.date, r.details, r.account, r.accountType, r.expenseNo].map(x=>x||'').join(' ').toLowerCase();
             return str.includes(searchText.toLowerCase());
           });
-          console.log(`  - Filtered by text: ${beforeCount} → ${rows.length}`);
         }
         
         allRows = rows;
@@ -478,16 +476,28 @@ function applyDateFilter() {
         if (sortCol >= 0) doSort();
         renderTable();
         renderTotals();
-        console.log(`✅ applyDateFilter completed - rows: ${filteredRows.length}`);
         showToast(`تم العثور على ${filteredRows.length} سجل`, 'success');
       } else {
-        console.log(`❌ applyDateFilter: data is not array`, data);
         showAlert('فشل جلب البيانات', '❌');
       }
     }).catch(err => {
-      console.log(`❌ applyDateFilter error:`, err);
       showAlert('خطأ: ' + err.message, '❌');
     });
+}
+
+function showAlert(msg, icon='ℹ️'){ 
+  const modal = document.getElementById('alertModal');
+  const alertIcon = document.getElementById('alertIcon');
+  const alertMsg = document.getElementById('alertMsg');
+  const mBtns = document.getElementById('mBtns');
+  if (modal && alertIcon && alertMsg && mBtns) {
+    alertIcon.textContent = icon;
+    alertMsg.textContent = msg;
+    mBtns.innerHTML = `<button class="btn btn-primary" onclick="closeAlert()">موافق</button>`;
+    modal.classList.add('open');
+  } else {
+    alert(msg);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -578,7 +588,6 @@ function renderTable() {
   filteredRows.forEach((r, i) => {
     const rowClass = (i === selectedIdx) ? 'sel' : '';
     const bgColor = rowClass === 'sel' ? '#fff3cd' : 'white';
-    // ✅ أضفت ondblclick هنا
     html += `<tr ondblclick="loadRow(${i})" style="border-bottom:1px solid #eef2f8; background:${bgColor}; cursor:pointer;">
       <td style="padding:8px 4px; text-align:center; font-weight:700; background:#fafbff;">${escapeHtml(r.expenseNo || '-')}</td>
       <td style="padding:8px 4px; text-align:center;">${r.date || '-'}</td>
@@ -597,20 +606,14 @@ function renderTable() {
       <td style="padding:8px 4px; text-align:center;">${r.year || '-'}<\/td>
       <td style="padding:8px 4px; text-align:center;">${escapeHtml(r.centerName || '-')}<\/td>
       <td style="padding:8px 4px; text-align:center;">${escapeHtml(r.branchName || '-')}<\/td>
-      <td style="padding:8px 4px; text-align:center;">
-  <button class="dbtn" 
-          type="button" 
-          onclick="console.log('🖱️ زر الحذف clicked للصف ${i}'); window.confirmDelete(${i});" 
-          style="padding:4px 10px; border:none; border-radius:20px; background:#dc2626; color:white; cursor:pointer;">
-    🗑️
-  </button>
-</td>
-</td>`;
+      <td style="padding:8px 4px; text-align:center;"><button class="dbtn" onclick="window.confirmDelete(${i})">🗑️<\/button><\/td>
+    </tr>`;
   });
   
   html += `</tbody></table></div>`;
   wrap.innerHTML = html;
 }
+
 // ═══════════════════════════════════════════════════════════════════
 // RENDER TOTALS
 // ═══════════════════════════════════════════════════════════════════
@@ -683,10 +686,9 @@ function resetForm(){
   document.getElementById('fMonth').value = MN[parseInt(m)-1];
   document.getElementById('fYear').value = y;
   document.getElementById('fDate').classList.remove('err');
-  
-  // ✅ إلغاء وضع التعديل وإعادة نص الزر الأصلي
   cancelEdit();
 }
+
 // ═══════════════════════════════════════════════════════════════════
 // SUBMIT (SAVE/UPDATE)
 // ═══════════════════════════════════════════════════════════════════
@@ -730,9 +732,6 @@ async function submitEntry(){
 // ═══════════════════════════════════════════════════════════════════
 // EDIT & DELETE
 // ═══════════════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════════════
-// EDIT ROW (Double-click)
-// ═══════════════════════════════════════════════════════════════════
 function loadRow(idx) {
   console.log('🖱️ loadRow CALLED with index:', idx);
   const r = filteredRows[idx];
@@ -740,7 +739,6 @@ function loadRow(idx) {
     console.log('❌ No row found at index:', idx);
     return;
   }
-  console.log('📋 Loading row data:', r);
   
   selectedIdx = idx;
   editRowNum = r._rowNum;
@@ -753,7 +751,6 @@ function loadRow(idx) {
     }
   };
   
-  // تحويل التاريخ من dd/MMM/yyyy إلى ISO
   const dateISO = ddToISO(r.date);
   setVal('fDate', dateISO);
   setVal('fMonth', r.month);
@@ -776,10 +773,11 @@ function loadRow(idx) {
   const btn = document.getElementById('saveBtn');
   btn.textContent = currentType === 'expense' ? '✏️ تحديث Expense' : '✏️ تحديث Revenue';
   
-  renderTable(); // لإعادة تعيين لون الصف المحدد
+  renderTable();
   showToast('تم تحميل السطر للتعديل - عدل البيانات ثم اضغط حفظ', 'info');
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
+
 function cancelEdit(){
   selectedIdx = -1;
   editRowNum = -1;
@@ -788,9 +786,14 @@ function cancelEdit(){
   btn.textContent = currentType==='expense' ? '💾 حفظ Expense' : '💾 حفظ Revenue';
   renderTable();
 }
+
 function confirmDelete(idx) {
+  console.log('🖱️ confirmDelete CALLED with index:', idx);
   const r = filteredRows[idx];
-  if(!r) return;
+  if(!r) {
+    console.log('❌ No row found');
+    return;
+  }
   
   showConfirmDialog(
     '🗑️ تأكيد الحذف',
@@ -815,68 +818,7 @@ function confirmDelete(idx) {
     }
   );
 }
-  // ═══════════════════════════════════════════════════════════════════
-// مودال تأكيد مخصص (بديل عن confirm())
-// ═══════════════════════════════════════════════════════════════════
-let confirmCallback = null;
 
-function showConfirmDialog(title, message, onConfirm) {
-  confirmCallback = onConfirm;
-  
-  const modal = document.getElementById('alertModal');
-  const alertIcon = document.getElementById('alertIcon');
-  const alertMsg = document.getElementById('alertMsg');
-  const mBtns = document.getElementById('mBtns');
-  
-  if (!modal || !alertIcon || !alertMsg || !mBtns) {
-    console.error('❌ Modal elements not found!');
-    // Fallback to native confirm
-    if (confirm(message.replace(/<br>/g, '\n').replace(/<[^>]*>/g, ''))) {
-      onConfirm();
-    }
-    return;
-  }
-  
-  alertIcon.textContent = '🗑️';
-  alertMsg.innerHTML = `<div style="font-size:16px; font-weight:800; margin-bottom:8px;">${title}</div>${message}`;
-  
-  mBtns.innerHTML = `
-    <button class="btn btn-gray" onclick="closeConfirmModal()" style="background:#f8f9fa; color:#6c757d; border:2px solid #dee2e6; padding:7px 18px; border-radius:40px; font-weight:700; cursor:pointer;">إلغاء</button>
-    <button class="btn" onclick="confirmYes()" style="background:#dc2626; color:white; padding:7px 18px; border-radius:40px; font-weight:700; border:none; cursor:pointer;">تأكيد الحذف</button>
-  `;
-  
-  modal.classList.add('open');
-}
-
-function confirmYes() {
-  closeModal();
-  if (confirmCallback) {
-    confirmCallback();
-    confirmCallback = null;
-  }
-}
-
-function closeConfirmModal() {
-  closeModal();
-  confirmCallback = null;
-}
-
-function closeModal() {
-  const modal = document.getElementById('alertModal');
-  if (modal) {
-    modal.classList.remove('open');
-  }
-  // إعادة زر الـ modal إلى وضعه الطبيعي
-  const mBtns = document.getElementById('mBtns');
-  if (mBtns) {
-    mBtns.innerHTML = `<button class="btn btn-primary" onclick="closeAlert()">موافق</button>`;
-  }
-}
-
-// تعديل دالة closeAlert الأصلية
-function closeAlert() {
-  closeModal();
-}
 // ═══════════════════════════════════════════════════════════════════
 // NAVIGATION
 // ═══════════════════════════════════════════════════════════════════
@@ -919,6 +861,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadList(iso);
 });
 
+// تعريف الدوال في النطاق العام
 window.switchType = switchType;
 window.onDateChange = onDateChange;
 window.applyDateFilter = applyDateFilter;
