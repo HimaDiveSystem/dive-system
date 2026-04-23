@@ -258,19 +258,25 @@ function parseSheetStructure() {
   sumCurrencies = [];
   paymentsData = [];
 
+  console.log('=== DEBUG parseSheetStructure ===');
+  console.log('lastCol:', lastCol);
+
   // البحث عن بداية جدول المدفوعات (عمود "Date")
   let paymentsStartCol = -1;
   for (let j = 0; j < row2.length; j++) {
     const header = (row2[j] || '').toString().trim();
     if (header === 'Date') {
       paymentsStartCol = j;
+      console.log('✅ found Date at col:', j);
       break;
     }
   }
 
-  // 1. أعمدة المجاميع (قبل جدول المدفوعات)
+  // 1. أعمدة المجاميع
   const sumSet = new Set();
-  for (let j = 0; j < (paymentsStartCol !== -1 ? paymentsStartCol : row2.length); j++) {
+  const endCol = (paymentsStartCol !== -1) ? paymentsStartCol : row2.length;
+  
+  for (let j = 0; j < endCol; j++) {
     const header = (row2[j] || '').toString().trim();
     if (header.startsWith('Total') || header.startsWith('المجموع')) {
       let currency = header.replace('Total ', '').replace('المجموع ', '').trim();
@@ -284,42 +290,73 @@ function parseSheetStructure() {
     }
   }
 
-  if (sumCurrencies.length === 0) sumCurrencies = [{ col: -1, currency: 'LE' }];
-
-  // 2. الرحلات والبنود (قبل جدول المدفوعات)
+  // 2. الرحلات والبنود
   let curTrip = null;
-  for (let j = 1; j < (paymentsStartCol !== -1 ? paymentsStartCol : row2.length); j++) {
+  for (let j = 1; j < endCol; j++) {
     const v2 = (row2[j] || '').toString().trim();
     const v3 = (row3[j] || '').toString().trim();
     
     if (v2 && v2 !== '' && !v2.startsWith('Total') && !v2.startsWith('المجموع') && v2 !== 'Date') {
       curTrip = { name: v2, items: [] };
       tripGroups.push(curTrip);
+      console.log('✅ found trip:', v2);
     }
-    if (v3 && v3 !== '' && curTrip) {
+    if (v3 && v3 !== '' && curTrip && !v3.startsWith('Total') && !v3.startsWith('المجموع')) {
       curTrip.items.push({ name: v3, col: j });
     }
   }
 
-  // 3. جدول الأسعار (من العمود 80 إلى ما قبل جدول المدفوعات)
-  let curPriceTrip = null;
-  const priceEndCol = (paymentsStartCol !== -1) ? paymentsStartCol : lastCol;
-  for (let j = 80; j < priceEndCol; j++) {
-    const v2 = (row2[j] || '').toString().trim();
-    const v3 = (row3[j] || '').toString().trim();
-    if (v2 && v2 !== '' && !v2.startsWith('Total') && !v2.startsWith('المجموع')) {
-      curPriceTrip = { name: v2, items: [] };
-      priceGroups.push(curPriceTrip);
+  // 3. جدول الأسعار (يبحث عن "الشهر" و "السنة" ثم الأسعار)
+  let priceStartRow = -1;
+  let priceStartCol = -1;
+  
+  // البحث عن صف يحتوي على "الشهر" و "السنة" (بداية جدول الأسعار)
+  for (let i = 0; i < sheetData.length; i++) {
+    const row = sheetData[i];
+    for (let j = 0; j < row.length; j++) {
+      const cell = (row[j] || '').toString().trim();
+      if (cell === 'الشهر' && (row[j+1] || '').toString().trim() === 'السنة') {
+        priceStartRow = i;
+        priceStartCol = j;
+        console.log('✅ found price table at row:', priceStartRow, 'col:', priceStartCol);
+        break;
+      }
     }
-    if (v3 && v3 !== '' && curPriceTrip) {
-      const sampleCell = (sheetData[3] || [])[j];
-      const { currency } = parseCell(sampleCell);
-      curPriceTrip.items.push({ name: v3, col: j, currency });
+    if (priceStartRow !== -1) break;
+  }
+  
+  if (priceStartRow !== -1 && priceStartCol !== -1 && sheetData[priceStartRow + 1]) {
+    // قراءة أسماء الرحلات والبنود من الصف التالي
+    const priceRow2 = sheetData[priceStartRow + 1] || [];
+    const priceRow3 = sheetData[priceStartRow + 2] || [];
+    
+    let curPriceTrip = null;
+    for (let j = priceStartCol + 2; j < priceRow2.length; j++) {
+      const tripName = (priceRow2[j] || '').toString().trim();
+      const itemName = (priceRow3[j] || '').toString().trim();
+      
+      if (tripName && tripName !== '') {
+        curPriceTrip = { name: tripName, items: [] };
+        priceGroups.push(curPriceTrip);
+      }
+      if (itemName && itemName !== '' && curPriceTrip) {
+        // قراءة السعر من الصف التالي (الأسعار الفعلية)
+        const priceRow = sheetData[priceStartRow + 3] || [];
+        const priceCell = priceRow[j] || '';
+        const { price, currency } = parseCell(priceCell);
+        curPriceTrip.items.push({ 
+          name: itemName, 
+          col: j, 
+          price: price,
+          currency: currency 
+        });
+      }
     }
   }
 
-  // 4. جدول المدفوعات (إذا وجد)
+  // 4. جدول المدفوعات
   if (paymentsStartCol !== -1 && sheetData.length > 3) {
+    console.log('✅ reading payments from col:', paymentsStartCol);
     for (let i = 3; i < sheetData.length; i++) {
       const row = sheetData[i];
       const dateVal = row[paymentsStartCol];
@@ -338,9 +375,10 @@ function parseSheetStructure() {
         });
       }
     }
+    console.log('✅ paymentsData length:', paymentsData.length);
   }
   
-  console.log('✅ parseSheetStructure - tripGroups:', tripGroups.length, 'priceGroups:', priceGroups.length, 'sumCurrencies:', sumCurrencies.length, 'payments:', paymentsData.length);
+  console.log('final - tripGroups:', tripGroups.length, 'priceGroups:', priceGroups.length, 'sumCurrencies:', sumCurrencies.length, 'payments:', paymentsData.length);
 }
 // ====================== دوال العرض ======================
 function renderPricesTab(rows) {
