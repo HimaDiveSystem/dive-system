@@ -427,7 +427,7 @@ async function loadEmployees() {
   document.getElementById('employeesTable').innerHTML = '<div class="loader"></div>';
   document.getElementById('statsRow').innerHTML = '';
   try {
-    // ✅ استخدم getAllEmployees بدلاً من getEmployeesByCenter
+    // ✅ استخدام getAllEmployees بدلاً من getEmployeesByCenter
     const all = await jsonpRequest('getAllEmployees');
     
     if (Array.isArray(all)) {
@@ -756,45 +756,64 @@ function onFileSelect(input, key, prevId) {
 
 async function uploadImageToDrive(file, key, prevId) {
   try {
-    const b64 = await new Promise((res, rej) => {
-      const r = new FileReader();
-      r.onload  = e => res(e.target.result.split(',')[1]);
-      r.onerror = rej;
-      r.readAsDataURL(file);
+    const b64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = e => resolve(e.target.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
     });
     const mimeType = file.type || 'image/jpeg';
-    const label    = (editingSerial || 'NEW') + '_' + key.toLowerCase();
-   const resp = await fetch(GAS, {
-  method: 'POST',
-  credentials: 'include',     // 🔑 هام جداً
-  body: JSON.stringify({
-    action: 'uploadEmployeeImage',
-    b64: b64,
-    mimeType: mimeType,
-    label: label
-  })
-});
-    const result = await resp.json();
-    if (result && result.url) {
-      imgData[key] = result.url;
-      const prev = document.getElementById(prevId);
-      prev.innerHTML = '<div class="img-ok">✓ ' + file.name + '</div>';
-      showToast('✅ تم رفع ' + file.name, 'success');
-    } else {
-      throw new Error(result?.message || 'فشل الرفع');
-    }
+    const label = (editingSerial || 'NEW') + '_' + key.toLowerCase();
+    
+    // ✅ استخدام JSONP بدلاً من fetch (لتجنب مشكلة CORS)
+    const callbackName = 'uploadCb_' + Date.now() + '_' + Math.floor(Math.random() * 99999);
+    
+    const params = new URLSearchParams({
+      action: 'uploadEmployeeImage',
+      b64: b64,
+      mimeType: mimeType,
+      label: label,
+      callback: callbackName
+    });
+    
+    const script = document.createElement('script');
+    script.src = GAS + '?' + params.toString();
+    
+    window[callbackName] = (result) => {
+      delete window[callbackName];
+      script.remove();
+      
+      if (result && result.url) {
+        imgData[key] = result.url;
+        const prev = document.getElementById(prevId);
+        prev.innerHTML = '<div class="img-ok">✓ ' + file.name + '</div>';
+        showToast('✅ تم رفع الصورة إلى Drive', 'success');
+      } else {
+        throw new Error(result?.message || 'فشل الرفع');
+      }
+    };
+    
+    script.onerror = () => {
+      delete window[callbackName];
+      script.remove();
+      throw new Error('فشل الاتصال بالخادم');
+    };
+    
+    document.head.appendChild(script);
+    
   } catch(e) {
-    console.warn('Drive upload failed, using base64 fallback:', e.message);
-    const r2 = new FileReader();
-    r2.onload = ev => {
+    console.error('upload error:', e);
+    // Fallback: تخزين base64 مؤقتاً
+    const reader = new FileReader();
+    reader.onload = ev => {
       imgData[key] = ev.target.result;
       const prev = document.getElementById(prevId);
       prev.innerHTML = '<div class="img-ok">✓ ' + file.name + ' (محلي)</div>';
+      showToast('⚠️ تم الحفظ محلياً (فشل الرفع إلى Drive)', 'error');
     };
-    r2.readAsDataURL(file);
+    reader.readAsDataURL(file);
   }
 }
-
 // ══════════════════════════════════════════════════════════
 // SAVE
 // ══════════════════════════════════════════════════════════
