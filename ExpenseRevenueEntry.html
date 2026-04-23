@@ -391,7 +391,7 @@ function onDateChange(){
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// APPLY DATE FILTER
+// APPLY DATE FILTER - تجلب كل البيانات ثم تفلتر حسب التاريخ المطلوب
 // ═══════════════════════════════════════════════════════════════════
 function applyDateFilter() {
   const fromDate = document.getElementById('fFromDate').value;
@@ -399,28 +399,36 @@ function applyDateFilter() {
   const searchText = document.getElementById('fSearch').value;
   const sheet = currentType === 'expense' ? 'Expenses' : 'Other_Revenues';
   
+  // إذا لم يتم تحديد تاريخ، استخدم تاريخ اليوم
   let fromDD = fromDate ? isoToDD(fromDate) : '';
   let toDD = toDate ? isoToDD(toDate) : '';
   
+  // إذا كان من تاريخ أو إلى تاريخ غير محددين، استخدم تاريخ اليوم
+  if (!fromDD && !toDD) {
+    const today = todayISO();
+    fromDD = isoToDD(today);
+    toDD = isoToDD(today);
+  } else if (!fromDD && toDD) {
+    fromDD = toDD;
+  } else if (fromDD && !toDD) {
+    toDD = fromDD;
+  }
+  
   document.getElementById('tableWrap').innerHTML = '<div class="loader"><div class="spinner"></div>جاري البحث...</div>';
   
-  gasGet({action: 'getExpenseRevenueRows', sheet, date: ''})
+  // جلب البيانات حسب النطاق الزمني المطلوب
+  gasGet({action: 'getExpenseRevenueRows', sheet, dateFrom: fromDD, dateTo: toDD})
     .then(data => {
       if (Array.isArray(data)) {
         let rows = data;
-        const fromTs = fromDate ? new Date(fromDate).getTime() : null;
-        const toTs = toDate ? new Date(toDate).getTime() + 86399999 : null;
         
-        rows = rows.filter(r => {
-          const rowTs = ddToTs(r.date);
-          if (fromTs && rowTs && rowTs < fromTs) return false;
-          if (toTs && rowTs && rowTs > toTs) return false;
-          if (searchText) {
+        // فلترة إضافية حسب النص (إن وجد)
+        if (searchText) {
+          rows = rows.filter(r => {
             const str = [r.date, r.details, r.account, r.accountType, r.expenseNo].map(x=>x||'').join(' ').toLowerCase();
-            if (!str.includes(searchText.toLowerCase())) return false;
-          }
-          return true;
-        });
+            return str.includes(searchText.toLowerCase());
+          });
+        }
         
         allRows = rows;
         filteredRows = [...allRows];
@@ -436,7 +444,6 @@ function applyDateFilter() {
       showAlert('خطأ: ' + err.message, '❌');
     });
 }
-
 function applyFilterWithDates(fromISO, toISO){
   const fromTs = fromISO ? new Date(fromISO).getTime() : null;
   const toTs = toISO ? new Date(toISO).getTime() + 86399999 : null;
@@ -530,15 +537,31 @@ document.addEventListener('click', function(e){ if(!e.target.closest('.cbw')){ [
 // ═══════════════════════════════════════════════════════════════════
 // LOAD LIST
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// LOAD LIST - تعرض بيانات اليوم فقط عند التحميل الأول
+// ═══════════════════════════════════════════════════════════════════
 function loadList(iso){
   const sheet = currentType==='expense' ? 'Expenses' : 'Other_Revenues';
   const dateTxt = isoToDD(iso);
   document.getElementById('tableWrap').innerHTML = '<div class="loader"><div class="spinner"></div>جاري التحميل...</div>';
+  
   gasGet({action:'getExpenseRevenueRows', sheet, date:dateTxt})
-    .then(data => { allRows = Array.isArray(data) ? data : []; applyFilterWithDates(null, null); })
-    .catch(err => { document.getElementById('tableWrap').innerHTML = `<div class="no-data">خطأ: ${err.message}</div>`; });
+    .then(data => { 
+      allRows = Array.isArray(data) ? data : []; 
+      filteredRows = [...allRows];
+      if(sortCol>=0) doSort();
+      renderTable();
+      renderTotals();
+      
+      // تعيين حقلي الفلترة ليبدأ من تاريخ اليوم (للبحث اللاحق)
+      const todayISO = new Date().toISOString().split('T')[0];
+      document.getElementById('fFromDate').value = todayISO;
+      document.getElementById('fToDate').value = todayISO;
+    })
+    .catch(err => { 
+      document.getElementById('tableWrap').innerHTML = `<div class="no-data">خطأ: ${err.message}</div>`; 
+    });
 }
-
 // ═══════════════════════════════════════════════════════════════════
 // FILTER & SORT
 // ═══════════════════════════════════════════════════════════════════
