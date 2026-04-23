@@ -256,9 +256,21 @@ function parseSheetStructure() {
   tripGroups = [];
   priceGroups = [];
   sumCurrencies = [];
+  paymentsData = [];
 
-  const sumSet = new Set();
+  // البحث عن بداية جدول المدفوعات (عمود "Date")
+  let paymentsStartCol = -1;
   for (let j = 0; j < row2.length; j++) {
+    const header = (row2[j] || '').toString().trim();
+    if (header === 'Date') {
+      paymentsStartCol = j;
+      break;
+    }
+  }
+
+  // 1. أعمدة المجاميع (قبل جدول المدفوعات)
+  const sumSet = new Set();
+  for (let j = 0; j < (paymentsStartCol !== -1 ? paymentsStartCol : row2.length); j++) {
     const header = (row2[j] || '').toString().trim();
     if (header.startsWith('Total') || header.startsWith('المجموع')) {
       let currency = header.replace('Total ', '').replace('المجموع ', '').trim();
@@ -274,11 +286,13 @@ function parseSheetStructure() {
 
   if (sumCurrencies.length === 0) sumCurrencies = [{ col: -1, currency: 'LE' }];
 
+  // 2. الرحلات والبنود (قبل جدول المدفوعات)
   let curTrip = null;
-  for (let j = 1; j < row2.length && j < 78; j++) {
+  for (let j = 1; j < (paymentsStartCol !== -1 ? paymentsStartCol : row2.length); j++) {
     const v2 = (row2[j] || '').toString().trim();
     const v3 = (row3[j] || '').toString().trim();
-    if (v2 && v2 !== '' && !v2.startsWith('Total') && !v2.startsWith('المجموع')) {
+    
+    if (v2 && v2 !== '' && !v2.startsWith('Total') && !v2.startsWith('المجموع') && v2 !== 'Date') {
       curTrip = { name: v2, items: [] };
       tripGroups.push(curTrip);
     }
@@ -287,11 +301,13 @@ function parseSheetStructure() {
     }
   }
 
+  // 3. جدول الأسعار (من العمود 80 إلى ما قبل جدول المدفوعات)
   let curPriceTrip = null;
-  for (let j = 80; j < lastCol; j++) {
+  const priceEndCol = (paymentsStartCol !== -1) ? paymentsStartCol : lastCol;
+  for (let j = 80; j < priceEndCol; j++) {
     const v2 = (row2[j] || '').toString().trim();
     const v3 = (row3[j] || '').toString().trim();
-    if (v2 && v2 !== '') {
+    if (v2 && v2 !== '' && !v2.startsWith('Total') && !v2.startsWith('المجموع')) {
       curPriceTrip = { name: v2, items: [] };
       priceGroups.push(curPriceTrip);
     }
@@ -301,17 +317,8 @@ function parseSheetStructure() {
       curPriceTrip.items.push({ name: v3, col: j, currency });
     }
   }
-  
-  // قراءة جدول المدفوعات (ابحث عن عمود "Date")
-  paymentsData = [];
-  let paymentsStartCol = -1;
-  for (let j = 0; j < row2.length; j++) {
-    if ((row2[j] || '').toString().trim() === 'Date') {
-      paymentsStartCol = j;
-      break;
-    }
-  }
-  
+
+  // 4. جدول المدفوعات (إذا وجد)
   if (paymentsStartCol !== -1 && sheetData.length > 3) {
     for (let i = 3; i < sheetData.length; i++) {
       const row = sheetData[i];
@@ -335,7 +342,6 @@ function parseSheetStructure() {
   
   console.log('✅ parseSheetStructure - tripGroups:', tripGroups.length, 'priceGroups:', priceGroups.length, 'sumCurrencies:', sumCurrencies.length, 'payments:', paymentsData.length);
 }
-
 // ====================== دوال العرض ======================
 function renderPricesTab(rows) {
   if(!priceGroups.length) return '<div class="no-data">لا توجد بيانات أسعار</div>';
