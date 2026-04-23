@@ -223,7 +223,25 @@
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbzZqrtAc8UBauMrzriGi7Q18rni4JeLFI-rqLSkctRjT3Qvx3rtblQiBXpDvu2BJbJx/exec';
 const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const YEARS = ['2024','2025','2026','2027','2028','2029','2030'];
+// ═══════════════════════════════════════════════════════════════════
+// CONSOLE DIAGNOSTICS (ابدأ الاختبار)
+// ═══════════════════════════════════════════════════════════════════
+console.log('🚀 PAGE LOADED - بدء التشخيص');
+console.log('GAS_URL:', GAS_URL);
 
+// مراقبة جميع اتصالات fetch
+const originalFetch = window.fetch;
+window.fetch = function(...args) {
+  console.log(`🌐 FETCH: ${args[0]}`);
+  console.log(`📦 PARAMS:`, args[1]);
+  return originalFetch.apply(this, args).then(response => {
+    console.log(`✅ RESPONSE STATUS: ${response.status}`);
+    return response;
+  }).catch(error => {
+    console.log(`❌ FETCH ERROR:`, error);
+    throw error;
+  });
+};
 let currentUser = null;
 let currentType = 'expense';
 let allRows = [], filteredRows = [];
@@ -337,15 +355,25 @@ document.addEventListener('click', function(e){ if(!e.target.closest('.cbw')){ [
 // ═══════════════════════════════════════════════════════════════════
 // LOAD LIST - تعرض بيانات اليوم فقط عند التحميل الأول
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// LOAD LIST - مع تشخيص
+// ═══════════════════════════════════════════════════════════════════
 function loadList(iso){
   const sheet = currentType==='expense' ? 'Expenses' : 'Other_Revenues';
   const dateTxt = isoToDD(iso);
+  console.log(`🔍 loadList CALLED - iso: ${iso}, dateTxt: ${dateTxt}, sheet: ${sheet}`);
+  
   document.getElementById('tableWrap').innerHTML = '<div class="loader"><div class="spinner"></div>جاري التحميل...</div>';
   
   gasGet({action:'getExpenseRevenueRows', sheet, date:dateTxt})
     .then(data => { 
+      console.log(`📊 loadList received data:`, data);
+      console.log(`📊 data type: ${Array.isArray(data) ? 'Array' : typeof data}, length: ${data?.length || 0}`);
+      
       allRows = Array.isArray(data) ? data : []; 
       filteredRows = [...allRows];
+      console.log(`✅ allRows length: ${allRows.length}`);
+      
       if(sortCol>=0) doSort();
       renderTable();
       renderTotals();
@@ -353,8 +381,10 @@ function loadList(iso){
       const todayISO = new Date().toISOString().split('T')[0];
       document.getElementById('fFromDate').value = todayISO;
       document.getElementById('fToDate').value = todayISO;
+      console.log(`✅ Load completed - set filter dates to: ${todayISO}`);
     })
     .catch(err => { 
+      console.log(`❌ loadList error:`, err);
       document.getElementById('tableWrap').innerHTML = `<div class="no-data">خطأ: ${err.message}</div>`; 
     });
 }
@@ -362,11 +392,20 @@ function loadList(iso){
 // ═══════════════════════════════════════════════════════════════════
 // APPLY DATE FILTER - تجلب البيانات حسب النطاق الزمني المطلوب
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// APPLY DATE FILTER - مع تشخيص
+// ═══════════════════════════════════════════════════════════════════
 function applyDateFilter() {
   const fromDate = document.getElementById('fFromDate').value;
   const toDate = document.getElementById('fToDate').value;
   const searchText = document.getElementById('fSearch').value;
   const sheet = currentType === 'expense' ? 'Expenses' : 'Other_Revenues';
+  
+  console.log(`🔍 applyDateFilter CALLED`);
+  console.log(`  - fromDate: ${fromDate}`);
+  console.log(`  - toDate: ${toDate}`);
+  console.log(`  - searchText: ${searchText}`);
+  console.log(`  - sheet: ${sheet}`);
   
   let fromDD = fromDate ? isoToDD(fromDate) : '';
   let toDD = toDate ? isoToDD(toDate) : '';
@@ -376,26 +415,37 @@ function applyDateFilter() {
     const today = todayISO();
     fromDD = isoToDD(today);
     toDD = isoToDD(today);
+    console.log(`  - No dates, using today: ${fromDD}`);
   } else if (!fromDD && toDD) {
     fromDD = toDD;
+    console.log(`  - Only toDate, using from=to: ${fromDD}`);
   } else if (fromDD && !toDD) {
     toDD = fromDD;
+    console.log(`  - Only fromDate, using to=from: ${toDD}`);
   }
+  
+  console.log(`  - FINAL fromDD: ${fromDD}, toDD: ${toDD}`);
   
   document.getElementById('tableWrap').innerHTML = '<div class="loader"><div class="spinner"></div>جاري البحث...</div>';
   
   // جلب البيانات حسب النطاق الزمني
   gasGet({action: 'getExpenseRevenueRows', sheet, dateFrom: fromDD, dateTo: toDD})
     .then(data => {
+      console.log(`📊 applyDateFilter received data:`, data);
+      console.log(`📊 data type: ${Array.isArray(data) ? 'Array' : typeof data}`);
+      
       if (Array.isArray(data)) {
+        console.log(`📊 Initial data count: ${data.length}`);
         let rows = data;
         
         // فلترة حسب النص (إن وجد)
         if (searchText) {
+          const beforeCount = rows.length;
           rows = rows.filter(r => {
             const str = [r.date, r.details, r.account, r.accountType, r.expenseNo].map(x=>x||'').join(' ').toLowerCase();
             return str.includes(searchText.toLowerCase());
           });
+          console.log(`  - Filtered by text: ${beforeCount} → ${rows.length}`);
         }
         
         allRows = rows;
@@ -403,11 +453,14 @@ function applyDateFilter() {
         if (sortCol >= 0) doSort();
         renderTable();
         renderTotals();
+        console.log(`✅ applyDateFilter completed - rows: ${filteredRows.length}`);
         showToast(`تم العثور على ${filteredRows.length} سجل`, 'success');
       } else {
+        console.log(`❌ applyDateFilter: data is not array`, data);
         showAlert('فشل جلب البيانات', '❌');
       }
     }).catch(err => {
+      console.log(`❌ applyDateFilter error:`, err);
       showAlert('خطأ: ' + err.message, '❌');
     });
 }
