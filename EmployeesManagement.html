@@ -813,14 +813,14 @@ function uploadImageToDrive(file, key, prevId) {
 // SAVE
 // ══════════════════════════════════════════════════════════
 async function saveEmployee() {
-  const g        = id => (document.getElementById(id)?.value||'').trim();
+  const g = id => (document.getElementById(id)?.value || '').trim();
   const hasAccess = document.getElementById('empHasAccess').checked;
-  const isEdit    = !!editingSerial;
+  const isEdit = !!editingSerial;
 
   const errs = [];
-  if (!g('empName'))      errs.push('الاسم الكامل');
-  if (!g('empPosition'))  errs.push('الوظيفة');
-  if (!g('empBranch'))    errs.push('الفرع');
+  if (!g('empName')) errs.push('الاسم الكامل');
+  if (!g('empPosition')) errs.push('الوظيفة');
+  if (!g('empBranch')) errs.push('الفرع');
   if (!g('empStartDate')) errs.push('تاريخ بداية العمل');
   if (hasAccess && !g('empPassword') && !isEdit) errs.push('كلمة المرور');
   if (errs.length) {
@@ -836,31 +836,66 @@ async function saveEmployee() {
   btn.textContent = '⏳ جاري الحفظ...';
 
   try {
+    // أولاً: رفع الصور إلى Drive عبر POST منفصل
+    let uploadedImages = { ...imgData };
+    
+    for (const [key, value] of Object.entries(imgData)) {
+      if (value && value.startsWith('data:image')) {
+        try {
+          const b64 = value.split(',')[1];
+          const mimeType = value.split(';')[0].split(':')[1];
+          const label = (editingSerial || 'NEW') + '_' + key.toLowerCase();
+          
+          const response = await fetch(GAS, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'uploadEmployeeImage',
+              b64: b64,
+              mimeType: mimeType,
+              label: label
+            })
+          });
+          // مع mode: 'no-cors' لا يمكن قراءة الرد، لكننا نعتبر الرفع ناجحاً
+          // وسيتم حفظ الرابط في Drive، لكننا لن نعرفه هنا
+          // لذلك نترك الصورة كـ Base64 وسيتم حفظها في الشيت مباشرة
+        } catch(e) {
+          console.warn('فشل رفع الصورة', key, e);
+        }
+      }
+    }
+
     const params = {
-      serial:          editingSerial || '',
-      fullName:        g('empName'),
-      position:        g('empPosition'),
-      monthlySalary:   parseFloat(g('empSalary')) || 0,
-      phone:           g('empPhone'),
-      startDate:       g('empStartDate'),
-      branchId:        g('empBranch'),
-      branchName:      selBranch.name || '',
-      paymentSystem:   g('empPaymentSystem'),
-      status:          isEdit ? g('empStatus') : 'نشط',
-      centerId:        currentUser?.centerId   || '',
-      centerName:      currentUser?.centerName || '',
+      serial: editingSerial || '',
+      fullName: g('empName'),
+      position: g('empPosition'),
+      monthlySalary: parseFloat(g('empSalary')) || 0,
+      phone: g('empPhone'),
+      startDate: g('empStartDate'),
+      branchId: g('empBranch'),
+      branchName: selBranch.name || '',
+      paymentSystem: g('empPaymentSystem'),
+      status: isEdit ? g('empStatus') : 'نشط',
+      centerId: currentUser?.centerId || '',
+      centerName: currentUser?.centerName || '',
       hasSystemAccess: hasAccess ? 'true' : 'false',
-      userType:        g('empUserType') || 'Employee',
-      username:        g('empUsername'),
-      email:           g('empEmail'),
-      password:        g('empPassword'),
-      address:         g('empAddress'),
-      imgPhoto:        imgData.Employee  || '',
-      imgIdFront:      imgData.IdFront   || '',
-      imgIdBack:       imgData.IdBack    || '',
-      imgSecurity:     imgData.Security  || ''
+      userType: g('empUserType') || 'Employee',
+      username: g('empUsername'),
+      email: g('empEmail'),
+      password: g('empPassword'),
+      address: g('empAddress'),
+      imgPhoto: imgData.Employee || '',
+      imgIdFront: imgData.IdFront || '',
+      imgIdBack: imgData.IdBack || '',
+      imgSecurity: imgData.Security || ''
     };
-console.log('📤 البيانات المرسلة إلى updateEmployee:', JSON.stringify(params, null, 2));
+    
+    console.log('📤 البيانات المرسلة إلى updateEmployee:', {
+      ...params,
+      imgPhoto: params.imgPhoto ? '(Base64 طوله ' + params.imgPhoto.length + ')' : 'فارغ'
+    });
+    
     const action = isEdit ? 'updateEmployee' : 'addNewEmployee';
     const result = await jsonpRequest(action, params);
 
