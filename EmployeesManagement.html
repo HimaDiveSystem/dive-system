@@ -837,8 +837,8 @@ async function saveEmployee() {
   btn.textContent = '⏳ جاري الحفظ...';
 
   try {
-    // حفظ الصور مؤقتاً (Base64) لاستخدامها لاحقاً
-    const imagesToUpload = { ...imgData };
+    // نسخة من الصور لاستخدامها لاحقاً
+    const imagesToSave = { ...imgData };
     
     // ========== 1. إرسال بيانات الموظف (بدون الصور) عبر JSONP ==========
     const params = {
@@ -872,52 +872,30 @@ async function saveEmployee() {
     
     const employeeSerial = result.serial || editingSerial;
     
-    // ========== 2. بعد نجاح الحفظ، نرسل الصور عبر POST منفصل ==========
-    let uploadedCount = 0;
-    for (const [key, value] of Object.entries(imagesToUpload)) {
-      if (value && value.startsWith('data:image')) {
-        try {
-          const b64 = value.split(',')[1];
-          const mimeType = value.split(';')[0].split(':')[1];
-          const label = employeeSerial + '_' + key.toLowerCase();
-          
-          await fetch(GAS, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'uploadEmployeeImage',
-              b64: b64,
-              mimeType: mimeType,
-              label: label
-            })
-          });
-          uploadedCount++;
-        } catch(e) {
-          console.warn(`⚠️ فشل رفع الصورة ${key}:`, e);
-        }
-      } else if (value && value.startsWith('https://')) {
-        // الصورة موجودة بالفعل على Drive، نحتاج إلى حفظ الرابط في شيت Salaries
+    // ========== 2. بعد نجاح الحفظ، نحفظ الصور مباشرة في شيت Salaries ==========
+    let savedImagesCount = 0;
+    for (const [key, imageData] of Object.entries(imagesToSave)) {
+      if (imageData) {
         try {
           await fetch(GAS, {
             method: 'POST',
             mode: 'no-cors',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              action: 'saveEmployeeImageUrl',
+              action: 'updateEmployeeImage',
               serial: employeeSerial,
               imageKey: key,
-              imageUrl: value
+              imageData: imageData
             })
           });
-          uploadedCount++;
+          savedImagesCount++;
         } catch(e) {
-          console.warn(`⚠️ فشل حفظ رابط الصورة ${key}:`, e);
+          console.warn(`⚠️ فشل حفظ الصورة ${key}:`, e);
         }
       }
     }
     
-    showToast(`✅ ${isEdit ? 'تم تعديل' : 'تم إضافة'} الموظف: ${employeeSerial} (تم رفع ${uploadedCount} صورة)`, 'success');
+    showToast(`✅ ${isEdit ? 'تم تعديل' : 'تم إضافة'} الموظف: ${employeeSerial} (تم حفظ ${savedImagesCount} صورة)`, 'success');
     closeModal();
     await loadEmployees();
     
