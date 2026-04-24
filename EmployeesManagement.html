@@ -752,47 +752,62 @@ function onFileSelect(input, key, prevId) {
   uploadImageToDrive(file, key, prevId);
 }
 
-async function uploadImageToDrive(file, key, prevId) {
-  showToast('⏳ جاري تجهيز الصورة...', 'info');
+function uploadImageToDrive(file, key, prevId) {
+  showToast('⏳ جاري ضغط الصورة...', 'info');
   
-  try {
-    // 1. تحويل الصورة إلى Base64
-    const b64 = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = e => resolve(e.target.result.split(',')[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-    
-    const mimeType = file.type || 'image/jpeg';
-    const label = (editingSerial || 'NEW') + '_' + key.toLowerCase();
-    
-    // 2. إرسال الصورة عبر POST مع mode: 'no-cors'
-    await fetch(GAS, {
-      method: 'POST',
-      mode: 'no-cors',  // 🔑 يتجاوز CORS
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'uploadEmployeeImage',
-        b64: b64,
-        mimeType: mimeType,
-        label: label
-      })
-    });
-    
-    // 3. مع mode: 'no-cors' لا يمكن قراءة الرد،
-    //    لذلك نخزن الصورة كـ base64 مؤقتاً (سترتفع عند حفظ الموظف)
-    imgData[key] = 'data:' + mimeType + ';base64,' + b64;
-    
-    // 4. تحديث واجهة المعاينة
-    const prev = document.getElementById(prevId);
-    prev.innerHTML = '<div class="img-ok">✓ ' + file.name + ' (جاهزة للحفظ)</div>';
-    showToast('✅ الصورة جاهزة للحفظ', 'success');
-    
-  } catch(e) {
-    console.error('uploadImageToDrive error:', e);
-    showToast('❌ فشل تجهيز الصورة: ' + e.message, 'error');
-  }
+  const reader = new FileReader();
+  reader.onload = function(ev) {
+    // ضغط الصورة (تغيير الحجم إلى 200px عرض)
+    const img = new Image();
+    img.onload = function() {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      const maxWidth = 200;
+      const scale = maxWidth / img.width;
+      canvas.width = maxWidth;
+      canvas.height = img.height * scale;
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      
+      const compressedB64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+      const mimeType = 'image/jpeg';
+      const label = (editingSerial || 'NEW') + '_' + key.toLowerCase();
+      
+      const callbackName = 'uploadCb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
+      const url = GAS + '?action=uploadEmployeeImage&b64=' + encodeURIComponent(compressedB64) + 
+                  '&mimeType=' + encodeURIComponent(mimeType) + 
+                  '&label=' + encodeURIComponent(label) + 
+                  '&callback=' + callbackName;
+      
+      window[callbackName] = function(result) {
+        delete window[callbackName];
+        if (result && result.success && result.url) {
+          imgData[key] = result.url;
+          const prev = document.getElementById(prevId);
+          prev.innerHTML = '<div class="img-ok">✓ ' + file.name + '</div>';
+          showToast('✅ تم رفع الصورة', 'success');
+        } else {
+          // فشل JSONP → نخزن Base64 مباشرة (سيُحفظ في الشيت)
+          imgData[key] = 'data:image/jpeg;base64,' + compressedB64;
+          const prev = document.getElementById(prevId);
+          prev.innerHTML = '<div class="img-ok">⚠️ ' + file.name + ' (محلي)</div>';
+          showToast('⚠️ تم الحفظ محلياً', 'warning');
+        }
+      };
+      
+      const script = document.createElement('script');
+      script.src = url;
+      script.onerror = function() {
+        delete window[callbackName];
+        imgData[key] = 'data:image/jpeg;base64,' + compressedB64;
+        const prev = document.getElementById(prevId);
+        prev.innerHTML = '<div class="img-ok">⚠️ ' + file.name + ' (محلي)</div>';
+        showToast('⚠️ تم الحفظ محلياً (فشل الرفع)', 'warning');
+      };
+      document.head.appendChild(script);
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
 }
 // ══════════════════════════════════════════════════════════
 // SAVE
