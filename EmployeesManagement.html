@@ -754,53 +754,52 @@ function onFileSelect(input, key, prevId) {
   uploadImageToDrive(file, key, prevId);
 }
 
-async function uploadImageToDrive(file, key, prevId) {
+function uploadImageToDrive(file, key, prevId) {
   try {
-    const b64 = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = e => resolve(e.target.result.split(',')[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-    const mimeType = file.type || 'image/jpeg';
-    const label = (editingSerial || 'NEW') + '_' + key.toLowerCase();
-    
-    // ✅ استخدام POST مباشرة (دون credentials)
-    const response = await fetch(GAS, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
+    const reader = new FileReader();
+    reader.onload = async function(ev) {
+      const b64 = ev.target.result.split(',')[1];
+      const mimeType = file.type || 'image/jpeg';
+      const label = (editingSerial || 'NEW') + '_' + key.toLowerCase();
+      
+      // ✅ استخدام JSONP عبر GET
+      const callbackName = 'uploadCb_' + Date.now() + '_' + Math.floor(Math.random() * 99999);
+      const params = new URLSearchParams({
         action: 'uploadEmployeeImage',
         b64: b64,
         mimeType: mimeType,
-        label: label
-      })
-    });
-    
-    const result = await response.json();
-    
-    if (result && result.url) {
-      imgData[key] = result.url;
-      const prev = document.getElementById(prevId);
-      prev.innerHTML = '<div class="img-ok">✓ ' + file.name + '</div>';
-      showToast('✅ تم رفع الصورة إلى Drive', 'success');
-    } else {
-      throw new Error(result?.message || 'فشل الرفع');
-    }
-    
-  } catch(e) {
-    console.error('upload error:', e);
-    // Fallback: تخزين base64 مؤقتاً
-    const reader = new FileReader();
-    reader.onload = ev => {
-      imgData[key] = ev.target.result;
-      const prev = document.getElementById(prevId);
-      prev.innerHTML = '<div class="img-ok">✓ ' + file.name + ' (محلي)</div>';
-      showToast('⚠️ تم الحفظ محلياً (فشل الرفع إلى Drive)', 'error');
+        label: label,
+        callback: callbackName
+      });
+      
+      const script = document.createElement('script');
+      script.src = GAS + '?' + params.toString();
+      
+      window[callbackName] = (result) => {
+        delete window[callbackName];
+        script.remove();
+        
+        if (result && result.url) {
+          imgData[key] = result.url;
+          const prev = document.getElementById(prevId);
+          prev.innerHTML = '<div class="img-ok">✓ ' + file.name + '</div>';
+          showToast('✅ تم رفع الصورة إلى Drive', 'success');
+        } else {
+          showToast('❌ فشل رفع الصورة: ' + (result?.message || 'خطأ غير معروف'), 'error');
+        }
+      };
+      
+      script.onerror = () => {
+        delete window[callbackName];
+        script.remove();
+        showToast('❌ فشل الاتصال بالخادم', 'error');
+      };
+      
+      document.head.appendChild(script);
     };
     reader.readAsDataURL(file);
+  } catch(e) {
+    showToast('❌ خطأ في قراءة الملف: ' + e.message, 'error');
   }
 }
 // ══════════════════════════════════════════════════════════
