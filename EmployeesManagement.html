@@ -817,6 +817,7 @@ async function saveEmployee() {
   const hasAccess = document.getElementById('empHasAccess').checked;
   const isEdit = !!editingSerial;
 
+  // التحقق من الحقول المطلوبة
   const errs = [];
   if (!g('empName')) errs.push('الاسم الكامل');
   if (!g('empPosition')) errs.push('الوظيفة');
@@ -836,36 +837,10 @@ async function saveEmployee() {
   btn.textContent = '⏳ جاري الحفظ...';
 
   try {
-    // أولاً: رفع الصور إلى Drive عبر POST منفصل
-    let uploadedImages = { ...imgData };
+    // حفظ الصور مؤقتاً (Base64) لاستخدامها لاحقاً
+    const imagesToUpload = { ...imgData };
     
-    for (const [key, value] of Object.entries(imgData)) {
-      if (value && value.startsWith('data:image')) {
-        try {
-          const b64 = value.split(',')[1];
-          const mimeType = value.split(';')[0].split(':')[1];
-          const label = (editingSerial || 'NEW') + '_' + key.toLowerCase();
-          
-          const response = await fetch(GAS, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'uploadEmployeeImage',
-              b64: b64,
-              mimeType: mimeType,
-              label: label
-            })
-          });
-          // مع mode: 'no-cors' لا يمكن قراءة الرد، لكننا نعتبر الرفع ناجحاً
-          // وسيتم حفظ الرابط في Drive، لكننا لن نعرفه هنا
-          // لذلك نترك الصورة كـ Base64 وسيتم حفظها في الشيت مباشرة
-        } catch(e) {
-          console.warn('فشل رفع الصورة', key, e);
-        }
-      }
-    }
-
+    // ========== 1. إرسال بيانات الموظف (بدون الصور) عبر JSONP ==========
     const params = {
       serial: editingSerial || '',
       fullName: g('empName'),
@@ -884,36 +859,76 @@ async function saveEmployee() {
       username: g('empUsername'),
       email: g('empEmail'),
       password: g('empPassword'),
-      address: g('empAddress'),
-      imgPhoto: imgData.Employee || '',
-      imgIdFront: imgData.IdFront || '',
-      imgIdBack: imgData.IdBack || '',
-      imgSecurity: imgData.Security || ''
+      address: g('empAddress')
+      // ❌ لا نرسل imgPhoto, imgIdFront, imgIdBack, imgSecurity هنا
     };
-    
-    console.log('📤 البيانات المرسلة إلى updateEmployee:', {
-      ...params,
-      imgPhoto: params.imgPhoto ? '(Base64 طوله ' + params.imgPhoto.length + ')' : 'فارغ'
-    });
     
     const action = isEdit ? 'updateEmployee' : 'addNewEmployee';
     const result = await jsonpRequest(action, params);
-
-    if (result && result.success === true) {
-      showToast('✅ ' + (isEdit ? 'تم تعديل' : 'تم إضافة') + ' الموظف: ' + (result.serial || editingSerial), 'success');
-      closeModal();
-      await loadEmployees();
-    } else {
-      showToast('❌ ' + (result?.message || 'فشلت العملية'), 'error');
+    
+    if (!result || result.success !== true) {
+      throw new Error(result?.message || 'فشل حفظ بيانات الموظف');
     }
+    
+    const employeeSerial = result.serial || editingSerial;
+    
+    // ========== 2. بعد نجاح الحفظ، نرسل الصور عبر POST منفصل ==========
+    let uploadedCount = 0;
+    for (const [key, value] of Object.entries(imagesToUpload)) {
+      if (value && value.startsWith('data:image')) {
+        try {
+          const b64 = value.split(',')[1];
+          const mimeType = value.split(';')[0].split(':')[1];
+          const label = employeeSerial + '_' + key.toLowerCase();
+          
+          await fetch(GAS, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'uploadEmployeeImage',
+              b64: b64,
+              mimeType: mimeType,
+              label: label
+            })
+          });
+          uploadedCount++;
+        } catch(e) {
+          console.warn(`⚠️ فشل رفع الصورة ${key}:`, e);
+        }
+      } else if (value && value.startsWith('https://')) {
+        // الصورة موجودة بالفعل على Drive، نحتاج إلى حفظ الرابط في شيت Salaries
+        try {
+          await fetch(GAS, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'saveEmployeeImageUrl',
+              serial: employeeSerial,
+              imageKey: key,
+              imageUrl: value
+            })
+          });
+          uploadedCount++;
+        } catch(e) {
+          console.warn(`⚠️ فشل حفظ رابط الصورة ${key}:`, e);
+        }
+      }
+    }
+    
+    showToast(`✅ ${isEdit ? 'تم تعديل' : 'تم إضافة'} الموظف: ${employeeSerial} (تم رفع ${uploadedCount} صورة)`, 'success');
+    closeModal();
+    await loadEmployees();
+    
   } catch(e) {
-    showToast('❌ خطأ في الاتصال: ' + e.message, 'error');
+    showToast('❌ خطأ: ' + e.message, 'error');
+    console.error('saveEmployee error:', e);
   } finally {
     btn.disabled = false;
     btn.textContent = origTxt;
   }
 }
-
 // ══════════════════════════════════════════════════════════
 // HISTORY
 // ══════════════════════════════════════════════════════════
