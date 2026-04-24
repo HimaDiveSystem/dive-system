@@ -752,41 +752,47 @@ function onFileSelect(input, key, prevId) {
   uploadImageToDrive(file, key, prevId);
 }
 
-function uploadImageToDrive(file, key, prevId) {
-  showToast('⏳ جاري رفع الصورة...', 'info');
-  const reader = new FileReader();
-  reader.onload = function(ev) {
-    const b64 = ev.target.result.split(',')[1];
+async function uploadImageToDrive(file, key, prevId) {
+  showToast('⏳ جاري تجهيز الصورة...', 'info');
+  
+  try {
+    // 1. تحويل الصورة إلى Base64
+    const b64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = e => resolve(e.target.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    
     const mimeType = file.type || 'image/jpeg';
     const label = (editingSerial || 'NEW') + '_' + key.toLowerCase();
     
-    const callbackName = 'uploadCb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
-    const url = GAS + '?action=uploadEmployeeImage&b64=' + encodeURIComponent(b64) + 
-                '&mimeType=' + encodeURIComponent(mimeType) + 
-                '&label=' + encodeURIComponent(label) + 
-                '&callback=' + callbackName;
+    // 2. إرسال الصورة عبر POST مع mode: 'no-cors'
+    await fetch(GAS, {
+      method: 'POST',
+      mode: 'no-cors',  // 🔑 يتجاوز CORS
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'uploadEmployeeImage',
+        b64: b64,
+        mimeType: mimeType,
+        label: label
+      })
+    });
     
-    window[callbackName] = function(result) {
-      delete window[callbackName];
-      if (result && result.success && result.url) {
-        imgData[key] = result.url;
-        const prev = document.getElementById(prevId);
-        prev.innerHTML = '<div class="img-ok">✓ ' + file.name + '</div>';
-        showToast('✅ تم رفع الصورة بنجاح', 'success');
-      } else {
-        showToast('❌ فشل الرفع: ' + (result?.message || 'خطأ'), 'error');
-      }
-    };
+    // 3. مع mode: 'no-cors' لا يمكن قراءة الرد،
+    //    لذلك نخزن الصورة كـ base64 مؤقتاً (سترتفع عند حفظ الموظف)
+    imgData[key] = 'data:' + mimeType + ';base64,' + b64;
     
-    const script = document.createElement('script');
-    script.src = url;
-    script.onerror = function() {
-      delete window[callbackName];
-      showToast('❌ فشل الاتصال بالخادم', 'error');
-    };
-    document.head.appendChild(script);
-  };
-  reader.readAsDataURL(file);
+    // 4. تحديث واجهة المعاينة
+    const prev = document.getElementById(prevId);
+    prev.innerHTML = '<div class="img-ok">✓ ' + file.name + ' (جاهزة للحفظ)</div>';
+    showToast('✅ الصورة جاهزة للحفظ', 'success');
+    
+  } catch(e) {
+    console.error('uploadImageToDrive error:', e);
+    showToast('❌ فشل تجهيز الصورة: ' + e.message, 'error');
+  }
 }
 // ══════════════════════════════════════════════════════════
 // SAVE
