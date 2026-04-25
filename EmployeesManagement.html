@@ -169,6 +169,68 @@
       <button class="btn-success" onclick="openAddModal()">➕ إضافة موظف جديد</button>
       <button class="btn-primary" onclick="loadEmployees()">🔄 تحديث</button>
     </div>
+    <!-- فلترة متقدمة -->
+<div class="filter-bar" style="background:#f8f9fa; padding:15px; border-radius:12px; margin-bottom:20px; display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
+  
+ <div class="filter-group" style="flex:2; min-width:180px;">
+  <label style="display:block; font-size:11px; color:#1e2b4f; margin-bottom:4px;">🔍 بحث بالاسم</label>
+  <input type="text" id="filterName" list="employeeNamesList" placeholder="ابحث بالاسم..." style="width:100%; padding:8px; border:1px solid #ddd; border-radius:8px; font-size:12px;">
+  <datalist id="employeeNamesList"></datalist>
+</div>
+   
+  
+  <div class="filter-group" style="flex:1; min-width:120px;" id="filterBranchGroup">
+    <label style="display:block; font-size:11px; color:#1e2b4f; margin-bottom:4px;">🏢 الفرع</label>
+    <select id="filterBranch" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:8px; font-size:12px;">
+      <option value="">الكل</option>
+    </select>
+  </div>
+  
+  <div class="filter-group" style="flex:1; min-width:100px;">
+    <label style="display:block; font-size:11px; color:#1e2b4f; margin-bottom:4px;">📌 الوظيفة</label>
+    <select id="filterPosition" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:8px; font-size:12px;">
+      <option value="">الكل</option>
+      <option value="Accountant">محاسب</option>
+      <option value="Sales">سيلز</option>
+      <option value="Employee">موظف عادي</option>
+      <option value="Technician">فني</option>
+      <option value="Cleaner">عامل نظافة</option>
+      <option value="Driver">سائق</option>
+      <option value="Guard">أمن</option>
+      <option value="Other">أخرى</option>
+    </select>
+  </div>
+  
+  <div class="filter-group" style="flex:1; min-width:110px;">
+    <label style="display:block; font-size:11px; color:#1e2b4f; margin-bottom:4px;">💰 نظام الحساب</label>
+    <select id="filterPaymentSystem" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:8px; font-size:12px;">
+      <option value="">الكل</option>
+      <option value="مرتب فقط">مرتب فقط</option>
+      <option value="مرتب+عمولة">مرتب + عمولة</option>
+      <option value="عمولة فقط">عمولة فقط</option>
+    </select>
+  </div>
+  
+  <div class="filter-group" style="flex:1; min-width:90px;">
+    <label style="display:block; font-size:11px; color:#1e2b4f; margin-bottom:4px;">⚙️ الحالة</label>
+    <select id="filterStatus" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:8px; font-size:12px;">
+      <option value="">الكل</option>
+      <option value="نشط">نشط</option>
+      <option value="موقوف">موقوف</option>
+    </select>
+  </div>
+  
+  <div class="filter-group" style="flex:1; min-width:110px;">
+    <label style="display:block; font-size:11px; color:#1e2b4f; margin-bottom:4px;">🖥️ حساب النظام</label>
+    <select id="filterHasAccount" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:8px; font-size:12px;">
+      <option value="">الكل</option>
+      <option value="true">لديه حساب</option>
+      <option value="false">ليس لديه حساب</option>
+    </select>
+  </div>
+  
+  <button class="btn-primary btn-sm" onclick="resetFilters()" style="padding:8px 16px;">🗑️ إعادة تعيين</button>
+</div>
     <div id="employeesTable"><div class="loader"></div></div>
   </div>
 </div>
@@ -431,18 +493,39 @@ async function loadEmployees() {
     
     if (Array.isArray(all)) {
       let result = all;
+      const userType = currentUser?.type || '';
+      const canViewAll = ['Admin', 'Owner', 'AccountantManager', 'FinancialManager'].includes(userType);
       
-      if (currentUser?.type === 'Accountant') {
-        result = all.filter(emp => 
-          emp.centerId === currentCenterId && 
-          (!currentBranchId || emp.branchId === currentBranchId)
-        );
+      if (!canViewAll && currentUser?.branchId) {
+        // محاسب أو مدير فرع → يرى فقط موظفي فرعه
+        result = all.filter(emp => emp.branchId === currentUser.branchId);
+        
+        // إخفاء فلترة الفرع (لأنه يرى فرعاً واحداً فقط)
+        const branchFilterGroup = document.getElementById('filterBranchGroup');
+        if (branchFilterGroup) branchFilterGroup.style.display = 'none';
+      } else {
+        // مدير حسابات / مدير مالي / صاحب عمل → يرى الكل ويعرض فلترة الفرع
+        const branchFilterGroup = document.getElementById('filterBranchGroup');
+        if (branchFilterGroup) branchFilterGroup.style.display = 'block';
+        
+        // جلب قائمة الفروع لفلترة
+        const branchesResult = await jsonpRequest('getBranchesByCenter', { centerId: currentUser?.centerId || '' });
+        if (Array.isArray(branchesResult)) {
+          populateBranchFilter(branchesResult);
+        }
       }
       
       employees = result;
+      populateNamesDatalist(employees);
       usedEmails = new Set(employees.filter(e=>e.email).map(e=>e.email.toLowerCase().trim()));
       renderStats();
-      displayTable();
+      
+      // تطبيق الفلترة الأولية
+      applyFilters();
+      
+      // إضافة مستمعي الأحداث للفلترة
+      setupFilterListeners();
+      
     } else {
       document.getElementById('employeesTable').innerHTML = '<p style="color:#e74c3c;text-align:center;padding:30px;">خطأ في تحميل البيانات</p>';
     }
@@ -450,6 +533,33 @@ async function loadEmployees() {
     document.getElementById('employeesTable').innerHTML = '<p style="color:#e74c3c;text-align:center;padding:30px;">خطأ في الاتصال: ' + e.message + '</p>';
     showToast('خطأ في الاتصال', 'error');
   }
+}
+function populateNamesDatalist(employeesList) {
+  const datalist = document.getElementById('employeeNamesList');
+  if (!datalist) return;
+  
+  // جمع الأسماء الفريدة
+  const uniqueNames = [...new Set(employeesList.map(emp => emp.name).filter(Boolean))];
+  uniqueNames.sort((a, b) => a.localeCompare(b, 'ar'));
+  
+  datalist.innerHTML = '';
+  uniqueNames.forEach(name => {
+    const option = document.createElement('option');
+    option.value = name;
+    datalist.appendChild(option);
+  });
+}
+function setupFilterListeners() {
+  const filterIds = ['filterName', 'filterBranch', 'filterPosition', 'filterPaymentSystem', 'filterStatus', 'filterHasAccount'];
+  filterIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.removeEventListener('input', applyFilters);
+      el.removeEventListener('change', applyFilters);
+      el.addEventListener('input', applyFilters);
+      el.addEventListener('change', applyFilters);
+    }
+  });
 }
   // ============ كود اختبار الكونسول ============
 async function testGetEmployees() {
@@ -506,17 +616,166 @@ setTimeout(() => {
     testGetEmployees();
   }
 }, 3000);
-
-function renderStats() {
-  const active  = employees.filter(e => e.status === 'نشط').length;
-  const hasAcc  = employees.filter(e => e.hasAccount).length;
-  document.getElementById('statsRow').innerHTML =
-    '<div class="stat-card"><div class="stat-num">' + employees.length + '</div><div class="stat-lbl">إجمالي الموظفين</div></div>' +
-    '<div class="stat-card" style="border-color:#27ae60"><div class="stat-num" style="color:#27ae60">' + active + '</div><div class="stat-lbl">نشط</div></div>' +
-    '<div class="stat-card" style="border-color:#e74c3c"><div class="stat-num" style="color:#e74c3c">' + (employees.length-active) + '</div><div class="stat-lbl">موقوف</div></div>' +
-    '<div class="stat-card" style="border-color:#9b59b6"><div class="stat-num" style="color:#9b59b6">' + hasAcc + '</div><div class="stat-lbl">لديهم حساب</div></div>';
+  // فلترة الموظفين
+let filteredEmployees = [];
+// ترتيب الجدول
+let sortColumn = 'serial';
+let sortDirection = 'asc'; // 'asc' أو 'desc'
+  
+function applyFilters() {
+  // إعادة تعيين الترتيب عند تغيير الفلتر (اختياري)
+  sortColumn = 'serial';
+  sortDirection = 'asc';
+  
+  const searchName = document.getElementById('filterName')?.value.toLowerCase().trim() || '';
+  const filterBranch = document.getElementById('filterBranch')?.value || '';
+  const filterPosition = document.getElementById('filterPosition')?.value || '';
+  const filterPaymentSystem = document.getElementById('filterPaymentSystem')?.value || '';
+  const filterStatus = document.getElementById('filterStatus')?.value || '';
+  const filterHasAccount = document.getElementById('filterHasAccount')?.value || '';
+  
+  filteredEmployees = employees.filter(emp => {
+    // بحث بالاسم (أي جزء من الاسم، وليس فقط البداية)
+    if (searchName && !emp.name?.toLowerCase().includes(searchName)) return false;
+    
+    // الفرع
+    if (filterBranch && emp.branchId !== filterBranch) return false;
+    
+    // الوظيفة
+    if (filterPosition && emp.position !== filterPosition) return false;
+    
+    // نظام الحساب
+    if (filterPaymentSystem && emp.paymentSystem !== filterPaymentSystem) return false;
+    
+    // الحالة
+    if (filterStatus && emp.status !== filterStatus) return false;
+    
+    // حساب النظام
+    if (filterHasAccount) {
+      const hasAccount = filterHasAccount === 'true';
+      if (emp.hasAccount !== hasAccount) return false;
+    }
+    
+    return true;
+  });
+  
+  // تحديث القائمة المنسدلة للأسماء بناءً على الموظفين المفلترين (ولكن الأفضل تحديثها من employees الأصليين)
+  // نستخدم employees الأصليين لتعريف القائمة، أو filteredEmployees حسب الرغبة
+  populateNamesDatalist(employees);
+  
+  displayFilteredTable();
+}
+  
+function displayFilteredTable() {
+  if (!filteredEmployees.length) {
+    document.getElementById('employeesTable').innerHTML = '<p style="text-align:center;padding:40px;color:#6c757d;">لا يوجد موظفون مطابقون للفلترة</p>';
+    return;
+  }
+  
+  // ترتيب البيانات حسب العمود المحدد
+  const sorted = [...filteredEmployees].sort((a, b) => {
+    let valA = a[sortColumn] || '';
+    let valB = b[sortColumn] || '';
+    
+    // معالجة الأرقام
+    if (sortColumn === 'monthlySalary') {
+      valA = parseFloat(valA) || 0;
+      valB = parseFloat(valB) || 0;
+    } else {
+      valA = valA.toString().toLowerCase();
+      valB = valB.toString().toLowerCase();
+    }
+    
+    if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
+    if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+    return 0;
+  });
+  
+  let html = '<div class="table-wrapper"><table><thead><tr>';
+  
+  // أعمدة الجدول مع إمكانية الترتيب
+  const columns = [
+    { key: 'serial', label: 'الرقم' },
+    { key: 'name', label: 'الاسم' },
+    { key: 'position', label: 'الوظيفة' },
+    { key: 'paymentSystem', label: 'نظام الحساب' },
+    { key: 'status', label: 'الحالة' },
+    { key: 'hasAccount', label: 'حساب النظام' },
+    { key: 'actions', label: 'الإجراءات' }
+  ];
+  
+  columns.forEach(col => {
+    if (col.key === 'actions') {
+      html += `<th>${col.label}</th>`;
+    } else {
+      const sortIcon = (sortColumn === col.key) ? (sortDirection === 'asc' ? ' ▲' : ' ▼') : ' ⇅';
+      html += `<th style="cursor:pointer;" onclick="sortTable('${col.key}')">${col.label}${sortIcon}</th>`;
+    }
+  });
+  
+  html += '</thead><tbody>';
+    
+  sorted.forEach(emp => {
+    html += '<tr>' +
+      '<td><b>' + (emp.serial||'') + '</b></td>' +
+      '<td>' + (emp.name||'') + '</td>' +
+      '<td>' + (emp.position||'') + '</td>' +
+      '<td><span class="badge badge-blue">' + (emp.paymentSystem||'—') + '</span></td>' +
+      '<td class="' + (emp.status==='نشط'?'status-active':'status-inactive') + '">' + (emp.status||'—') + '</td>' +
+      '<td>' + (emp.hasAccount ? '<span class="badge badge-purple">✓ ' + (emp.userType||'') + '</span>' : '<span style="color:#aaa;font-size:11px;">—</span>') + '</td>' +
+      '<td style="white-space:nowrap;">' +
+        '<button class="btn-warning btn-sm" onclick="openEditModal(\'' + emp.serial + '\')">✏️ تعديل</button> ' +
+        '<button class="btn-primary btn-sm" onclick="viewHistory(\'' + emp.serial + '\')">📜 سجل</button>' +
+      '</td>' +
+    '<tr>';
+  });
+  
+  html += '</tbody></table></div>';
+  document.getElementById('employeesTable').innerHTML = html;
 }
 
+function sortTable(column) {
+  if (sortColumn === column) {
+    // تغيير الاتجاه إذا كان نفس العمود
+    sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+  } else {
+    // عمود جديد → ترتيب تصاعدي افتراضي
+    sortColumn = column;
+    sortDirection = 'asc';
+  }
+  displayFilteredTable();
+}
+function resetFilters() {
+  document.getElementById('filterName').value = '';
+  if (document.getElementById('filterBranch')) document.getElementById('filterBranch').value = '';
+  document.getElementById('filterPosition').value = '';
+  document.getElementById('filterPaymentSystem').value = '';
+  document.getElementById('filterStatus').value = '';
+  document.getElementById('filterHasAccount').value = '';
+  applyFilters();
+}
+
+function populateBranchFilter(branchesList) {
+  const branchSelect = document.getElementById('filterBranch');
+  if (!branchSelect) return;
+  
+  const currentValue = branchSelect.value;
+  branchSelect.innerHTML = '<option value="">الكل</option>';
+  branchesList.forEach(b => {
+    branchSelect.innerHTML += '<option value="' + b.id + '">' + b.name + '</option>';
+  });
+  branchSelect.value = currentValue;
+}
+
+function renderStats() {
+  const active = filteredEmployees.filter(e => e.status === 'نشط').length;
+  const hasAcc = filteredEmployees.filter(e => e.hasAccount).length;
+  document.getElementById('statsRow').innerHTML =
+    '<div class="stat-card"><div class="stat-num">' + filteredEmployees.length + '</div><div class="stat-lbl">الموظفين (بعد الفلترة)</div></div>' +
+    '<div class="stat-card" style="border-color:#27ae60"><div class="stat-num" style="color:#27ae60">' + active + '</div><div class="stat-lbl">نشط</div></div>' +
+    '<div class="stat-card" style="border-color:#e74c3c"><div class="stat-num" style="color:#e74c3c">' + (filteredEmployees.length-active) + '</div><div class="stat-lbl">موقوف</div></div>' +
+    '<div class="stat-card" style="border-color:#9b59b6"><div class="stat-num" style="color:#9b59b6">' + hasAcc + '</div><div class="stat-lbl">لديهم حساب</div></div>';
+}
 function displayTable() {
   if (!employees.length) {
     document.getElementById('employeesTable').innerHTML = '<p style="text-align:center;padding:40px;color:#6c757d;">لا يوجد موظفون حتى الآن</p>';
