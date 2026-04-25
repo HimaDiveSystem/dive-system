@@ -107,6 +107,9 @@ td.day-col{font-size:12px;color:#888;width:90px;}
 </div>
 <div class="toast" id="toast"></div>
 <script>
+// ══════════════════════════════════════════════════════════
+// CONFIG
+// ══════════════════════════════════════════════════════════
 const GAS = 'https://script.google.com/macros/s/AKfycbwC1BRoLAJthZqxWTYyMUSjPNNGfCI0BjTfhE7ZiVx67rUP__OKAj0vlwD1-RUCOMSE/exec';
 const DASH = {Admin:'Dashboard.html',Owner:'OwnerDashboard.html',Sales:'SalesDashboard.html',Accountant:'AccountantDashboard.html'};
 const MN_KEYS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -121,7 +124,7 @@ const STATUSES=[
   {key:'غياب يوم بيومين',chip:'D',icon:'🔴'},
 ];
 
-let currentUser=null, mySerial='';
+let currentUser=null, targetSerial=null, isAccountant=false;
 
 function jsonp(action,params={}){
   return new Promise((res,rej)=>{
@@ -144,29 +147,69 @@ function showToast(msg,type='info'){
 
 function goBack(){window.location.href=DASH[currentUser?.type]||'Dashboard.html';}
 
-// تحويل YYYY-MM-DD → Date بدون timezone
+function getUrlParameter(name){
+  const urlParams=new URLSearchParams(window.location.search);
+  return urlParams.get(name);
+}
+
 function parseDS(ds){
   const p=ds.split('-');
   return p.length===3?new Date(parseInt(p[0]),parseInt(p[1])-1,parseInt(p[2])):null;
 }
 
-// تنسيق YYYY-MM-DD → DD شهر YYYY
 function fmtDate(ds){
   const dt=parseDS(ds);if(!dt)return ds;
   return dt.getDate().toString().padStart(2,'0')+' '+MN_AR[dt.getMonth()]+' '+dt.getFullYear();
 }
 
-document.addEventListener('DOMContentLoaded',()=>{
+async function loadEmployeeInfo(){
+  if(!targetSerial) return;
+  try{
+    const all=await jsonp('getAllEmployees');
+    const emp=all.find(e=>e.serial===targetSerial);
+    if(emp){
+      document.getElementById('infoName').textContent=emp.name||'—';
+      document.getElementById('infoSerial').textContent=targetSerial;
+      document.getElementById('infoCenter').textContent=emp.centerName||currentUser.centerName||'—';
+      document.getElementById('infoBranch').textContent=emp.branchName||currentUser.branchName||'—';
+    }
+  }catch(e){console.warn(e);}
+}
+
+document.addEventListener('DOMContentLoaded', async ()=>{
   const ud=sessionStorage.getItem('currentUser');
   if(!ud){location.href='index.html';return;}
   try{currentUser=JSON.parse(ud);}catch(e){location.href='index.html';return;}
 
-  mySerial=currentUser.id||'';
+  isAccountant=(currentUser.type==='Accountant');
+  const urlSerial=getUrlParameter('serial');
+
+  if(urlSerial && isAccountant){
+    targetSerial=urlSerial;
+    // التحقق من صلاحية المحاسب لرؤية هذا الموظف
+    try{
+      const allEmployees=await jsonp('getAllEmployees');
+      const targetEmp=allEmployees.find(e=>e.serial===urlSerial);
+      if(targetEmp && targetEmp.centerId===currentUser.centerId &&
+         (!currentUser.branchId || targetEmp.branchId===currentUser.branchId)){
+        // مسموح
+      }else{
+        showToast('⚠️ ليس لديك صلاحية لعرض بيانات هذا الموظف','error');
+        targetSerial=currentUser.id||'';
+      }
+    }catch(e){showToast('خطأ في التحقق من الصلاحيات','error');}
+  }else{
+    targetSerial=currentUser.id||'';
+  }
+
   document.getElementById('userBadge').textContent=currentUser.name||'—';
-  document.getElementById('infoName').textContent=currentUser.name||'—';
-  document.getElementById('infoSerial').textContent=mySerial||'—';
-  document.getElementById('infoCenter').textContent=currentUser.centerName||'—';
-  document.getElementById('infoBranch').textContent=currentUser.branchName||'—';
+  await loadEmployeeInfo();
+  if(!urlSerial || !isAccountant){
+    document.getElementById('infoName').textContent=currentUser.name||'—';
+    document.getElementById('infoSerial').textContent=targetSerial||'—';
+    document.getElementById('infoCenter').textContent=currentUser.centerName||'—';
+    document.getElementById('infoBranch').textContent=currentUser.branchName||'—';
+  }
 
   const now=new Date();
   const ySel=document.getElementById('selYear');
@@ -180,10 +223,12 @@ document.addEventListener('DOMContentLoaded',()=>{
 });
 
 async function loadMyAttendance(){
-  if(!mySerial){showToast('⚠️ الرقم الوظيفي غير موجود','error');return;}
+  const serialToUse=targetSerial||currentUser?.id||'';
+  if(!serialToUse){showToast('⚠️ الرقم الوظيفي غير موجود','error');return;}
+
   const month=document.getElementById('selMonth').value;
-  const year =document.getElementById('selYear').value;
-  const btn  =document.getElementById('btnLoad');
+  const year=document.getElementById('selYear').value;
+  const btn=document.getElementById('btnLoad');
   btn.disabled=true;
   btn.innerHTML='<span class="loader"></span> جاري التحميل...';
 
@@ -191,21 +236,18 @@ async function loadMyAttendance(){
     const r=await jsonp('getMonthlyAttendance',{month,year});
     if(!r||!r.success) throw new Error(r?.message||'فشل التحميل');
 
-    // البحث عن الموظف بالـ serial
-    const emp=(r.employees||[]).find(e=>e.serial===mySerial);
+    const emp=(r.employees||[]).find(e=>e.serial===serialToUse);
     if(!emp){
       document.getElementById('summaryRow').style.display='none';
       document.getElementById('tableArea').innerHTML=`
-        <div class="empty">
-          <span class="empty-icon">🔍</span>
-          <p>الرقم الوظيفي <strong>${mySerial}</strong> غير موجود في سجل الحضور</p>
-          <small style="color:#aaa;display:block;margin-top:8px;">تأكد من إضافتك في شيت Working_Days</small>
-        </div>`;
+        <div class="empty"><span class="empty-icon">🔍</span>
+        <p>الرقم الوظيفي <strong>${serialToUse}</strong> غير موجود في سجل الحضور</p>
+        <small style="color:#aaa;display:block;margin-top:8px;">تأكد من إضافته في شيت Working_Days</small></div>`;
       showToast('الرقم الوظيفي غير موجود في الشيت','error');
       return;
     }
 
-    const myData=(r.data||{})[mySerial]||{};
+    const myData=(r.data||{})[serialToUse]||{};
     const dates=(r.dates||[]).sort((a,b)=>new Date(a)-new Date(b));
 
     if(!dates.length){
@@ -217,11 +259,10 @@ async function loadMyAttendance(){
       return;
     }
 
-    // ── ملخص الحالات ──
     const counts={};
     STATUSES.forEach(s=>{counts[s.key]=0;});
     dates.forEach(d=>{const st=myData[d];if(st&&counts[st]!==undefined)counts[st]++;});
-    const balance=parseFloat((r.balanceMap||{})[mySerial])||0;
+    const balance=parseFloat((r.balanceMap||{})[serialToUse])||0;
 
     const summaryRow=document.getElementById('summaryRow');
     summaryRow.style.display='flex';
@@ -231,15 +272,13 @@ async function loadMyAttendance(){
         .join('')+
       `<div class="sbadge sb-T">⚖️ الرصيد: <strong>${balance}</strong></div>`;
 
-    // ── الجدول ──
     const rows=dates.map(ds=>{
       const dt=parseDS(ds);
       const dayName=dt?DAYS_AR[dt.getDay()]:'';
       const st=myData[ds];
       const stObj=STATUSES.find(s=>s.key===st);
-      const chip=st
-        ?`<span class="chip chip-${stObj?.chip||'A'}">${stObj?.icon||''} ${st}</span>`
-        :`<span style="color:#ccc;font-size:12px;">—</span>`;
+      const chip=st?`<span class="chip chip-${stObj?.chip||'A'}">${stObj?.icon||''} ${st}</span>`
+                  :`<span style="color:#ccc;font-size:12px;">—</span>`;
       return`<tr><td class="date-col">${fmtDate(ds)}</td><td class="day-col">${dayName}</td><td>${chip}</td></tr>`;
     }).join('');
 
@@ -250,7 +289,6 @@ async function loadMyAttendance(){
           <tbody>${rows}</tbody>
         </table>
       </div>`;
-
     showToast(`✅ ${dates.length} يوم مسجّل`,'success');
 
   }catch(e){
