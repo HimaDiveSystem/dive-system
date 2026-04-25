@@ -443,6 +443,7 @@ let editingSerial = null;
 let imgData       = { Employee:'', IdFront:'', IdBack:'', Security:'' };
 let usedEmails    = new Set();
 let _confirmCb    = null;
+let currentUser   = null;
 
 // ══════════════════════════════════════════════════════════
 // JSONP
@@ -464,9 +465,10 @@ function jsonpRequest(action, params = {}) {
 }
 
 // ══════════════════════════════════════════════════════════
-// INIT
+// INIT (تم دمج حدثي DOMContentLoaded في حدث واحد)
 // ══════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
+  // 1. تهيئة المستخدم الحالي
   const ud = sessionStorage.getItem('currentUser');
   if (!ud) {
     document.querySelector('.content').innerHTML =
@@ -486,6 +488,32 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   document.getElementById('userNameDisplay').textContent = currentUser.name || '—';
   loadEmployees();
+  
+  // 2. إعداد حقل البحث (منع ظهور القائمة تلقائياً)
+  const filterNameInput = document.getElementById('filterName');
+  const namesDatalist = document.getElementById('employeeNamesList');
+  
+  if (filterNameInput && namesDatalist) {
+    filterNameInput.addEventListener('focus', function() {
+      if (this.value === '') {
+        namesDatalist.style.display = 'none';
+      }
+    });
+    
+    filterNameInput.addEventListener('input', function() {
+      if (this.value !== '') {
+        namesDatalist.style.display = 'block';
+      } else {
+        namesDatalist.style.display = 'none';
+      }
+    });
+    
+    filterNameInput.addEventListener('blur', function() {
+      setTimeout(() => {
+        namesDatalist.style.display = 'block';
+      }, 200);
+    });
+  }
 });
 
 // ══════════════════════════════════════════════════════════
@@ -503,18 +531,13 @@ async function loadEmployees() {
       const canViewAll = ['Admin', 'Owner', 'AccountantManager', 'FinancialManager'].includes(userType);
       
       if (!canViewAll && currentUser?.branchId) {
-        // محاسب أو مدير فرع → يرى فقط موظفي فرعه
         result = all.filter(emp => emp.branchId === currentUser.branchId);
-        
-        // إخفاء فلترة الفرع (لأنه يرى فرعاً واحداً فقط)
         const branchFilterGroup = document.getElementById('filterBranchGroup');
         if (branchFilterGroup) branchFilterGroup.style.display = 'none';
       } else {
-        // مدير حسابات / مدير مالي / صاحب عمل → يرى الكل ويعرض فلترة الفرع
         const branchFilterGroup = document.getElementById('filterBranchGroup');
         if (branchFilterGroup) branchFilterGroup.style.display = 'block';
         
-        // جلب قائمة الفروع لفلترة
         const branchesResult = await jsonpRequest('getBranchesByCenter', { centerId: currentUser?.centerId || '' });
         if (Array.isArray(branchesResult)) {
           populateBranchFilter(branchesResult);
@@ -525,11 +548,7 @@ async function loadEmployees() {
       populateNamesDatalist(employees);
       usedEmails = new Set(employees.filter(e=>e.email).map(e=>e.email.toLowerCase().trim()));
       renderStats();
-      
-      // تطبيق الفلترة الأولية
       applyFilters();
-      
-      // إضافة مستمعي الأحداث للفلترة
       setupFilterListeners();
       
     } else {
@@ -540,49 +559,22 @@ async function loadEmployees() {
     showToast('خطأ في الاتصال', 'error');
   }
 }
-  document.addEventListener('DOMContentLoaded', function() {
-  const filterNameInput = document.getElementById('filterName');
-const namesDatalist = document.getElementById('employeeNamesList');
 
-if (filterNameInput && namesDatalist) {
-  // إخفاء datalist عند التركيز على الحقل (إذا كان فارغاً)
-  filterNameInput.addEventListener('focus', function() {
-    if (this.value === '') {
-      namesDatalist.style.display = 'none';
-    }
-  });
-  
-  // إظهار datalist عندما يبدأ المستخدم في الكتابة
-  filterNameInput.addEventListener('input', function() {
-    if (this.value !== '') {
-      namesDatalist.style.display = 'block';
-    } else {
-      namesDatalist.style.display = 'none';
-    }
-  });
-  
-  // عند مغادرة الحقل، إخفاء datalist
-  filterNameInput.addEventListener('blur', function() {
-    setTimeout(() => {
-      namesDatalist.style.display = 'block'; // إعادة الإظهار لاستخدامات لاحقة
-    }, 200);
-  });
-}
 function populateNamesDatalist(employeesList) {
   const datalist = document.getElementById('employeeNamesList');
   if (!datalist) return;
   
-  // جمع الأسماء الفريدة
   const uniqueNames = [...new Set(employeesList.map(emp => emp.name).filter(Boolean))];
   uniqueNames.sort((a, b) => a.localeCompare(b, 'ar'));
   
   datalist.innerHTML = '';
   uniqueNames.forEach(name => {
     const option = document.createElement('option');
-    option.value = name;   // ✅ القيمة المعروضة في القائمة
+    option.value = name;
     datalist.appendChild(option);
   });
 }
+
 function setupFilterListeners() {
   const filterIds = ['filterName', 'filterBranch', 'filterPosition', 'filterPaymentSystem', 'filterStatus', 'filterHasAccount'];
   filterIds.forEach(id => {
@@ -595,69 +587,14 @@ function setupFilterListeners() {
     }
   });
 }
-  // ============ كود اختبار الكونسول ============
-async function testGetEmployees() {
-  console.log('🧪===== بدء اختبار جلب الموظفين =====');
-  
-  // 1. اختبار getAllEmployees مباشرة
-  console.log('1️⃣ جلب getAllEmployees...');
-  const allResult = await jsonpRequest('getAllEmployees');
-  console.log('📦 getAllEmployees:', allResult);
-  
-  if (Array.isArray(allResult) && allResult.length > 0) {
-    console.log('✅ أول موظف في القائمة:', allResult[0]);
-    console.log('   - serial:', allResult[0].serial);
-    console.log('   - name:', allResult[0].name);
-    console.log('   - position:', allResult[0].position);
-    console.log('   - paymentSystem:', allResult[0].paymentSystem);
-    console.log('   - status:', allResult[0].status);
-    console.log('   - hasAccount:', allResult[0].hasAccount);
-    console.log('   - branchId:', allResult[0].branchId);
-    console.log('   - centerId:', allResult[0].centerId);
-  } else {
-    console.log('❌ لا توجد بيانات أو الخطأ:', allResult);
-  }
-  
-  // 2. اختبار getEmployeesByCenter للمحاسب الحالي
-  console.log('\n2️⃣ جلب getEmployeesByCenter للمحاسب...');
-  console.log('   centerId:', currentCenterId);
-  console.log('   branchId:', currentBranchId);
-  
-  const byCenterResult = await jsonpRequest('getEmployeesByCenter', { 
-    centerId: currentCenterId,
-    branchId: currentBranchId
-  });
-  console.log('📦 getEmployeesByCenter:', byCenterResult);
-  
-  if (Array.isArray(byCenterResult) && byCenterResult.length > 0) {
-    console.log('✅ أول موظف:', byCenterResult[0]);
-    console.log('   - paymentSystem:', byCenterResult[0].paymentSystem);
-    console.log('   - status:', byCenterResult[0].status);
-  }
-  
-  // 3. طباعة جميع المفاتيح الموجودة في أول كائن
-  if (Array.isArray(allResult) && allResult.length > 0) {
-    console.log('\n3️⃣ جميع المفاتيح في كائن الموظف:');
-    console.log(Object.keys(allResult[0]));
-  }
-  
-  console.log('🧪===== انتهى الاختبار =====');
-}
 
-// تشغيل الاختبار بعد تحميل الصفحة بـ 3 ثواني
-setTimeout(() => {
-  if (typeof currentUser !== 'undefined' && currentUser) {
-    testGetEmployees();
-  }
-}, 3000);
-  // فلترة الموظفين
+// فلترة الموظفين
 let filteredEmployees = [];
 // ترتيب الجدول
 let sortColumn = 'serial';
-let sortDirection = 'asc'; // 'asc' أو 'desc'
-  
+let sortDirection = 'asc';
+
 function applyFilters() {
-  // إعادة تعيين الترتيب عند تغيير الفلتر (اختياري)
   sortColumn = 'serial';
   sortDirection = 'asc';
   
@@ -669,52 +606,38 @@ function applyFilters() {
   const filterHasAccount = document.getElementById('filterHasAccount')?.value || '';
   
   filteredEmployees = employees.filter(emp => {
-    // بحث بالاسم (أي جزء من الاسم، وليس فقط البداية)
     if (searchName && !emp.name?.toLowerCase().includes(searchName)) return false;
-    
-    // الفرع
     if (filterBranch && emp.branchId !== filterBranch) return false;
-    
-    // الوظيفة
     if (filterPosition && emp.position !== filterPosition) return false;
-    
-    // نظام الحساب
     if (filterPaymentSystem && emp.paymentSystem !== filterPaymentSystem) return false;
-    
-    // الحالة
     if (filterStatus && emp.status !== filterStatus) return false;
-    
-    // حساب النظام
     if (filterHasAccount) {
       const hasAccount = filterHasAccount === 'true';
       if (emp.hasAccount !== hasAccount) return false;
     }
-    
     return true;
   });
   
-  // تحديث القائمة المنسدلة للأسماء بناءً على الموظفين المفلترين (ولكن الأفضل تحديثها من employees الأصليين)
-  // نستخدم employees الأصليين لتعريف القائمة، أو filteredEmployees حسب الرغبة
   populateNamesDatalist(employees);
-  
   displayFilteredTable();
 }
-  
+
 function displayFilteredTable() {
   if (!filteredEmployees.length) {
     document.getElementById('employeesTable').innerHTML = '<p style="text-align:center;padding:40px;color:#6c757d;">لا يوجد موظفون مطابقون للفلترة</p>';
     return;
   }
   
-  // ترتيب البيانات حسب العمود المحدد
   const sorted = [...filteredEmployees].sort((a, b) => {
     let valA = a[sortColumn] || '';
     let valB = b[sortColumn] || '';
     
-    // معالجة الأرقام
     if (sortColumn === 'monthlySalary') {
       valA = parseFloat(valA) || 0;
       valB = parseFloat(valB) || 0;
+    } else if (sortColumn === 'hasAccount') {
+      valA = a.hasAccount ? 1 : 0;
+      valB = b.hasAccount ? 1 : 0;
     } else {
       valA = valA.toString().toLowerCase();
       valB = valB.toString().toLowerCase();
@@ -727,7 +650,6 @@ function displayFilteredTable() {
   
   let html = '<div class="table-wrapper"><table><thead><tr>';
   
-  // أعمدة الجدول مع إمكانية الترتيب
   const columns = [
     { key: 'serial', label: 'الرقم' },
     { key: 'name', label: 'الاسم' },
@@ -761,24 +683,23 @@ function displayFilteredTable() {
         '<button class="btn-warning btn-sm" onclick="openEditModal(\'' + emp.serial + '\')">✏️ تعديل</button> ' +
         '<button class="btn-primary btn-sm" onclick="viewHistory(\'' + emp.serial + '\')">📜 سجل</button>' +
       '</td>' +
-    '<tr>';
+    '</tr>';
   });
   
-  html += '</tbody></table></div>';
+  html += '</tbody></td></div>';
   document.getElementById('employeesTable').innerHTML = html;
 }
 
 function sortTable(column) {
   if (sortColumn === column) {
-    // تغيير الاتجاه إذا كان نفس العمود
     sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
   } else {
-    // عمود جديد → ترتيب تصاعدي افتراضي
     sortColumn = column;
     sortDirection = 'asc';
   }
   displayFilteredTable();
 }
+
 function resetFilters() {
   document.getElementById('filterName').value = '';
   if (document.getElementById('filterBranch')) document.getElementById('filterBranch').value = '';
@@ -810,6 +731,7 @@ function renderStats() {
     '<div class="stat-card" style="border-color:#e74c3c"><div class="stat-num" style="color:#e74c3c">' + (filteredEmployees.length-active) + '</div><div class="stat-lbl">موقوف</div></div>' +
     '<div class="stat-card" style="border-color:#9b59b6"><div class="stat-num" style="color:#9b59b6">' + hasAcc + '</div><div class="stat-lbl">لديهم حساب</div></div>';
 }
+
 function displayTable() {
   if (!employees.length) {
     document.getElementById('employeesTable').innerHTML = '<p style="text-align:center;padding:40px;color:#6c757d;">لا يوجد موظفون حتى الآن</p>';
@@ -830,11 +752,12 @@ function displayTable() {
         '<button class="btn-warning btn-sm" onclick="openEditModal(\'' + emp.serial + '\')">✏️ تعديل</button> ' +
         '<button class="btn-primary btn-sm" onclick="viewHistory(\'' + emp.serial + '\')">📜 سجل</button>' +
       '</td>' +
-    '</tr>';
+    '</table>';
   });
   html += '</tbody></table></div>';
   document.getElementById('employeesTable').innerHTML = html;
 }
+
 // ══════════════════════════════════════════════════════════
 // MODAL — فتح للإضافة
 // ══════════════════════════════════════════════════════════
@@ -1050,7 +973,6 @@ function uploadImageToDrive(file, key, prevId) {
   
   const reader = new FileReader();
   reader.onload = function(ev) {
-    // ضغط الصورة (تغيير الحجم إلى 200px عرض)
     const img = new Image();
     img.onload = function() {
       const canvas = document.createElement('canvas');
@@ -1079,7 +1001,6 @@ function uploadImageToDrive(file, key, prevId) {
           prev.innerHTML = '<div class="img-ok">✓ ' + file.name + '</div>';
           showToast('✅ تم رفع الصورة', 'success');
         } else {
-          // فشل JSONP → نخزن Base64 مباشرة (سيُحفظ في الشيت)
           imgData[key] = 'data:image/jpeg;base64,' + compressedB64;
           const prev = document.getElementById(prevId);
           prev.innerHTML = '<div class="img-ok">⚠️ ' + file.name + ' (محلي)</div>';
@@ -1102,6 +1023,7 @@ function uploadImageToDrive(file, key, prevId) {
   };
   reader.readAsDataURL(file);
 }
+
 // ══════════════════════════════════════════════════════════
 // SAVE
 // ══════════════════════════════════════════════════════════
@@ -1110,7 +1032,6 @@ async function saveEmployee() {
   const hasAccess = document.getElementById('empHasAccess').checked;
   const isEdit = !!editingSerial;
 
-  // التحقق من الحقول المطلوبة
   const errs = [];
   if (!g('empName')) errs.push('الاسم الكامل');
   if (!g('empPosition')) errs.push('الوظيفة');
@@ -1130,10 +1051,8 @@ async function saveEmployee() {
   btn.textContent = '⏳ جاري الحفظ...';
 
   try {
-    // نسخة من الصور لاستخدامها لاحقاً
     const imagesToSave = { ...imgData };
     
-    // ========== 1. إرسال بيانات الموظف (بدون الصور) عبر JSONP ==========
     const params = {
       serial: editingSerial || '',
       fullName: g('empName'),
@@ -1153,7 +1072,6 @@ async function saveEmployee() {
       email: g('empEmail'),
       password: g('empPassword'),
       address: g('empAddress')
-      // ❌ لا نرسل imgPhoto, imgIdFront, imgIdBack, imgSecurity هنا
     };
     
     const action = isEdit ? 'updateEmployee' : 'addNewEmployee';
@@ -1165,7 +1083,6 @@ async function saveEmployee() {
     
     const employeeSerial = result.serial || editingSerial;
     
-    // ========== 2. بعد نجاح الحفظ، نحفظ الصور مباشرة في شيت Salaries ==========
     let savedImagesCount = 0;
     for (const [key, imageData] of Object.entries(imagesToSave)) {
       if (imageData) {
@@ -1200,6 +1117,7 @@ async function saveEmployee() {
     btn.textContent = origTxt;
   }
 }
+
 // ══════════════════════════════════════════════════════════
 // HISTORY
 // ══════════════════════════════════════════════════════════
@@ -1253,7 +1171,7 @@ function toInputDate(str) {
   } catch(e) {}
   return '';
 }
-  
+
 function showToast(msg, type) {
   const t = document.getElementById('toast');
   t.textContent = msg;
