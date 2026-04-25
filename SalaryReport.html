@@ -20,8 +20,8 @@
     .btn-primary:hover{background:#2a4f8c;}
     .btn-success{background:#27ae60;color:white;border:none;padding:8px 20px;border-radius:40px;cursor:pointer;font-weight:600;}
     .table-wrapper{overflow-x:auto;padding:20px;}
-    table{width:100%;border-collapse:collapse;min-width:800px;}
-    th{background:#1e2b4f;color:#ffd966;padding:12px;text-align:center;font-size:13px;}
+    table{width:100%;border-collapse:collapse;min-width:1000px;}
+    th{background:#1e2b4f;color:#ffd966;padding:12px;text-align:center;font-size:12px;white-space:nowrap;}
     td{padding:10px;text-align:center;border-bottom:1px solid #eee;font-size:12px;}
     tr:hover{background:#f8f9fa;}
     .badge{display:inline-block;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700;}
@@ -39,11 +39,11 @@
 <div class="container">
   <div class="header">
     <h2>💰 تقرير المرتبات الشهري</h2>
-    <div class="user-badge" id="userBadge">—</div>
+    <div><span class="user-badge" id="userBadge">—</span>
+    <button class="back-btn" onclick="goBack()">🔙 رجوع</button></div>
   </div>
   <div class="filter-bar">
-    <div class="filter-group">
-      <label>📅 الشهر</label>
+    <div class="filter-group"><label>📅 الشهر</label>
       <select id="monthSelect">
         <option value="Jan">يناير</option><option value="Feb">فبراير</option>
         <option value="Mar">مارس</option><option value="Apr">أبريل</option>
@@ -53,14 +53,8 @@
         <option value="Nov">نوفمبر</option><option value="Dec">ديسمبر</option>
       </select>
     </div>
-    <div class="filter-group">
-      <label>📆 السنة</label>
-      <select id="yearSelect"></select>
-    </div>
-    <div class="filter-group">
-      <label>🏢 الفرع</label>
-      <select id="branchSelect"><option value="">الكل</option></select>
-    </div>
+    <div class="filter-group"><label>📆 السنة</label><select id="yearSelect"></select></div>
+    <div class="filter-group"><label>🏢 الفرع</label><select id="branchSelect"><option value="">الكل</option></select></div>
     <button class="btn-primary" onclick="loadSalaryReport()">🔍 عرض التقرير</button>
     <button class="btn-success" onclick="exportToExcel()">📎 تصدير Excel</button>
   </div>
@@ -68,11 +62,10 @@
 </div>
 <div class="toast" id="toast"></div>
 
+<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
 <script>
 const GAS = 'https://script.google.com/macros/s/AKfycbwC1BRoLAJthZqxWTYyMUSjPNNGfCI0BjTfhE7ZiVx67rUP__OKAj0vlwD1-RUCOMSE/exec';
 let currentUser = null;
-let allEmployees = [];
-let branches = [];
 
 function jsonpRequest(action, params = {}) {
   return new Promise((resolve, reject) => {
@@ -103,7 +96,6 @@ async function init() {
   try { currentUser = JSON.parse(ud); } catch(e) { window.location.href = 'index.html'; return; }
   document.getElementById('userBadge').textContent = currentUser.name || 'محاسب';
   
-  // تعبئة السنوات
   const yearSelect = document.getElementById('yearSelect');
   const currentYear = new Date().getFullYear();
   for (let y = currentYear + 1; y >= 2020; y--) {
@@ -114,13 +106,12 @@ async function init() {
     yearSelect.appendChild(option);
   }
   
-  // جلب قائمة الفروع
+  // جلب الفروع
   try {
     const branchesData = await jsonpRequest('getActiveBranches');
     if (Array.isArray(branchesData)) {
-      branches = branchesData;
       const branchSelect = document.getElementById('branchSelect');
-      branches.forEach(b => {
+      branchesData.forEach(b => {
         const option = document.createElement('option');
         option.value = b.name;
         option.textContent = b.name;
@@ -140,64 +131,64 @@ async function loadSalaryReport() {
   document.getElementById('reportArea').innerHTML = '<div class="loader"></div>';
   
   try {
-    // 1. جلب جميع الموظفين
-    const employees = await jsonpRequest('getAllEmployees');
-    allEmployees = employees;
+    // 1. جلب بيانات Salaries
+    const allSalaries = await jsonpRequest('getSalariesData');
+    if (!Array.isArray(allSalaries)) throw new Error('لا توجد بيانات رواتب');
     
-    // 2. جلب بيانات أيام العمل من Working_Days
-    const attendanceData = await jsonpRequest('getMonthlyAttendance', { month, year });
+    // تصفية حسب الشهر والسنة
+    const monthlySalaries = allSalaries.filter(s => String(s.Year) === String(year) && s.Month === month);
     
-    // 3. جلب المدفوعات من شيت Expenses (حيث Account = اسم الموظف)
+    if (!monthlySalaries.length) {
+      document.getElementById('reportArea').innerHTML = '<p style="text-align:center;padding:40px;">لا توجد بيانات رواتب للشهر المحدد</p>';
+      return;
+    }
+    
+    // 2. جلب بيانات الموظفين
+    const allEmployees = await jsonpRequest('getAllEmployees');
+    const empMap = new Map();
+    allEmployees.forEach(emp => empMap.set(emp.serial, emp));
+    
+    // 3. جلب المدفوعات من Expenses
     const expensesData = await jsonpRequest('getExpenseRevenueRows', { sheet: 'Expenses', month, year });
     
-    // بناء تقرير لكل موظف
     const report = [];
-    for (const emp of employees) {
-      // تصفية حسب الفرع
+    for (const sal of monthlySalaries) {
+      const emp = empMap.get(sal.UserID);
+      if (!emp) continue;
       if (branchFilter && emp.branchName !== branchFilter) continue;
       
-      // عدد أيام العمل الفعلية من Working_Days
-      const attendDays = (attendanceData.data || {})[emp.serial] || {};
-      const workingDays = Object.values(attendDays).filter(v => v && v !== '' && parseFloat(v) > 0).length;
-      
-      // الراتب الأساسي من Salary_History (أحدث راتب قبل هذا الشهر)
-      const baseSalary = await getSalaryForMonth(emp.serial, year, month);
-      
-      // مجموع المدفوعات المستلمة من شيت Expenses
+      // حساب المدفوعات
       let totalPayments = 0;
       if (Array.isArray(expensesData)) {
         totalPayments = expensesData
-          .filter(row => row.account === emp.name || row.accountName === emp.name)
+          .filter(row => {
+            const acc = (row.account || '').toLowerCase();
+            const accName = (row.accountName || '').toLowerCase();
+            const empName = (emp.name || '').toLowerCase();
+            return acc === empName || accName === empName;
+          })
           .reduce((sum, row) => sum + (parseFloat(row.le) || 0), 0);
       }
       
-      // البيانات من شيت Salaries (إذا وجدت)
-      let salaryRow = null;
-      try {
-        const allSalaries = await jsonpRequest('getSalariesData'); // ستحتاج إلى إضافة هذه الدالة في Code.gs
-        if (Array.isArray(allSalaries)) {
-          salaryRow = allSalaries.find(s => s.UserID === emp.serial && s.Year === year && s.Month === month);
-        }
-      } catch(e) { console.warn(e); }
+      const workingDays = parseFloat(sal.WorkingDays) || 0;
+      const baseSalary = parseFloat(sal.SalaryAmount) || 0;
+      const commission = parseFloat(sal.Commission) || 0;
+      const bonus = parseFloat(sal.Bonus) || 0;
+      const cuts = parseFloat(sal.Cuts) || 0;
+      const absent = parseFloat(sal.Absent) || 0;
+      const insurance = parseFloat(sal.Insurance) || 0;
+      const downPayment = parseFloat(sal.DownPayment) || 0;
       
-      const salaryAmount = salaryRow?.SalaryAmount || baseSalary;
-      const commission = salaryRow?.Commission || 0;
-      const bonus = salaryRow?.Bonus || 0;
-      const cuts = salaryRow?.Cuts || 0;
-      const absent = salaryRow?.Absent || 0;
-      const insurance = salaryRow?.Insurance || 0;
-      const downPayment = salaryRow?.DownPayment || 0;
-      
-      const totalSalary = salaryAmount + commission + bonus - cuts - absent - insurance;
+      const totalSalary = baseSalary + commission + bonus - cuts - absent - insurance;
       const netSalary = totalSalary - downPayment - totalPayments;
       
       report.push({
-        serial: emp.serial,
-        name: emp.name,
-        position: emp.position,
-        branch: emp.branchName,
+        serial: sal.UserID,
+        name: emp.name || sal.UserID,
+        position: emp.position || '—',
+        branch: emp.branchName || '—',
         workingDays: workingDays,
-        baseSalary: salaryAmount,
+        baseSalary: baseSalary,
         commission: commission,
         bonus: bonus,
         cuts: cuts,
@@ -219,36 +210,9 @@ async function loadSalaryReport() {
   }
 }
 
-async function getSalaryForMonth(serial, year, month) {
-  try {
-    const history = await jsonpRequest('getSalaryHistory', { serial });
-    if (!Array.isArray(history)) return 0;
-    
-    const monthIndex = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].indexOf(month);
-    const targetDate = new Date(parseInt(year), monthIndex, 1);
-    
-    let latestSalary = 0;
-    let latestDate = null;
-    
-    for (const record of history) {
-      const effDate = new Date(record.effectiveDate);
-      const salary = parseFloat(record.salary) || 0;
-      if (effDate <= targetDate) {
-        if (!latestDate || effDate > latestDate) {
-          latestDate = effDate;
-          latestSalary = salary;
-        }
-      }
-    }
-    return latestSalary;
-  } catch(e) {
-    return 0;
-  }
-}
-
 function displayReport(report) {
   if (!report.length) {
-    document.getElementById('reportArea').innerHTML = '<p style="text-align:center;padding:40px;color:#6c757d;">لا توجد بيانات للشهر المحدد</p>';
+    document.getElementById('reportArea').innerHTML = '<p style="text-align:center;padding:40px;">لا توجد بيانات</p>';
     return;
   }
   
@@ -257,10 +221,10 @@ function displayReport(report) {
   html += '<th>أيام العمل</th><th>الراتب الأساسي</th><th>العمولة</th><th>الإضافات</th>';
   html += '<th>الاستقطاعات</th><th>الغياب</th><th>التأمينات</th><th>الإجمالي</th>';
   html += '<th>المسدد</th><th>مدفوعات (مصروفات)</th><th>الصافي</th><th>الحالة</th>';
-  html += '</tr></thead><tbody>';
+  html += '<tr></thead><tbody>';
   
-  let totalBase = 0, totalCommission = 0, totalBonus = 0, totalCuts = 0, totalAbsent = 0, totalInsurance = 0;
-  let totalSalaries = 0, totalDownPayment = 0, totalExpensePayments = 0, totalNet = 0;
+  let totalBase=0,totalCommission=0,totalBonus=0,totalCuts=0,totalAbsent=0,totalInsurance=0;
+  let totalSalaries=0,totalDownPayment=0,totalExpensePayments=0,totalNet=0;
   
   report.forEach(r => {
     totalBase += r.baseSalary;
@@ -275,7 +239,7 @@ function displayReport(report) {
     totalNet += r.net;
     
     html += `<tr>
-      <td>${r.serial}</td><td>${r.name}</td><td>${r.position}</td><td>${r.branch || '—'}</td>
+      <td>${r.serial}</td><td>${r.name}</td><td>${r.position}</td><td>${r.branch}</td>
       <td>${r.workingDays}</td><td>${r.baseSalary.toFixed(2)}</td><td>${r.commission.toFixed(2)}</td>
       <td>${r.bonus.toFixed(2)}</td><td>${r.cuts.toFixed(2)}</td><td>${r.absent.toFixed(2)}</td>
       <td>${r.insurance.toFixed(2)}</td><td>${r.total.toFixed(2)}</td>
@@ -285,9 +249,9 @@ function displayReport(report) {
     </tr>`;
   });
   
-  html += `<tr style="background:#f0f4fa;font-weight:700;border-top:2px solid #1e2b4f;">
-    <td colspan="4">الإجمالي</td>
-    <td>—</td><td>${totalBase.toFixed(2)}</td><td>${totalCommission.toFixed(2)}</td><td>${totalBonus.toFixed(2)}</td>
+  html += `<tr style="background:#f0f4fa;font-weight:700;">
+    <td colspan="4">الإجمالي</td><td>—</td>
+    <td>${totalBase.toFixed(2)}</td><td>${totalCommission.toFixed(2)}</td><td>${totalBonus.toFixed(2)}</td>
     <td>${totalCuts.toFixed(2)}</td><td>${totalAbsent.toFixed(2)}</td><td>${totalInsurance.toFixed(2)}</td>
     <td>${totalSalaries.toFixed(2)}</td><td>${totalDownPayment.toFixed(2)}</td>
     <td>${totalExpensePayments.toFixed(2)}</td><td>${totalNet.toFixed(2)}</td><td></td>
@@ -305,8 +269,11 @@ function exportToExcel() {
   XLSX.writeFile(wb, `Salary_Report_${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
+function goBack() {
+  window.location.href = 'AccountantDashboard.html';
+}
+
 init();
 </script>
-<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
 </body>
 </html>
