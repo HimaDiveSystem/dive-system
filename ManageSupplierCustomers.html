@@ -1107,9 +1107,16 @@ async function openPriceUpdateModal() {
   await loadCurrentPricesForDate(lastDate);
 }
 
-async function loadCurrentPricesForDate(dateStr) {
+async function loadCurrentPricesForDate(dateISO) {
   const area = document.getElementById('priceUpdateItemsArea');
   if (!area) return;
+  
+  if (!dateISO) {
+    area.innerHTML = '<div class="no-data">الرجاء اختيار تاريخ</div>';
+    return;
+  }
+  
+  area.innerHTML = '<div class="loader"><div class="spinner"></div>جاري تحميل الأسعار...</div>';
   
   try {
     const sheetName = selectedAccount.customerName + '_' + selectedAccount.category + '_' + selectedAccount.customerType;
@@ -1120,33 +1127,51 @@ async function loadCurrentPricesForDate(dateStr) {
       return;
     }
     
+    // ✅ تحويل dateISO (yyyy-mm-dd) إلى صيغة مقارنة موحدة
+    const targetDate = new Date(dateISO);
+    targetDate.setHours(0, 0, 0, 0);
+    
+    // البحث عن الصف الذي يطابق التاريخ
     const rows = sheetData.data.slice(3);
     let targetRowData = null;
+    let targetRowIndex = -1;
     
     for (let i = 0; i < rows.length; i++) {
       const rowDate = rows[i][0];
-      let rowDateStr = '';
+      let rowDateObj = null;
+      
       if (rowDate instanceof Date) {
-        const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        rowDateStr = String(rowDate.getDate()).padStart(2,'0') + '/' + MN[rowDate.getMonth()] + '/' + rowDate.getFullYear();
-      } else {
-        rowDateStr = rowDate ? rowDate.toString().trim() : '';
+        rowDateObj = new Date(rowDate);
+        rowDateObj.setHours(0, 0, 0, 0);
+      } else if (typeof rowDate === 'string') {
+        // تحويل dd/MMM/yyyy إلى Date
+        const months = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+        const match = rowDate.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
+        if (match) {
+          rowDateObj = new Date(parseInt(match[3]), months[match[2]], parseInt(match[1]));
+          rowDateObj.setHours(0, 0, 0, 0);
+        }
       }
       
-      if (rowDateStr === formatDateForDisplay(dateStr)) {
+      if (rowDateObj && rowDateObj.getTime() === targetDate.getTime()) {
         targetRowData = rows[i];
+        targetRowIndex = i + 4;
         break;
       }
     }
     
     if (!targetRowData) {
-      area.innerHTML = '<div class="no-data">لا توجد بيانات للتاريخ المحدد</div>';
+      // ✅ عرض رسالة أوضح
+      const targetDateStr = formatDateForDisplay(dateISO);
+      area.innerHTML = `<div class="no-data">⚠️ لا توجد بيانات للتاريخ ${targetDateStr}<br><small>تأكد من أن هذا التاريخ موجود في شيت الحساب</small></div>`;
       return;
     }
     
+    // تحليل هيكل الجدول (أعمدة الأسعار)
     const headers = sheetData.data[1] || [];
     const subHeaders = sheetData.data[2] || [];
     
+    // البحث عن بداية أعمدة الأسعار
     let priceStartCol = -1;
     for (let j = 0; j < headers.length; j++) {
       const h = (headers[j] || '').toString().trim();
@@ -1157,6 +1182,7 @@ async function loadCurrentPricesForDate(dateStr) {
     }
     if (priceStartCol === -1) priceStartCol = 81;
     
+    // بناء واجهة تعديل الأسعار
     let html = '<div style="font-size:13px;font-weight:700;margin-bottom:12px;">✏️ تعديل الأسعار (من هذا التاريخ حتى نهاية الجدول)</div>';
     html += '<div class="trip-price-grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));">';
     
@@ -1263,16 +1289,16 @@ function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function formatDateForDisplay(dateStr) {
-  if (!dateStr) return '';
-  if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
-    const parts = dateStr.split('-');
+function formatDateForDisplay(dateISO) {
+  if (!dateISO) return '';
+  // إذا كان الإدخال yyyy-mm-dd
+  if (dateISO.match(/^\d{4}-\d{2}-\d{2}$/)) {
+    const parts = dateISO.split('-');
     const months = { '01':'Jan', '02':'Feb', '03':'Mar', '04':'Apr', '05':'May', '06':'Jun', '07':'Jul', '08':'Aug', '09':'Sep', '10':'Oct', '11':'Nov', '12':'Dec' };
     return `${parseInt(parts[2])}/${months[parts[1]]}/${parts[0]}`;
   }
-  return dateStr;
+  return dateISO;
 }
-
 function updateAutoEmail() {
   const name = document.getElementById('f_name')?.value.trim();
   const emailField = document.getElementById('f_loginEmail');
