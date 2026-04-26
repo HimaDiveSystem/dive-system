@@ -586,8 +586,10 @@ function renderStep1(data) {
   }
 
   document.getElementById('formFooter').innerHTML = `
-    <button class="btn btn-navy" onclick="goStep2()">التالي ← الرحلات والأسعار</button>
-    <button class="btn btn-gray" onclick="closeModal()">إلغاء</button>`;
+  <button class="btn btn-green" id="saveBtn" onclick="doSave()" disabled>💾 ${isEdit ? 'تحديث البيانات' : 'حفظ وإنشاء الشيت'}</button>
+  ${isEdit ? '<button class="btn btn-orange" onclick="openPriceUpdateModal()" style="background:#ea580c;color:white;">💰 تحديث الأسعار</button>' : ''}
+  <button class="btn btn-gray" onclick="goBackStep1()">← رجوع</button>
+  <button class="btn btn-gray" onclick="closeModal()">إلغاء</button>`;
 }
 
 function openAdd() {
@@ -1119,7 +1121,228 @@ async function doSave() {
     showAlert('❌ خطأ: ' + e.message, '❌');
   }
 }
+  // ====================== تحديث الأسعار من تاريخ محدد ======================
+let priceUpdateStartDate = '';
+let priceUpdateData = {};
+
+async function openPriceUpdateModal() {
+  if (!selectedAccount) {
+    showAlert('الرجاء اختيار عميل أولاً', '⚠️');
+    return;
+  }
   
+  // الحصول على آخر تاريخ في شيت العميل
+  let lastDate = '';
+  try {
+    const datesRes = await gasPost({ action: 'getAccountSheetDates', customerId: selectedAccount.customerId });
+    if (datesRes?.success && datesRes.lastDateISO) {
+      lastDate = datesRes.lastDateISO;
+    }
+  } catch(e) { console.warn(e); }
+  
+  // إنشاء نافذة منبثقة لإدخال تاريخ البداية والأسعار الجديدة
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.style.display = 'flex';
+  modal.innerHTML = `
+    <div class="modal-box" style="max-width:800px;max-height:85vh;overflow-y:auto;">
+      <div class="modal-title">💰 تحديث الأسعار من تاريخ محدد</div>
+      <div style="margin-bottom:16px;">
+        <div class="fgroup">
+          <label class="req">📅 تاريخ بداية تطبيق الأسعار الجديدة</label>
+          <input type="date" id="priceStartDate" class="fc" value="${lastDate}" style="direction:ltr">
+          <small style="color:#666;font-size:11px;">سيتم تطبيق الأسعار الجديدة من هذا التاريخ حتى نهاية الجدول</small>
+        </div>
+      </div>
+      <div id="priceUpdateItemsArea" style="max-height:400px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:12px;">
+        <div class="loader"><div class="spinner"></div>جاري تحميل الأسعار الحالية...</div>
+      </div>
+      <div class="modal-footer" style="margin-top:20px;">
+        <button class="btn btn-green" id="confirmPriceUpdateBtn" onclick="confirmPriceUpdate()">💾 تطبيق الأسعار الجديدة</button>
+        <button class="btn btn-gray" onclick="this.closest('.modal').remove()">إلغاء</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  
+  // تحميل الأسعار الحالية من شيت العميل في آخر تاريخ
+  await loadCurrentPricesForDate(lastDate);
+}
+
+async function loadCurrentPricesForDate(dateStr) {
+  const area = document.getElementById('priceUpdateItemsArea');
+  if (!area) return;
+  
+  try {
+    const sheetName = selectedAccount.customerName + '_' + selectedAccount.category + '_' + selectedAccount.customerType;
+    const sheetData = await gasPost({ action: 'getAccountSheetData', sheetName });
+    
+    if (!sheetData?.success || !Array.isArray(sheetData.data) || sheetData.data.length < 4) {
+      area.innerHTML = '<div class="no-data">لا توجد بيانات في شيت الحساب</div>';
+      return;
+    }
+    
+    // البحث عن الصف الذي يطابق التاريخ
+    const rows = sheetData.data.slice(3);
+    let targetRowData = null;
+    let targetRowIndex = -1;
+    
+    for (let i = 0; i < rows.length; i++) {
+      const rowDate = rows[i][0];
+      let rowDateStr = '';
+      if (rowDate instanceof Date) {
+        const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        rowDateStr = String(rowDate.getDate()).padStart(2,'0') + '/' + MN[rowDate.getMonth()] + '/' + rowDate.getFullYear();
+      } else {
+        rowDateStr = rowDate ? rowDate.toString().trim() : '';
+      }
+      
+      if (rowDateStr === formatDateForDisplay(dateStr)) {
+        targetRowData = rows[i];
+        targetRowIndex = i + 4;
+        break;
+      }
+    }
+    
+    if (!targetRowData) {
+      area.innerHTML = '<div class="no-data">لا توجد بيانات للتاريخ المحدد</div>';
+      return;
+    }
+    
+    // تحليل هيكل الجدول (أعمدة الأسعار)
+    const headers = sheetData.data[1] || [];
+    const subHeaders = sheetData.data[2] || [];
+    
+    // البحث عن بداية أعمدة الأسعار (تبدأ من العمود 81 أو بعد أعمدة المجاميع)
+    let priceStartCol = -1;
+    for (let j = 0; j < headers.length; j++) {
+      const h = (headers[j] || '').toString().trim();
+      if (h === 'السنة' || h === 'Year') {
+        priceStartCol = j + 2;
+        break;
+      }
+    }
+    if (priceStartCol === -1) priceStartCol = 81;
+    
+    // بناء واجهة تعديل الأسعار
+    let html = '<div style="font-size:13px;font-weight:700;margin-bottom:12px;">✏️ تعديل الأسعار (من هذا التاريخ حتى نهاية الجدول)</div>';
+    html += '<div class="trip-price-grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));">';
+    
+    let currentTrip = '';
+    for (let j = priceStartCol - 1; j < headers.length; j++) {
+      const tripName = (headers[j] || '').toString().trim();
+      const itemName = (subHeaders[j] || '').toString().trim();
+      
+      if (tripName && tripName !== '') {
+        currentTrip = tripName;
+      }
+      if (itemName && itemName !== '' && currentTrip) {
+        const cellValue = targetRowData[j] || '';
+        const match = cellValue.toString().trim().match(/^([\d.]+)\s*([A-Za-z$€£]*)$/);
+        const currentPrice = match ? parseFloat(match[1]) || 0 : 0;
+        const currentCurrency = match ? (match[2].toUpperCase() === '$' ? 'USD' : (match[2].toUpperCase() === '€' ? 'EUR' : (match[2].toUpperCase() === '£' ? 'GBP' : 'LE'))) : 'LE';
+        
+        const key = currentTrip + '_' + itemName;
+        html += `
+          <div class="price-item">
+            <div class="pi-trip">${escapeHtml(currentTrip)}</div>
+            <div class="pi-label">${escapeHtml(itemName)}</div>
+            <div class="pi-row">
+              <input type="number" id="pp_${key}" placeholder="0" min="0" value="${currentPrice}" step="0.01" style="flex:2;">
+              <select id="pc_${key}" style="flex:1;">
+                <option value="LE" ${currentCurrency === 'LE' ? 'selected' : ''}>LE ج</option>
+                <option value="USD" ${currentCurrency === 'USD' ? 'selected' : ''}>USD $</option>
+                <option value="EUR" ${currentCurrency === 'EUR' ? 'selected' : ''}>EUR €</option>
+                <option value="GBP" ${currentCurrency === 'GBP' ? 'selected' : ''}>GBP £</option>
+              </select>
+            </div>
+          </div>
+        `;
+      }
+    }
+    html += '</div>';
+    area.innerHTML = html;
+    
+  } catch(e) {
+    area.innerHTML = '<div class="no-data">خطأ في تحميل الأسعار: ' + e.message + '</div>';
+  }
+}
+
+async function confirmPriceUpdate() {
+  const startDate = document.getElementById('priceStartDate')?.value;
+  if (!startDate) {
+    showAlert('الرجاء إدخال تاريخ بداية تحديث الأسعار', '⚠️');
+    return;
+  }
+  
+  // جمع الأسعار الجديدة
+  const pricesData = {};
+  const priceInputs = document.querySelectorAll('#priceUpdateItemsArea input[type="number"]');
+  for (const input of priceInputs) {
+    const id = input.id;
+    if (id && id.startsWith('pp_')) {
+      const key = id.substring(3); // إزالة 'pp_'
+      const price = parseFloat(input.value) || 0;
+      const currencySelect = document.getElementById(`pc_${key}`);
+      const currency = currencySelect ? currencySelect.value : 'LE';
+      if (price > 0) {
+        // تحويل المفتاح إلى الصيغة المتوقعة (tripName + '_' + itemName)
+        pricesData[key] = { price, currency };
+      }
+    }
+  }
+  
+  if (Object.keys(pricesData).length === 0) {
+    showAlert('لا توجد أسعار جديدة للتحديث', '⚠️');
+    return;
+  }
+  
+  const btn = document.getElementById('confirmPriceUpdateBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ جاري التحديث...';
+  }
+  
+  try {
+    const result = await gasPost({
+      action: 'updatePricesFromDate',
+      customerId: selectedAccount.customerId,
+      startUpdateDate: startDate,
+      pricesData: JSON.stringify(pricesData)
+    });
+    
+    if (result?.success) {
+      showAlert(`✅ تم تحديث الأسعار بنجاح (تم تحديث ${result.updatedRows || 0} يوم)`, '✅');
+      // إغلاق النافذة المنبثقة
+      const modal = document.querySelector('.modal');
+      if (modal) modal.remove();
+    } else {
+      showAlert('❌ ' + (result?.message || 'فشل تحديث الأسعار'), '❌');
+    }
+  } catch(e) {
+    showAlert('❌ خطأ: ' + e.message, '❌');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '💾 تطبيق الأسعار الجديدة';
+    }
+  }
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function formatDateForDisplay(dateStr) {
+  if (!dateStr) return '';
+  if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+    const parts = dateStr.split('-');
+    const months = { '01':'Jan', '02':'Feb', '03':'Mar', '04':'Apr', '05':'May', '06':'Jun', '07':'Jul', '08':'Aug', '09':'Sep', '10':'Oct', '11':'Nov', '12':'Dec' };
+    return `${parseInt(parts[2])}/${months[parts[1]]}/${parts[0]}`;
+  }
+  return dateStr;
+}
 function updateAutoEmail() {
   const name = document.getElementById('f_name')?.value.trim();
   const emailField = document.getElementById('f_loginEmail');
