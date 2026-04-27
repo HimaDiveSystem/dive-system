@@ -1120,21 +1120,40 @@ async function loadCurrentPricesForDate(dateISO) {
   
   try {
     const sheetName = selectedAccount.customerName + '_' + selectedAccount.category + '_' + selectedAccount.customerType;
-    const sheetData = await gasPost({ action: 'getAccountSheetData', sheetName });
+    console.log('📡 جلب البيانات من الشيت:', sheetName);
     
-    if (!sheetData?.success || !Array.isArray(sheetData.data) || sheetData.data.length < 4) {
+    const result = await gasPost({ action: 'getAccountSheetData', sheetName });
+    
+    if (!result?.success || !Array.isArray(result.data) || result.data.length < 4) {
       area.innerHTML = '<div class="no-data">لا توجد بيانات في شيت الحساب</div>';
       return;
     }
     
-    // تحويل dateISO (yyyy-mm-dd) إلى كائن Date للمقارنة
+    // ✅ قراءة الصف 2 و 3 للحصول على هيكل الأسعار
+    const headers = result.data[1] || [];
+    const subHeaders = result.data[2] || [];
+    
+    // ✅ البحث عن بداية أعمدة الأسعار (بعد أعمدة الشهر والسنة)
+    let priceStartCol = 81; // CC
+    for (let j = 0; j < headers.length; j++) {
+      const header = (headers[j] || '').toString().trim();
+      if (header === 'السنة' || header === 'Year') {
+        priceStartCol = j + 2;
+        break;
+      }
+    }
+    
+    console.log('📍 priceStartCol:', priceStartCol);
+    
+    // ✅ تحويل dateISO إلى كائن Date للمقارنة
     const targetDate = new Date(dateISO);
     targetDate.setHours(0, 0, 0, 0);
     const targetDateString = targetDate.toISOString().split('T')[0];
     
-    // البحث عن الصف الذي يطابق التاريخ
-    const rows = sheetData.data.slice(3);
+    // ✅ البحث عن الصف الذي يطابق التاريخ
+    const rows = result.data.slice(3);
     let targetRowData = null;
+    let targetRowIndex = -1;
     
     for (let i = 0; i < rows.length; i++) {
       const rowDate = rows[i][0];
@@ -1151,8 +1170,12 @@ async function loadCurrentPricesForDate(dateISO) {
         }
       }
       
+      console.log(`📅 صف ${i + 4}: التاريخ = "${rowDate}" → مقارنة مع "${targetDateString}"`);
+      
       if (rowDateString === targetDateString) {
         targetRowData = rows[i];
+        targetRowIndex = i + 4;
+        console.log('✅ تم العثور على الصف:', targetRowIndex);
         break;
       }
     }
@@ -1163,12 +1186,7 @@ async function loadCurrentPricesForDate(dateISO) {
       return;
     }
     
-    // ✅ أعمدة الأسعار تبدأ من العمود 81 (فهرس 80 في المصفوفة)
-    const priceStartCol = 81; // العمود 81
-    
-    const headers = sheetData.data[1] || [];
-    const subHeaders = sheetData.data[2] || [];
-    
+    // ✅ بناء HTML مع الأسعار الحالية من الشيت
     let html = '<div style="font-size:13px;font-weight:700;margin-bottom:12px;">✏️ تعديل الأسعار (من هذا التاريخ حتى نهاية الجدول)</div>';
     html += '<div class="trip-price-grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));">';
     
@@ -1187,15 +1205,26 @@ async function loadCurrentPricesForDate(dateISO) {
       }
       if (currentTrip && itemName && itemName !== '') {
         const cellValue = targetRowData[j] || '';
-        const match = cellValue.toString().trim().match(/^([\d.]+)\s*([A-Za-z$€£]*)$/);
-        const currentPrice = match ? parseFloat(match[1]) || 0 : 0;
+        console.log(`🔍 العمود ${j}: ${currentTrip} - ${itemName} = "${cellValue}"`);
+        
+        // ✅ تحليل قيمة السعر (مثال: "1100 LE" أو "1100LE")
+        let currentPrice = 0;
         let currentCurrency = 'LE';
-        if (match && match[2]) {
-          const cur = match[2].toUpperCase();
+        
+        const cellStr = cellValue.toString().trim();
+        const match = cellStr.match(/^([\d.]+)\s*([A-Za-z$€£]*)$/);
+        if (match) {
+          currentPrice = parseFloat(match[1]) || 0;
+          let cur = match[2].toUpperCase();
           if (cur === '$' || cur === 'USD') currentCurrency = 'USD';
           else if (cur === '€' || cur === 'EUR') currentCurrency = 'EUR';
           else if (cur === '£' || cur === 'GBP') currentCurrency = 'GBP';
+          else if (cur === 'LE' || cur === 'EGP') currentCurrency = 'LE';
+        } else {
+          currentPrice = parseFloat(cellStr) || 0;
         }
+        
+        console.log(`💰 السعر المستخرج: ${currentPrice} ${currentCurrency}`);
         
         const key = currentTrip + '_' + itemName;
         html += `
@@ -1218,7 +1247,10 @@ async function loadCurrentPricesForDate(dateISO) {
     html += '</div>';
     area.innerHTML = html;
     
+    console.log('✅ تم تحميل الأسعار بنجاح');
+    
   } catch(e) {
+    console.error('❌ loadCurrentPricesForDate error:', e);
     area.innerHTML = '<div class="no-data">خطأ في تحميل الأسعار: ' + e.message + '</div>';
   }
 }
