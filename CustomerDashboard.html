@@ -270,6 +270,85 @@ function parseSheetStructure() {
   sumCurrencies = [];
   paymentsData = [];
 
+  // ✅ معالجة خاصة لـ Submarine
+  const isSubmarine = viewingCustomer && viewingCustomer.category === 'Submarine';
+  
+  if (isSubmarine) {
+    console.log('🛸 معالجة Submarine');
+    
+    // لـ Submarine: الأسعار تبدأ من العمود 81
+    const priceStartCol = 81;
+    const categories = ['F', 'Aarab', 'Arab48', 'EGY'];
+    const items = ['PAX', 'CHILD', 'INF'];
+    
+    let priceCol = priceStartCol;
+    for (const cat of categories) {
+      const priceGroup = { name: cat, items: [] };
+      for (const item of items) {
+        priceGroup.items.push({ name: item, col: priceCol - 1 }); // -1 لأن المصفوفة 0-index
+        priceCol++;
+      }
+      priceGroups.push(priceGroup);
+    }
+    
+    // أعمدة المجاميع (إذا وجدت)
+    for (let j = 0; j < row2.length; j++) {
+      const header = (row2[j] || '').toString().trim();
+      if (header.startsWith('Total') || header.startsWith('المجموع')) {
+        let currency = header.replace('Total ', '').replace('المجموع ', '').trim();
+        if (currency === '$') currency = 'USD';
+        if (currency === '€') currency = 'EUR';
+        if (currency === '£') currency = 'GBP';
+        sumCurrencies.push({ col: j, currency: currency || 'LE' });
+      }
+    }
+    
+    if (sumCurrencies.length === 0) sumCurrencies = [{ col: -1, currency: 'LE' }];
+    
+    // البحث عن جدول المدفوعات
+    let paymentsStartCol = -1;
+    for (let j = 0; j < row2.length; j++) {
+      const header = (row2[j] || '').toString().trim();
+      if (header === 'Date') {
+        paymentsStartCol = j;
+        break;
+      }
+    }
+    
+    // جدول المدفوعات
+    if (paymentsStartCol !== -1 && sheetData.length > 3) {
+      for (let i = 3; i < sheetData.length; i++) {
+        const row = sheetData[i];
+        const dateVal = row[paymentsStartCol];
+        if (dateVal && dateVal.toString().trim()) {
+          paymentsData.push({
+            date: fmtDate(dateVal),
+            details: row[paymentsStartCol + 1] || '',
+            USD: parseFloat(row[paymentsStartCol + 2]) || 0,
+            EUR: parseFloat(row[paymentsStartCol + 3]) || 0,
+            GBP: parseFloat(row[paymentsStartCol + 4]) || 0,
+            LE: parseFloat(row[paymentsStartCol + 5]) || 0,
+            account: row[paymentsStartCol + 6] || '',
+            accountName: row[paymentsStartCol + 7] || '',
+            month: row[paymentsStartCol + 8] || '',
+            year: row[paymentsStartCol + 9] || ''
+          });
+        }
+      }
+    }
+    
+    console.log('🏗️ هيكل Submarine:', {
+      priceGroupsCount: priceGroups.length,
+      sumCurrencies: sumCurrencies.map(s => s.currency),
+      paymentsCount: paymentsData.length
+    });
+    
+    return;
+  }
+  
+  // ===================== الأنشطة العادية =====================
+  console.log('🗺️ معالجة الأنشطة العادية');
+
   // البحث عن بداية جدول المدفوعات (عمود "Date")
   let paymentsStartCol = -1;
   for (let j = 0; j < row2.length; j++) {
@@ -300,7 +379,7 @@ function parseSheetStructure() {
 
   if (sumCurrencies.length === 0) sumCurrencies = [{ col: -1, currency: 'LE' }];
 
-  // 2. الرحلات والبنود
+  // 2. الرحلات والبنود (أعمدة الكميات)
   let curTrip = null;
   for (let j = 1; j < endCol; j++) {
     const v2 = (row2[j] || '').toString().trim();
@@ -315,7 +394,7 @@ function parseSheetStructure() {
     }
   }
 
-   // 3. جدول الأسعار (يبحث عن "PAX" أو "الشهر" و "السنة")
+  // 3. جدول الأسعار (يبحث عن "PAX" أو "الشهر" و "السنة")
   let priceStartRow = -1;
   let priceStartCol = -1;
   
@@ -342,7 +421,7 @@ function parseSheetStructure() {
       const tripName = (priceRow2[j] || '').toString().trim();
       const itemName = (priceRow3[j] || '').toString().trim();
       
-      // ✅ تجاهل أعمدة الشهر والسنة
+      // تجاهل أعمدة الشهر والسنة
       if (tripName === 'الشهر' || tripName === 'السنة' || tripName === 'Month' || tripName === 'Year') {
         continue;
       }
@@ -352,7 +431,7 @@ function parseSheetStructure() {
         priceGroups.push(curPriceTrip);
       }
       if (itemName && itemName !== '' && curPriceTrip && !itemName.startsWith('Total')) {
-        // ✅ تجاهل العناصر الفارغة أو أعمدة الشهر/السنة في العناصر الفرعية
+        // تجاهل العناصر الفارغة أو أعمدة الشهر/السنة في العناصر الفرعية
         if (itemName === 'الشهر' || itemName === 'السنة' || itemName === 'Month' || itemName === 'Year') {
           continue;
         }
@@ -389,13 +468,23 @@ function parseSheetStructure() {
       }
     }
   }
+  
+  console.log('🏗️ هيكل الشيت:', {
+    tripGroupsCount: tripGroups.length,
+    priceGroupsCount: priceGroups.length,
+    sumCurrencies: sumCurrencies.map(s => s.currency),
+    paymentsCount: paymentsData.length
+  });
 }
-
-// ====================== دوال العرض ======================
+  // ====================== دوال العرض ======================
 function renderPricesTab(rows) {
+  // ✅ معالجة خاصة لـ Submarine
+  if (viewingCustomer && viewingCustomer.category === 'Submarine') {
+    return renderSubmarinePricesTab(rows);
+  }
+  
   if(!priceGroups.length) return '<div class="no-data">لا توجد بيانات أسعار</div>';
   
-  // ✅ تصفية priceGroups لإزالة أي مجموعة فارغة أو غير مرغوب فيها
   const validPriceGroups = priceGroups.filter(g => g.name && g.name !== 'الشهر' && g.name !== 'السنة' && g.items.length > 0);
   
   if(!validPriceGroups.length) return '<div class="no-data">لا توجد بيانات أسعار</div>';
@@ -426,7 +515,58 @@ function renderPricesTab(rows) {
     }
     tbody+=`<tr><td style="font-weight:600;text-align:center">${dateStr}<\/td>${tds}<\/tr>`;
   }
-  return `<div class="table-wrap"><table class="dt"><thead><tr class="row-trip">${trTrip}<\/tr><tr class="row-item">${trItem}<\/tr><\/thead><tbody>${tbody||'<tr><td colspan="100" class="no-data">لا توجد بيانات<\/td><\/tr>'}<\/tbody><\/table><\/div>`;
+  return `<div class="table-wrap"><table class="dt"><thead><tr class="row-trip">${trTrip}<\/tr><tr class="row-item">${trItem}<\/tr><\/thead><tbody>${tbody||'</tr><td colspan="100" class="no-data">لا توجد بيانات<\/td><\/tr>'}<\/tbody><\/table><\/div>`;
+}
+
+// ✅ دالة خاصة لعرض أسعار Submarine
+function renderSubmarinePricesTab(rows) {
+  // هيكل Submarine: الفئات الثابتة F, Aarab, Arab48, EGY
+  const categories = ['F', 'Aarab', 'Arab48', 'EGY'];
+  const items = ['PAX', 'CHILD', 'INF'];
+  
+  // البحث عن أعمدة الأسعار (تبدأ من العمود 81)
+  let priceStartCol = 81;
+  for (let j = 0; j < priceGroups.length; j++) {
+    if (priceGroups[j].name && priceGroups[j].name !== '') {
+      priceStartCol = priceGroups[j].col || 81;
+      break;
+    }
+  }
+  
+  // بناء الرؤوس
+  let trTrip = '<th class="th-date" rowspan="2">التاريخ</th>';
+  let trItem = '';
+  
+  for (const cat of categories) {
+    trTrip += `<th colspan="3" style="text-align:center">${cat}</th>`;
+    for (const item of items) {
+      trItem += `<th>${item}</th>`;
+    }
+  }
+  
+  let tbody = '';
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const dateStr = row[0] ? fmtDate(row[0]) : '';
+    if (!dateStr) continue;
+    
+    let tds = '';
+    // قراءة الأسعار من الأعمدة 81 فصاعداً
+    for (let col = 0; col < categories.length * items.length; col++) {
+      const priceCol = priceStartCol + col;
+      const cellValue = row[priceCol] !== undefined ? row[priceCol] : '';
+      const cellStr = (cellValue || '').toString().trim();
+      const { price, currency } = parseCell(cellStr);
+      let displayValue = '-';
+      if (price > 0) displayValue = `<span class="${curClass(currency)}">${price} ${currency}</span>`;
+      else if (cellStr && cellStr !== '0' && cellStr !== '-') displayValue = cellStr;
+      tds += `<td style="text-align:center">${displayValue}</td>`;
+    }
+    
+    tbody += `<tr><td style="font-weight:600;text-align:center">${dateStr}</td>${tds}</tr>`;
+  }
+  
+  return `<div class="table-wrap"><table class="dt"><thead><tr class="row-trip">${trTrip}</tr><tr class="row-item">${trItem}</tr></thead><tbody>${tbody || '<tr><td colspan="100" class="no-data">لا توجد بيانات</td></tr>'}</tbody></table></div>`;
 }
 function renderTotalsTab(rows) {
   if(!tripGroups.length) return '<div class="no-data">لا توجد بيانات بنود</div>';
