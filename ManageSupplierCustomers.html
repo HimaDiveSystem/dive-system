@@ -1130,93 +1130,72 @@ async function loadCurrentPricesForDate(dateISO) {
     // تحويل dateISO (yyyy-mm-dd) إلى كائن Date للمقارنة
     const targetDate = new Date(dateISO);
     targetDate.setHours(0, 0, 0, 0);
+    const targetDateString = targetDate.toISOString().split('T')[0];
     
-    const targetDateString = targetDate.toISOString().split('T')[0]; // yyyy-mm-dd
-    
-    // البحث عن الصف الذي يطابق التاريخ (بأي صيغة)
+    // البحث عن الصف الذي يطابق التاريخ
     const rows = sheetData.data.slice(3);
     let targetRowData = null;
-    let targetRowIndex = -1;
     
     for (let i = 0; i < rows.length; i++) {
       const rowDate = rows[i][0];
-      let rowDateObj = null;
       let rowDateString = null;
       
       if (rowDate instanceof Date) {
-        rowDateObj = new Date(rowDate);
-        rowDateObj.setHours(0, 0, 0, 0);
-        rowDateString = rowDateObj.toISOString().split('T')[0];
+        rowDateString = new Date(rowDate).toISOString().split('T')[0];
       } else if (typeof rowDate === 'string') {
-        // محاولة تحويل dd/MMM/yyyy إلى Date
         const months = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
         const match = rowDate.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
         if (match) {
-          rowDateObj = new Date(parseInt(match[3]), months[match[2]], parseInt(match[1]));
-          rowDateObj.setHours(0, 0, 0, 0);
-          rowDateString = rowDateObj.toISOString().split('T')[0];
-        } else {
-          // محاولة مباشرة
-          const d = new Date(rowDate);
-          if (!isNaN(d)) {
-            rowDateObj = d;
-            rowDateObj.setHours(0, 0, 0, 0);
-            rowDateString = rowDateObj.toISOString().split('T')[0];
-          }
+          const d = new Date(parseInt(match[3]), months[match[2]], parseInt(match[1]));
+          rowDateString = d.toISOString().split('T')[0];
         }
       }
       
-      // مقارنة باستخدام yyyy-mm-dd
-      if (rowDateString && rowDateString === targetDateString) {
+      if (rowDateString === targetDateString) {
         targetRowData = rows[i];
-        targetRowIndex = i + 4;
         break;
       }
     }
     
     if (!targetRowData) {
       const targetDateStr = formatDateForDisplay(dateISO);
-      area.innerHTML = `<div class="no-data">⚠️ لا توجد بيانات للتاريخ ${targetDateStr}<br><small>تأكد من أن هذا التاريخ موجود في شيت الحساب</small></div>`;
+      area.innerHTML = `<div class="no-data">⚠️ لا توجد بيانات للتاريخ ${targetDateStr}</div>`;
       return;
     }
     
-    // تحليل هيكل الجدول (أعمدة الأسعار)
+    // ✅ أعمدة الأسعار تبدأ من العمود 81 (فهرس 80 في المصفوفة)
+    const priceStartCol = 81; // العمود 81
+    
     const headers = sheetData.data[1] || [];
     const subHeaders = sheetData.data[2] || [];
     
-    // البحث عن بداية أعمدة الأسعار (بعد أعمدة الشهر والسنة)
-    let priceStartCol = 81;
-    for (let j = 0; j < headers.length; j++) {
-      const h = (headers[j] || '').toString().trim();
-      if (h === 'السنة' || h === 'Year') {
-        priceStartCol = j + 2;
-        break;
-      }
-    }
-    if (priceStartCol === -1) priceStartCol = 81;
-    
-    // ✅ بناء واجهة تعديل الأسعار (نتخطى أعمدة الشهر والسنة)
     let html = '<div style="font-size:13px;font-weight:700;margin-bottom:12px;">✏️ تعديل الأسعار (من هذا التاريخ حتى نهاية الجدول)</div>';
     html += '<div class="trip-price-grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));">';
     
     let currentTrip = '';
-    for (let j = priceStartCol; j < headers.length; j++) {
+    for (let j = priceStartCol - 1; j < headers.length; j++) {
       const tripName = (headers[j] || '').toString().trim();
       const itemName = (subHeaders[j] || '').toString().trim();
       
-      // ✅ تجاهل أعمدة الشهر والسنة إذا ظهرت
-      if (tripName === 'الشهر' || tripName === 'Month' || tripName === 'السنة' || tripName === 'Year') {
-        continue;
-      }
+      // تخطي الأعمدة الفارغة أو أعمدة المجاميع
+      if (!tripName && !itemName) continue;
+      if (tripName === 'Total' || tripName === 'المجموع' || tripName === 'الشهر' || tripName === 'السنة') continue;
+      if (itemName === 'Total' || itemName === 'المجموع' || itemName === 'الشهر' || itemName === 'السنة') continue;
       
-      if (tripName && tripName !== '' && !tripName.startsWith('Total') && !tripName.startsWith('المجموع')) {
+      if (tripName && tripName !== '') {
         currentTrip = tripName;
       }
-      if (currentTrip && itemName && itemName !== '' && !itemName.startsWith('Total') && !itemName.startsWith('المجموع')) {
+      if (currentTrip && itemName && itemName !== '') {
         const cellValue = targetRowData[j] || '';
         const match = cellValue.toString().trim().match(/^([\d.]+)\s*([A-Za-z$€£]*)$/);
         const currentPrice = match ? parseFloat(match[1]) || 0 : 0;
-        const currentCurrency = match ? (match[2].toUpperCase() === '$' ? 'USD' : (match[2].toUpperCase() === '€' ? 'EUR' : (match[2].toUpperCase() === '£' ? 'GBP' : 'LE'))) : 'LE';
+        let currentCurrency = 'LE';
+        if (match && match[2]) {
+          const cur = match[2].toUpperCase();
+          if (cur === '$' || cur === 'USD') currentCurrency = 'USD';
+          else if (cur === '€' || cur === 'EUR') currentCurrency = 'EUR';
+          else if (cur === '£' || cur === 'GBP') currentCurrency = 'GBP';
+        }
         
         const key = currentTrip + '_' + itemName;
         html += `
