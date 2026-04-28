@@ -235,9 +235,11 @@
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
             <button class="btn-outline" onclick="backToStep2()" style="padding:8px 16px;font-size:12px;">◀ تغيير اليوم</button>
-            <button class="btn-success" id="saveBtn" onclick="saveDay()">💾 حفظ الحضور</button>
+           <div style="display:flex; gap:10px;">
+  <button class="btn-success" id="saveBtn" onclick="saveDay()">💾 حفظ الحضور</button>
+  <button class="btn-primary" id="salaryBtn" onclick="saveAndOpenSalary()" style="background:#8e44ad;">📊 تقرير المرتبات</button>
           </div>
-        </div>
+             </div>
 
         <!-- شريط التعبئة السريعة -->
         <div class="quick-bar">
@@ -388,7 +390,12 @@ async function confirmPeriod(){
     const inp=document.getElementById('attDate');
     inp.min=firstDay;
     inp.max=lastDay;
-    inp.value=firstDay;
+    const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+  inp.value = todayStr;
+  // ولكن مع التأكد أنه ضمن نطاق الشهر المختار
+  if (todayStr < firstDay) inp.value = firstDay;
+  if (todayStr > lastDay) inp.value = lastDay;
     onDateChange();
     setStep(2);
 
@@ -664,27 +671,33 @@ async function saveDay(){
       entries:JSON.stringify(entries)
     });
 
-    if(r&&r.success){
-      // تحديث الرصيد المعروض بعد الحفظ
-      if(r.balanceMap){
-        balanceMap=r.balanceMap;
-        employees.forEach(emp=>{
-          const safeId=emp.serial.replace(/[^a-zA-Z0-9]/g,'_');
-          const box=document.getElementById('bal_'+safeId);
-          if(!box) return;
-          const bal=balanceMap[emp.serial];
-          const balNum=parseFloat(bal);
-          box.querySelector('.balance-num').textContent=isNaN(balNum)?'—':balNum;
-          box.classList.remove('bal-pos','bal-neg','bal-zero');
-          if(balNum>0)      box.classList.add('bal-pos');
-          else if(balNum<0) box.classList.add('bal-neg');
-          else              box.classList.add('bal-zero');
-        });
-      }
-      showToast('✅ تم حفظ '+r.saved+' موظف','success');
-    } else {
-      showToast('❌ '+(r?.message||'فشل الحفظ'),'error');
-    }
+   if(r&&r.success){
+  // تحديث الرصيد المعروض بعد الحفظ
+  if(r.balanceMap){
+    balanceMap=r.balanceMap;
+    employees.forEach(emp=>{
+      const safeId=emp.serial.replace(/[^a-zA-Z0-9]/g,'_');
+      const box=document.getElementById('bal_'+safeId);
+      if(!box) return;
+      const bal=balanceMap[emp.serial];
+      const balNum=parseFloat(bal);
+      box.querySelector('.balance-num').textContent=isNaN(balNum)?'—':balNum;
+      box.classList.remove('bal-pos','bal-neg','bal-zero');
+      if(balNum>0)      box.classList.add('bal-pos');
+      else if(balNum<0) box.classList.add('bal-neg');
+      else              box.classList.add('bal-zero');
+    });
+  }
+  showToast('✅ تم حفظ '+r.saved+' موظف','success');
+  
+  // بعد حفظ الحضور، قم بمزامنة شيت Salaries
+  try {
+    await jsonp('syncWorkingDaysToSalaries', { month: currentMonth, year: currentYear });
+  } catch(e) { console.warn('sync error:', e); }
+  
+} else {
+  showToast('❌ '+(r?.message||'فشل الحفظ'),'error');
+}
   }catch(e){
     showToast('❌ '+e.message,'error');
   }finally{
@@ -692,7 +705,39 @@ async function saveDay(){
     btn.innerHTML='💾 حفظ الحضور';
   }
 }
-
+async function saveAndOpenSalary() {
+  // تعطيل الزر لمنع الضغط المتكرر
+  const btn = document.getElementById('salaryBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="loader" style="width:16px;height:16px;border-width:2px;margin:0;display:inline-block;vertical-align:middle;margin-left:6px;"></span> جاري...';
+  
+  try {
+    // 1. حفظ الحضور أولاً
+    await saveDay();
+    
+    // 2. مزامنة البيانات مع شيت Salaries
+    const syncResult = await jsonp('syncWorkingDaysToSalaries', {
+      month: currentMonth,
+      year: currentYear
+    });
+    
+    if (syncResult && syncResult.success) {
+      showToast(`✅ تم تحديث ${syncResult.updatedCount} موظف في شيت المرتبات`, 'success');
+    } else {
+      showToast('⚠️ ' + (syncResult?.message || 'فشل تحديث المرتبات'), 'error');
+    }
+    
+    // 3. فتح صفحة تقرير المرتبات
+    const userParam = encodeURIComponent(JSON.stringify(currentUser));
+    window.location.href = `SalaryReport.html?month=${currentMonth}&year=${currentYear}&user=${userParam}`;
+    
+  } catch(e) {
+    showToast('❌ ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '📊 تقرير المرتبات';
+  }
+}
 // ══ NAVIGATION ══
 function backToStep1(){
   document.getElementById('step2Card').style.display='none';
