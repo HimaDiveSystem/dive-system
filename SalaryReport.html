@@ -8,7 +8,7 @@
   <style>
     *{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;}
     body{background:linear-gradient(135deg,#1e2b4f,#152238);min-height:100vh;padding:20px;}
-    .container{max-width:1300px;margin:0 auto;background:white;border-radius:30px;box-shadow:0 20px 60px rgba(0,0,0,0.3);overflow:hidden;}
+    .container{max-width:1400px;margin:0 auto;background:white;border-radius:30px;box-shadow:0 20px 60px rgba(0,0,0,0.3);overflow:hidden;}
     .header{background:linear-gradient(135deg,#1e2b4f,#152238);color:white;padding:18px 28px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;}
     .header h2{color:#ffd966;font-size:20px;display:flex;align-items:center;gap:8px;}
     .header-right{display:flex;align-items:center;gap:10px;}
@@ -26,17 +26,28 @@
     .btn-excel:hover{background:#1e8449;transform:translateY(-1px);}
     .table-wrap{overflow-x:auto;border-radius:16px;box-shadow:0 4px 14px rgba(0,0,0,.07);margin-top:20px;}
     table{width:100%;border-collapse:collapse;font-size:13px;}
-    thead th{background:#1e2b4f;color:#ffd966;padding:12px;text-align:center;white-space:nowrap;}
-    tbody td{padding:10px;border-bottom:1px solid #f0f4fa;text-align:center;}
+    thead th{background:#1e2b4f;color:#ffd966;padding:12px 10px;text-align:center;white-space:nowrap;font-size:12px;}
+    thead th.group-salary{background:#1a5276;color:#aed6f1;}
+    thead th.group-deduction{background:#641e16;color:#f9ebea;}
+    tbody td{padding:10px 8px;border-bottom:1px solid #f0f4fa;text-align:center;white-space:nowrap;}
     tbody tr:hover{background:#f8f9ff;}
-    .total-row{background:#e6f0ff;font-weight:700;}
+    tbody tr:nth-child(even){background:#fafbff;}
+    .total-row{background:#1e2b4f!important;color:white;font-weight:700;}
+    .total-row td{color:white!important;border-bottom:none;}
+    .total-row td.highlight{color:#ffd966!important;font-size:15px;}
+    .cell-salary{background:#e8f4f8;color:#1a5276;font-weight:700;}
+    .cell-commission{background:#e8f5e9;color:#1b5e20;font-weight:700;}
+    .cell-net{background:#fff3e0;color:#e65100;font-weight:900;font-size:14px;}
+    .cell-name{text-align:right;font-weight:700;color:#2c3e50;}
+    .cell-days{font-weight:700;color:#1e2b4f;}
+    .badge-zero{color:#aaa;}
     .loader{border:4px solid #f3f3f3;border-top:4px solid #1e2b4f;border-radius:50%;width:36px;height:36px;animation:spin .9s linear infinite;margin:36px auto;}
     @keyframes spin{to{transform:rotate(360deg);}}
     .empty{text-align:center;padding:50px;color:#aaa;}
     .toast{position:fixed;bottom:24px;right:24px;padding:12px 20px;border-radius:12px;font-size:13px;font-weight:700;color:white;z-index:9999;box-shadow:0 6px 20px rgba(0,0,0,.2);transform:translateY(60px);opacity:0;transition:.35s;}
     .toast.show{transform:translateY(0);opacity:1;}
-    .t-ok{background:#27ae60;}
-    .t-err{background:#e74c3c;}
+    .t-ok{background:#27ae60;} .t-err{background:#e74c3c;} .t-info{background:#3498db;}
+    .info-bar{background:#e8f4fd;border:1px solid #bee3f8;border-radius:12px;padding:12px 18px;margin-bottom:16px;font-size:13px;color:#1a5276;display:flex;align-items:center;gap:8px;}
   </style>
 </head>
 <body>
@@ -64,12 +75,18 @@
           <label>📆 السنة</label>
           <select id="selYear"></select>
         </div>
-        <div style="display:flex;gap:10px;">
+        <div style="display:flex;gap:10px;align-items:flex-end;">
           <button class="btn-primary" onclick="loadReport()">🔍 عرض التقرير</button>
           <button class="btn-excel" onclick="exportToExcel()">📎 تصدير Excel</button>
         </div>
       </div>
     </div>
+
+    <div class="info-bar" id="infoBar" style="display:none;">
+      <span>ℹ️</span>
+      <span id="infoText"></span>
+    </div>
+
     <div id="reportArea"><div class="loader"></div></div>
   </div>
 </div>
@@ -78,14 +95,17 @@
 <script>
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbwC1BRoLAJthZqxWTYyMUSjPNNGfCI0BjTfhE7ZiVx67rUP__OKAj0vlwD1-RUCOMSE/exec';
 let currentUser = null;
-let currentData = [];
+let tableData = []; // البيانات المحسوبة النهائية للتصدير
 
-function jsonp(action, params) {
+// ──────────────────────────────────────────────
+// JSONP helper
+// ──────────────────────────────────────────────
+function jsonp(action, params={}) {
   return new Promise((resolve, reject) => {
     const cb = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
     params.action = action;
     params.callback = cb;
-    const qs = Object.entries(params).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+    const qs = Object.entries(params).map(([k,v]) => k+'='+encodeURIComponent(String(v??''))).join('&');
     const script = document.createElement('script');
     const timeout = setTimeout(() => { delete window[cb]; script.remove(); reject(new Error('انتهى الوقت')); }, 30000);
     window[cb] = (data) => { clearTimeout(timeout); delete window[cb]; script.remove(); resolve(data); };
@@ -95,18 +115,17 @@ function jsonp(action, params) {
   });
 }
 
+// ──────────────────────────────────────────────
+// Init
+// ──────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   const ud = sessionStorage.getItem('currentUser');
-  if (!ud) { window.location.href = 'AccountantDashboard.html'; return; }
-  try { currentUser = JSON.parse(ud); } catch(e) { window.location.href = 'AccountantDashboard.html'; return; }
-  document.getElementById('userBadge').textContent = currentUser.name || '—';
-  
-  const urlParams = new URLSearchParams(window.location.search);
-  const month = urlParams.get('month');
-  const year = urlParams.get('year');
-  if (month) document.getElementById('selMonth').value = month;
-  if (year) document.getElementById('selYear').value = year;
-  
+  if (ud) {
+    try { currentUser = JSON.parse(ud); } catch(e) {}
+  }
+  document.getElementById('userBadge').textContent = currentUser?.name || '—';
+
+  // تعبئة السنوات
   const selYear = document.getElementById('selYear');
   const currentYear = new Date().getFullYear();
   for (let y = currentYear + 1; y >= 2020; y--) {
@@ -115,146 +134,356 @@ document.addEventListener('DOMContentLoaded', () => {
     if (y === currentYear) opt.selected = true;
     selYear.appendChild(opt);
   }
-  if (year) selYear.value = year;
-  
+
+  // قراءة المعاملات من URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const month = urlParams.get('month');
+  const year  = urlParams.get('year');
+  if (month) document.getElementById('selMonth').value = month;
+  if (year)  document.getElementById('selYear').value  = year;
+
   loadReport();
 });
 
+// ──────────────────────────────────────────────
+// تحميل التقرير: نجمع 3 مصادر في وقت واحد
+// 1. getSalaryReportData  → أيام العمل + الراتب من Salaries
+// 2. getAllInvoices        → عمولات من Invoices عمود 39
+// 3. getExpenseRevenueRows (Expenses) → الدفعات المقدمة
+// ──────────────────────────────────────────────
 async function loadReport() {
   const month = document.getElementById('selMonth').value;
-  const year = document.getElementById('selYear').value;
+  const year  = document.getElementById('selYear').value;
   if (!month || !year) { showToast('اختر الشهر والسنة', 'error'); return; }
-  
+
   document.getElementById('reportArea').innerHTML = '<div class="loader"></div>';
-  
+  document.getElementById('infoBar').style.display = 'none';
+
   try {
-    const result = await jsonp('getSalaryReportData', { month: month, year: year });
-    if (result && result.success && result.employees && result.employees.length > 0) {
-      currentData = result.employees;
-      renderTable(result.employees, month, year);
-    } else {
-      document.getElementById('reportArea').innerHTML = '<div class="empty">📭 لا توجد بيانات رواتب للشهر المحدد</div>';
-      currentData = [];
+    // طلبات متوازية
+    const [salResult, invoicesResult, expResult, ratesResult] = await Promise.all([
+      jsonp('getSalaryReportData', { month, year }),
+      jsonp('getAllInvoices', { includeCollection: 'false' }),
+      jsonp('getExpenseRevenueRows', { sheet: 'Expenses', dateFrom: '', dateTo: '' }),
+      jsonp('getLatestExchangeRates', {})
+    ]);
+
+    if (!salResult || !salResult.success || !salResult.employees || salResult.employees.length === 0) {
+      document.getElementById('reportArea').innerHTML =
+        '<div class="empty">📭 لا توجد بيانات رواتب للشهر المحدد<br><small>تأكد من تسجيل الحضور وضغط "مزامنة" أولاً</small></div>';
+      tableData = [];
+      return;
     }
+
+    const employees   = salResult.employees;
+    const invoices    = Array.isArray(invoicesResult) ? invoicesResult : [];
+    const expenses    = Array.isArray(expResult) ? expResult : [];
+    const rates       = ratesResult || { bUSD: 50, bEUR: 55, bGBP: 65 };
+
+    // معدلات تحويل (نستخدم أسعار البنك كتقريب للمرتبات)
+    const usdRate = parseFloat(rates.bUSD) || 50;
+    const eurRate = parseFloat(rates.bEUR) || 55;
+    const gbpRate = parseFloat(rates.bGBP) || 65;
+
+    // ── 1. حساب العمولات من Invoices (عمود index 39) ──
+    // نفلتر: State=Confirmed، Month وYear يطابقان الشهر المحسوب
+    const commissionMap = {}; // {salesId: totalCommission}
+    invoices.forEach(inv => {
+      // inv هو object من getAllInvoices
+      const invMonth = (inv.month || '').toString().trim();
+      const invYear  = (inv.year  || '').toString().trim();
+      const state    = (inv.state || '').toString().trim().toLowerCase();
+      const comm     = parseFloat(inv.commission) || 0; // commission = العمود index 39
+
+      // نقبل فقط فواتير الشهر المطابق وحالتها confirmed
+      if (invMonth !== month || invYear !== year) return;
+      if (state !== 'confirmed') return;
+      if (comm <= 0) return;
+
+      const salesId = (inv.salesId || '').toString().trim();
+      if (!salesId) return;
+      commissionMap[salesId] = (commissionMap[salesId] || 0) + comm;
+    });
+
+    // ── 2. حساب الدفعات المقدمة من Expenses ──
+    // نفلتر: Month وYear يطابقان + Account أو Account_Name يطابق اسم الموظف
+    // نبني خريطة اسم → userId أولاً
+    const nameToId = {};
+    employees.forEach(emp => {
+      if (emp.name) nameToId[emp.name.trim().toLowerCase()] = emp.userId;
+    });
+
+    const advanceMap = {}; // {userId: totalAdvanceLE}
+    expenses.forEach(exp => {
+      const expMonth = (exp.month || '').toString().trim();
+      const expYear  = (exp.year  || '').toString().trim();
+      if (expMonth !== month || expYear !== year) return;
+
+      const account     = (exp.account     || '').toString().trim().toLowerCase();
+      const accountName = (exp.accountName || '').toString().trim().toLowerCase();
+      const details     = (exp.details     || '').toString().trim().toLowerCase();
+
+      // البحث عن الموظف المرتبط
+      let targetUserId = null;
+      // أولاً: Account_Name مباشر
+      if (nameToId[accountName]) {
+        targetUserId = nameToId[accountName];
+      } else {
+        // البحث في details
+        for (const [name, uid] of Object.entries(nameToId)) {
+          if (details.includes(name) || account.includes(name)) {
+            targetUserId = uid;
+            break;
+          }
+        }
+      }
+
+      if (!targetUserId) return;
+
+      // تحويل كل العملات إلى LE
+      const usd = parseFloat(exp.usd) || 0;
+      const eur = parseFloat(exp.eur) || 0;
+      const gbp = parseFloat(exp.gbp) || 0;
+      const le  = parseFloat(exp.le)  || 0;
+
+      const totalLE = (usd * usdRate) + (eur * eurRate) + (gbp * gbpRate) + le;
+      if (totalLE <= 0) return;
+
+      advanceMap[targetUserId] = (advanceMap[targetUserId] || 0) + totalLE;
+    });
+
+    // ── 3. بناء صفوف التقرير النهائية ──
+    tableData = employees.map(emp => {
+      const workingDays    = parseFloat(emp.workingDays)    || 0;
+      const monthlySalary  = parseFloat(emp.monthlySalary)  || 0;
+      const absentDays     = Math.max(0, 30 - workingDays);
+
+      // الراتب المستحق = (المرتب الشهري / 30) × أيام العمل
+      const salaryAmount   = monthlySalary > 0
+        ? Math.round((monthlySalary / 30) * workingDays)
+        : (parseFloat(emp.salaryAmount) || 0);
+
+      // العمولة من Invoices
+      const commission     = Math.round(commissionMap[emp.userId] || 0);
+
+      // الحافز (0 لاحقاً)
+      const bonus          = parseFloat(emp.bonus) || 0;
+
+      // الإجمالي = الراتب المستحق + العمولة + الحافز
+      const total          = salaryAmount + commission + bonus;
+
+      // الخصم (0 لاحقاً)
+      const cuts           = parseFloat(emp.cuts) || 0;
+
+      // التأمينات (0 لاحقاً)
+      const insurance      = parseFloat(emp.insurance) || 0;
+
+      // صافي بعد الخصم = الإجمالي - الخصم - التأمينات
+      const totalAfterCuts = total - cuts - insurance;
+
+      // الدفعة المقدمة = إجمالي المسحوبات من Expenses بالجنيه
+      const downPaymentLE  = Math.round(advanceMap[emp.userId] || 0);
+
+      // الصافي المستحق
+      const net            = totalAfterCuts - downPaymentLE;
+
+      return {
+        userId:        emp.userId        || '',
+        name:          emp.name          || '',
+        position:      emp.position      || '',
+        workingDays,
+        absentDays,
+        monthlySalary,
+        salaryAmount,
+        commission,
+        bonus,
+        total,
+        cuts,
+        insurance,
+        totalAfterCuts,
+        downPaymentLE,
+        net
+      };
+    });
+
+    // معلومات إضافية
+    const totalCommissions = Object.values(commissionMap).reduce((a,b)=>a+b, 0);
+    const totalAdvances    = Object.values(advanceMap).reduce((a,b)=>a+b, 0);
+    document.getElementById('infoBar').style.display = 'flex';
+    document.getElementById('infoText').textContent =
+      `إجمالي العمولات المجمَّعة من الفواتير: ${Math.round(totalCommissions).toLocaleString()} LE  |  إجمالي المسحوبات: ${Math.round(totalAdvances).toLocaleString()} LE  |  سعر الصرف المستخدم: $1 = ${usdRate} LE، €1 = ${eurRate} LE`;
+
+    renderTable(tableData, month, year);
+
   } catch(e) {
-    document.getElementById('reportArea').innerHTML = '<div class="empty">❌ خطأ: ' + e.message + '</div>';
+    document.getElementById('reportArea').innerHTML =
+      '<div class="empty">❌ خطأ: ' + e.message + '</div>';
+    console.error(e);
   }
 }
 
-function renderTable(employees, month, year) {
-  const monthNames = {Jan:'يناير',Feb:'فبراير',Mar:'مارس',Apr:'أبريل',May:'مايو',Jun:'يونيو',Jul:'يوليو',Aug:'أغسطس',Sep:'سبتمبر',Oct:'أكتوبر',Nov:'نوفمبر',Dec:'ديسمبر'};
+// ──────────────────────────────────────────────
+// عرض الجدول
+// ──────────────────────────────────────────────
+function renderTable(rows, month, year) {
+  if (!rows.length) {
+    document.getElementById('reportArea').innerHTML =
+      '<div class="empty">📭 لا توجد بيانات</div>';
+    return;
+  }
+
+  // إجماليات الأعمدة
+  let totals = {
+    workingDays:0, absentDays:0, monthlySalary:0, salaryAmount:0,
+    commission:0, bonus:0, total:0, cuts:0, insurance:0,
+    totalAfterCuts:0, downPaymentLE:0, net:0
+  };
+  rows.forEach(r => {
+    totals.workingDays    += r.workingDays;
+    totals.absentDays     += r.absentDays;
+    totals.monthlySalary  += r.monthlySalary;
+    totals.salaryAmount   += r.salaryAmount;
+    totals.commission     += r.commission;
+    totals.bonus          += r.bonus;
+    totals.total          += r.total;
+    totals.cuts           += r.cuts;
+    totals.insurance      += r.insurance;
+    totals.totalAfterCuts += r.totalAfterCuts;
+    totals.downPaymentLE  += r.downPaymentLE;
+    totals.net            += r.net;
+  });
+
+  function fmt(n) { return Math.round(n).toLocaleString(); }
+  function fmtDays(n) { return (Math.round(n*100)/100).toLocaleString(); }
+  function cell(n, cls='') {
+    const rounded = Math.round(n);
+    const display = rounded === 0 ? '<span class="badge-zero">—</span>' : rounded.toLocaleString();
+    return `<td class="${cls}">${display}</td>`;
+  }
+
   let html = `<div class="table-wrap"><table>
-  <thead>
-  <tr>
-    <th>#</th>
-    <th>الرقم الوظيفي</th>
-    <th>الاسم</th>
-    <th>الوظيفة</th>
-    <th>أيام العمل</th>
-    <th>الراتب الشهري</th>
-    <th>الراتب المستحق</th>
-    <th>العمولة</th>
-    <th>الحافز</th>
-    <th>الإجمالي</th>
-    <th>الخصم</th>
-    <th>الغياب</th>
-    <th>التأمينات</th>
-    <th>صافي بعد الخصم</th>
-    <th>الدفعة المقدمة</th>
-    <th>الصافي المستحق</th>
-  </tr>
-</thead><tbody>`;
-  
- // في renderTable:
-employees.forEach((emp, i) => {
-  html += `<tr>
-    <td>${i+1}</td>
-    <td>${emp.userId || ''}</td>
-    <td>${emp.name || ''}</td>
-    <td>${emp.position || ''}</td>
-    <td>${emp.workingDays || 0}</td>
-    <td>${(emp.monthlySalary || 0).toLocaleString()}</td>
-    <td style="background:#e6f0ff;">${(emp.salaryAmount || 0).toLocaleString()}</td>
-    <td>${(emp.commission || 0).toLocaleString()}</td>
-    <td>${(emp.bonus || 0).toLocaleString()}</td>
-    <td>${(emp.total || 0).toLocaleString()}</td>
-    <td>${(emp.cuts || 0).toLocaleString()}</td>
-    <td>${(emp.absent || 0).toLocaleString()}</td>
-    <td>${(emp.insurance || 0).toLocaleString()}</td>
-    <td>${(emp.totalAfterCuts || 0).toLocaleString()}</td>
-    <td>${(emp.downPayment || 0).toLocaleString()}</td>
-    <td style="font-weight:700;color:#1e8449;">${(emp.net || 0).toLocaleString()}</td>
+    <thead>
+      <tr>
+        <th rowspan="2">#</th>
+        <th rowspan="2">الرقم الوظيفي</th>
+        <th rowspan="2" style="text-align:right;min-width:120px;">الاسم</th>
+        <th rowspan="2">الوظيفة</th>
+        <th rowspan="2">أيام الحضور</th>
+        <th rowspan="2">أيام الغياب</th>
+        <th colspan="4" class="group-salary">المستحقات</th>
+        <th colspan="3" class="group-deduction">الخصومات</th>
+        <th rowspan="2" style="background:#b7770d;color:#fff;">الصافي المستحق (LE)</th>
+      </tr>
+      <tr>
+        <th class="group-salary">الراتب الأساسي</th>
+        <th class="group-salary">العمولات</th>
+        <th class="group-salary">الحافز</th>
+        <th class="group-salary">الإجمالي</th>
+        <th class="group-deduction">الدفعة المقدمة</th>
+        <th class="group-deduction">التأمينات</th>
+        <th class="group-deduction">خصم آخر</th>
+      </tr>
+    </thead>
+    <tbody>`;
+
+  rows.forEach((r, i) => {
+    html += `<tr>
+      <td>${i+1}</td>
+      <td>${r.userId}</td>
+      <td class="cell-name">${r.name}</td>
+      <td style="color:#6c757d;font-size:12px;">${r.position}</td>
+      <td class="cell-days">${fmtDays(r.workingDays)}</td>
+      <td style="color:${r.absentDays>0?'#e74c3c':'#aaa'};">${r.absentDays>0?r.absentDays:'—'}</td>
+      ${cell(r.salaryAmount, 'cell-salary')}
+      ${cell(r.commission,   'cell-commission')}
+      ${cell(r.bonus)}
+      <td style="font-weight:700;color:#1a5276;">${fmt(r.total)}</td>
+      ${cell(r.downPaymentLE, r.downPaymentLE>0?'':'badge-zero')}
+      ${cell(r.insurance)}
+      ${cell(r.cuts)}
+      <td class="cell-net">${r.net >= 0 ? fmt(r.net) : '<span style="color:#e74c3c;">'+fmt(r.net)+'</span>'}</td>
+    </tr>`;
+  });
+
+  // صف الإجماليات
+  html += `<tr class="total-row">
+    <td colspan="4" style="text-align:right;padding-right:12px;">الإجمالي الكلي</td>
+    <td>${fmtDays(totals.workingDays)}</td>
+    <td>${fmt(totals.absentDays)}</td>
+    <td class="highlight">${fmt(totals.salaryAmount)}</td>
+    <td class="highlight">${fmt(totals.commission)}</td>
+    <td>${fmt(totals.bonus)}</td>
+    <td class="highlight">${fmt(totals.total)}</td>
+    <td>${fmt(totals.downPaymentLE)}</td>
+    <td>${fmt(totals.insurance)}</td>
+    <td>${fmt(totals.cuts)}</td>
+    <td class="highlight" style="font-size:16px;">${fmt(totals.net)}</td>
   </tr>`;
-});
-  
- // حساب إجمالي كل عمود
-let totalMonthlySalary = 0;
-let totalSalaryAmount = 0;
-let totalCommission = 0;
-let totalBonus = 0;
-let totalOverall = 0;
-let totalCuts = 0;
-let totalAbsent = 0;
-let totalInsurance = 0;
-let totalAfterCuts = 0;
-let totalDownPayment = 0;
-let totalNet = 0;
 
-employees.forEach(e => {
-  totalMonthlySalary += e.monthlySalary || 0;
-  totalSalaryAmount += e.salaryAmount || 0;
-  totalCommission += e.commission || 0;
-  totalBonus += e.bonus || 0;
-  totalOverall += e.total || 0;
-  totalCuts += e.cuts || 0;
-  totalAbsent += e.absent || 0;
-  totalInsurance += e.insurance || 0;
-  totalAfterCuts += e.totalAfterCuts || 0;
-  totalDownPayment += e.downPayment || 0;
-  totalNet += e.net || 0;
-});
-
-html += `<tr class="total-row">
-  <td colspan="4" style="text-align:left;"><strong>الإجمالي الكلي</strong></td>
-  <td><strong>${totalMonthlySalary.toLocaleString()}</strong></td>
-  <td><strong>${totalSalaryAmount.toLocaleString()}</strong></td>
-  <td><strong>${totalCommission.toLocaleString()}</strong></td>
-  <td><strong>${totalBonus.toLocaleString()}</strong></td>
-  <td><strong>${totalOverall.toLocaleString()}</strong></td>
-  <td><strong>${totalCuts.toLocaleString()}</strong></td>
-  <td><strong>${totalAbsent.toLocaleString()}</strong></td>
-  <td><strong>${totalInsurance.toLocaleString()}</strong></td>
-  <td><strong>${totalAfterCuts.toLocaleString()}</strong></td>
-  <td><strong>${totalDownPayment.toLocaleString()}</strong></td>
-  <td><strong>${totalNet.toLocaleString()}</strong></td>
-</tr>`;
-  html += `</tbody></table></div>`;
+  html += '</tbody></table></div>';
   document.getElementById('reportArea').innerHTML = html;
 }
 
+// ──────────────────────────────────────────────
+// تصدير Excel (CSV)
+// ──────────────────────────────────────────────
 function exportToExcel() {
-  if (!currentData.length) { showToast('لا توجد بيانات لتصديرها', 'error'); return; }
-  let csv = "الرقم الوظيفي,الاسم,الوظيفة,أيام العمل,الراتب الشهري,الراتب المستحق,العمولة,الحافز,الإجمالي,الخصم,الغياب,التأمينات,صافي بعد الخصم,الدفعة المقدمة,الصافي المستحق\n";
-  currentData.forEach(emp => {
-    csv += `"${emp.userId || ''}","${emp.name || ''}","${emp.position || ''}",${emp.workingDays || 0},${emp.monthlySalary || 0},${emp.salaryAmount || 0},${emp.commission || 0},${emp.bonus || 0},${emp.total || 0},${emp.cuts || 0},${emp.absent || 0},${emp.insurance || 0},${emp.totalAfterCuts || 0},${emp.downPayment || 0},${emp.net || 0}\n`;
-  });
-  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
-  const link = document.createElement("a");
-  const url = URL.createObjectURL(blob);
-  link.href = url;
-  link.setAttribute("download", `Salary_Report_${document.getElementById('selMonth').value}_${document.getElementById('selYear').value}.csv`);
+  if (!tableData.length) { showToast('لا توجد بيانات لتصديرها', 'error'); return; }
+  const month = document.getElementById('selMonth').value;
+  const year  = document.getElementById('selYear').value;
+
+  const headers = [
+    'الرقم الوظيفي','الاسم','الوظيفة','أيام الحضور','أيام الغياب',
+    'الراتب الأساسي (LE)','العمولات (LE)','الحافز (LE)','الإجمالي (LE)',
+    'الدفعة المقدمة (LE)','التأمينات (LE)','خصم آخر (LE)','الصافي المستحق (LE)'
+  ].join(',');
+
+  const rows = tableData.map(r => [
+    r.userId, '"'+r.name+'"', '"'+r.position+'"',
+    r.workingDays, r.absentDays,
+    Math.round(r.salaryAmount), Math.round(r.commission), Math.round(r.bonus), Math.round(r.total),
+    Math.round(r.downPaymentLE), Math.round(r.insurance), Math.round(r.cuts), Math.round(r.net)
+  ].join(','));
+
+  // صف الإجماليات
+  const totals = tableData.reduce((acc, r) => {
+    acc.workingDays    += r.workingDays;
+    acc.absentDays     += r.absentDays;
+    acc.salaryAmount   += r.salaryAmount;
+    acc.commission     += r.commission;
+    acc.bonus          += r.bonus;
+    acc.total          += r.total;
+    acc.downPaymentLE  += r.downPaymentLE;
+    acc.insurance      += r.insurance;
+    acc.cuts           += r.cuts;
+    acc.net            += r.net;
+    return acc;
+  }, {workingDays:0,absentDays:0,salaryAmount:0,commission:0,bonus:0,total:0,downPaymentLE:0,insurance:0,cuts:0,net:0});
+
+  rows.push([
+    'الإجمالي','','',
+    Math.round(totals.workingDays*100)/100, Math.round(totals.absentDays),
+    Math.round(totals.salaryAmount), Math.round(totals.commission), Math.round(totals.bonus), Math.round(totals.total),
+    Math.round(totals.downPaymentLE), Math.round(totals.insurance), Math.round(totals.cuts), Math.round(totals.net)
+  ].join(','));
+
+  const csv = '\uFEFF' + headers + '\n' + rows.join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `Salary_${month}_${year}.csv`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  URL.revokeObjectURL(link.href);
   showToast('✅ تم التصدير', 'success');
 }
 
 function showToast(msg, type) {
-  const toast = document.getElementById('toast');
-  toast.textContent = msg;
-  toast.className = 'toast ' + (type === 'error' ? 't-err' : 't-ok') + ' show';
-  setTimeout(() => toast.className = 'toast', 3000);
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast ' + (type==='error'?'t-err':type==='info'?'t-info':'t-ok') + ' show';
+  setTimeout(() => { t.className = 'toast'; }, 3500);
 }
 
 function goBack() { window.location.href = 'AttendanceManagement.html'; }
