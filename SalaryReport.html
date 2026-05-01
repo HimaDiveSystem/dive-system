@@ -162,11 +162,28 @@ async function loadReport() {
   try {
     // طلبات متوازية
     const [salResult, invoicesResult, expResult, ratesResult] = await Promise.all([
-      jsonp('getSalaryReportData', { month, year }),
+      jsonp('getSalaryReportData', { 
+        month: month, 
+        year: year,
+        currentUser: JSON.stringify(currentUser) 
+      }),
       jsonp('getAllInvoices', { includeCollection: 'false' }),
       jsonp('getExpenseRevenueRows', { sheet: 'Expenses', dateFrom: '', dateTo: '' }),
       jsonp('getLatestExchangeRates', {})
     ]);
+
+    // ✅ التحقق من وجود أسعار الصرف (بدون أرقام افتراضية)
+    if (!ratesResult || !ratesResult.bUSD || !ratesResult.bEUR || !ratesResult.bGBP) {
+      console.log('⚠️ لا توجد أسعار صرف في شيت Exchange_Rates');
+      document.getElementById('reportArea').innerHTML = 
+        '<div class="empty">⚠️ لا توجد أسعار صرف في شيت Exchange_Rates<br><small>يرجى إدخال أسعار الصرف أولاً</small></div>';
+      tableData = [];
+      return;
+    }
+
+    const usdRate = parseFloat(ratesResult.bUSD);
+    const eurRate = parseFloat(ratesResult.bEUR);
+    const gbpRate = parseFloat(ratesResult.bGBP);
 
     if (!salResult || !salResult.success || !salResult.employees || salResult.employees.length === 0) {
       document.getElementById('reportArea').innerHTML =
@@ -178,24 +195,15 @@ async function loadReport() {
     const employees   = salResult.employees;
     const invoices    = Array.isArray(invoicesResult) ? invoicesResult : [];
     const expenses    = Array.isArray(expResult) ? expResult : [];
-    const rates       = ratesResult || { bUSD: 50, bEUR: 55, bGBP: 65 };
 
-    // معدلات تحويل (نستخدم أسعار البنك كتقريب للمرتبات)
-    const usdRate = parseFloat(rates.bUSD) || 50;
-    const eurRate = parseFloat(rates.bEUR) || 55;
-    const gbpRate = parseFloat(rates.bGBP) || 65;
-
-    // ── 1. حساب العمولات من Invoices (عمود index 39) ──
-    // نفلتر: State=Confirmed، Month وYear يطابقان الشهر المحسوب
-    const commissionMap = {}; // {salesId: totalCommission}
+    // ── 1. حساب العمولات من Invoices ──
+    const commissionMap = {};
     invoices.forEach(inv => {
-      // inv هو object من getAllInvoices
       const invMonth = (inv.month || '').toString().trim();
       const invYear  = (inv.year  || '').toString().trim();
       const state    = (inv.state || '').toString().trim().toLowerCase();
-      const comm     = parseFloat(inv.commission) || 0; // commission = العمود index 39
+      const comm     = parseFloat(inv.commission) || 0;
 
-      // نقبل فقط فواتير الشهر المطابق وحالتها confirmed
       if (invMonth !== month || invYear !== year) return;
       if (state !== 'confirmed') return;
       if (comm <= 0) return;
@@ -206,14 +214,12 @@ async function loadReport() {
     });
 
     // ── 2. حساب الدفعات المقدمة من Expenses ──
-    // نفلتر: Month وYear يطابقان + Account أو Account_Name يطابق اسم الموظف
-    // نبني خريطة اسم → userId أولاً
     const nameToId = {};
     employees.forEach(emp => {
       if (emp.name) nameToId[emp.name.trim().toLowerCase()] = emp.userId;
     });
 
-    const advanceMap = {}; // {userId: totalAdvanceLE}
+    const advanceMap = {};
     expenses.forEach(exp => {
       const expMonth = (exp.month || '').toString().trim();
       const expYear  = (exp.year  || '').toString().trim();
@@ -223,13 +229,10 @@ async function loadReport() {
       const accountName = (exp.accountName || '').toString().trim().toLowerCase();
       const details     = (exp.details     || '').toString().trim().toLowerCase();
 
-      // البحث عن الموظف المرتبط
       let targetUserId = null;
-      // أولاً: Account_Name مباشر
       if (nameToId[accountName]) {
         targetUserId = nameToId[accountName];
       } else {
-        // البحث في details
         for (const [name, uid] of Object.entries(nameToId)) {
           if (details.includes(name) || account.includes(name)) {
             targetUserId = uid;
@@ -240,7 +243,7 @@ async function loadReport() {
 
       if (!targetUserId) return;
 
-      // تحويل كل العملات إلى LE
+      // تحويل كل العملات إلى LE باستخدام أسعار الصرف الحقيقية
       const usd = parseFloat(exp.usd) || 0;
       const eur = parseFloat(exp.eur) || 0;
       const gbp = parseFloat(exp.gbp) || 0;
@@ -258,33 +261,17 @@ async function loadReport() {
       const monthlySalary  = parseFloat(emp.monthlySalary)  || 0;
       const absentDays     = Math.max(0, 30 - workingDays);
 
-      // الراتب المستحق = (المرتب الشهري / 30) × أيام العمل
       const salaryAmount   = monthlySalary > 0
         ? Math.round((monthlySalary / 30) * workingDays)
         : (parseFloat(emp.salaryAmount) || 0);
 
-      // العمولة من Invoices
       const commission     = Math.round(commissionMap[emp.userId] || 0);
-
-      // الحافز (0 لاحقاً)
       const bonus          = parseFloat(emp.bonus) || 0;
-
-      // الإجمالي = الراتب المستحق + العمولة + الحافز
       const total          = salaryAmount + commission + bonus;
-
-      // الخصم (0 لاحقاً)
       const cuts           = parseFloat(emp.cuts) || 0;
-
-      // التأمينات (0 لاحقاً)
       const insurance      = parseFloat(emp.insurance) || 0;
-
-      // صافي بعد الخصم = الإجمالي - الخصم - التأمينات
       const totalAfterCuts = total - cuts - insurance;
-
-      // الدفعة المقدمة = إجمالي المسحوبات من Expenses بالجنيه
       const downPaymentLE  = Math.round(advanceMap[emp.userId] || 0);
-
-      // الصافي المستحق
       const net            = totalAfterCuts - downPaymentLE;
 
       return {
@@ -306,7 +293,6 @@ async function loadReport() {
       };
     });
 
-    // معلومات إضافية
     const totalCommissions = Object.values(commissionMap).reduce((a,b)=>a+b, 0);
     const totalAdvances    = Object.values(advanceMap).reduce((a,b)=>a+b, 0);
     document.getElementById('infoBar').style.display = 'flex';
@@ -321,7 +307,6 @@ async function loadReport() {
     console.error(e);
   }
 }
-
 // ──────────────────────────────────────────────
 // عرض الجدول
 // ──────────────────────────────────────────────
