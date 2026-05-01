@@ -437,57 +437,59 @@ function closeCustomerSelect() {
 
 async function openEmployeeAttendance() {
   try {
-    // ===== كود الاختبار والتصحيح =====
     console.log("===== بدء اختبار سجل حضور موظف آخر =====");
     console.log("بيانات المستخدم الحالي:", currentUser);
-    console.log("نوع المستخدم:", currentUser?.type);
     console.log("فرع المستخدم:", currentUser?.branchName);
-    console.log("اسم الفرع (lowercase):", currentUser?.branchName?.toLowerCase());
-    console.log("======================================");
     
     const employees = await gas('getAllEmployees');
-    console.log("البيانات الخام من الخادم (getAllEmployees):", employees);
-    console.log("نوع البيانات:", typeof employees);
-    console.log("هل هي مصفوفة؟", Array.isArray(employees));
+    console.log("عدد الموظفين المستلمين:", employees?.length);
     
     if (!Array.isArray(employees) || employees.length === 0) {
-      console.log("⚠️ لا توجد بيانات موظفين أو البيانات ليست مصفوفة");
       showAlert('لا توجد بيانات موظفين');
       return;
     }
     
-    console.log(`📊 عدد الموظفين الكلي: ${employees.length}`);
-    console.log("أول 3 موظفين كعينة:", employees.slice(0, 3));
+    // التحقق مما إذا كان الموظفون لديهم بيانات فروع صالحة
+    const employeesWithBranches = employees.filter(e => e.branchName && e.branchName !== 'undefined' && e.branchName !== '');
+    const hasValidBranches = employeesWithBranches.length > 0;
     
-    // طباعة جميع أسماء الفروع الموجودة في البيانات
-    const allBranches = [...new Set(employees.map(e => e.branchName))];
-    console.log("🏢 جميع الفروع الموجودة في بيانات الموظفين:", allBranches);
+    console.log(`عدد الموظفين الذين لديهم فروع صالحة: ${employeesWithBranches.length}`);
     
     let filtered = employees;
-    if (currentUser.type === 'Accountant' && currentUser.branchName) {
+    
+    // تطبيق تصفية الفرع فقط إذا:
+    // 1. المستخدم من نوع Accountant
+    // 2. المستخدم لديه فرع محدد
+    // 3. هناك موظفون لديهم بيانات فروع صالحة
+    if (currentUser.type === 'Accountant' && currentUser.branchName && hasValidBranches) {
       console.log(`🔍 يتم التصفية حسب الفرع: "${currentUser.branchName}"`);
-      filtered = employees.filter(e => {
-        const match = e.branchName === currentUser.branchName;
-        console.log(`   موظف: ${e.name}, فرعه: "${e.branchName}", مطابق؟ ${match}`);
-        return match;
-      });
+      filtered = employees.filter(e => e.branchName === currentUser.branchName);
       console.log(`✅ بعد التصفية: ${filtered.length} موظف من أصل ${employees.length}`);
+      
+      if (filtered.length === 0) {
+        console.log(`⚠️ لا يوجد موظفون في الفرع "${currentUser.branchName}"، سيتم عرض جميع الموظفين كبديل`);
+        // بدلاً من إظهار خطأ، نعرض جميع الموظفين مع تحذير
+        showAlert(`⚠️ لا يوجد موظفون مسجلون في فرع "${currentUser.branchName}"\nسيتم عرض جميع الموظفين بدلاً من ذلك.`);
+        filtered = employees; // عرض جميع الموظفين كحل بديل
+      }
+    } else if (currentUser.type === 'Accountant' && currentUser.branchName && !hasValidBranches) {
+      console.log("⚠️ بيانات الموظفين لا تحتوي على معلومات الفروع، سيتم عرض جميع الموظفين");
+      showAlert("📢 ملاحظة: بيانات الموظفين لا تحتوي على معلومات الفروع، يتم عرض جميع الموظفين.");
+      filtered = employees;
     } else {
-      console.log("⚠️ لم يتم تطبيق تصفية حسب الفرع - إما المستخدم ليس Accountant أو لا يوجد branchName");
+      console.log("عرض جميع الموظفين (بدون تصفية حسب الفرع)");
     }
     
     if (filtered.length === 0) {
-      console.log("❌ لا يوجد موظفون بعد التصفية!");
-      console.log(`   - إجمالي الموظفين: ${employees.length}`);
-      console.log(`   - فرع المحاسب: "${currentUser?.branchName}"`);
-      console.log(`   - الفروع المتوفرة: ${allBranches.join(', ')}`);
-      console.log("   - نصيحة: تأكد من تطابق اسم الفرع تماماً (يشمل المسافات والأحرف الكبيرة/الصغيرة)");
-      showAlert('لا يوجد موظفون في فرعك');
+      showAlert('لا يوجد موظفون لعرضهم');
       return;
     }
-    // ===== نهاية كود الاختبار =====
     
-    let options = filtered.map(emp => `<option value="${safeEscape(emp.serial)}">${safeEscape(emp.name)} (${safeEscape(emp.position || 'موظف')})</option>`).join('');
+    // إنشاء قائمة الموظفين
+    let options = filtered.map(emp => {
+      const branchInfo = emp.branchName ? ` - فرع: ${emp.branchName}` : '';
+      return `<option value="${safeEscape(emp.serial)}">${safeEscape(emp.name)} (${safeEscape(emp.position || 'موظف')})${branchInfo}</option>`;
+    }).join('');
     
     const modal = document.createElement('div');
     modal.className = 'modal';
@@ -496,7 +498,10 @@ async function openEmployeeAttendance() {
       <div class="modal-box" style="max-width:400px;text-align:center;">
         <div class="modal-icon">👤</div>
         <div class="modal-title">اختر الموظف</div>
-        <select id="empSelect" style="width:100%;padding:10px;border-radius:12px;border:2px solid #ddd;margin-bottom:16px;">${options}</select>
+        <div style="margin-bottom:12px;font-size:12px;color:#666;">📊 عدد الموظفين: ${filtered.length}</div>
+        <select id="empSelect" style="width:100%;padding:10px;border-radius:12px;border:2px solid #ddd;margin-bottom:16px;font-family:'Cairo',sans-serif;">
+          ${options}
+        </select>
         <div class="modal-btns">
           <button class="action-btn btn-teal" onclick="viewSelectedEmployeeAttendance()">عرض السجل</button>
           <button class="action-btn btn-gray" onclick="this.closest('.modal').remove()">إلغاء</button>
@@ -506,7 +511,12 @@ async function openEmployeeAttendance() {
     document.body.appendChild(modal);
     
     window.viewSelectedEmployeeAttendance = () => {
-      const serial = document.getElementById('empSelect').value;
+      const select = document.getElementById('empSelect');
+      const serial = select?.value;
+      if (!serial) {
+        showAlert('الرجاء اختيار موظف أولاً');
+        return;
+      }
       modal.remove();
       window.location.href = `MyAttendance.html?serial=${serial}`;
     };
