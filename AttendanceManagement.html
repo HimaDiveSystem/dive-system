@@ -646,66 +646,187 @@ function updateSummary(){
 }
 
 // ══ SAVE ══
-async function saveDay(){
-  if(!currentDate){showToast('لم يُحدَّد تاريخ','error');return;}
-  const unset=employees.filter(e=>!statusMap[e.serial]);
-  if(unset.length){
-    const names=unset.slice(0,3).map(e=>e.name).join('، ')+(unset.length>3?' وآخرون':'');
-    if(!confirm(unset.length+' موظف لم يُسجَّل:\n'+names+'\n\nهل تريد الحفظ بدونهم؟')) return;
-  }
-
-  const btn=document.getElementById('saveBtn');
-  btn.disabled=true;
-  btn.innerHTML='<span class="loader" style="width:16px;height:16px;border-width:2px;margin:0;display:inline-block;vertical-align:middle;margin-left:6px;"></span> جاري الحفظ...';
-
-  try{
-    const entries=employees
-      .filter(e=>statusMap[e.serial])
-      .map(e=>({serial:e.serial,status:statusMap[e.serial]}));
-
-    const r=await jsonp('saveAttendance',{
-      dateStr:currentDate,
-      month:currentMonth,
-      year:currentYear,
-      dateColNum:currentDateCol,
-      entries:JSON.stringify(entries)
-    });
-
-   if(r&&r.success){
-  // تحديث الرصيد المعروض بعد الحفظ
-  if(r.balanceMap){
-    balanceMap=r.balanceMap;
-    employees.forEach(emp=>{
-      const safeId=emp.serial.replace(/[^a-zA-Z0-9]/g,'_');
-      const box=document.getElementById('bal_'+safeId);
-      if(!box) return;
-      const bal=balanceMap[emp.serial];
-      const balNum=parseFloat(bal);
-      box.querySelector('.balance-num').textContent=isNaN(balNum)?'—':balNum;
-      box.classList.remove('bal-pos','bal-neg','bal-zero');
-      if(balNum>0)      box.classList.add('bal-pos');
-      else if(balNum<0) box.classList.add('bal-neg');
-      else              box.classList.add('bal-zero');
-    });
-  }
-  showToast('✅ تم حفظ '+r.saved+' موظف','success');
+// ══ دالة عرض نافذة منبثقة احترافية بدلاً من confirm ══
+function showConfirmModal(message, unsetEmployees, onConfirm, onCancel) {
+  // إزالة أي مودال موجود مسبقاً
+  const existingModal = document.getElementById('customConfirmModal');
+  if (existingModal) existingModal.remove();
   
-  // بعد حفظ الحضور، قم بمزامنة شيت Salaries
+  // إنشاء طبقة المودال
+  const modalOverlay = document.createElement('div');
+  modalOverlay.id = 'customConfirmModal';
+  modalOverlay.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  `;
+  
+  // بناء قائمة الموظفين
+  const employeesHtml = unsetEmployees.map(emp => `
+    <span style="display: inline-block; background: #fef3c7; padding: 6px 14px; border-radius: 30px; margin: 4px 6px; font-size: 13px; font-weight: 600; color: #92400e;">
+      🧑‍💼 ${emp.name || emp.serial}
+    </span>
+  `).join('');
+  
+  // محتوى المودال
+  modalOverlay.innerHTML = `
+    <div style="background: white; max-width: 480px; width: 90%; border-radius: 28px; box-shadow: 0 25px 50px rgba(0,0,0,0.3); overflow: hidden; animation: fadeSlideUp 0.25s ease-out; direction: rtl;">
+      <div style="background: #fef3c7; padding: 18px 24px; border-bottom: 2px solid #f59e0b;">
+        <h2 style="margin: 0; font-size: 1.5rem; color: #92400e; display: flex; align-items: center; gap: 8px;">
+          ⚠️ انتباه
+        </h2>
+      </div>
+      <div style="padding: 24px;">
+        <div style="background: #fffbeb; padding: 16px; border-radius: 20px; margin-bottom: 20px; text-align: center;">
+          <p style="margin: 0 0 12px 0; font-weight: 700; color: #7c2d12; font-size: 14px;">📋 الموظفون التاليون لم يتم تسجيلهم في النظام:</p>
+          <div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 8px;">
+            ${employeesHtml}
+          </div>
+          <p style="margin-top: 14px; font-size: 12px; color: #b45309;">✖️ إجمالي ${unsetEmployees.length} موظف غير مسجل</p>
+        </div>
+        <p style="text-align: center; font-size: 16px; font-weight: 700; color: #1e293b; margin: 10px 0 20px;">
+          ❓ هل تريد حفظ البيانات بدونهم؟
+        </p>
+        <div style="display: flex; gap: 12px; justify-content: center;">
+          <button id="modalConfirmBtn" style="background: #dc2626; color: white; border: none; padding: 10px 28px; border-radius: 50px; font-size: 14px; font-weight: 700; cursor: pointer; transition: 0.2s;">✅ حفظ بدونهم</button>
+          <button id="modalCancelBtn" style="background: #e2e8f0; color: #1e293b; border: none; padding: 10px 28px; border-radius: 50px; font-size: 14px; font-weight: 700; cursor: pointer; transition: 0.2s;">✖️ إلغاء</button>
+        </div>
+      </div>
+    </div>
+    <style>
+      @keyframes fadeSlideUp {
+        from { opacity: 0; transform: translateY(30px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+    </style>
+  `;
+  
+  document.body.appendChild(modalOverlay);
+  
+  // منع التمرير خلف المودال
+  document.body.style.overflow = 'hidden';
+  
+  // التعامل مع الأزرار
+  const confirmBtn = document.getElementById('modalConfirmBtn');
+  const cancelBtn = document.getElementById('modalCancelBtn');
+  
+  const cleanup = () => {
+    modalOverlay.remove();
+    document.body.style.overflow = '';
+  };
+  
+  confirmBtn.onclick = () => {
+    cleanup();
+    if (onConfirm) onConfirm();
+  };
+  
+  cancelBtn.onclick = () => {
+    cleanup();
+    if (onCancel) onCancel();
+  };
+  
+  // إغلاق عند الضغط على الخلفية
+  modalOverlay.onclick = (e) => {
+    if (e.target === modalOverlay) {
+      cleanup();
+      if (onCancel) onCancel();
+    }
+  };
+}
+
+// ══ دالة SAVE المعدلة (بدون confirm التقليدية) ══
+async function saveDay() {
+  if (!currentDate) {
+    showToast('لم يُحدَّد تاريخ', 'error');
+    return;
+  }
+  
+  const unsetEmployees = employees.filter(e => !statusMap[e.serial]);
+  
+  if (unsetEmployees.length) {
+    // استخدام المودال الاحترافي بدلاً من confirm
+    showConfirmModal(
+      'تأكيد الحفظ',
+      unsetEmployees,
+      async () => {
+        // على "حفظ بدونهم" - تابع الحفظ
+        await performSave();
+      },
+      () => {
+        // على "إلغاء" - لا تفعل شيئاً
+        showToast('تم إلغاء الحفظ', 'info');
+      }
+    );
+    return;
+  }
+  
+  // لا يوجد موظفون غير مسجلين، احفظ مباشرة
+  await performSave();
+}
+
+// ══ دالة التنفيذ الفعلي للحفظ ══
+async function performSave() {
+  const btn = document.getElementById('saveBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="loader" style="width:16px;height:16px;border-width:2px;margin:0;display:inline-block;vertical-align:middle;margin-left:6px;"></span> جاري الحفظ...';
+  
   try {
-    await jsonp('syncWorkingDaysToSalaries', { month: currentMonth, year: currentYear });
-  } catch(e) { console.warn('sync error:', e); }
-  
-} else {
-  showToast('❌ '+(r?.message||'فشل الحفظ'),'error');
-}
-  }catch(e){
-    showToast('❌ '+e.message,'error');
-  }finally{
-    btn.disabled=false;
-    btn.innerHTML='💾 حفظ الحضور';
+    const entries = employees
+      .filter(e => statusMap[e.serial])
+      .map(e => ({ serial: e.serial, status: statusMap[e.serial] }));
+    
+    const r = await jsonp('saveAttendance', {
+      dateStr: currentDate,
+      month: currentMonth,
+      year: currentYear,
+      dateColNum: currentDateCol,
+      entries: JSON.stringify(entries)
+    });
+    
+    if (r && r.success) {
+      if (r.balanceMap) {
+        balanceMap = r.balanceMap;
+        employees.forEach(emp => {
+          const safeId = emp.serial.replace(/[^a-zA-Z0-9]/g, '_');
+          const box = document.getElementById('bal_' + safeId);
+          if (!box) return;
+          const bal = balanceMap[emp.serial];
+          const balNum = parseFloat(bal);
+          box.querySelector('.balance-num').textContent = isNaN(balNum) ? '—' : balNum;
+          box.classList.remove('bal-pos', 'bal-neg', 'bal-zero');
+          if (balNum > 0) box.classList.add('bal-pos');
+          else if (balNum < 0) box.classList.add('bal-neg');
+          else box.classList.add('bal-zero');
+        });
+      }
+      showToast('✅ تم حفظ ' + r.saved + ' موظف', 'success');
+      
+      try {
+        await jsonp('syncWorkingDaysToSalaries', { month: currentMonth, year: currentYear });
+      } catch (e) {
+        console.warn('sync error:', e);
+      }
+      
+    } else {
+      showToast('❌ ' + (r?.message || 'فشل الحفظ'), 'error');
+    }
+  } catch (e) {
+    showToast('❌ ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '💾 حفظ الحضور';
   }
 }
-async function saveAndOpenSalary() {
+  async function saveAndOpenSalary() {
   const btn = document.getElementById('salaryBtn');
   btn.disabled = true;
   btn.innerHTML = '<span class="loader" style="width:16px;height:16px;border-width:2px;margin:0;display:inline-block;vertical-align:middle;margin-left:6px;"></span> جاري...';
