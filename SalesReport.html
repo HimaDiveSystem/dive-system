@@ -47,7 +47,7 @@
     .chart-card h3{color:var(--navy);font-size:14px;font-weight:800;margin-bottom:12px;display:flex;align-items:center;gap:7px;}
     .chart-wrap{position:relative;height:300px;}
     .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:18px 0;}
-    .stat-card{background:var(--card);border-radius:var(--radius);border:1px solid var(--border);padding:15px;text-align:center;cursor:help;transition:all 0.2s;}
+    .stat-card{background:var(--card);border-radius:var(--radius);border:1px solid var(--border);padding:15px;text-align:center;transition:all 0.2s;}
     .stat-card:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(0,0,0,0.1);border-color:var(--blue);}
     .stat-icon{font-size:24px;margin-bottom:8px;}
     .stat-label{font-size:11px;color:var(--text-lt);font-weight:600;margin-bottom:5px;}
@@ -178,51 +178,37 @@ function setFullYear(){ const y=new Date().getFullYear(); document.getElementByI
 function resetFilters(){ document.getElementById('filterDateFrom').value=''; document.getElementById('filterDateTo').value=''; const branchSelect=document.getElementById('fBranch'); if(branchSelect&&branchSelect.disabled!==true) branchSelect.value=''; document.getElementById('fSales').value=''; document.getElementById('fTrip').value=''; document.getElementById('fHotel').value=''; document.getElementById('fNat').value=''; document.getElementById('fState').value=''; setDefaultDates(); runReport(); }
 function applyFilters(){ const fromDate=document.getElementById('filterDateFrom').value; const toDate=document.getElementById('filterDateTo').value; const branch=document.getElementById('fBranch')?.value; const sales=document.getElementById('fSales')?.value; const trip=document.getElementById('fTrip')?.value; const hotel=document.getElementById('fHotel')?.value; const nat=document.getElementById('fNat')?.value; const state=document.getElementById('fState')?.value; let fromTs=null,toTs=null; if(fromDate){ const [y,m,d]=fromDate.split('-').map(Number); fromTs=new Date(y,m-1,d).getTime(); } if(toDate){ const [y,m,d]=toDate.split('-').map(Number); toTs=new Date(y,m-1,d,23,59,59,999).getTime(); } filteredInvoices=allInvoices.filter(inv=>{ let dt=parseDate(inv.activeDate); if(!dt) dt=parseDate(inv.issueDate); const ts=dt?dt.getTime():null; if(fromTs&&(ts===null||ts<fromTs)) return false; if(toTs&&(ts===null||ts>toTs)) return false; if(branch&&inv.branchName!==branch) return false; if(sales&&inv.salesName!==sales) return false; if(trip&&inv.trip!==trip) return false; if(hotel&&inv.hotel!==hotel) return false; if(nat&&inv.nationality!==nat) return false; if(state&&(inv.state||'').toLowerCase()!==state.toLowerCase()) return false; return true; }); console.log(`📊 بعد التصفية: ${filteredInvoices.length} فاتورة`); }
 async function runReport(){ applyFilters(); if(!filteredInvoices.length){ document.getElementById('reportContent').innerHTML='<div class="no-data">📭 لا توجد بيانات تطابق معايير البحث</div>'; return; } const total=filteredInvoices.length; const rev=filteredInvoices.reduce((s,i)=>s+(parseFloat(i.actualPrice)||0),0); const coll=filteredInvoices.reduce((s,i)=>s+(parseFloat(i.paymentPrice)||0),0); const rest=filteredInvoices.reduce((s,i)=>s+(parseFloat(i.rest)||0),0); const confirmed=filteredInvoices.filter(i=>(i.state||'').toLowerCase()==='confirmed').length; const monthlyMap={}; for(const inv of filteredInvoices){ const dt=parseDate(inv.activeDate); if(!dt) continue; const monthKey=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`; const monthLabel=`${MONTHS[dt.getMonth()]} ${dt.getFullYear()}`; if(!monthlyMap[monthKey]) monthlyMap[monthKey]={label:monthLabel,rev:0,count:0}; const revenueEGP=getRevenueInEGPFromCache(inv); monthlyMap[monthKey].rev+=revenueEGP; monthlyMap[monthKey].count++; } const sortedMonths=Object.keys(monthlyMap).sort(); const labels=sortedMonths.map(k=>monthlyMap[k].label); const revData=sortedMonths.map(k=>monthlyMap[k].rev); const cntData=sortedMonths.map(k=>monthlyMap[k].count); const totalRevenue=revData.reduce((a,b)=>a+b,0); const tripMap={}; for(const inv of filteredInvoices){ const trip=inv.trip||'أخرى'; const revenueEGP=getRevenueInEGPFromCache(inv); tripMap[trip]=(tripMap[trip]||0)+revenueEGP; } const topTrips=Object.entries(tripMap).sort((a,b)=>b[1]-a[1]).slice(0,10); const salesMap={}; for(const inv of filteredInvoices){ const name=inv.salesName||'غير معروف'; const revenueEGP=getRevenueInEGPFromCache(inv); salesMap[name]=(salesMap[name]||0)+revenueEGP; } const topSales=Object.entries(salesMap).sort((a,b)=>b[1]-a[1]).slice(0,10); const branchMap={}; for(const inv of filteredInvoices){ const name=inv.branchName||'المركز الرئيسي'; const revenueEGP=getRevenueInEGPFromCache(inv); branchMap[name]=(branchMap[name]||0)+revenueEGP; } const topBranches=Object.entries(branchMap).sort((a,b)=>b[1]-a[1]).slice(0,10); const natMap={}; for(const inv of filteredInvoices){ const nat=inv.nationality||'أخرى'; const revenueEGP=getRevenueInEGPFromCache(inv); natMap[nat]=(natMap[nat]||0)+revenueEGP; } const topNats=Object.entries(natMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
-
-// حساب القيم الحقيقية للبطاقات الأربع
-const highestRevenue = Math.max(...revData, 0);
-const bestMonthIndex = revData.indexOf(highestRevenue);
-const bestMonthName = bestMonthIndex !== -1 ? labels[bestMonthIndex] : '-';
-const avgMonthly = totalRevenue / (labels.length || 1);
-
-// إنشاء HTML مع إضافة data-attributes للقيم الحقيقية
-document.getElementById('reportContent').innerHTML=`<div class="kpi-grid"><div class="kpi-card c-blue"><div class="kpi-icon">🧾</div><div class="kpi-label">Total Bookings</div><div class="kpi-val">${total}</div><div class="kpi-sub">${confirmed} confirmed</div></div><div class="kpi-card c-green"><div class="kpi-icon">💰</div><div class="kpi-label">Total Revenue (EGP)</div><div class="kpi-val">${fmtNum(totalRevenue)}</div><div class="kpi-sub">After discount</div></div><div class="kpi-card c-orange"><div class="kpi-icon">💳</div><div class="kpi-label">Collected (EGP)</div><div class="kpi-val">${fmtNum(coll)}</div><div class="kpi-sub">Payment received</div></div><div class="kpi-card c-purple"><div class="kpi-icon">📋</div><div class="kpi-label">Outstanding (EGP)</div><div class="kpi-val">${fmtNum(rest)}</div><div class="kpi-sub">Remaining balance</div></div><div class="kpi-card c-gold"><div class="kpi-icon">📊</div><div class="kpi-label">Avg / Booking</div><div class="kpi-val">${fmtNum(totalRevenue/total)}</div><div class="kpi-sub">EGP per invoice</div></div></div><div class="chart-card"><h3>📈 Revenue & Bookings Trend</h3><div class="chart-wrap"><canvas id="mainChart"></canvas></div></div><div class="stats-grid"><div class="stat-card" data-raw-value="${highestRevenue}" data-raw-type="revenue"><div class="stat-icon">📈</div><div class="stat-label">Highest Month</div><div class="stat-value">${fmtNum(highestRevenue)}</div></div><div class="stat-card" data-raw-value="${bestMonthName}" data-raw-type="month"><div class="stat-icon">⭐</div><div class="stat-label">Best Month</div><div class="stat-value">${bestMonthName}</div></div><div class="stat-card" data-raw-value="${total}" data-raw-type="bookings"><div class="stat-icon">📊</div><div class="stat-label">Total Bookings</div><div class="stat-value">${total}</div></div><div class="stat-card" data-raw-value="${avgMonthly}" data-raw-type="revenue"><div class="stat-icon">🎯</div><div class="stat-label">Avg Monthly</div><div class="stat-value">${fmtNum(avgMonthly)}</div></div></div><div class="tips-section"><div class="tips-title"><span>💡</span> Insights & Recommendations</div><div class="tips-grid"><div class="tip-card"><div class="tip-icon">🏆</div><div class="tip-text">Best selling trip: <span class="tip-highlight">${topTrips[0]?.[0]||'-'}</span> with ${fmtNum(topTrips[0]?.[1]||0)} EGP</div></div><div class="tip-card"><div class="tip-icon">👤</div><div class="tip-text">Top performer: <span class="tip-highlight">${topSales[0]?.[0]||'-'}</span> with ${fmtNum(topSales[0]?.[1]||0)} EGP</div></div><div class="tip-card"><div class="tip-icon">🏛️</div><div class="tip-text">Best branch: <span class="tip-highlight">${topBranches[0]?.[0]||'-'}</span> with ${fmtNum(topBranches[0]?.[1]||0)} EGP</div></div><div class="tip-card"><div class="tip-icon">🌍</div><div class="tip-text">Top nationality: <span class="tip-highlight">${topNats[0]?.[0]||'-'}</span> with ${fmtNum(topNats[0]?.[1]||0)} EGP</div></div></div></div><div class="tbls-grid">${buildTable('🏝️ By Trip',topTrips,'Trip')}${buildTable('👤 By Sales Person',topSales,'Sales')}${buildTable('🏛️ By Branch',topBranches,'Branch')}${buildTable('🌍 By Nationality',topNats,'Nationality')}</div>`;
-
-// رسم الرسم البياني
-drawChart(labels, revData, cntData);
-
-// إضافة خاصية Hover (tooltip) لإظهار القيم الحقيقية بعد رسم البطاقات
-addHoverTooltipsToStatCards();
+document.getElementById('reportContent').innerHTML=`<div class="kpi-grid"><div class="kpi-card c-blue"><div class="kpi-icon">🧾</div><div class="kpi-label">Total Bookings</div><div class="kpi-val">${total}</div><div class="kpi-sub">${confirmed} confirmed</div></div><div class="kpi-card c-green"><div class="kpi-icon">💰</div><div class="kpi-label">Total Revenue (EGP)</div><div class="kpi-val">${fmtNum(totalRevenue)}</div><div class="kpi-sub">After discount</div></div><div class="kpi-card c-orange"><div class="kpi-icon">💳</div><div class="kpi-label">Collected (EGP)</div><div class="kpi-val">${fmtNum(coll)}</div><div class="kpi-sub">Payment received</div></div><div class="kpi-card c-purple"><div class="kpi-icon">📋</div><div class="kpi-label">Outstanding (EGP)</div><div class="kpi-val">${fmtNum(rest)}</div><div class="kpi-sub">Remaining balance</div></div><div class="kpi-card c-gold"><div class="kpi-icon">📊</div><div class="kpi-label">Avg / Booking</div><div class="kpi-val">${fmtNum(totalRevenue/total)}</div><div class="kpi-sub">EGP per invoice</div></div></div><div class="chart-card"><h3>📈 Revenue & Bookings Trend</h3><div class="chart-wrap"><canvas id="mainChart"></canvas></div></div><div class="stats-grid"><div class="stat-card" data-raw-revenue="${Math.max(...revData,0)}"><div class="stat-icon">📈</div><div class="stat-label">Highest Month</div><div class="stat-value">${fmtNum(Math.max(...revData,0))}</div></div><div class="stat-card" data-raw-month="${labels[revData.indexOf(Math.max(...revData))]||'-'}"><div class="stat-icon">⭐</div><div class="stat-label">Best Month</div><div class="stat-value">${labels[revData.indexOf(Math.max(...revData))]||'-'}</div></div><div class="stat-card" data-raw-bookings="${total}"><div class="stat-icon">📊</div><div class="stat-label">Total Bookings</div><div class="stat-value">${total}</div></div><div class="stat-card" data-raw-avg="${totalRevenue/(labels.length||1)}"><div class="stat-icon">🎯</div><div class="stat-label">Avg Monthly</div><div class="stat-value">${fmtNum(totalRevenue/(labels.length||1))}</div></div></div><div class="tips-section"><div class="tips-title"><span>💡</span> Insights & Recommendations</div><div class="tips-grid"><div class="tip-card"><div class="tip-icon">🏆</div><div class="tip-text">Best selling trip: <span class="tip-highlight">${topTrips[0]?.[0]||'-'}</span> with ${fmtNum(topTrips[0]?.[1]||0)} EGP</div></div><div class="tip-card"><div class="tip-icon">👤</div><div class="tip-text">Top performer: <span class="tip-highlight">${topSales[0]?.[0]||'-'}</span> with ${fmtNum(topSales[0]?.[1]||0)} EGP</div></div><div class="tip-card"><div class="tip-icon">🏛️</div><div class="tip-text">Best branch: <span class="tip-highlight">${topBranches[0]?.[0]||'-'}</span> with ${fmtNum(topBranches[0]?.[1]||0)} EGP</div></div><div class="tip-card"><div class="tip-icon">🌍</div><div class="tip-text">Top nationality: <span class="tip-highlight">${topNats[0]?.[0]||'-'}</span> with ${fmtNum(topNats[0]?.[1]||0)} EGP</div></div></div></div><div class="tbls-grid">${buildTable('🏝️ By Trip',topTrips,'Trip')}${buildTable('👤 By Sales Person',topSales,'Sales')}${buildTable('🏛️ By Branch',topBranches,'Branch')}${buildTable('🌍 By Nationality',topNats,'Nationality')}</div>`;
+drawChart(labels,revData,cntData);
+// إضافة خاصية الـ Hover للبطاقات
+addHoverTooltips();
 }
-
-// دالة جديدة لإضافة خاصية الـ Hover على البطاقات الإحصائية
-function addHoverTooltipsToStatCards() {
-  const statCards = document.querySelectorAll('.stat-card');
-  statCards.forEach(card => {
-    const rawValue = card.getAttribute('data-raw-value');
-    const rawType = card.getAttribute('data-raw-type');
-    const label = card.querySelector('.stat-label')?.innerText || '';
+// دالة إضافة الـ Tooltip للقيم الحقيقية
+function addHoverTooltips() {
+  const cards = document.querySelectorAll('.stat-card');
+  cards.forEach(card => {
     let tooltipText = '';
-    
-    if (rawType === 'revenue' && rawValue && !isNaN(rawValue)) {
-      const numValue = parseFloat(rawValue);
-      tooltipText = `💰 القيمة الحقيقية: ${numValue.toLocaleString()} جنيه مصري`;
-    } 
-    else if (rawType === 'bookings') {
-      tooltipText = `📊 إجمالي الحجوزات: ${rawValue} حجز`;
+    if (card.hasAttribute('data-raw-revenue')) {
+      const val = parseFloat(card.getAttribute('data-raw-revenue'));
+      tooltipText = `💰 القيمة الحقيقية: ${val.toLocaleString()} جنيه مصري`;
+    } else if (card.hasAttribute('data-raw-bookings')) {
+      const val = card.getAttribute('data-raw-bookings');
+      tooltipText = `📊 إجمالي الحجوزات: ${val} حجز`;
+    } else if (card.hasAttribute('data-raw-month')) {
+      const month = card.getAttribute('data-raw-month');
+      const revenueCard = document.querySelector('.stat-card[data-raw-revenue]');
+      const revenue = revenueCard ? parseFloat(revenueCard.getAttribute('data-raw-revenue')) : 0;
+      tooltipText = `⭐ أفضل شهر: ${month} - الإيرادات: ${revenue.toLocaleString()} جنيه`;
+    } else if (card.hasAttribute('data-raw-avg')) {
+      const val = parseFloat(card.getAttribute('data-raw-avg'));
+      tooltipText = `🎯 متوسط الإيرادات الشهرية: ${val.toLocaleString()} جنيه مصري`;
     }
-    else if (rawType === 'month' && rawValue && rawValue !== '-') {
-      const highestRevenue = document.querySelector('.stat-card[data-raw-type="revenue"]')?.getAttribute('data-raw-value') || '0';
-      tooltipText = `⭐ أفضل شهر: ${rawValue} - الإيرادات: ${parseFloat(highestRevenue).toLocaleString()} جنيه`;
-    }
-    
     if (tooltipText) {
       card.setAttribute('title', tooltipText);
       card.style.cursor = 'help';
     }
   });
 }
-
 function switchTab(tab){ document.querySelectorAll('.analytics-tab').forEach(t=>t.classList.remove('active')); document.querySelector(`.analytics-tab[data-tab="${tab}"]`).classList.add('active'); runReport(); }
 function goBack() {
   if (document.referrer && document.referrer !== '') {
