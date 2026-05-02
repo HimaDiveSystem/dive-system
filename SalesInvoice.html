@@ -212,6 +212,8 @@ const C={
   customers:[]
 };
 
+// ========== الدوال الأساسية ==========
+
 function gas(action, params = {}) {
   const u = new URL(GAS);
   u.searchParams.set('action', action);
@@ -560,6 +562,12 @@ async function collectData() {
     else paid = R2(LE);
   } else paid = directPaid(cur, cU, cE, cG, cL, vU, vE, vG, vL);
   
+  const prices = [];
+  for (let i = 0; i < 10; i++) {
+    const priceEl = document.getElementById(`price_${i}`);
+    prices.push(priceEl ? parseFloat(priceEl.value) || 0 : 0);
+  }
+  
   return {
     salesId: currentUser?.id || '',
     salesName: currentUser?.name || '',
@@ -590,8 +598,10 @@ async function collectData() {
     signatureData: signatureData || '',
     cost: tripHasCost,
     state: 'pending',
+    pricesArray: prices,
   };
 }
+
 async function validate(){
   const inv=await collectData();
   if(!inv.guestName){showAlert('الرجاء إدخال اسم العميل','⚠️');return null;}
@@ -604,51 +614,100 @@ async function validate(){
   if(!inv.trip){showAlert('الرجاء اختيار اسم الرحلة','⚠️');return null;}
   return inv;
 }
-async function saveAndGeneratePDF(inv) {
-  showPDFOv('💾 جاري حفظ الفاتورة...');
-  
-  // ✅ حفظ الأسعار والإجمالي مؤقتاً قبل الحفظ
-  const savedPrices = [];
-  for (let i = 0; i < 10; i++) {
-    savedPrices.push(parseFloat(document.getElementById(`price_${i}`)?.value) || 0);
-  }
-  const savedTotal = inv.actualPrice;
-  
-  const save = await gasWithSig('saveInvoice', inv);
-  if (!save?.success) throw new Error(save?.message || 'فشل الحفظ');
-  const voucherNo = save.voucherNo;
-  
-  if (inv.signatureData && inv.signatureData.startsWith('data:image')) {
-    showPDFOv('✍️ جاري إنهاء التوقيع...');
-    await new Promise(r => setTimeout(r, 1000));
-  }
-  
-  showPDFOv('📄 جاري إنشاء PDF...');
-  
-  // ✅ تمرير الأسعار والإجمالي مع رقم الفاتورة
-  const pdf = await gas('saveAndGenerateSinglePDF_New', { 
-    voucherNo, 
-    prices: JSON.stringify(savedPrices),
-    total: savedTotal
-  });
-  
-  hidePDFOv();
-  if (!pdf?.success) {
-    showAlert('تم الحفظ ولكن فشل إنشاء PDF: ' + (pdf?.message || ''), '⚠️');
+
+// ========== دوال الحفظ الرئيسية ==========
+async function saveInvoice() {
+  try {
+    setBtns(true);
+    showPDFOv('💾 جاري حفظ الفاتورة...');
+    
+    const formData = await validate();
+    if (!formData) {
+      hidePDFOv();
+      setBtns(false);
+      return;
+    }
+    
+    const prices = formData.pricesArray || [];
+    
+    const saveResult = await gasWithSig('saveInvoice', formData);
+    if (!saveResult?.success) throw new Error(saveResult?.message || 'فشل الحفظ');
+    
+    const voucherNo = saveResult.voucherNo;
+    console.log('✅ تم حفظ الفاتورة:', voucherNo);
+    
+    showPDFOv('📄 جاري إنشاء PDF...');
+    const pdfResult = await gas('saveAndGenerateSinglePDF_New', {
+      voucherNo: voucherNo,
+      prices: JSON.stringify(prices)
+    });
+    
+    hidePDFOv();
+    
+    if (!pdfResult?.success) {
+      showAlert('تم الحفظ ولكن فشل إنشاء PDF: ' + (pdfResult?.message || ''), '⚠️');
+      return null;
+    }
+    
+    const allVouchers = [...sessionVouchers, { voucherNo: voucherNo, url: pdfResult.url }];
+    sessionVouchers = [];
+    clearFormFull();
+    showPDFsModal(allVouchers);
+    
+    return { voucherNo, url: pdfResult.url };
+    
+  } catch(err) {
+    console.error('❌ خطأ:', err);
+    hidePDFOv();
+    showAlert('خطأ: ' + err.message, '❌');
     return null;
+  } finally {
+    setBtns(false);
   }
-  return { voucherNo, url: pdf.url };
 }
-  
-async function saveInvoice(){
-  const inv=await validate();if(!inv)return;setBtns(true);
-  try{const res=await saveAndGeneratePDF(inv);if(res){const all=[...sessionVouchers,{voucherNo:res.voucherNo,url:res.url}];sessionVouchers=[];clearFormFull();showPDFsModal(all);}}
-  catch(err){hidePDFOv();showAlert('خطأ: '+err.message,'❌');}finally{setBtns(false);}
-}
-async function newBooking(){
-  const inv=await validate();if(!inv)return;setBtns(true);
-  try{const res=await saveAndGeneratePDF(inv);if(res){sessionVouchers.push({voucherNo:res.voucherNo,url:res.url});updateSessionBadge();clearFormPartial();showAlert(`✅ تم حفظ ${res.voucherNo}\n${sessionVouchers.length} حجز في الجلسة\n\nأدخل الحجز التالي أو اضغط حفظ لإنهاء.`,'✅');}}
-  catch(err){hidePDFOv();showAlert('خطأ: '+err.message,'❌');}finally{setBtns(false);}
+
+async function newBooking() {
+  try {
+    setBtns(true);
+    showPDFOv('💾 جاري حفظ الحجز...');
+    
+    const formData = await validate();
+    if (!formData) {
+      hidePDFOv();
+      setBtns(false);
+      return;
+    }
+    
+    const prices = formData.pricesArray || [];
+    
+    const saveResult = await gasWithSig('saveInvoice', formData);
+    if (!saveResult?.success) throw new Error(saveResult?.message || 'فشل الحفظ');
+    
+    const voucherNo = saveResult.voucherNo;
+    
+    showPDFOv('📄 جاري إنشاء PDF...');
+    const pdfResult = await gas('saveAndGenerateSinglePDF_New', {
+      voucherNo: voucherNo,
+      prices: JSON.stringify(prices)
+    });
+    
+    hidePDFOv();
+    
+    if (pdfResult?.success) {
+      sessionVouchers.push({ voucherNo: voucherNo, url: pdfResult.url });
+      updateSessionBadge();
+      clearFormPartial();
+      showAlert(`✅ تم حفظ ${voucherNo}\n${sessionVouchers.length} حجز في الجلسة`, '✅');
+    } else {
+      showAlert('تم الحفظ ولكن فشل إنشاء PDF', '⚠️');
+    }
+  } catch(err) {
+    console.error('❌ خطأ:', err);
+    hidePDFOv();
+    showAlert('خطأ: ' + err.message, '❌');
+  } finally {
+    setBtns(false);
+  }
 }
 
 function clearFormFull(){
@@ -663,6 +722,7 @@ function clearFormFull(){
   const td=document.getElementById('timeDisplayText');if(td){td.textContent='اختر الوقت...';td.classList.add('ph');}
   updateSessionBadge();
 }
+
 function clearFormPartial(){
   resetTrip();ckHour=null;ckMin=null;
   ['activeDate','notes','discount','tripName'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
@@ -674,10 +734,12 @@ function clearFormPartial(){
   ['displayActualPrice','displayRest'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent='0.00';});
   ['cashUSD','cashEUR','cashGBP','cashLE','visaUSD','visaEUR','visaGBP','visaLE'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
 }
+
 function clearForm(){
   if(sessionVouchers.length){showAlert(`تحذير: ${sessionVouchers.length} حجز في الجلسة.\nمسح النموذج فقط أم إلغاء الجلسة؟`,'⚠️',`<button class="btn btn-clear" onclick="clearFormPartial();closeAlert()">مسح النموذج فقط</button><button class="btn btn-save" onclick="cancelSession()">إلغاء الجلسة</button>`);}
   else clearFormFull();
 }
+
 function cancelSession(){sessionVouchers=[];clearFormFull();closeAlert();}
 
 function buildClockFace(){
