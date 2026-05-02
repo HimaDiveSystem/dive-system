@@ -172,7 +172,7 @@ async function loadReport() {
       jsonp('getLatestExchangeRates', {})
     ]);
 
-    // ✅ التحقق من وجود أسعار الصرف (بدون أرقام افتراضية)
+    // ✅ التحقق من وجود أسعار الصرف
     if (!ratesResult || !ratesResult.bUSD || !ratesResult.bEUR || !ratesResult.bGBP) {
       console.log('⚠️ لا توجد أسعار صرف في شيت Exchange_Rates');
       document.getElementById('reportArea').innerHTML = 
@@ -202,7 +202,13 @@ async function loadReport() {
       const invMonth = (inv.month || '').toString().trim();
       const invYear  = (inv.year  || '').toString().trim();
       const state    = (inv.state || '').toString().trim().toLowerCase();
-      const comm     = parseFloat(inv.commission) || 0;
+      let comm = parseFloat(inv.commission) || 0;
+      
+      // إذا كانت العمولة undefined أو NaN، حاول قراءتها كنص
+      if (isNaN(comm) || comm === 0) {
+        const commStr = inv.commission?.toString().trim();
+        if (commStr && commStr !== '') comm = parseFloat(commStr) || 0;
+      }
 
       if (invMonth !== month || invYear !== year) return;
       if (state !== 'confirmed') return;
@@ -213,10 +219,11 @@ async function loadReport() {
       commissionMap[salesId] = (commissionMap[salesId] || 0) + comm;
     });
 
-    // ── 2. حساب الدفعات المقدمة من Expenses ──
+    // ── 2. حساب الدفعات المقدمة من Expenses (مطابقة تامة لاسم الموظف) ──
+    // بناء خريطة اسم الموظف → userId من employees
     const nameToId = {};
     employees.forEach(emp => {
-      if (emp.name) nameToId[emp.name.trim().toLowerCase()] = emp.userId;
+      if (emp.name) nameToId[emp.name] = emp.userId;
     });
 
     const advanceMap = {};
@@ -225,25 +232,13 @@ async function loadReport() {
       const expYear  = (exp.year  || '').toString().trim();
       if (expMonth !== month || expYear !== year) return;
 
-      const account     = (exp.account     || '').toString().trim().toLowerCase();
-      const accountName = (exp.accountName || '').toString().trim().toLowerCase();
-      const details     = (exp.details     || '').toString().trim().toLowerCase();
-
-      let targetUserId = null;
-      if (nameToId[accountName]) {
-        targetUserId = nameToId[accountName];
-      } else {
-        for (const [name, uid] of Object.entries(nameToId)) {
-          if (details.includes(name) || account.includes(name)) {
-            targetUserId = uid;
-            break;
-          }
-        }
-      }
-
+      const account = (exp.account || '').toString().trim(); // عمود Account
+      
+      // ✅ مطابقة تامة (ليست includes)
+      const targetUserId = nameToId[account];
       if (!targetUserId) return;
 
-      // تحويل كل العملات إلى LE باستخدام أسعار الصرف الحقيقية
+      // تحويل العملات إلى LE
       const usd = parseFloat(exp.usd) || 0;
       const eur = parseFloat(exp.eur) || 0;
       const gbp = parseFloat(exp.gbp) || 0;
@@ -292,6 +287,11 @@ async function loadReport() {
         net
       };
     });
+
+    // Log للتحقق من النتائج
+    console.log('commissionMap:', commissionMap);
+    console.log('advanceMap:', advanceMap);
+    console.log('tableData[0]:', tableData[0]);
 
     const totalCommissions = Object.values(commissionMap).reduce((a,b)=>a+b, 0);
     const totalAdvances    = Object.values(advanceMap).reduce((a,b)=>a+b, 0);
