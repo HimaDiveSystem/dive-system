@@ -417,54 +417,95 @@ function renderTable(rows, month, year) {
 // ──────────────────────────────────────────────
 function exportToExcel() {
   if (!tableData.length) { showToast('لا توجد بيانات لتصديرها', 'error'); return; }
+  
   const month = document.getElementById('selMonth').value;
-  const year  = document.getElementById('selYear').value;
-
+  const year = document.getElementById('selYear').value;
+  
+  // تعريف رؤوس الأعمدة (16 عموداً)
   const headers = [
-    'الرقم الوظيفي','الاسم','الوظيفة','أيام الحضور','أيام الغياب',
-    'الراتب الأساسي (LE)','العمولات (LE)','الحافز (LE)','الإجمالي (LE)',
-    'الدفعة المقدمة (LE)','التأمينات (LE)','خصم آخر (LE)','الصافي المستحق (LE)'
-  ].join(',');
-
-  const rows = tableData.map(r => [
-    r.userId, '"'+r.name+'"', '"'+r.position+'"',
-    r.workingDays, r.absentDays,
-    Math.round(r.salaryAmount), Math.round(r.commission), Math.round(r.bonus), Math.round(r.total),
-    Math.round(r.downPaymentLE), Math.round(r.insurance), Math.round(r.cuts), Math.round(r.net)
-  ].join(','));
-
-  // صف الإجماليات
+    '#', 'الرقم الوظيفي', 'الاسم', 'الوظيفة', 'أيام الحضور', 'أيام الغياب',
+    'الراتب الأساسي', 'الراتب المستحق', 'العمولة', 'الحافز',
+    'الإجمالي', 'الخصم', 'الغياب', 'التأمينات',
+    'صافي بعد الخصم', 'الدفعة المقدمة', 'الصافي المستحق'
+  ];
+  
+  // ✅ استخدام الفاصلة المنقوطة (;) كفاصل بدلاً من الفاصلة (,) لتجنب مشاكل Excel العربي
+  const delimiter = ';';
+  
+  // بناء صفوف CSV
+  const rows = [];
+  
+  // إضافة رؤوس الأعمدة
+  rows.push(headers.join(delimiter));
+  
+  // إضافة بيانات كل موظف
+  tableData.forEach(emp => {
+    const row = [
+      emp.userId,
+      `"${emp.name}"`,
+      `"${emp.position || ''}"`,
+      emp.workingDays,
+      emp.absentDays,
+      emp.monthlySalary,
+      emp.salaryAmount,
+      emp.commission,
+      emp.bonus,
+      emp.total,
+      emp.cuts,
+      emp.absent,
+      emp.insurance,
+      emp.totalAfterCuts,
+      emp.downPaymentLE,
+      emp.net
+    ];
+    rows.push(row.join(delimiter));
+  });
+  
+  // إضافة صف الإجماليات
   const totals = tableData.reduce((acc, r) => {
-    acc.workingDays    += r.workingDays;
-    acc.absentDays     += r.absentDays;
-    acc.salaryAmount   += r.salaryAmount;
-    acc.commission     += r.commission;
-    acc.bonus          += r.bonus;
-    acc.total          += r.total;
-    acc.downPaymentLE  += r.downPaymentLE;
-    acc.insurance      += r.insurance;
-    acc.cuts           += r.cuts;
-    acc.net            += r.net;
+    acc.workingDays += r.workingDays || 0;
+    acc.absentDays += r.absentDays || 0;
+    acc.monthlySalary += r.monthlySalary || 0;
+    acc.salaryAmount += r.salaryAmount || 0;
+    acc.commission += r.commission || 0;
+    acc.total += r.total || 0;
+    acc.downPaymentLE += r.downPaymentLE || 0;
+    acc.net += r.net || 0;
     return acc;
-  }, {workingDays:0,absentDays:0,salaryAmount:0,commission:0,bonus:0,total:0,downPaymentLE:0,insurance:0,cuts:0,net:0});
-
-  rows.push([
-    'الإجمالي','','',
-    Math.round(totals.workingDays*100)/100, Math.round(totals.absentDays),
-    Math.round(totals.salaryAmount), Math.round(totals.commission), Math.round(totals.bonus), Math.round(totals.total),
-    Math.round(totals.downPaymentLE), Math.round(totals.insurance), Math.round(totals.cuts), Math.round(totals.net)
-  ].join(','));
-
-  const csv = '\uFEFF' + headers + '\n' + rows.join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  }, { workingDays: 0, absentDays: 0, monthlySalary: 0, salaryAmount: 0, commission: 0, total: 0, downPaymentLE: 0, net: 0 });
+  
+  const totalRow = [
+    'الإجمالي الكلي',
+    '', '', '',
+    totals.workingDays.toFixed(1),
+    totals.absentDays,
+    totals.monthlySalary,
+    totals.salaryAmount,
+    totals.commission,
+    '',
+    totals.total,
+    '',
+    '',
+    '',
+    totals.downPaymentLE,
+    totals.net
+  ];
+  rows.push(totalRow.join(delimiter));
+  
+  // ✅ إنشاء ملف CSV مع BOM لدعم اللغة العربية
+  const blob = new Blob(['\uFEFF' + rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  
+  // تحميل الملف
   const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
-  link.download = `Salary_${month}_${year}.csv`;
+  const url = URL.createObjectURL(blob);
+  link.href = url;
+  link.setAttribute('download', `Salary_Report_${month}_${year}.csv`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  URL.revokeObjectURL(link.href);
-  showToast('✅ تم التصدير', 'success');
+  URL.revokeObjectURL(url);
+  
+  showToast('✅ تم التصدير بنجاح', 'success');
 }
 
 function showToast(msg, type) {
