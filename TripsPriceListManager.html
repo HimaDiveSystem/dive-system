@@ -856,42 +856,68 @@
   // ============================================================
   // API HELPER (JSONP)
   // ============================================================
-  function jsonp(action, params = {}) {
-    return new Promise((resolve, reject) => {
-      const callbackName = '_cb_' + Date.now() + '_' + Math.floor(Math.random() * 99999);
-      params.action = action;
-      params.callback = callbackName;
+ // ============================================================
+// JSONP WITH RETRY AND BETTER ERROR HANDLING
+// ============================================================
+async function jsonp(action, params = {}, retryCount = 0) {
+  const MAX_RETRIES = 3;
+  const TIMEOUT = 45000; // 45 seconds
+  
+  return new Promise((resolve, reject) => {
+    const callbackName = '_cb_' + Date.now() + '_' + Math.floor(Math.random() * 99999);
+    params.action = action;
+    params.callback = callbackName;
+    
+    const queryString = Object.entries(params)
+      .map(([k, v]) => k + '=' + encodeURIComponent(v === undefined ? '' : String(v)))
+      .join('&');
+    
+    const script = document.createElement('script');
+    let timeoutId;
+    let isCompleted = false;
+    
+    const cleanup = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (window[callbackName]) delete window[callbackName];
+      if (script.parentNode) script.remove();
+    };
+    
+    const handleError = (error) => {
+      if (isCompleted) return;
+      isCompleted = true;
+      cleanup();
       
-      const queryString = Object.entries(params)
-        .map(([k, v]) => k + '=' + encodeURIComponent(v === undefined ? '' : String(v)))
-        .join('&');
-      
-      const script = document.createElement('script');
-      const timeout = setTimeout(() => {
-        if (window[callbackName]) delete window[callbackName];
-        script.remove();
-        reject(new Error('انتهت المهلة'));
-      }, 30000);
-      
-      window[callbackName] = (data) => {
-        clearTimeout(timeout);
-        delete window[callbackName];
-        script.remove();
-        resolve(data);
-      };
-      
-      script.onerror = () => {
-        clearTimeout(timeout);
-        delete window[callbackName];
-        script.remove();
-        reject(new Error('فشل الاتصال بالخادم'));
-      };
-      
-      script.src = GAS_URL + '?' + queryString;
-      document.head.appendChild(script);
-    });
-  }
-
+      if (retryCount < MAX_RETRIES) {
+        console.warn(`⚠️ JSONP failed for ${action}, retrying (${retryCount + 1}/${MAX_RETRIES})...`);
+        setTimeout(() => {
+          jsonp(action, params, retryCount + 1)
+            .then(resolve)
+            .catch(reject);
+        }, 1000 * (retryCount + 1));
+      } else {
+        reject(new Error(`فشل الاتصال بعد ${MAX_RETRIES} محاولات: ${error.message || error}`));
+      }
+    };
+    
+    timeoutId = setTimeout(() => {
+      handleError(new Error('انتهت المهلة'));
+    }, TIMEOUT);
+    
+    window[callbackName] = (data) => {
+      if (isCompleted) return;
+      isCompleted = true;
+      cleanup();
+      resolve(data);
+    };
+    
+    script.onerror = () => {
+      handleError(new Error('فشل تحميل السكريبت'));
+    };
+    
+    script.src = GAS_URL + '?' + queryString;
+    document.head.appendChild(script);
+  });
+}
   // ============================================================
   // INITIALIZATION
   // ============================================================
@@ -1139,7 +1165,7 @@ function updateItemsUI() {
 }
   
 // ============================================================
-// تحديث واجهة الأسعار (محسّن)
+// UPDATE PRICES UI - محسّن
 // ============================================================
 function updatePricesUI() {
   const container = document.getElementById('pricesContainer');
@@ -1165,21 +1191,79 @@ function updatePricesUI() {
       priceValue = currentTrip.prices[priceKey][i];
     }
     
-    // عرض الصفر كحقل فارغ
     const displayValue = (priceValue === 0 || priceValue === null) ? '' : priceValue;
+    const isZero = (priceValue === 0 || priceValue === null);
     
     html += `
       <div class="price-card" data-item-index="${i}">
         <div class="price-header" title="${escapeHtml(itemName)}">${escapeHtml(itemName.length > 20 ? itemName.substring(0, 18) + '...' : itemName)}</div>
         <div class="price-input-group">
           <span class="currency-symbol">${selectedCurrency}</span>
-          <input type="number" id="price_${i}" value="${displayValue}" step="0.01" min="0" placeholder="0.00" onchange="window.updatePrice(${i})" oninput="window.updatePrice(${i})" style="${priceValue === 0 ? 'color: #aaa;' : 'color: #000;'}">
+          <input type="number" id="price_${i}" value="${displayValue}" step="0.01" min="0" placeholder="0" 
+                 onchange="window.updatePrice(${i})" 
+                 oninput="window.updatePrice(${i})" 
+                 style="${isZero ? 'color: #aaa;' : 'color: #000;'}">
         </div>
       </div>
     `;
   }
   html += '</div>';
   container.innerHTML = html;
+}
+  
+  // ============================================================
+// RETRY FUNCTION FOR FAILED REQUESTS
+// ============================================================
+async function fetchWithRetry(action, params, maxRetries = 3) {
+  let lastError = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await jsonp(action, params);
+      return result;
+    } catch (error) {
+      lastError = error;
+      console.warn(`⚠️ محاولة ${attempt}/${maxRetries} فشلت: ${error.message}`);
+      
+      if (attempt < maxRetries) {
+        // انتظر قبل إعادة المحاولة (تأخير متزايد)
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+      }
+    }
+  }
+  
+  throw lastError;
+}
+
+// استخدم fetchWithRetry بدلاً من jsonp مباشرة في الدوال المهمة
+async function loadTripPricesForCurrency(tripName, category, currencySym) {
+  let currencyCode = currencySym;
+  if (currencySym === '$') currencyCode = 'USD';
+  else if (currencySym === '€') currencyCode = 'EUR';
+  else if (currencySym === '£') currencyCode = 'GBP';
+  else if (currencySym === 'LE') currencyCode = 'LE';
+  
+  try {
+    const data = await fetchWithRetry('getTripPrices', {
+      tripName: tripName,
+      currency: currencySym,
+      category: category
+    });
+    
+    if (data && data.prices) {
+      if (!currentTrip.prices[currencyCode]) currentTrip.prices[currencyCode] = [];
+      for (let i = 0; i < currentTrip.items.length; i++) {
+        if (i < data.prices.length) {
+          currentTrip.prices[currencyCode][i] = data.prices[i] || 0;
+        } else {
+          currentTrip.prices[currencyCode][i] = 0;
+        }
+      }
+    }
+  } catch(err) {
+    console.error(`Error loading prices for ${currencySym}:`, err);
+    // لا نرمي الخطأ، نستمر بأسعار صفرية
+  }
 }
   // ============================================================
   // ITEMS MANAGEMENT
@@ -1233,26 +1317,41 @@ function updatePricesUI() {
     });
   }
 
- function updateItemName(index) {
-  const input = document.getElementById(`item_${index}`);
-  if (input) {
-    const oldName = currentTrip.items[index];
-    const newName = input.value;
-    currentTrip.items[index] = newName;
-    
-    // ✅ تحديث عنوان البند في بطاقة السعر فوراً
-    const priceHeader = document.querySelector(`#pricesContainer .price-card:nth-child(${index + 1}) .price-header`);
-    if (priceHeader) {
-      const displayName = newName.length > 20 ? newName.substring(0, 18) + '...' : newName;
-      priceHeader.textContent = displayName;
-      priceHeader.title = newName;
-    }
-    
-    // ✅ تحديث الـ label في حالة تعديل الاسم
-    console.log(`✅ تم تحديث اسم البند ${index + 1} من "${oldName}" إلى "${newName}"`);
-  }
-}
+ // ============================================================
+// UPDATE ITEM NAME - مع debounce لمنع التحديثات المتكررة
+// ============================================================
+let itemNameDebounceTimer = null;
 
+function updateItemName(index) {
+  // منع التحديثات المتكررة
+  if (itemNameDebounceTimer) clearTimeout(itemNameDebounceTimer);
+  
+  itemNameDebounceTimer = setTimeout(() => {
+    const input = document.getElementById(`item_${index}`);
+    if (input) {
+      const newName = input.value.trim();
+      const oldName = currentTrip.items[index] || '';
+      
+      // فقط قم بالتحديث إذا تغير الاسم فعلاً
+      if (newName !== oldName) {
+        currentTrip.items[index] = newName;
+        
+        // تحديث عنوان البند في بطاقة السعر
+        const priceCards = document.querySelectorAll('#pricesContainer .price-card');
+        if (priceCards[index]) {
+          const priceHeader = priceCards[index].querySelector('.price-header');
+          if (priceHeader) {
+            const displayName = newName.length > 20 ? newName.substring(0, 18) + '...' : newName;
+            priceHeader.textContent = displayName || `بند ${index + 1}`;
+            priceHeader.title = newName || `بند ${index + 1}`;
+          }
+        }
+        
+        console.log(`✅ تم تحديث اسم البند ${index + 1} من "${oldName}" إلى "${newName}"`);
+      }
+    }
+  }, 300); // انتظر 300ms قبل التحديث
+}
 
  function updatePrice(index) {
   const input = document.getElementById(`price_${index}`);
