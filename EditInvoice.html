@@ -730,14 +730,30 @@ async function loadInvoice() {
     if (!inv) throw new Error('الفاتورة غير موجودة: ' + voucherNo);
 
     currentInvoice  = { ...inv };
-originalInvoice = { ...inv };
+    originalInvoice = { ...inv };
 
-// ✅ إضافة NationArrange إلى currentInvoice
-currentInvoice.nationArrange = inv.NationArrange || inv.nationArrange || '';
-originalInvoice.nationArrange = inv.NationArrange || inv.nationArrange || '';
+    // ✅ إضافة NationArrange إلى currentInvoice
+    currentInvoice.nationArrange = inv.NationArrange || inv.nationArrange || '';
+    originalInvoice.nationArrange = inv.NationArrange || inv.nationArrange || '';
 
     if (!currentInvoice.activeDate && currentInvoice.issueDate) {
       currentInvoice.activeDate = currentInvoice.issueDate;
+    }
+
+    // ✅ جلب أسعار البنود من Price_List
+    console.log('💰 جلب أسعار الرحلة:', currentInvoice.trip, currentInvoice.invoiceCurrency);
+    const tripPricesData = await gas('getTripPrices', { 
+      tripName: currentInvoice.trip, 
+      currency: currentInvoice.invoiceCurrency || 'LE',
+      category: ''
+    });
+    
+    if (tripPricesData && tripPricesData.prices) {
+      currentInvoice.tripPrices = tripPricesData.prices;
+      console.log('💰 تم جلب الأسعار:', currentInvoice.tripPrices);
+    } else {
+      currentInvoice.tripPrices = [];
+      console.log('⚠️ لم يتم العثور على أسعار للرحلة');
     }
 
     const totalPayments = await getTotalPaymentsForInvoice(voucherNo);
@@ -757,7 +773,6 @@ originalInvoice.nationArrange = inv.NationArrange || inv.nationArrange || '';
     document.getElementById('userNameDisplay').textContent = currentUser?.name || 'User';
     document.getElementById('voucherDisplay').textContent  = voucherNo;
 
-    // ✅ التصحيح: استخدام toDateString() للمقارنة
     const issueDate = parseDate(currentInvoice.issueDate);
     const today     = new Date(); today.setHours(0,0,0,0);
     const isIssueDateToday = issueDate && issueDate.toDateString() === today.toDateString();
@@ -786,13 +801,15 @@ originalInvoice.nationArrange = inv.NationArrange || inv.nationArrange || '';
     const supOpts = '<option value="">-- اختر --</option>' + suppliers.map(s => `<option value="${esc(s.customerName)}" ${s.customerName === currentInvoice.supplier ? 'selected' : ''}>${esc(s.customerName)}</option>`).join('');
     const custOpts = '<option value="">-- اختر --</option>' + customers.map(c => `<option value="${esc(c.customerName)}" ${c.customerName === currentInvoice.customer ? 'selected' : ''}>${esc(c.customerName)}</option>`).join('');
 
+    // ✅ استخدام الأسعار المجلوبة في بناء الجدول
+    const tripPrices = currentInvoice.tripPrices || [];
     const tripData = await gas('getTripData', { tripName: currentInvoice.trip, currency: currentInvoice.invoiceCurrency });
     let tRows = '';
     if (tripData?.items) {
       const acts = parseActivities(currentInvoice.activitiesText || '');
       tRows = tripData.items.map((name, i) => {
         const qty   = acts.find(a => a.name === name)?.qty || 0;
-        const price = tripData.prices?.[i] || 0;
+        const price = tripPrices[i] || 0;
         return `<tr>
           <td style="font-weight:600">${esc(name)}</td>
           <td><input type="number" id="qty_${i}" min="0" placeholder="0" value="${qty || ''}" oninput="updateItemTotal(${i}, ${price})"></td>
@@ -829,7 +846,7 @@ originalInvoice.nationArrange = inv.NationArrange || inv.nationArrange || '';
             <div class="form-group"><label>تاريخ التنفيذ</label><input type="date" id="activeDate" value="${dateToInput(currentInvoice.activeDate)}" onchange="updateTotals()"></div>
             <div class="form-group"><label>الوقت</label><input type="text" id="tripTime" value="${timeToInput(currentInvoice.time)}" placeholder="--:--"></div>
             <div class="form-group"><label>عملة الفاتورة</label>
-              <select id="invoiceCurrency" onchange="updateTotals()">
+              <select id="invoiceCurrency" onchange="changeTrip()">
                 <option value="$" ${currentInvoice.invoiceCurrency==='$'?'selected':''}>USD ($)</option>
                 <option value="€" ${currentInvoice.invoiceCurrency==='€'?'selected':''}>EUR (€)</option>
                 <option value="£" ${currentInvoice.invoiceCurrency==='£'?'selected':''}>GBP (£)</option>
@@ -929,7 +946,6 @@ originalInvoice.nationArrange = inv.NationArrange || inv.nationArrange || '';
     hidePDF();
   }
 }
-
 // ─── جمع البيانات المعدّلة لحفظها ──────────────────────
 async function collectEditedData() {
   const currency = document.getElementById('invoiceCurrency')?.value;
@@ -939,17 +955,31 @@ async function collectEditedData() {
 
   // بنود الرحلة
   const items = [];
+  const tripPrices = [];
+  
   for (let i = 0; i < 20; i++) {
     const qtyEl = document.getElementById(`qty_${i}`);
+    const priceEl = document.getElementById(`price_${i}`);
+    
     if (!qtyEl) continue;
+    
     const qty = parseFloat(qtyEl.value) || 0;
+    const price = priceEl ? (parseFloat(priceEl.value) || 0) : 0;
+    
+    // حفظ الأسعار
+    tripPrices.push(price);
+    
+    // حفظ الأنشطة
     const nameEl = document.querySelector(`#itemsBody tr:nth-child(${i+1}) td:first-child`);
     if (qty > 0 && nameEl) items.push(`${nameEl.textContent}×${qty}`);
   }
 
   let actualPrice = currentInvoice.actualPrice || 0;
   let itemsTotal  = 0;
-  for (let i = 0; i < 20; i++) { const el = document.getElementById(`total_${i}`); if (el) itemsTotal += parseFloat(el.value)||0; }
+  for (let i = 0; i < 20; i++) { 
+    const el = document.getElementById(`total_${i}`); 
+    if (el) itemsTotal += parseFloat(el.value)||0; 
+  }
   if (itemsTotal > 0 && itemsTotal !== actualPrice) actualPrice = itemsTotal;
 
   const disc = parseFloat(document.getElementById('discount')?.value) || 0;
@@ -981,7 +1011,8 @@ async function collectEditedData() {
   return {
     voucherNo: currentInvoice.voucherNo,
     issueDate: currentInvoice.issueDate,
-    activeDate, time: document.getElementById('tripTime')?.value || '',
+    activeDate, 
+    time: document.getElementById('tripTime')?.value || '',
     contactNo:  document.getElementById('contactNo')?.value   || '',
     guestName:  document.getElementById('guestName')?.value   || '',
     nationality:document.getElementById('nationality')?.value || '',
@@ -994,7 +1025,10 @@ async function collectEditedData() {
     infantCount: parseInt(document.getElementById('infantCount')?.value) || 0,
     cashUSD: cU, cashEUR: cE, cashGBP: cG, cashLE: cL,
     visaUSD: vU, visaEUR: vE, visaGBP: vG, visaLE: vL,
-    actualPrice, paymentPrice: paid, discount: disc, rest,
+    actualPrice, 
+    paymentPrice: paid, 
+    discount: disc, 
+    rest,
     activitiesText: items.join(' | '),
     supplier: document.getElementById('supplier')?.value || '',
     customer: document.getElementById('customer')?.value || '',
@@ -1005,10 +1039,10 @@ async function collectEditedData() {
     branchName:   currentInvoice.branchName,
     salesName:    currentInvoice.salesName,
     cost:         currentInvoice.cost || '',
-     nationArrange: currentInvoice.nationArrange || '' 
+    nationArrange: currentInvoice.nationArrange || '',
+    tripPrices: tripPrices  // ✅ إضافة الأسعار
   };
 }
-
 function createEditSummary(orig, edited) {
   const changes = [], cur = edited.invoiceCurrency || '$';
   if ((orig.discount||0) !== (edited.discount||0)) { const d=(edited.discount||0)-(orig.discount||0); changes.push(`💰 الخصم ${d>0?'+':''}${d} ${cur}`); }
@@ -1025,7 +1059,6 @@ async function saveChanges() {
 
   const editedData = await collectEditedData();
 
-  // إذا كانت الفاتورة ماضية: اسحب قيم المدفوعات من currentInvoice (المجمّعة)
   if (isPastDate) {
     editedData.cashUSD = currentInvoice.cashUSD;
     editedData.cashEUR = currentInvoice.cashEUR;
@@ -1044,27 +1077,25 @@ async function saveChanges() {
   try {
     const upd = await gas('updateInvoice', editedData);
     if (!upd.success) throw new Error(upd.message || 'فشل التحديث');
+    
     await gas('copyInvoiceToEdit', {
       originalData: JSON.stringify(originalInvoice),
       editedData:   JSON.stringify(editedData),
       userId:       currentUser?.id || '',
       editSummary:  summary
     });
+    
     showPDF('جاري إنشاء PDF...');
-    // تجميع الأسعار من جدول البنود
-const prices = [];
-for (let i = 0; i < 20; i++) {
-  const priceEl = document.getElementById(`price_${i}`);
-  if (priceEl) {
-    prices.push(parseFloat(priceEl.value) || 0);
-  }
-}
-
-const pdf = await gas('saveAndGenerateSinglePDF_New', { 
-  voucherNo: editedData.voucherNo,
-  prices: JSON.stringify(prices),
-  total: editedData.actualPrice || 0
-});
+    
+    // ✅ تجميع الأسعار من editedData (أو من الجدول مباشرة)
+    const prices = editedData.tripPrices || [];
+    
+    const pdf = await gas('saveAndGenerateSinglePDF_New', { 
+      voucherNo: editedData.voucherNo,
+      prices: JSON.stringify(prices),
+      total: editedData.actualPrice || 0
+    });
+    
     hidePDF();
     if (pdf?.success) {
       showAlert('✅ تم حفظ التعديلات بنجاح',
@@ -1072,9 +1103,11 @@ const pdf = await gas('saveAndGenerateSinglePDF_New', {
     } else {
       showAlert('✅ تم الحفظ (فشل إنشاء PDF: ' + (pdf?.message||'') + ')', '<button class="btn btn-primary" onclick="goBack()">رجوع</button>');
     }
-  } catch(err) { hidePDF(); showAlert('خطأ: ' + err.message); }
+  } catch(err) { 
+    hidePDF(); 
+    showAlert('خطأ: ' + err.message); 
+  }
 }
-
 async function cancelEdit() { if (confirm('هل أنت متأكد من إلغاء التعديلات؟')) goBack(); }
 
 window.changeTrip = async function() {
