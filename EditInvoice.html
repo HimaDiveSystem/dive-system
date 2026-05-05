@@ -433,14 +433,17 @@ async function loadInvoice() {
   
   try {
     // ✅ تحميل كل شيء بالتوازي (Parallel) بدلاً من التسلسل
-    const [suppliersResult, invoiceResult, tripsResult] = await Promise.all([
-      gas('getAllSuppliersCustomers'),
-      gas('getInvoiceByVoucher', { voucherNo: voucherNo }),
-      gas('getUniqueTrips')
-    ]);
+    const [suppliersResult, invoiceResult, tripsResult, tripDefsResult] = await Promise.all([
+  gas('getAllSuppliersCustomers'),
+  gas('getInvoiceByVoucher', { voucherNo: voucherNo }),
+  gas('getUniqueTrips'),
+  gas('getAllTrips')  // ✅ أضف هذا لتحميل تعريفات الرحلات
+]);
+
+allSuppliersCustomers = Array.isArray(suppliersResult) ? suppliersResult : [];
+tripDefinitions = Array.isArray(tripDefsResult) ? tripDefsResult : [];
     
-    allSuppliersCustomers = Array.isArray(suppliersResult) ? suppliersResult : [];
-    const uniqueTrips = Array.isArray(tripsResult) ? tripsResult : [];
+       const uniqueTrips = Array.isArray(tripsResult) ? tripsResult : [];
     
     if (!invoiceResult.success || !invoiceResult.invoice) {
       throw new Error('الفاتورة غير موجودة: ' + voucherNo);
@@ -487,6 +490,8 @@ async function loadInvoice() {
     }
     
     const currentCategory = getTripCategory(currentInvoice.trip);
+console.log('🏷️ Current category:', currentCategory);
+console.log('📋 Available customers:', getCustomersByCategory(currentCategory));
     
     const formHtml = `
     <div class="card"><div class="card-header">👤<h3>بيانات العميل</h3></div><div class="card-body"><div class="form-grid">
@@ -571,7 +576,45 @@ async function updateSupplierValue() { const val = document.getElementById('supp
 async function updateCustomerValue() { const val = document.getElementById('customer').value; if (currentInvoice) currentInvoice.customer = val; }
 async function changeTrip() { const newTrip = document.getElementById('tripName')?.value; const currency = document.getElementById('invoiceCurrency')?.value; if (!newTrip || !currency) return; const td = await gas('getTripData', { tripName: newTrip, currency }); if (td?.items) { let rows = ''; for (let i = 0; i < td.items.length; i++) { rows += `<tr><td style="font-weight:600">${esc(td.items[i])}</td><td><input type="number" id="qty_${i}" min="0" placeholder="0" oninput="updateItemTotal(${i}, ${td.prices?.[i]||0})"></td><td><input type="number" id="price_${i}" value="${td.prices?.[i]||0}" readonly></td><td><input type="number" id="total_${i}" value="0" readonly></td></tr>`; } document.getElementById('itemsBody').innerHTML = rows; } await updateTotals(); }
 async function collectEditedData() { const items = []; for (let i = 0; i < 20; i++) { const qty = parseFloat(document.getElementById(`qty_${i}`)?.value) || 0; if (qty > 0) { const name = document.querySelector(`#itemsBody tr:nth-child(${i+1}) td:first-child`)?.textContent; if (name) items.push(`${name}×${qty}`); } } return { voucherNo: currentInvoice.voucherNo, issueDate: currentInvoice.issueDate, activeDate: document.getElementById('activeDate')?.value, time: document.getElementById('tripTime')?.value, contactNo: document.getElementById('contactNo')?.value, guestName: document.getElementById('guestName')?.value, nationality: document.getElementById('nationality')?.value, hotel: document.getElementById('hotel')?.value, roomNo: document.getElementById('roomNo')?.value, trip: document.getElementById('tripName')?.value, invoiceCurrency: document.getElementById('invoiceCurrency')?.value, adultCount: parseInt(document.getElementById('adultCount')?.value) || 0, childCount: parseInt(document.getElementById('childCount')?.value) || 0, infantCount: parseInt(document.getElementById('infantCount')?.value) || 0, cashUSD: parseFloat(document.getElementById('cashUSD')?.value) || 0, cashEUR: parseFloat(document.getElementById('cashEUR')?.value) || 0, cashGBP: parseFloat(document.getElementById('cashGBP')?.value) || 0, cashLE: parseFloat(document.getElementById('cashLE')?.value) || 0, visaUSD: parseFloat(document.getElementById('visaUSD')?.value) || 0, visaEUR: parseFloat(document.getElementById('visaEUR')?.value) || 0, visaGBP: parseFloat(document.getElementById('visaGBP')?.value) || 0, visaLE: parseFloat(document.getElementById('visaLE')?.value) || 0, actualPrice: calculateTotalFromItems(), discount: parseFloat(document.getElementById('discount')?.value) || 0, paymentPrice: currentInvoice.paymentPrice, rest: currentInvoice.rest, activitiesText: items.join(' | '), supplier: document.getElementById('supplier')?.value, customer: document.getElementById('customer')?.value, state: document.getElementById('state')?.value, notes: document.getElementById('notes')?.value, salesId: currentInvoice.salesId, centerName: currentInvoice.centerName, branchName: currentInvoice.branchName, salesName: currentInvoice.salesName, cost: currentInvoice.cost, nationArrange: currentInvoice.nationArrange, tripPrices: currentInvoice.tripPrices }; }
-async function saveChanges() { const editedData = await collectEditedData(); showPDF('جاري حفظ التعديلات...'); try { await gas('updateInvoice', editedData); await gas('copyInvoiceToEdit', { originalData: JSON.stringify(originalInvoice), editedData: JSON.stringify(editedData), userId: currentUser?.id || '', editSummary: 'تعديلات' }); const pdf = await gas('saveAndGenerateSinglePDF_New', { voucherNo: editedData.voucherNo, prices: JSON.stringify(editedData.tripPrices || []), total: editedData.actualPrice || 0 }); hidePDF(); showAlert('✅ تم حفظ التعديلات بنجاح', '✅', `<a href="${pdf.url}" target="_blank" class="btn btn-primary">📄 فتح PDF</a><button class="btn btn-primary" onclick="goBack()">رجوع</button>`); } catch(err) { hidePDF(); showAlert('خطأ: ' + err.message, '❌'); } }
+async function saveChanges() {
+  const editedData = await collectEditedData();
+  const summary = createEditSummary(originalInvoice, editedData);
+  showPDF('جاري حفظ التعديلات...');
+  try {
+    const upd = await gas('updateInvoice', editedData);
+    if (!upd.success) throw new Error(upd.message || 'فشل التحديث');
+    
+    await gas('copyInvoiceToEdit', {
+      originalData: JSON.stringify(originalInvoice),
+      editedData: JSON.stringify(editedData),
+      userId: currentUser?.id || '',
+      editSummary: summary
+    });
+    
+    showPDF('جاري إنشاء PDF...');
+    const prices = editedData.tripPrices || [];
+    const pdf = await gas('saveAndGenerateSinglePDF_New', {
+      voucherNo: editedData.voucherNo,
+      prices: JSON.stringify(prices),
+      total: editedData.actualPrice || 0
+    });
+    
+    hidePDF();
+    
+    // ✅ رسالة تحتوي على أزرار للخروج وعرض PDF
+    let buttons = '<button class="btn btn-primary" onclick="closeAlert(); goBack()">🏠 رجوع</button>';
+    if (pdf?.success && pdf.url) {
+      buttons += `<a href="${pdf.url}" target="_blank" class="btn btn-success" style="text-decoration:none; margin-right:8px;">📄 فتح PDF</a>`;
+    }
+    buttons += '<button class="btn btn-primary" onclick="closeAlert()">❌ إغلاق</button>';
+    
+    showAlert('✅ تم حفظ التعديلات بنجاح', '✅', buttons);
+    
+  } catch(err) {
+    hidePDF();
+    showAlert('خطأ: ' + err.message, '❌', '<button class="btn btn-primary" onclick="closeAlert()">موافق</button>');
+  }
+}
 async function cancelEdit() { if (confirm('هل أنت متأكد من إلغاء التعديلات؟')) goBack(); }
 
 document.addEventListener('DOMContentLoaded', () => {
