@@ -576,7 +576,36 @@ async function updateSupplierValue() { const val = document.getElementById('supp
 async function updateCustomerValue() { const val = document.getElementById('customer').value; if (currentInvoice) currentInvoice.customer = val; }
 async function changeTrip() { const newTrip = document.getElementById('tripName')?.value; const currency = document.getElementById('invoiceCurrency')?.value; if (!newTrip || !currency) return; const td = await gas('getTripData', { tripName: newTrip, currency }); if (td?.items) { let rows = ''; for (let i = 0; i < td.items.length; i++) { rows += `<tr><td style="font-weight:600">${esc(td.items[i])}</td><td><input type="number" id="qty_${i}" min="0" placeholder="0" oninput="updateItemTotal(${i}, ${td.prices?.[i]||0})"></td><td><input type="number" id="price_${i}" value="${td.prices?.[i]||0}" readonly></td><td><input type="number" id="total_${i}" value="0" readonly></td></tr>`; } document.getElementById('itemsBody').innerHTML = rows; } await updateTotals(); }
 async function collectEditedData() { const items = []; for (let i = 0; i < 20; i++) { const qty = parseFloat(document.getElementById(`qty_${i}`)?.value) || 0; if (qty > 0) { const name = document.querySelector(`#itemsBody tr:nth-child(${i+1}) td:first-child`)?.textContent; if (name) items.push(`${name}×${qty}`); } } return { voucherNo: currentInvoice.voucherNo, issueDate: currentInvoice.issueDate, activeDate: document.getElementById('activeDate')?.value, time: document.getElementById('tripTime')?.value, contactNo: document.getElementById('contactNo')?.value, guestName: document.getElementById('guestName')?.value, nationality: document.getElementById('nationality')?.value, hotel: document.getElementById('hotel')?.value, roomNo: document.getElementById('roomNo')?.value, trip: document.getElementById('tripName')?.value, invoiceCurrency: document.getElementById('invoiceCurrency')?.value, adultCount: parseInt(document.getElementById('adultCount')?.value) || 0, childCount: parseInt(document.getElementById('childCount')?.value) || 0, infantCount: parseInt(document.getElementById('infantCount')?.value) || 0, cashUSD: parseFloat(document.getElementById('cashUSD')?.value) || 0, cashEUR: parseFloat(document.getElementById('cashEUR')?.value) || 0, cashGBP: parseFloat(document.getElementById('cashGBP')?.value) || 0, cashLE: parseFloat(document.getElementById('cashLE')?.value) || 0, visaUSD: parseFloat(document.getElementById('visaUSD')?.value) || 0, visaEUR: parseFloat(document.getElementById('visaEUR')?.value) || 0, visaGBP: parseFloat(document.getElementById('visaGBP')?.value) || 0, visaLE: parseFloat(document.getElementById('visaLE')?.value) || 0, actualPrice: calculateTotalFromItems(), discount: parseFloat(document.getElementById('discount')?.value) || 0, paymentPrice: currentInvoice.paymentPrice, rest: currentInvoice.rest, activitiesText: items.join(' | '), supplier: document.getElementById('supplier')?.value, customer: document.getElementById('customer')?.value, state: document.getElementById('state')?.value, notes: document.getElementById('notes')?.value, salesId: currentInvoice.salesId, centerName: currentInvoice.centerName, branchName: currentInvoice.branchName, salesName: currentInvoice.salesName, cost: currentInvoice.cost, nationArrange: currentInvoice.nationArrange, tripPrices: currentInvoice.tripPrices }; }
-async function saveChanges() {
+function createEditSummary(orig, edited) {
+  const changes = [];
+  const cur = edited.invoiceCurrency || '$';
+  
+  if ((orig.discount || 0) !== (edited.discount || 0)) {
+    const d = (edited.discount || 0) - (orig.discount || 0);
+    changes.push(`💰 الخصم ${d > 0 ? '+' : ''}${d} ${cur}`);
+  }
+  
+  if (orig.state !== edited.state) {
+    changes.push(`📌 الحالة: ${orig.state || 'pending'} → ${edited.state || 'pending'}`);
+  }
+  
+  const ot = orig.time || '';
+  const et = edited.time || '';
+  if (ot !== et) {
+    changes.push(`⏰ الوقت: ${ot} → ${et}`);
+  }
+  
+  // اختلاف في المدفوعات
+  const cashDiff = ((edited.cashUSD || 0) - (orig.cashUSD || 0)) + 
+                   ((edited.cashEUR || 0) - (orig.cashEUR || 0)) + 
+                   ((edited.cashGBP || 0) - (orig.cashGBP || 0));
+  if (Math.abs(cashDiff) > 0.01) {
+    changes.push(`💵 تغيير في المدفوعات النقدية: ${cashDiff > 0 ? '+' : ''}${cashDiff} ${cur}`);
+  }
+  
+  return changes.length ? changes.join(' | ') : 'لا توجد تغييرات';
+}
+  async function saveChanges() {
   const editedData = await collectEditedData();
   const summary = createEditSummary(originalInvoice, editedData);
   showPDF('جاري حفظ التعديلات...');
