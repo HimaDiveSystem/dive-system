@@ -411,29 +411,49 @@ async function loadInvoice() {
   console.time('loadInvoice');
   const params = new URLSearchParams(location.search);
   const voucherNo = params.get('voucherNo');
-  if (!voucherNo) { showAlert('رقم الفاتورة غير موجود', '<button class="btn btn-primary" onclick="goBack()">رجوع</button>'); return; }
+  
+  if (!voucherNo) { 
+    showAlert('رقم الفاتورة غير موجود', '<button class="btn btn-primary" onclick="goBack()">رجوع</button>'); 
+    return; 
+  }
+  
   showPDF('جاري التحميل...');
+  
   try {
-    await loadSuppliersAndTrips();
-    const result = await gas('getInvoiceByVoucher', { voucherNo });
-    if (!result.success || !result.invoice) throw new Error('الفاتورة غير موجودة: ' + voucherNo);
-    currentInvoice = result.invoice;
+    // ✅ تحميل كل شيء بالتوازي (Parallel) بدلاً من التسلسل
+    const [suppliersResult, invoiceResult, tripsResult] = await Promise.all([
+      gas('getAllSuppliersCustomers'),
+      gas('getInvoiceByVoucher', { voucherNo: voucherNo }),
+      gas('getUniqueTrips')
+    ]);
+    
+    allSuppliersCustomers = Array.isArray(suppliersResult) ? suppliersResult : [];
+    const uniqueTrips = Array.isArray(tripsResult) ? tripsResult : [];
+    
+    if (!invoiceResult.success || !invoiceResult.invoice) {
+      throw new Error('الفاتورة غير موجودة: ' + voucherNo);
+    }
+    
+    currentInvoice = invoiceResult.invoice;
     originalInvoice = JSON.parse(JSON.stringify(currentInvoice));
     
     document.getElementById('userNameDisplay').textContent = currentUser?.name || 'User';
     document.getElementById('voucherDisplay').textContent = voucherNo;
     
-    // جلب أسعار الرحلة
-    const tripPricesData = await gas('getTripPrices', { tripName: currentInvoice.trip, currency: currentInvoice.invoiceCurrency || 'LE', category: '' });
+    // ✅ تحميل بيانات الرحلة وأسعارها بالتوازي
+    const [tripData, tripPricesData] = await Promise.all([
+      gas('getTripData', { tripName: currentInvoice.trip, currency: currentInvoice.invoiceCurrency || 'LE' }),
+      gas('getTripPrices', { tripName: currentInvoice.trip, currency: currentInvoice.invoiceCurrency || 'LE', category: '' })
+    ]);
+    
     if (tripPricesData?.prices) currentInvoice.tripPrices = tripPricesData.prices;
     else currentInvoice.tripPrices = [];
     
-    const uniqueTrips = await gas('getUniqueTrips');
-    const tripsOpts = Array.isArray(uniqueTrips) ? uniqueTrips.map(t => `<option value="${esc(t.name)}" ${t.name === currentInvoice.trip ? 'selected' : ''}>${esc(t.name)}</option>`).join('') : '';
+    const tripsOpts = uniqueTrips.map(t => `<option value="${esc(t.name)}" ${t.name === currentInvoice.trip ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
     
-    const tripData = await gas('getTripData', { tripName: currentInvoice.trip, currency: currentInvoice.invoiceCurrency });
     const tripPrices = currentInvoice.tripPrices || [];
     let tRows = '';
+    
     if (tripData?.items && tripData.items.length > 0) {
       const acts = [];
       if (currentInvoice.activitiesText) {
@@ -446,17 +466,23 @@ async function loadInvoice() {
         const act = acts.find(a => a.name === name);
         const qty = act ? act.qty : 0;
         const price = tripPrices[i] || 0;
-        return `<tr><td style="font-weight:600">${esc(name)}</td><td><input type="number" id="qty_${i}" min="0" placeholder="0" value="${qty || ''}" oninput="updateItemTotal(${i}, ${price})"></td><td><input type="number" id="price_${i}" value="${price}" readonly></td><td><input type="number" id="total_${i}" value="${(qty * price).toFixed(2)}" readonly></td></tr>`;
+        return `<tr><td style="font-weight:600">${esc(name)}</td>
+          <td><input type="number" id="qty_${i}" min="0" placeholder="0" value="${qty || ''}" oninput="updateItemTotal(${i}, ${price})"></td>
+          <td><input type="number" id="price_${i}" value="${price}" readonly></td>
+          <td><input type="number" id="total_${i}" value="${(qty * price).toFixed(2)}" readonly></td>
+        <table>`;
       }).join('');
     }
     
+    const currentCategory = getTripCategory(currentInvoice.trip);
+    
     const formHtml = `
-    <div class="card"><div class="card-header"><span class="icon">👤</span><h3>بيانات العميل</h3></div><div class="card-body"><div class="form-grid">
+    <div class="card"><div class="card-header">👤<h3>بيانات العميل</h3></div><div class="card-body"><div class="form-grid">
       <div class="form-group"><label>الهاتف</label><input type="text" id="contactNo" value="${esc(currentInvoice.contactNo)}"></div>
       <div class="form-group"><label>اسم الضيف</label><input type="text" id="guestName" value="${esc(currentInvoice.guestName)}"></div>
       <div class="form-group"><label>الجنسية</label><input type="text" id="nationality" value="${esc(currentInvoice.nationality)}"></div>
     </div></div></div>
-    <div class="card"><div class="card-header"><span class="icon">🏝️</span><h3>تفاصيل الرحلة</h3></div><div class="card-body">
+    <div class="card"><div class="card-header">🏝️<h3>تفاصيل الرحلة</h3></div><div class="card-body">
       <div class="hotel-row">
         <div class="form-group"><label>الفندق</label><input type="text" id="hotel" value="${esc(currentInvoice.hotel)}"></div>
         <div class="form-group"><label>رقم الغرفة</label><input type="text" id="roomNo" value="${esc(currentInvoice.roomNo)}"></div>
@@ -467,35 +493,40 @@ async function loadInvoice() {
       <div class="form-grid">
         <div class="form-group"><label>تاريخ التنفيذ</label><input type="date" id="activeDate" value="${dateToInput(currentInvoice.activeDate)}" onchange="updateTotals()"></div>
         <div class="form-group"><label>الوقت</label><input type="hidden" id="tripTime"><button type="button" class="time-btn-display" onclick="openClockModal()"><span id="timeDisplayText" class="${currentInvoice.time ? '' : 'ph'}">${currentInvoice.time || 'اختر الوقت...'}</span><span>🕐</span></button></div>
-        <div class="form-group"><label>عملة الفاتورة</label><select id="invoiceCurrency" onchange="changeTrip()"><option value="$" ${currentInvoice.invoiceCurrency === '$' ? 'selected' : ''}>USD ($)</option><option value="€" ${currentInvoice.invoiceCurrency === '€' ? 'selected' : ''}>EUR (€)</option><option value="£" ${currentInvoice.invoiceCurrency === '£' ? 'selected' : ''}>GBP (£)</option><option value="LE" ${currentInvoice.invoiceCurrency === 'LE' ? 'selected' : ''}>EGP (LE)</option></select></div>
+        <div class="form-group"><label>عملة الفاتورة</label><select id="invoiceCurrency" onchange="changeTrip()">
+          <option value="$" ${currentInvoice.invoiceCurrency === '$' ? 'selected' : ''}>USD ($)</option>
+          <option value="€" ${currentInvoice.invoiceCurrency === '€' ? 'selected' : ''}>EUR (€)</option>
+          <option value="£" ${currentInvoice.invoiceCurrency === '£' ? 'selected' : ''}>GBP (£)</option>
+          <option value="LE" ${currentInvoice.invoiceCurrency === 'LE' ? 'selected' : ''}>EGP (LE)</option>
+        </select></div>
       </div>
       <div class="form-group"><label>اسم الرحلة</label><select id="tripName" onchange="changeTrip()">${tripsOpts}</select></div>
       <div class="trip-table"><table><thead><tr><th style="text-align:left">البند</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th></tr></thead><tbody id="itemsBody">${tRows || '<tr><td colspan="4">لا توجد بنود</td></tr>'}</tbody></table></div>
     </div></div>
-    <div class="card"><div class="card-header"><span class="icon">💰</span><h3>المدفوعات والإجماليات</h3></div>
+    <div class="card"><div class="card-header">💰<h3>المدفوعات والإجماليات</h3></div>
       <div class="totals-strip">
         <div class="total-item"><div class="label">الخصم</div><input type="number" id="discount" min="0" step="0.01" value="${dV(currentInvoice.discount)}" oninput="updateTotals()"></div>
         <div class="total-item"><div class="label">إجمالي الفاتورة</div><div class="value" id="displayActualPrice">${(currentInvoice.actualPrice || 0).toFixed(2)}</div><div class="currency">${currentInvoice.invoiceCurrency || ''}</div></div>
         <div class="total-item"><div class="label">المدفوع (كل التحصيلات)</div><div class="value" id="displayPaymentPrice">${(currentInvoice.paymentPrice || 0).toFixed(2)}</div><div class="currency">${currentInvoice.invoiceCurrency || ''}</div></div>
         <div class="total-item"><div class="label">المتبقي</div><div class="value" id="displayRest">${(currentInvoice.rest || 0).toFixed(2)}</div><div class="currency">${currentInvoice.invoiceCurrency || ''}</div></div>
       </div>
-      <div class="payment-section"><div class="payment-label">💵 كاش (إجمالي كل التحصيلات)</div><div class="payment-grid">
+      <div class="payment-section"><div class="payment-label">💵 كاش</div><div class="payment-grid">
         <div class="payment-card"><label>USD $</label><input type="number" id="cashUSD" step="0.01" value="${dV(currentInvoice.cashUSD)}" oninput="updateTotals()"></div>
         <div class="payment-card"><label>EUR €</label><input type="number" id="cashEUR" step="0.01" value="${dV(currentInvoice.cashEUR)}" oninput="updateTotals()"></div>
         <div class="payment-card"><label>GBP £</label><input type="number" id="cashGBP" step="0.01" value="${dV(currentInvoice.cashGBP)}" oninput="updateTotals()"></div>
         <div class="payment-card"><label>EGP LE</label><input type="number" id="cashLE" step="0.01" value="${dV(currentInvoice.cashLE)}" oninput="updateTotals()"></div>
       </div></div>
-      <div class="payment-section"><div class="payment-label">💳 فيزا / بطاقة (إجمالي كل التحصيلات)</div><div class="payment-grid">
+      <div class="payment-section"><div class="payment-label">💳 فيزا / بطاقة</div><div class="payment-grid">
         <div class="payment-card"><label>Visa $</label><input type="number" id="visaUSD" step="0.01" value="${dV(currentInvoice.visaUSD)}" oninput="updateTotals()"></div>
         <div class="payment-card"><label>Visa €</label><input type="number" id="visaEUR" step="0.01" value="${dV(currentInvoice.visaEUR)}" oninput="updateTotals()"></div>
         <div class="payment-card"><label>Visa £</label><input type="number" id="visaGBP" step="0.01" value="${dV(currentInvoice.visaGBP)}" oninput="updateTotals()"></div>
         <div class="payment-card"><label>Visa LE</label><input type="number" id="visaLE" step="0.01" value="${dV(currentInvoice.visaLE)}" oninput="updateTotals()"></div>
       </div></div>
-      <div class="card-body" style="padding-top:0"><div class="form-group"><label>ملاحظات</label><textarea id="notes" rows="2">${esc(currentInvoice.notes)}</textarea></div></div>
+      <div class="card-body"><div class="form-group"><label>ملاحظات</label><textarea id="notes" rows="2">${esc(currentInvoice.notes)}</textarea></div></div>
     </div>
-    <div class="card"><div class="card-header"><span class="icon">🏢</span><h3>معلومات إضافية</h3></div><div class="card-body"><div class="form-grid">
-      <div class="form-group"><label>المنفذ</label><select id="supplier" onchange="updateSupplierValue()"><option value="">-- اختر المنفذ --</option>${getSuppliersByCategory(getTripCategory(currentInvoice.trip)).map(s => `<option value="${esc(s.customerName)}" ${s.customerName === currentInvoice.supplier ? 'selected' : ''}>${esc(s.customerName)}</option>`).join('')}</select></div>
-      <div class="form-group"><label>العميل</label><select id="customer" onchange="updateCustomerValue()"><option value="">-- اختر العميل --</option>${getCustomersByCategory(getTripCategory(currentInvoice.trip)).map(c => `<option value="${esc(c.customerName)}" ${c.customerName === currentInvoice.customer ? 'selected' : ''}>${esc(c.customerName)}</option>`).join('')}</select></div>
+    <div class="card"><div class="card-header">🏢<h3>معلومات إضافية</h3></div><div class="card-body"><div class="form-grid">
+      <div class="form-group"><label>المنفذ</label><select id="supplier"><option value="">-- اختر المنفذ --</option>${getSuppliersByCategory(currentCategory).map(s => `<option value="${esc(s.customerName)}" ${s.customerName === currentInvoice.supplier ? 'selected' : ''}>${esc(s.customerName)}</option>`).join('')}</select></div>
+      <div class="form-group"><label>العميل</label><select id="customer"><option value="">-- اختر العميل --</option>${getCustomersByCategory(currentCategory).map(c => `<option value="${esc(c.customerName)}" ${c.customerName === currentInvoice.customer ? 'selected' : ''}>${esc(c.customerName)}</option>`).join('')}</select></div>
       <div class="form-group"><label>الحالة</label><select id="state"><option value="pending" ${currentInvoice.state === 'pending' ? 'selected' : ''}>⏳ قيد الانتظار</option><option value="Confirmed" ${(currentInvoice.state === 'Confirmed' || currentInvoice.state === 'confirmed') ? 'selected' : ''}>✅ مؤكد</option><option value="cancel" ${currentInvoice.state === 'cancel' ? 'selected' : ''}>❌ ملغي</option></select></div>
     </div></div></div>
     <div class="action-buttons"><button class="btn btn-success" id="collectionBtn" ${(currentInvoice.rest || 0) <= 0.01 ? 'disabled' : ''}>💰 تحصيل دفعة</button><button class="btn btn-primary" onclick="saveChanges()">💾 حفظ التعديلات</button><button class="btn btn-danger" onclick="cancelEdit()">❌ إلغاء</button></div>`;
@@ -505,21 +536,25 @@ async function loadInvoice() {
     document.getElementById('formContent').innerHTML = formHtml;
     
     document.getElementById('collectionBtn')?.addEventListener('click', openCollectionModal);
+    
     if (currentInvoice.time) {
       document.getElementById('tripTime').value = currentInvoice.time;
       const td = document.getElementById('timeDisplayText');
       if (td) { td.textContent = currentInvoice.time; td.classList.remove('ph'); }
     }
+    
     await updateTotals();
     console.timeEnd('loadInvoice');
+    
   } catch(err) {
-    console.error(err);
+    console.error('loadInvoice error:', err);
     hidePDF();
     showAlert('خطأ: ' + err.message, '<button class="btn btn-primary" onclick="goBack()">رجوع</button>');
     document.getElementById('loaderState').style.display = 'none';
-  } finally { hidePDF(); }
+  } finally {
+    hidePDF();
+  }
 }
-
 async function updateSupplierValue() { const val = document.getElementById('supplier').value; if (currentInvoice) currentInvoice.supplier = val; }
 async function updateCustomerValue() { const val = document.getElementById('customer').value; if (currentInvoice) currentInvoice.customer = val; }
 async function changeTrip() { const newTrip = document.getElementById('tripName')?.value; const currency = document.getElementById('invoiceCurrency')?.value; if (!newTrip || !currency) return; const td = await gas('getTripData', { tripName: newTrip, currency }); if (td?.items) { let rows = ''; for (let i = 0; i < td.items.length; i++) { rows += `<tr><td style="font-weight:600">${esc(td.items[i])}</td><td><input type="number" id="qty_${i}" min="0" placeholder="0" oninput="updateItemTotal(${i}, ${td.prices?.[i]||0})"></td><td><input type="number" id="price_${i}" value="${td.prices?.[i]||0}" readonly></td><td><input type="number" id="total_${i}" value="0" readonly></td></tr>`; } document.getElementById('itemsBody').innerHTML = rows; } await updateTotals(); }
