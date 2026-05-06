@@ -123,34 +123,78 @@ let activeChart=null, realMode=false, currentTab='currency';
 let cachedCurrencyData = { labels:[], values:[] };
 let cachedBookingData = { labels:[], revData:[], cntData:[], totalRevenue:0, coll:0, rest:0, total:0, confirmed:0, highestRevenue:0, bestMonthName:'', avgMonthly:0, avgBooking:0, topTrips:[], topSales:[], topBranches:[], topNats:[] };
 
-async function loadAllExchangeRates(){ try{ const res=await fetch(`${GAS_URL}?action=getAllExchangeRatesNew`); const rates=await res.json(); if(Array.isArray(rates)){ rates.forEach(rate=>{ if(rate.date){ const isoDate=convertToISO(rate.date); if(isoDate){ exchangeRatesMap.set(isoDate,{cash:{USD:parseFloat(rate.bUSD)||0,EUR:parseFloat(rate.bEUR)||0,GBP:parseFloat(rate.bGBP)||0},visa:{USD:parseFloat(rate.bVUSD)||0,EUR:parseFloat(rate.bVEUR)||0,GBP:parseFloat(rate.bVGBP)||0}}); } } }); return true; } }catch(e){ console.error(e); } return false; }
 function convertToISO(dateStr){ if(!dateStr) return null; const match=dateStr.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/); if(!match) return null; const months={Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'}; const day=match[1].padStart(2,'0'); const month=months[match[2]]; const year=match[3]; return `${year}-${month}-${day}`; }
-function getRevenueInEGPFromCache(inv){
-  const actualPrice=parseFloat(inv.ActualPrice)||0;
-  const discount=parseFloat(inv.Discount)||0;
-  const netAmount=actualPrice-discount;
-  if(netAmount<=0) return 0;
-  const currency=inv.InvoiceCurrency||'$';
-  let dateISO=convertToISO(inv.ActiveDate);
-  if(!dateISO) dateISO=convertToISO(inv.IssueDate);
-  if(!dateISO) return 0;
-  let rate=exchangeRatesMap.get(dateISO);
-  if(!rate){
-    const dates=Array.from(exchangeRatesMap.keys()).sort();
-    let closest=null;
-    for(const d of dates){ if(d<=dateISO) closest=d; else break; }
-    if(closest) rate=exchangeRatesMap.get(closest);
+function calculateMonthlyAverageRates(rates) {
+  const monthlyData = {};
+  
+  rates.forEach(rate => {
+    if (!rate.date) return;
+    const dateParts = rate.date.split('/'); // dd/MMM/yyyy
+    if (dateParts.length !== 3) return;
+    const month = dateParts[1]; // MMM
+    const year = dateParts[2];
+    const monthKey = `${year}-${month}`;
+    
+    if (!monthlyData[monthKey]) {
+      monthlyData[monthKey] = { USD: 0, EUR: 0, GBP: 0, count: 0 };
+    }
+    
+    monthlyData[monthKey].USD += parseFloat(rate.bUSD) || 0;
+    monthlyData[monthKey].EUR += parseFloat(rate.bEUR) || 0;
+    monthlyData[monthKey].GBP += parseFloat(rate.bGBP) || 0;
+    monthlyData[monthKey].count++;
+  });
+  
+  const result = {};
+  for (const [monthKey, data] of Object.entries(monthlyData)) {
+    result[monthKey] = {
+      USD: data.USD / data.count,
+      EUR: data.EUR / data.count,
+      GBP: data.GBP / data.count,
+      count: data.count
+    };
   }
-  if(!rate) return 0;
-  if(currency==='$') return netAmount*(rate.cash?.USD||47.5);
-  if(currency==='€') return netAmount*(rate.cash?.EUR||50.25);
-  if(currency==='£') return netAmount*(rate.cash?.GBP||60);
-  return netAmount;
+  
+  return result;
+}
+
+function getAverageRateForDate(dateStr) {
+  if (!dateStr) return null;
+  const date = parseDate(dateStr);
+  if (!date) return null;
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const monthKey = `${date.getFullYear()}-${monthNames[date.getMonth()]}`;
+  return monthlyAvgRates[monthKey] || null;
 }
 function parseDate(str){ if(!str) return null; const match=str.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/); if(match){ const day=parseInt(match[1]); const monthStr=match[2]; const year=parseInt(match[3]); const monthIndex=MONTHS.findIndex(m=>m.toLowerCase()===monthStr.toLowerCase()); if(monthIndex!==-1) return new Date(year,monthIndex,day); } const d=new Date(str); return isNaN(d)?null:d; }
 function fmtNum(n){ if(!n||isNaN(n)) return '0'; if(realMode) return Math.round(n).toLocaleString(); if(n>=1000000) return (n/1e6).toFixed(2)+'M'; if(n>=1000) return (n/1000).toFixed(1)+'K'; return Math.round(n).toString(); }
 function formatDateForInput(date){ const y=date.getFullYear(); const m=String(date.getMonth()+1).padStart(2,'0'); const d=String(date.getDate()).padStart(2,'0'); return `${y}-${m}-${d}`; }
-
+async function loadAllExchangeRates(){
+  try{ 
+    const res=await fetch(`${GAS_URL}?action=getAllExchangeRatesNew`); 
+    const rates=await res.json(); 
+    if(Array.isArray(rates)){ 
+      exchangeRatesMap.clear();
+      // تخزين الأسعار الأصلية لكل يوم
+      rates.forEach(rate=>{ 
+        if(rate.date){ 
+          const isoDate=convertToISO(rate.date); 
+          if(isoDate){ 
+            exchangeRatesMap.set(isoDate,{
+              cash:{USD:parseFloat(rate.bUSD)||0,EUR:parseFloat(rate.bEUR)||0,GBP:parseFloat(rate.bGBP)||0},
+              visa:{USD:parseFloat(rate.bVUSD)||0,EUR:parseFloat(rate.bVEUR)||0,GBP:parseFloat(rate.bVGBP)||0}
+            }); 
+          } 
+        } 
+      });
+      
+      // حساب متوسطات الشهر
+      monthlyAvgRates = calculateMonthlyAverageRates(rates);
+      return true; 
+    } 
+  }catch(e){ console.error(e); } 
+  return false; 
+}
 function drawCurrencyChart(labels, values) {
   if (activeChart) { activeChart.destroy(); activeChart = null; }
   const ctx = document.getElementById('mainChart');
@@ -193,32 +237,85 @@ function calculateCurrencyData() {
   cachedCurrencyData = { labels, values };
 }
 
-function calculateBookingData() {
-  const total = filteredInvoices.length;
-  const coll = filteredInvoices.reduce((s,i)=>s+(parseFloat(i.PaymentPrice)||0),0);
-  const rest = filteredInvoices.reduce((s,i)=>s+(parseFloat(i.Rest)||0),0);
-  const confirmed = filteredInvoices.filter(i=>(i.State||'').toLowerCase()==='confirmed').length;
+ function calculateTotalsInEGP(invoices) {
+  let totalRevenueEGP = 0;
+  let totalCollectedEGP = 0;
+  let totalRestEGP = 0;
   
-  // ✅ إجمالي الإيرادات = المحصل + المتبقي
-  const totalRevenue = coll + rest;
-  
-  const monthlyMap={};
-  for(const inv of filteredInvoices){
-    const dt=parseDate(inv.ActiveDate);
-    if(!dt) continue;
-    const monthKey=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
-    const monthLabel=`${MONTHS[dt.getMonth()]} ${dt.getFullYear()}`;
-    if(!monthlyMap[monthKey]) monthlyMap[monthKey]={label:monthLabel,rev:0,count:0};
-    // استخدم نفس منطق الإيرادات
-    const revenue = (parseFloat(inv.PaymentPrice)||0) + (parseFloat(inv.Rest)||0);
-    monthlyMap[monthKey].rev += revenue;
-    monthlyMap[monthKey].count++;
+  for (const inv of invoices) {
+    const activeDate = inv.ActiveDate || inv.IssueDate;
+    if (!activeDate) continue;
+    
+    const avgRate = getAverageRateForDate(activeDate);
+    if (!avgRate) continue; // لا يوجد سعر صرف للشهر
+    
+    const actualPrice = parseFloat(inv.ActualPrice) || 0;
+    const discount = parseFloat(inv.Discount) || 0;
+    const netAmount = actualPrice - discount;
+    const currency = inv.InvoiceCurrency || 'LE';
+    
+    let amountInEGP = 0;
+    if (currency === '$') amountInEGP = netAmount * avgRate.USD;
+    else if (currency === '€') amountInEGP = netAmount * avgRate.EUR;
+    else if (currency === '£') amountInEGP = netAmount * avgRate.GBP;
+    else amountInEGP = netAmount;
+    
+    totalRevenueEGP += amountInEGP;
+    
+    // للمدفوعات والمتبقي بنفس نسبة العملة
+    const paymentPrice = parseFloat(inv.PaymentPrice) || 0;
+    const rest = parseFloat(inv.Rest) || 0;
+    const totalNet = paymentPrice + rest;
+    if (totalNet > 0) {
+      totalCollectedEGP += amountInEGP * (paymentPrice / totalNet);
+      totalRestEGP += amountInEGP * (rest / totalNet);
+    }
   }
   
-  const sortedMonths=Object.keys(monthlyMap).sort();
-  const labels=sortedMonths.map(k=>monthlyMap[k].label);
-  const revData=sortedMonths.map(k=>monthlyMap[k].rev);
-  const cntData=sortedMonths.map(k=>monthlyMap[k].count);
+  return {
+    totalRevenueEGP: Math.round(totalRevenueEGP),
+    totalCollectedEGP: Math.round(totalCollectedEGP),
+    totalRestEGP: Math.round(totalRestEGP)
+  };
+}
+  
+async function calculateBookingData() {
+  const total = filteredInvoices.length;
+  const confirmed = filteredInvoices.filter(i=>(i.State||'').toLowerCase()==='confirmed').length;
+  
+  const totals = calculateTotalsInEGP(filteredInvoices); // ليست async
+  
+  const totalRevenue = totals.totalRevenueEGP;
+  const coll = totals.totalCollectedEGP;
+  const rest = totals.totalRestEGP;
+  
+  // تجميع شهري
+  const monthlyMap = {};
+  for (const inv of filteredInvoices) {
+    const dt = parseDate(inv.ActiveDate);
+    if (!dt) continue;
+    const monthKey = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
+    const monthLabel = `${MONTHS[dt.getMonth()]} ${dt.getFullYear()}`;
+    if (!monthlyMap[monthKey]) monthlyMap[monthKey] = { label: monthLabel, rev: 0, count: 0 };
+    
+    const rate = getAverageRateForDate(inv.ActiveDate);
+    if (rate) {
+      const netAmount = (parseFloat(inv.ActualPrice)||0) - (parseFloat(inv.Discount)||0);
+      const currency = inv.InvoiceCurrency || 'LE';
+      let rev = 0;
+      if (currency === '$') rev = netAmount * rate.USD;
+      else if (currency === '€') rev = netAmount * rate.EUR;
+      else if (currency === '£') rev = netAmount * rate.GBP;
+      else rev = netAmount;
+      monthlyMap[monthKey].rev += rev;
+      monthlyMap[monthKey].count++;
+    }
+  }
+  
+  const sortedMonths = Object.keys(monthlyMap).sort();
+  const labels = sortedMonths.map(k => monthlyMap[k].label);
+  const revData = sortedMonths.map(k => monthlyMap[k].rev);
+  const cntData = sortedMonths.map(k => monthlyMap[k].count);
   
   const highestRevenue = Math.max(...revData, 0);
   const bestMonthIndex = revData.indexOf(highestRevenue);
@@ -226,16 +323,83 @@ function calculateBookingData() {
   const avgMonthly = totalRevenue / (labels.length || 1);
   const avgBooking = total > 0 ? totalRevenue / total : 0;
   
-  const tripMap={}; for(const inv of filteredInvoices){ const trip=inv.Trip||'أخرى'; const revenue = (parseFloat(inv.PaymentPrice)||0) + (parseFloat(inv.Rest)||0); tripMap[trip]=(tripMap[trip]||0)+revenue; }
-  const topTrips=Object.entries(tripMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
-  const salesMap={}; for(const inv of filteredInvoices){ const name=inv.SalesName||'غير معروف'; const revenue = (parseFloat(inv.PaymentPrice)||0) + (parseFloat(inv.Rest)||0); salesMap[name]=(salesMap[name]||0)+revenue; }
-  const topSales=Object.entries(salesMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
-  const branchMap={}; for(const inv of filteredInvoices){ const name=inv.BranchName||'المركز الرئيسي'; const revenue = (parseFloat(inv.PaymentPrice)||0) + (parseFloat(inv.Rest)||0); branchMap[name]=(branchMap[name]||0)+revenue; }
-  const topBranches=Object.entries(branchMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
-  const natMap={}; for(const inv of filteredInvoices){ const nat=inv.Nationality||'أخرى'; const revenue = (parseFloat(inv.PaymentPrice)||0) + (parseFloat(inv.Rest)||0); natMap[nat]=(natMap[nat]||0)+revenue; }
-  const topNats=Object.entries(natMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  // تجميع حسب الرحلة
+  const tripMap = {};
+  for (const inv of filteredInvoices) {
+    const trip = inv.Trip || 'أخرى';
+    const rate = getAverageRateForDate(inv.ActiveDate);
+    if (rate) {
+      const netAmount = (parseFloat(inv.ActualPrice)||0) - (parseFloat(inv.Discount)||0);
+      const currency = inv.InvoiceCurrency || 'LE';
+      let rev = 0;
+      if (currency === '$') rev = netAmount * rate.USD;
+      else if (currency === '€') rev = netAmount * rate.EUR;
+      else if (currency === '£') rev = netAmount * rate.GBP;
+      else rev = netAmount;
+      tripMap[trip] = (tripMap[trip] || 0) + rev;
+    }
+  }
+  const topTrips = Object.entries(tripMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
   
-  cachedBookingData = { labels, revData, cntData, totalRevenue, coll, rest, total, confirmed, highestRevenue, bestMonthName, avgMonthly, avgBooking, topTrips, topSales, topBranches, topNats };
+  // تجميع حسب المندوب
+  const salesMap = {};
+  for (const inv of filteredInvoices) {
+    const name = inv.SalesName || 'غير معروف';
+    const rate = getAverageRateForDate(inv.ActiveDate);
+    if (rate) {
+      const netAmount = (parseFloat(inv.ActualPrice)||0) - (parseFloat(inv.Discount)||0);
+      const currency = inv.InvoiceCurrency || 'LE';
+      let rev = 0;
+      if (currency === '$') rev = netAmount * rate.USD;
+      else if (currency === '€') rev = netAmount * rate.EUR;
+      else if (currency === '£') rev = netAmount * rate.GBP;
+      else rev = netAmount;
+      salesMap[name] = (salesMap[name] || 0) + rev;
+    }
+  }
+  const topSales = Object.entries(salesMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  
+  // تجميع حسب الفرع
+  const branchMap = {};
+  for (const inv of filteredInvoices) {
+    const name = inv.BranchName || 'المركز الرئيسي';
+    const rate = getAverageRateForDate(inv.ActiveDate);
+    if (rate) {
+      const netAmount = (parseFloat(inv.ActualPrice)||0) - (parseFloat(inv.Discount)||0);
+      const currency = inv.InvoiceCurrency || 'LE';
+      let rev = 0;
+      if (currency === '$') rev = netAmount * rate.USD;
+      else if (currency === '€') rev = netAmount * rate.EUR;
+      else if (currency === '£') rev = netAmount * rate.GBP;
+      else rev = netAmount;
+      branchMap[name] = (branchMap[name] || 0) + rev;
+    }
+  }
+  const topBranches = Object.entries(branchMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  
+  // تجميع حسب الجنسية
+  const natMap = {};
+  for (const inv of filteredInvoices) {
+    const nat = inv.Nationality || 'أخرى';
+    const rate = getAverageRateForDate(inv.ActiveDate);
+    if (rate) {
+      const netAmount = (parseFloat(inv.ActualPrice)||0) - (parseFloat(inv.Discount)||0);
+      const currency = inv.InvoiceCurrency || 'LE';
+      let rev = 0;
+      if (currency === '$') rev = netAmount * rate.USD;
+      else if (currency === '€') rev = netAmount * rate.EUR;
+      else if (currency === '£') rev = netAmount * rate.GBP;
+      else rev = netAmount;
+      natMap[nat] = (natMap[nat] || 0) + rev;
+    }
+  }
+  const topNats = Object.entries(natMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  
+  cachedBookingData = { 
+    labels, revData, cntData, totalRevenue, coll, rest, total, confirmed, 
+    highestRevenue, bestMonthName, avgMonthly, avgBooking, 
+    topTrips, topSales, topBranches, topNats 
+  };
 }
   function buildTable(title,data,label){ if(!data.length) return `<div class="tbl-card"><div class="tbl-card-head"><h3>${title}</h3></div><div class="no-data" style="padding:20px">لا توجد بيانات</div></div>`; const maxVal=data[0]?.[1]||1; let rows=''; data.forEach(([name,val])=>{ const pct=maxVal>0?Math.round(val/maxVal*100):0; rows+=`<tr><td>${name||'غير معروف'}</td><td class="amt">${fmtNum(val)}<span class="bar-mini" style="width:${pct}%"></span></td></tr>`; }); return `<div class="tbl-card"><div class="tbl-card-head"><h3>${title}</h3></div><table class="dtbl"><thead><tr><th>${label}</th><th>المبلغ</th></tr></thead><tbody>${rows}</tbody></table></div>`; }
 
@@ -264,6 +428,22 @@ function refreshCurrencyDisplay() {
 function refreshBookingDisplay() {
   const d = cachedBookingData;
   drawBookingChart(d.labels, d.revData, d.cntData);
+  
+  // بناء جدول متوسطات أسعار الصرف
+  const avgRatesList = Object.entries(monthlyAvgRates).map(([monthKey, rates]) => {
+    return `<tr><td>${monthKey}</td><td class="amt">${Math.round(rates.USD)}</td><td class="amt">${Math.round(rates.EUR)}</td><td class="amt">${Math.round(rates.GBP)}</td></tr>`;
+  }).join('');
+  
+  const avgRatesHtml = `
+    <div class="tbl-card">
+      <div class="tbl-card-head"><h3>📈 متوسط أسعار الصرف (حسب الشهر)</h3></div>
+      <table class="dtbl">
+        <thead><tr><th>الشهر</th><th>USD</th><th>EUR</th><th>GBP</th></tr></thead>
+        <tbody>${avgRatesList || '<tr><td colspan="4">لا توجد بيانات</td></tr>'}</tbody>
+      </table>
+    </div>
+  `;
+  
   document.getElementById('reportContent').innerHTML = `
     <div class="kpi-grid">
       <div class="kpi-card c-blue"><div class="kpi-icon">🧾</div><div class="kpi-label">إجمالي الحجوزات</div><div class="kpi-val">${fmtNum(d.total)}</div><div class="kpi-sub">${d.confirmed} مؤكد</div></div>
@@ -285,7 +465,13 @@ function refreshBookingDisplay() {
       <div class="tip-card"><div class="tip-icon">🏛️</div><div class="tip-text">أفضل فرع: <span class="tip-highlight">${d.topBranches[0]?.[0]||'-'}</span> بقيمة ${fmtNum(d.topBranches[0]?.[1]||0)} جنيه</div></div>
       <div class="tip-card"><div class="tip-icon">🌍</div><div class="tip-text">أفضل جنسية: <span class="tip-highlight">${d.topNats[0]?.[0]||'-'}</span> بقيمة ${fmtNum(d.topNats[0]?.[1]||0)} جنيه</div></div>
     </div></div>
-    <div class="tbls-grid">${buildTable('🏝️ حسب الرحلة',d.topTrips,'الرحلة')}${buildTable('👤 حسب مندوب المبيعات',d.topSales,'مندوب المبيعات')}${buildTable('🏛️ حسب الفرع',d.topBranches,'الفرع')}${buildTable('🌍 حسب الجنسية',d.topNats,'الجنسية')}</div>
+    <div class="tbls-grid">
+      ${buildTable('🏝️ حسب الرحلة', d.topTrips, 'الرحلة')}
+      ${buildTable('👤 حسب مندوب المبيعات', d.topSales, 'مندوب المبيعات')}
+      ${buildTable('🏛️ حسب الفرع', d.topBranches, 'الفرع')}
+      ${buildTable('🌍 حسب الجنسية', d.topNats, 'الجنسية')}
+      ${avgRatesHtml}
+    </div>
   `;
   drawBookingChart(d.labels, d.revData, d.cntData);
 }
@@ -304,7 +490,7 @@ function toggleDisplayMode() {
   }
   refreshDisplay();
 }
-
+ 
 async function loadData(){ try{ await loadAllExchangeRates(); const res=await fetch(`${GAS_URL}?action=getAllInvoices`); const data=await res.json(); let invoices=Array.isArray(data)?data:[]; if(currentUser?.type==='Admin'){ } else if(currentUser?.type==='Owner'){ invoices=invoices.filter(i=>i.centerName===currentUser.centerName); } else if(currentUser?.type==='Accountant'){
   if(currentUser.branchName){
     invoices = invoices.filter(i => i.BranchName === currentUser.branchName);
@@ -359,7 +545,16 @@ function applyFilters() {
     return true;
   });
 }
-async function runReport(){ applyFilters(); if(!filteredInvoices.length){ document.getElementById('reportContent').innerHTML='<div class="no-data">📭 لا توجد بيانات تطابق معايير البحث</div>'; return; } calculateCurrencyData(); calculateBookingData(); refreshDisplay(); }
+async function runReport(){ 
+  applyFilters(); 
+  if(!filteredInvoices.length){ 
+    document.getElementById('reportContent').innerHTML='<div class="no-data">📭 لا توجد بيانات تطابق معايير البحث</div>'; 
+    return; 
+  } 
+  calculateCurrencyData(); 
+  await calculateBookingData(); 
+  refreshDisplay(); 
+}
 function switchTab(tab){ currentTab = tab; document.querySelectorAll('.analytics-tab').forEach(t=>t.classList.remove('active')); document.querySelector(`.analytics-tab[data-tab="${tab}"]`).classList.add('active'); runReport(); }
 function goBack() {
   if (document.referrer && document.referrer !== '') {
