@@ -20,7 +20,8 @@
     label { font-size: 11px; font-weight: bold; color: #64748b; text-transform: uppercase; display: block; margin-bottom: 4px; }
     input, select, textarea { padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-family: inherit; width: 100%; }
     input:focus, select:focus { outline: none; border-color: #3b82f6; }
-    input[readonly] { background: #f1f5f9; color: #64748b; cursor: not-allowed; }
+    input[readonly], input:read-only { background: #f1f5f9; color: #64748b; cursor: not-allowed; }
+    input[disabled] { background: #f1f5f9; color: #94a3b8; cursor: not-allowed; }
     .hotel-row { display: grid; grid-template-columns: 1fr 90px 70px 70px 70px; gap: 12px; margin-bottom: 16px; }
     .trip-table { overflow-x: auto; }
     .trip-table table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -31,6 +32,7 @@
     .payment-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; }
     .payment-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 8px; text-align: center; }
     .payment-card input { width: 100%; border: none; background: transparent; text-align: center; font-weight: bold; }
+    .payment-card input:focus { outline: none; }
     .totals-strip { display: flex; justify-content: space-around; padding: 16px; background: #f8fafc; border-radius: 10px; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
     .total-item { text-align: center; }
     .total-item .value { font-size: 24px; font-weight: bold; color: #0f1f3d; }
@@ -41,12 +43,13 @@
     .btn-danger { background: #dc2626; color: white; }
     .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 1000; }
     .modal.open { display: flex; }
-    .modal-content { background: white; border-radius: 16px; padding: 24px; max-width: 500px; width: 90%; text-align: center; max-height: 90vh; overflow-y: auto; }
+    .modal-content { background: white; border-radius: 16px; padding: 24px; max-width: 550px; width: 90%; text-align: center; max-height: 90vh; overflow-y: auto; }
     .loader { text-align: center; padding: 40px; }
     .spinner { width: 40px; height: 40px; border: 3px solid #e2e8f0; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto; }
     @keyframes spin { to { transform: rotate(360deg); } }
     .clickable-field { background: #e0e8ff !important; cursor: pointer !important; }
-    .disabled-field { background: #f1f5f9 !important; color: #94a3b8 !important; cursor: not-allowed !important; }
+    .collection-summary { background: #f8fafc; border-radius: 10px; padding: 12px; margin: 12px 0; text-align: center; }
+    .collection-summary span { font-size: 18px; font-weight: bold; }
     @media (max-width: 640px) { .payment-grid { grid-template-columns: repeat(2, 1fr); } .hotel-row { grid-template-columns: 1fr 70px 55px 55px 55px; } }
   </style>
 </head>
@@ -55,7 +58,7 @@
 <div class="header">
   <div>✏️ تعديل الفاتورة</div>
   <div><span class="voucher-badge" id="voucherDisplay">---</span></div>
-  <div><button class="back-btn" onclick="goBack()">← خروج</button></div>
+  <div><button class="back-btn" onclick="confirmExit()">← خروج</button></div>
 </div>
 
 <div class="container" id="mainContainer">
@@ -63,7 +66,7 @@
   <div id="formContent" style="display: none;"></div>
 </div>
 
-<div id="alertModal" class="modal"><div class="modal-content"><div id="alertMsg"></div><div id="alertBtns"><button class="btn btn-primary" onclick="closeAlert()">موافق</button></div></div></div>
+<div id="alertModal" class="modal"><div class="modal-content"><div id="alertMsg"></div><div id="alertBtns"></div></div></div>
 <div id="collectionModal" class="modal"><div class="modal-content" id="collectionModalContent"></div></div>
 <div id="pdfOverlay" class="modal"><div class="modal-content"><div class="spinner"></div><p id="pdfMsg">جاري المعالجة...</p></div></div>
 
@@ -84,6 +87,7 @@ function dateToInput(s) { const d = parseDate(s); if (!d) return ''; return `${d
 function showAlert(msg, btns = null) {
   document.getElementById('alertMsg').innerHTML = msg;
   if (btns) document.getElementById('alertBtns').innerHTML = btns;
+  else document.getElementById('alertBtns').innerHTML = '<button class="btn btn-primary" onclick="closeAlert()">موافق</button>';
   document.getElementById('alertModal').classList.add('open');
 }
 function closeAlert() { document.getElementById('alertModal').classList.remove('open'); }
@@ -92,6 +96,7 @@ function showLoader(show, msg = 'جاري المعالجة...') {
   if (show) { document.getElementById('pdfMsg').innerHTML = msg; document.getElementById('pdfOverlay').classList.add('open'); }
   else { document.getElementById('pdfOverlay').classList.remove('open'); }
 }
+function confirmExit() { if (confirm('هل أنت متأكد من إلغاء التعديلات؟')) goBack(); }
 function goBack() { location.href = sessionStorage.getItem('returnUrl') || 'Dashboard.html'; }
 
 async function gas(action, params = {}) {
@@ -176,54 +181,92 @@ function updateItemTotal(idx, price) {
   updateTotals();
 }
 
-// التحصيل
+// ===================== التحصيل =====================
+let currentCollectionRest = 0;
+
 async function openCollectionModal() {
   if (!currentInvoice) return;
   const rest = parseFloat(document.getElementById('displayRest')?.textContent) || 0;
   if (rest <= 0.01) { showAlert('لا يوجد مبلغ متبقي للتحصيل'); return; }
+  currentCollectionRest = rest;
   
-  // جلب الموظفين (إذا لم يتم تحميلهم مسبقاً)
   if (allEmployees.length === 0) {
-    try {
-      const employees = await gas('getAllEmployees');
-      allEmployees = Array.isArray(employees) ? employees : [];
-    } catch(e) { console.warn(e); }
+    try { const employees = await gas('getAllEmployees'); allEmployees = Array.isArray(employees) ? employees : []; } catch(e) {}
   }
   
   let collectorsOptions = '<option value="">-- اختر المحصل --</option>';
   if (allEmployees.length) {
     allEmployees.forEach(emp => {
-      const selected = (emp.serial === currentUser?.id) ? 'selected' : '';
-      collectorsOptions += `<option value="${esc(emp.serial)}|${esc(emp.name)}" ${selected}>${esc(emp.name)} (${esc(emp.position || 'موظف')})</option>`;
+      collectorsOptions += `<option value="${esc(emp.serial)}|${esc(emp.name)}">${esc(emp.name)} (${esc(emp.position || 'موظف')})</option>`;
     });
-  }
-  if (currentUser && !allEmployees.some(e => e.serial === currentUser.id)) {
-    collectorsOptions += `<option value="${currentUser.id}|${currentUser.name}" selected>${currentUser.name} (المستخدم الحالي)</option>`;
   }
   
   const html = `
     <h3 style="margin-bottom:16px">💰 تحصيل دفعة</h3>
-    <div style="font-size:32px;font-weight:bold;margin-bottom:16px">${R2(rest).toFixed(2)} ${currentInvoice.invoiceCurrency || 'LE'}</div>
+    <div style="font-size:28px;font-weight:bold;margin-bottom:8px">${R2(rest).toFixed(2)} ${currentInvoice.invoiceCurrency || 'LE'}</div>
+    <div style="font-size:12px;color:#64748b;margin-bottom:16px">المبلغ المتبقي الحالي</div>
+    
     <div class="payment-grid">
-      <div class="payment-card"><label>USD</label><input type="number" id="collUSD" step="0.01" placeholder="0"></div>
-      <div class="payment-card"><label>EUR</label><input type="number" id="collEUR" step="0.01" placeholder="0"></div>
-      <div class="payment-card"><label>GBP</label><input type="number" id="collGBP" step="0.01" placeholder="0"></div>
-      <div class="payment-card"><label>EGP</label><input type="number" id="collLE" step="0.01" placeholder="0"></div>
-      <div class="payment-card"><label>Visa USD</label><input type="number" id="collVisaUSD" step="0.01" placeholder="0"></div>
-      <div class="payment-card"><label>Visa EUR</label><input type="number" id="collVisaEUR" step="0.01" placeholder="0"></div>
-      <div class="payment-card"><label>Visa GBP</label><input type="number" id="collVisaGBP" step="0.01" placeholder="0"></div>
-      <div class="payment-card"><label>Visa EGP</label><input type="number" id="collVisaLE" step="0.01" placeholder="0"></div>
+      <div class="payment-card"><label>USD</label><input type="number" id="collUSD" step="0.01" placeholder="0" oninput="updateCollectionSummary()"></div>
+      <div class="payment-card"><label>EUR</label><input type="number" id="collEUR" step="0.01" placeholder="0" oninput="updateCollectionSummary()"></div>
+      <div class="payment-card"><label>GBP</label><input type="number" id="collGBP" step="0.01" placeholder="0" oninput="updateCollectionSummary()"></div>
+      <div class="payment-card"><label>EGP</label><input type="number" id="collLE" step="0.01" placeholder="0" oninput="updateCollectionSummary()"></div>
+      <div class="payment-card"><label>Visa USD</label><input type="number" id="collVisaUSD" step="0.01" placeholder="0" oninput="updateCollectionSummary()"></div>
+      <div class="payment-card"><label>Visa EUR</label><input type="number" id="collVisaEUR" step="0.01" placeholder="0" oninput="updateCollectionSummary()"></div>
+      <div class="payment-card"><label>Visa GBP</label><input type="number" id="collVisaGBP" step="0.01" placeholder="0" oninput="updateCollectionSummary()"></div>
+      <div class="payment-card"><label>Visa EGP</label><input type="number" id="collVisaLE" step="0.01" placeholder="0" oninput="updateCollectionSummary()"></div>
     </div>
+    
+    <div class="collection-summary">
+      <div>💰 إجمالي المبلغ المحصل</div>
+      <span id="collectionTotalDisplay" style="font-size:24px;color:#16a34a">0.00</span>
+      <div style="font-size:12px;color:#64748b;margin-top:8px">المتبقي بعد التحصيل: <span id="newRestPreview" style="font-weight:bold">${R2(rest).toFixed(2)}</span></div>
+    </div>
+    
     <div style="margin:12px 0; text-align:left"><label>من قام بالتحصيل؟</label><select id="collectedBySelect" style="width:100%">${collectorsOptions}</select></div>
     <div style="margin:12px 0; text-align:left"><label>هل تم تسليم المبلغ للخزينة؟</label><select id="transferredToTreasury" style="width:100%"><option value="No">لا، لم يُسلم بعد</option><option value="Yes">نعم، تم التسليم</option></select></div>
     <div style="margin:12px 0; text-align:left"><label>ملاحظات</label><textarea id="collectionNotes" rows="2" style="width:100%"></textarea></div>
+    
     <div style="margin-top:16px">
-      <button class="btn btn-success" onclick="submitCollection()">تأكيد</button>
+      <button class="btn btn-success" onclick="submitCollection()">تأكيد التحصيل</button>
       <button class="btn btn-danger" onclick="closeCollectionModal()">إلغاء</button>
     </div>
   `;
   document.getElementById('collectionModalContent').innerHTML = html;
   document.getElementById('collectionModal').classList.add('open');
+  updateCollectionSummary();
+}
+
+async function updateCollectionSummary() {
+  const currency = currentInvoice?.invoiceCurrency || 'LE';
+  const activeDate = document.getElementById('activeDate')?.value;
+  const cU = Number(document.getElementById('collUSD')?.value) || 0;
+  const cE = Number(document.getElementById('collEUR')?.value) || 0;
+  const cG = Number(document.getElementById('collGBP')?.value) || 0;
+  const cL = Number(document.getElementById('collLE')?.value) || 0;
+  const vU = Number(document.getElementById('collVisaUSD')?.value) || 0;
+  const vE = Number(document.getElementById('collVisaEUR')?.value) || 0;
+  const vG = Number(document.getElementById('collVisaGBP')?.value) || 0;
+  const vL = Number(document.getElementById('collVisaLE')?.value) || 0;
+  
+  let collected = 0;
+  if (activeDate && (cU + cE + cG + cL + vU + vE + vG + vL) > 0) {
+    const raw = await getRate(activeDate);
+    const r = rateFields(raw);
+    if (r) {
+      const totalLE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
+                      vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
+      if (currency === '$') collected = totalLE / r.cash.USD;
+      else if (currency === '€') collected = totalLE / r.cash.EUR;
+      else if (currency === '£') collected = totalLE / r.cash.GBP;
+      else collected = totalLE;
+    } else collected = cU + cE + cG + cL + vU + vE + vG + vL;
+  } else collected = cU + cE + cG + cL + vU + vE + vG + vL;
+  
+  collected = R2(collected);
+  const newRest = Math.max(0, R2(currentCollectionRest - collected));
+  document.getElementById('collectionTotalDisplay').textContent = collected.toFixed(2);
+  document.getElementById('newRestPreview').textContent = newRest.toFixed(2);
 }
 
 async function submitCollection() {
@@ -246,7 +289,7 @@ async function submitCollection() {
   const transferred = document.getElementById('transferredToTreasury')?.value === 'Yes' ? 'Yes' : 'No';
   const paymentMethod = (cU + cE + cG + cL > 0 && vU + vE + vG + vL > 0) ? 'Mixed' : (cU + cE + cG + cL > 0 ? 'Cash' : 'Visa');
   
-  showLoader(true, 'جاري التحصيل...');
+  showLoader(true, 'جاري إنشاء فاتورة التحصيل...');
   try {
     const result = await gas('createCollectionInvoice', {
       parentVoucherNo: currentInvoice.voucherNo,
@@ -274,11 +317,21 @@ async function submitCollection() {
       paymentMethod: paymentMethod,
       transferredToTreasury: transferred
     });
+    
     showLoader(false);
-    closeCollectionModal(); // ✅ إغلاق النافذة بعد التحصيل
+    closeCollectionModal();
     
     if (result?.success) {
-      showAlert(`✅ تم تحصيل ${total} ${currentInvoice.invoiceCurrency || 'LE'}`, '<button class="btn btn-primary" onclick="location.reload()">تحديث</button>');
+      // ✅ إعادة تحميل الفاتورة لعرض المتبقي الجديد
+      showLoader(true, 'جاري تحديث البيانات...');
+      const refreshed = await gas('getInvoiceByVoucher', { voucherNo: currentInvoice.voucherNo });
+      if (refreshed.success && refreshed.invoice) {
+        currentInvoice = refreshed.invoice;
+        originalInvoice = JSON.parse(JSON.stringify(currentInvoice));
+        await updateTotals();
+      }
+      showLoader(false);
+      showAlert(`✅ تم تحصيل ${total} ${currentInvoice.invoiceCurrency || 'LE'} بنجاح`, '<button class="btn btn-primary" onclick="location.reload()">تحديث</button>');
     } else {
       showAlert('❌ فشل التحصيل: ' + (result?.message || 'خطأ'));
     }
@@ -288,7 +341,7 @@ async function submitCollection() {
   }
 }
 
-// حفظ التعديلات
+// ===================== حفظ التعديلات وإنشاء PDF =====================
 async function collectEditedData() {
   const items = [];
   for (let i = 0; i < 20; i++) {
@@ -347,7 +400,7 @@ async function collectEditedData() {
 
 async function saveChanges() {
   const editedData = await collectEditedData();
-  showLoader(true, 'جاري حفظ التعديلات...');
+  showLoader(true, 'جاري حفظ التعديلات وإنشاء PDF...');
   try {
     await gas('updateInvoice', editedData);
     await gas('copyInvoiceToEdit', {
@@ -357,7 +410,6 @@ async function saveChanges() {
       editSummary: 'تعديل الفاتورة'
     });
     
-    showLoader(true, 'جاري إنشاء PDF...');
     const pdfResult = await gas('saveAndGenerateSinglePDF_New', {
       voucherNo: editedData.voucherNo,
       prices: JSON.stringify(editedData.tripPrices || []),
@@ -366,17 +418,18 @@ async function saveChanges() {
     
     showLoader(false);
     
-    let btns = '<button class="btn btn-primary" onclick="goBack()">🏠 رجوع</button>';
     if (pdfResult?.success && pdfResult?.url) {
-      btns += `<a href="${pdfResult.url}" target="_blank" class="btn btn-success" style="text-decoration:none">📄 فتح PDF</a>`;
+      showAlert('✅ تم حفظ التعديلات بنجاح', `📄 <a href="${pdfResult.url}" target="_blank" class="btn btn-success" style="text-decoration:none; margin:5px">فتح PDF</a><button class="btn btn-primary" onclick="goBack()" style="margin:5px">رجوع</button>`);
+    } else {
+      showAlert('✅ تم حفظ التعديلات', '<button class="btn btn-primary" onclick="goBack()">رجوع</button>');
     }
-    btns += '<button class="btn btn-primary" onclick="closeAlert()">❌ إغلاق</button>';
-    showAlert('✅ تم حفظ التعديلات بنجاح', btns);
-    
-  } catch(err) { showLoader(false); showAlert('❌ خطأ: ' + err.message); }
+  } catch(err) { 
+    showLoader(false); 
+    showAlert('❌ خطأ: ' + err.message); 
+  }
 }
 
-// تحميل الفاتورة
+// ===================== تحميل الفاتورة =====================
 async function loadInvoice() {
   const params = new URLSearchParams(location.search);
   const voucherNo = params.get('voucherNo');
@@ -386,7 +439,6 @@ async function loadInvoice() {
   showLoader(true, 'جاري تحميل الفاتورة...');
   
   try {
-    // جلب الموظفين والفاتورة
     const [employees, invoiceResult] = await Promise.all([
       gas('getAllEmployees'),
       gas('getInvoiceByVoucher', { voucherNo })
@@ -400,7 +452,6 @@ async function loadInvoice() {
     
     document.getElementById('voucherDisplay').textContent = voucherNo;
     
-    // جلب بيانات الرحلة
     const [tripData, tripPricesData, uniqueTrips] = await Promise.all([
       gas('getTripData', { tripName: currentInvoice.trip, currency: currentInvoice.invoiceCurrency || 'LE' }),
       gas('getTripPrices', { tripName: currentInvoice.trip, currency: currentInvoice.invoiceCurrency || 'LE', category: '' }),
@@ -410,7 +461,6 @@ async function loadInvoice() {
     const tripPrices = (tripPricesData?.prices) ? tripPricesData.prices : [];
     const tripsOpts = Array.isArray(uniqueTrips) ? uniqueTrips.map(t => `<option value="${esc(t.name)}" ${t.name === currentInvoice.trip ? 'selected' : ''}>${esc(t.name)}</option>`).join('') : '';
     
-    // جدول البنود
     let tRows = '';
     if (tripData?.items && tripData.items.length > 0) {
       const acts = [];
@@ -432,12 +482,12 @@ async function loadInvoice() {
       }).join('');
     }
     
-    // ✅ التحقق من تاريخ الفاتورة - غلق حقول المدفوعات نهائياً (مع منع الأسهم)
+    // ✅ التحقق من تاريخ الفاتورة
     const issueDate = parseDate(currentInvoice.issueDate);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const isPastDate = issueDate && issueDate < today;
-    const paymentsReadonlyAttr = isPastDate ? 'readonly onkeydown="return false;" onwheel="return false;" oncontextmenu="return false;" ondragstart="return false;" onselectstart="return false;"' : '';
+    const paymentsReadonlyAttr = isPastDate ? 'disabled' : '';
     const disableCollection = isPastDate || (currentInvoice.rest || 0) <= 0.01;
     const warnHtml = isPastDate ? `<div class="warning-bar">⚠️ تاريخ الفاتورة (${currentInvoice.issueDate}) قد مضى — لا يمكن تعديل المدفوعات.</div>` : '';
     
@@ -475,7 +525,7 @@ async function loadInvoice() {
             </select></div>
           </div>
           <div><label>الرحلة</label><select id="tripName" onchange="changeTrip()">${tripsOpts}</select></div>
-          <div class="trip-table"><table><thead><tr><th>البند</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th></tr></thead><tbody id="itemsBody">${tRows}</tbody></table></div>
+          <div class="trip-table"><td><thead><tr><th>البند</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th></tr></thead><tbody id="itemsBody">${tRows}</tbody></table></div>
         </div>
       </div>
       
@@ -522,7 +572,7 @@ async function loadInvoice() {
       <div style="display:flex; gap:10px; justify-content:center; margin-top:20px">
         <button class="btn btn-success" id="collectionBtn" ${disableCollection ? 'disabled' : ''}>💰 تحصيل</button>
         <button class="btn btn-primary" onclick="saveChanges()">💾 حفظ</button>
-        <button class="btn btn-danger" onclick="goBack()">❌ إلغاء</button>
+        <button class="btn btn-danger" onclick="confirmExit()">❌ إلغاء</button>
       </div>
     `;
     
@@ -578,7 +628,9 @@ window.updateItemTotal = updateItemTotal;
 window.saveChanges = saveChanges;
 window.openCollectionModal = openCollectionModal;
 window.submitCollection = submitCollection;
+window.updateCollectionSummary = updateCollectionSummary;
 window.changeTrip = changeTrip;
+window.confirmExit = confirmExit;
 </script>
 </body>
 </html>
