@@ -65,9 +65,9 @@
     .btn-danger{background:#fee2e2;color:#dc2626;}
     .modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);align-items:center;justify-content:center;z-index:1000;backdrop-filter:blur(4px);}
     .modal.open{display:flex;}
-    .modal-content{background:white;width:90%;max-width:500px;border-radius:24px;padding:24px;text-align:center;}
-    .modal-icon{font-size:48px;margin-bottom:12px;}
-    .modal-msg{font-size:1rem;font-weight:600;margin-bottom:20px;}
+    .modal-content{background:white;width:90%;max-width:550px;border-radius:24px;padding:24px;max-height:90vh;overflow-y:auto;}
+    .modal-icon{font-size:48px;margin-bottom:12px;text-align:center;}
+    .modal-msg{font-size:1rem;font-weight:600;margin-bottom:20px;text-align:center;}
     .modal-buttons{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;}
     .loader-container{text-align:center;padding:60px;color:var(--text-lt);}
     .spinner{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 12px;}
@@ -117,7 +117,20 @@
   <div id="formContent" style="display: none;"></div>
 </div>
 
-<div id="alertModal" class="modal"><div class="modal-content"><div class="modal-icon" id="alertIcon">ℹ️</div><div class="modal-msg" id="alertMsg"></div><div class="modal-buttons" id="alertBtns"></div></div></div>
+<!-- Modal التنبيه -->
+<div id="alertModal" class="modal">
+  <div class="modal-content">
+    <div class="modal-icon" id="alertIcon">ℹ️</div>
+    <div class="modal-msg" id="alertMsg"></div>
+    <div class="modal-buttons" id="alertBtns"></div>
+  </div>
+</div>
+
+<!-- Modal التحصيل -->
+<div id="collectionModal" class="modal">
+  <div class="modal-content" id="collectionModalContent"></div>
+</div>
+
 <div id="pdfOverlay" class="pdf-overlay"><div class="pdf-spinner"></div><p id="pdfMsg">جاري المعالجة...</p></div>
 <div id="clockModal" class="clock-modal"><div class="clock-box"><div class="ck-head"><div class="ck-head-title">اختيار الوقت</div><div class="ck-time-big"><span id="ckH">--</span>:<span id="ckM">--</span></div><div class="ck-mode-row"><button class="ck-mode-pill active" id="modeHour" onclick="setClockMode('hour')">ساعة</button><button class="ck-mode-pill" id="modeMin" onclick="setClockMode('minute')">دقيقة</button></div></div><div class="ck-face-wrap"><div class="ck-svg-wrap" id="ckWrap"><svg viewBox="0 0 230 230"><circle cx="115" cy="115" r="112" fill="#eef2f8" stroke="#dde4f0" stroke-width="1.5"/><circle cx="115" cy="115" r="64" fill="rgba(37,99,235,.04)" stroke="rgba(37,99,235,.12)" stroke-width="1" stroke-dasharray="4 3"/><g id="ckTicks"></g><g id="ckNums"></g><line id="ckHandH" x1="115" y1="115" x2="115" y2="62" stroke="#0f1f3d" stroke-width="5" stroke-linecap="round"/><line id="ckHandM" x1="115" y1="115" x2="115" y2="44" stroke="#2563eb" stroke-width="3.5" stroke-linecap="round"/><circle cx="115" cy="115" r="7" fill="#0f1f3d"/><circle cx="115" cy="115" r="3" fill="#f5c842"/><circle id="ckDot" cx="115" cy="44" r="9" fill="#f5c842" opacity="0"/></svg></div></div><div class="ck-foot"><button class="ck-btn ck-clear" onclick="clearClock()">🔄 مسح</button><button class="ck-btn ck-cancel" onclick="closeClockModal()">❌ إلغاء</button><button class="ck-btn ck-set" onclick="confirmClock()">✅ تعيين</button></div></div></div>
 <div id="quickModal" class="quick-modal"><div class="quick-modal-content"><div class="quick-modal-header"><span id="quickModalTitle">اختر</span><span class="quick-modal-close" onclick="closeQuickModal()">&times;</span></div><div id="quickModalBody"></div></div></div>
@@ -149,6 +162,7 @@ function closeAlert() { document.getElementById('alertModal').classList.remove('
 function showPDF(m) { document.getElementById('pdfMsg').textContent = m; document.getElementById('pdfOverlay').classList.add('show'); }
 function hidePDF() { document.getElementById('pdfOverlay').classList.remove('show'); }
 function closeQuickModal() { document.getElementById('quickModal').classList.remove('open'); }
+function closeCollectionModal() { document.getElementById('collectionModal').classList.remove('open'); }
 function goBack() {
   const returnUrl = sessionStorage.getItem('returnUrl');
   if (returnUrl && returnUrl !== window.location.href) {
@@ -368,6 +382,39 @@ function getCurrentRest() {
   return parseFloat(el?.textContent) || 0;
 }
 
+async function updateCollectionPreview() {
+  const currency = currentInvoice?.invoiceCurrency || 'LE';
+  const activeDate = document.getElementById('activeDate')?.value;
+  const cU = Number(document.getElementById('collUSD')?.value) || 0;
+  const cE = Number(document.getElementById('collEUR')?.value) || 0;
+  const cG = Number(document.getElementById('collGBP')?.value) || 0;
+  const cL = Number(document.getElementById('collLE')?.value) || 0;
+  const vU = Number(document.getElementById('collVisaUSD')?.value) || 0;
+  const vE = Number(document.getElementById('collVisaEUR')?.value) || 0;
+  const vG = Number(document.getElementById('collVisaGBP')?.value) || 0;
+  const vL = Number(document.getElementById('collVisaLE')?.value) || 0;
+  
+  let collected = 0;
+  if (activeDate && (cU + cE + cG + cL + vU + vE + vG + vL) > 0) {
+    const raw = await getRate(activeDate);
+    const r = rateFields(raw);
+    if (r) {
+      const totalLE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
+                      vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
+      if (currency === '$') collected = totalLE / r.cash.USD;
+      else if (currency === '€') collected = totalLE / r.cash.EUR;
+      else if (currency === '£') collected = totalLE / r.cash.GBP;
+      else collected = totalLE;
+    } else {
+      collected = cU + cE + cG + cL + vU + vE + vG + vL;
+    }
+  } else {
+    collected = cU + cE + cG + cL + vU + vE + vG + vL;
+  }
+  
+  document.getElementById('collectionTotalDisplay').textContent = R2(collected).toFixed(2);
+}
+
 async function openCollectionModal() {
   if (!currentInvoice) return;
   const rest = getCurrentRest();
@@ -417,43 +464,6 @@ async function openCollectionModal() {
   document.getElementById('collectionModalContent').innerHTML = html;
   document.getElementById('collectionModal').classList.add('open');
   setTimeout(() => updateCollectionPreview(), 100);
-}
-
-function closeCollectionModal() {
-  document.getElementById('collectionModal').classList.remove('open');
-}
-
-async function updateCollectionPreview() {
-  const currency = currentInvoice?.invoiceCurrency || 'LE';
-  const activeDate = document.getElementById('activeDate')?.value;
-  const cU = Number(document.getElementById('collUSD')?.value) || 0;
-  const cE = Number(document.getElementById('collEUR')?.value) || 0;
-  const cG = Number(document.getElementById('collGBP')?.value) || 0;
-  const cL = Number(document.getElementById('collLE')?.value) || 0;
-  const vU = Number(document.getElementById('collVisaUSD')?.value) || 0;
-  const vE = Number(document.getElementById('collVisaEUR')?.value) || 0;
-  const vG = Number(document.getElementById('collVisaGBP')?.value) || 0;
-  const vL = Number(document.getElementById('collVisaLE')?.value) || 0;
-  
-  let collected = 0;
-  if (activeDate && (cU + cE + cG + cL + vU + vE + vG + vL) > 0) {
-    const raw = await getRate(activeDate);
-    const r = rateFields(raw);
-    if (r) {
-      const totalLE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
-                      vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
-      if (currency === '$') collected = totalLE / r.cash.USD;
-      else if (currency === '€') collected = totalLE / r.cash.EUR;
-      else if (currency === '£') collected = totalLE / r.cash.GBP;
-      else collected = totalLE;
-    } else {
-      collected = cU + cE + cG + cL + vU + vE + vG + vL;
-    }
-  } else {
-    collected = cU + cE + cG + cL + vU + vE + vG + vL;
-  }
-  
-  document.getElementById('collectionTotalDisplay').textContent = R2(collected).toFixed(2);
 }
 
 async function submitCollection() {
@@ -558,7 +568,6 @@ async function loadInvoice() {
     document.getElementById('userNameDisplay').textContent = currentUser?.name || 'User';
     document.getElementById('voucherDisplay').textContent = voucherNo;
     
-    // جلب بيانات الرحلة
     const tripData = await gas('getTripData', { 
       tripName: currentInvoice.trip, 
       currency: currentInvoice.invoiceCurrency || 'LE' 
@@ -572,7 +581,6 @@ async function loadInvoice() {
     
     const tripPrices = (tripPricesData?.prices) ? tripPricesData.prices : [];
     
-    // بناء جدول البنود
     let tRows = '';
     if (tripData?.items && tripData.items.length > 0) {
       const acts = [];
@@ -596,13 +604,12 @@ async function loadInvoice() {
       }).join('');
     }
     
-    // جلب قائمة الرحلات
     const uniqueTrips = await gas('getUniqueTrips');
     const tripsOpts = Array.isArray(uniqueTrips) 
       ? uniqueTrips.map(t => `<option value="${esc(t.name)}" ${t.name === currentInvoice.trip ? 'selected' : ''}>${esc(t.name)}</option>`).join('') 
       : `<option value="${esc(currentInvoice.trip)}" selected>${esc(currentInvoice.trip)}</option>`;
     
-    // التحقق من تاريخ الفاتورة لحماية المدفوعات
+    // ✅ التحقق من تاريخ الفاتورة لحماية المدفوعات
     const issueDate = parseDate(currentInvoice.issueDate);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
