@@ -376,23 +376,29 @@ async function compressImage(file, maxWidth = 800, maxHeight = 800, quality = 0.
 }
   async function uploadLogoInChunks(file, centerId) {
   return new Promise(async (resolve, reject) => {
-    // ضغط الصورة أولاً
-    const compressedBase64 = await compressImage(file, 400, 400, 0.6);
-    let base64 = compressedBase64.split(',')[1];
+    // إظهار شريط التقدم
+    const overlay = document.getElementById('progressOverlay');
+    const progressBar = document.getElementById('progressBar');
+    const progressPercent = document.getElementById('progressPercent');
+    const progressText = document.getElementById('progressText');
+    overlay.style.display = 'flex';
+    progressBar.style.width = '0%';
+    progressPercent.textContent = '0%';
     
-    const CHUNK_SIZE = 500; // ✅ 500 حرف لكل جزء (آمن لـ JSONP)
-    const totalChunks = Math.ceil(base64.length / CHUNK_SIZE);
-    
-    console.log(`📤 تقسيم الصورة إلى ${totalChunks} جزء`);
-    showAlert(`جاري رفع الصورة (${totalChunks} جزء)...`, null);
-    
-    let uploadedChunks = 0;
-    let allResults = [];
-    
-    for (let i = 0; i < totalChunks; i++) {
-      const chunk = base64.substring(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+    try {
+      // ضغط الصورة أولاً
+      progressText.textContent = 'جاري ضغط الصورة...';
+      const compressedBase64 = await compressImage(file, 400, 400, 0.6);
+      let base64 = compressedBase64.split(',')[1];
       
-      try {
+      const CHUNK_SIZE = 500;
+      const totalChunks = Math.ceil(base64.length / CHUNK_SIZE);
+      
+      progressText.textContent = `جاري رفع الصورة (0/${totalChunks})...`;
+      
+      for (let i = 0; i < totalChunks; i++) {
+        const chunk = base64.substring(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+        
         const result = await jsonp('uploadCenterLogoChunk', {
           b64: chunk,
           chunkIndex: i,
@@ -401,30 +407,32 @@ async function compressImage(file, maxWidth = 800, maxHeight = 800, quality = 0.
           mimeType: 'image/jpeg'
         });
         
-        uploadedChunks++;
-        allResults.push(result);
-        
-        if (result?.chunkReceived) {
-          console.log(`✅ الجزء ${i + 1}/${totalChunks} تم استلامه`);
-        } else {
+        if (!result?.chunkReceived) {
           throw new Error(`فشل الجزء ${i + 1}`);
         }
-      } catch(err) {
-        reject(new Error(`فشل رفع الجزء ${i + 1}: ${err.message}`));
-        return;
+        
+        // تحديث شريط التقدم
+        const percent = Math.round(((i + 1) / totalChunks) * 100);
+        progressBar.style.width = percent + '%';
+        progressPercent.textContent = percent + '%';
+        progressText.textContent = `جاري رفع الصورة (${i + 1}/${totalChunks})...`;
       }
+      
+      progressText.textContent = 'جاري دمج الأجزاء...';
+      const finalResult = await jsonp('assembleUploadedLogo', {
+        centerId: centerId,
+        totalChunks: totalChunks
+      });
+      
+      overlay.style.display = 'none';
+      resolve(finalResult);
+      
+    } catch(err) {
+      overlay.style.display = 'none';
+      reject(err);
     }
-    
-    // ✅ بعد رفع كل الأجزاء، اطلب دمجها
-    const finalResult = await jsonp('assembleUploadedLogo', {
-      centerId: centerId,
-      totalChunks: totalChunks
-    });
-    
-    resolve(finalResult);
   });
-}
-  
+}  
 // ══════════════════════════════════════════════════
 // Modals
 // ══════════════════════════════════════════════════
@@ -673,18 +681,23 @@ async function openCenterModal(id) {
       };
       reader.readAsDataURL(file);
       
-      try {
-        const result = await uploadLogoInChunks(file, document.getElementById('centerId').value || 'new');
-        if (result?.success) {
-          document.getElementById('centerLogoUrl').value = result.url;
-          showAlert('✅ تم رفع اللوجو بنجاح');
-        } else {
-          showAlert('❌ فشل رفع اللوجو: ' + (result?.message || 'خطأ غير معروف'));
-        }
-      } catch(err) {
-        console.error('Upload error:', err);
-        showAlert('❌ خطأ في رفع اللوجو: ' + err.message);
-      }
+     try {
+  const result = await uploadLogoInChunks(file, document.getElementById('centerId').value || 'new');
+  if (result?.success) {
+    document.getElementById('centerLogoUrl').value = result.url;
+    // ✅ تحديث البيانات المحلية
+    if (document.getElementById('centerId').value) {
+      const center = centers.find(c => c.id === document.getElementById('centerId').value);
+      if (center) center.centerLogo = result.url;
+    }
+    showAlert('✅ تم رفع اللوجو بنجاح');
+  } else {
+    showAlert('❌ فشل رفع اللوجو: ' + (result?.message || 'خطأ غير معروف'));
+  }
+} catch(err) {
+  console.error('Upload error:', err);
+  showAlert('❌ خطأ في رفع اللوجو: ' + err.message);
+}
     });
   }
   
@@ -711,7 +724,7 @@ function viewCenter(id) {
       </div>
     `;
   }
-  
+  console.log('عرض المركز:', c.name, 'اللوجو:', c.centerLogo);
   document.getElementById('viewTitle').textContent = '🏢 تفاصيل المركز';
   document.getElementById('viewBody').innerHTML = `
     ${logoHtml}
@@ -1176,7 +1189,17 @@ async function runCheckNow() {
   } catch(e) { showAlert('❌ خطأ: '+e.message); }
   finally { btn.disabled=false; btn.textContent='🔄 تشغيل التحقق الآن'; }
 }
-
+<!-- شريط التقدم -->
+<div id="progressOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); align-items:center; justify-content:center; z-index:10000; flex-direction:column;">
+  <div style="background:white; border-radius:16px; padding:24px; width:300px; text-align:center;">
+    <div style="font-size:24px; margin-bottom:12px;">📤</div>
+    <div id="progressText" style="margin-bottom:12px;">جاري رفع الصورة...</div>
+    <div style="width:100%; background:#e0e0e0; border-radius:10px; overflow:hidden;">
+      <div id="progressBar" style="width:0%; height:10px; background:#1e2b4f; transition:width 0.3s;"></div>
+    </div>
+    <div id="progressPercent" style="margin-top:8px; font-size:12px;">0%</div>
+  </div>
+</div>
 // ══════════════════════════════════════════════════
 // تهيئة الصفحة
 // ══════════════════════════════════════════════════
