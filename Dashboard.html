@@ -314,7 +314,43 @@ function jsonp(action, params={}) {
     document.head.appendChild(sc);
   });
 }
-
+// ══════════════════════════════════════════════════
+// دالة ضغط الصورة
+// ══════════════════════════════════════════════════
+async function compressImage(file, maxWidth = 800, maxHeight = 800, quality = 0.7) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        
+        if (width > maxWidth) {
+          height = (height * maxWidth) / width;
+          width = maxWidth;
+        }
+        if (height > maxHeight) {
+          width = (width * maxHeight) / height;
+          height = maxHeight;
+        }
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        const compressedBase64 = canvas.toDataURL('image/jpeg', quality);
+        resolve(compressedBase64);
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 // ══════════════════════════════════════════════════
 // Modals
 // ══════════════════════════════════════════════════
@@ -472,6 +508,11 @@ async function openCenterModal(id) {
     document.getElementById('commissionPolicy').value = c.commissionPolicy || 'POL001';
     document.getElementById('centerStatus').value = (c.status === 'TRUE' || c.status === true) ? 'Active' : 'Inactive';
     
+    // ✅ تعبئة الحقول الجديدة
+    if (document.getElementById('contactNumbers')) document.getElementById('contactNumbers').value = c.contactNumbers || '';
+    if (document.getElementById('centerCategory')) document.getElementById('centerCategory').value = c.centerCategory || '';
+    if (document.getElementById('cancelationPolicy')) document.getElementById('cancelationPolicy').value = c.cancelationPolicy || '';
+    
     // ✅ تحويل التواريخ من dd/MMM/yyyy إلى yyyy-mm-dd
     const convertDateToInput = (dateStr) => {
       if (!dateStr) return '';
@@ -506,7 +547,35 @@ async function openCenterModal(id) {
     }
   }
   
-  // إضافة حقل رفع اللوجو إذا لم يكن موجوداً
+  // ✅ إضافة الحقول الجديدة إذا لم تكن موجودة
+  let extraFields = document.getElementById('extraFields');
+  if (!extraFields) {
+    const form = document.getElementById('centerForm');
+    const actions = document.querySelector('#centerForm .modal-actions');
+    
+    const extraDiv = document.createElement('div');
+    extraDiv.id = 'extraFields';
+    extraDiv.innerHTML = `
+      <div class="form-row">
+        <div class="form-group"><label>أرقام التواصل (للتواصل)</label><input type="text" id="contactNumbers" placeholder="مثال: 01000000000, 01100000000"></div>
+        <div class="form-group"><label>فئة المركز</label>
+          <select id="centerCategory">
+            <option value="">-- اختر --</option>
+            <option value="Dive Center">مركز غوص</option>
+            <option value="Safari">سفاري</option>
+            <option value="Water Sports">ألعاب مائية</option>
+            <option value="Diving Center">مركز غوص متكامل</option>
+            <option value="Resort">منتجع</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group"><label>سياسة الإلغاء</label><textarea id="cancelationPolicy" rows="2" placeholder="سياسة الإلغاء والاسترداد..."></textarea></div>
+    `;
+    
+    form.insertBefore(extraDiv, actions);
+  }
+  
+  // ✅ إضافة حقل رفع اللوجو إذا لم يكن موجوداً
   let logoHtml = document.getElementById('logoUploadField');
   if (!logoHtml) {
     const form = document.getElementById('centerForm');
@@ -526,54 +595,43 @@ async function openCenterModal(id) {
     const actions = document.querySelector('#centerForm .modal-actions');
     form.insertBefore(logoDiv, actions);
     
-document.getElementById('centerLogoFile').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  
-  // ✅ التحقق من حجم الصورة
-  if (file.size > 1024 * 1024) {
-    showAlert('⚠️ حجم الصورة كبير جداً (أكثر من 1 ميجابايت). يرجى اختيار صورة أصغر.');
-    return;
-  }
-  
-  // عرض معاينة
-  const reader = new FileReader();
-  reader.onload = (ev) => {
-    document.getElementById('logoPreview').innerHTML = `<img src="${ev.target.result}" style="width:100%; height:100%; object-fit:cover;">`;
-  };
-  reader.readAsDataURL(file);
-  
-  // ✅ استخدام FileReader بشكل صحيح للحصول على Base64
-  const base64Promise = new Promise((resolve) => {
-    const fr = new FileReader();
-    fr.onload = (e) => {
-      const base64 = e.target.result.split(',')[1];
-      resolve(base64);
-    };
-    fr.readAsDataURL(file);
-  });
-  
-  const base64 = await base64Promise;
-  
-  showAlert('جاري رفع اللوجو...', null);
-  try {
-    const result = await jsonp('uploadCenterLogo', {
-      b64: base64,
-      mimeType: file.type,
-      centerId: document.getElementById('centerId').value || 'new'
+    // ✅ حدث رفع الصورة مع الضغط
+    document.getElementById('centerLogoFile').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      
+      showAlert('جاري ضغط الصورة ورفعها...', null);
+      
+      try {
+        const compressedBase64 = await compressImage(file, 400, 400, 0.6);
+        const base64 = compressedBase64.split(',')[1];
+        
+        document.getElementById('logoPreview').innerHTML = `<img src="${compressedBase64}" style="width:100%; height:100%; object-fit:cover;">`;
+        
+        const result = await jsonp('uploadCenterLogo', {
+          b64: base64,
+          mimeType: 'image/jpeg',
+          centerId: document.getElementById('centerId').value || 'new'
+        });
+        
+        if (result?.success) {
+          document.getElementById('centerLogoUrl').value = result.url;
+          showAlert('✅ تم رفع اللوجو بنجاح');
+        } else {
+          showAlert('❌ فشل رفع اللوجو: ' + (result?.message || 'خطأ غير معروف'));
+        }
+      } catch(err) {
+        console.error('Upload error:', err);
+        showAlert('❌ خطأ في رفع اللوجو: ' + err.message);
+      }
     });
-    if (result?.success) {
-      document.getElementById('centerLogoUrl').value = result.url;
-      showAlert('✅ تم رفع اللوجو بنجاح');
-    } else {
-      showAlert('❌ فشل رفع اللوجو: ' + (result?.message || 'خطأ غير معروف'));
-    }
-  } catch(err) {
-    console.error('Upload error:', err);
-    showAlert('❌ خطأ في رفع اللوجو: ' + err.message);
   }
-});  // ✅ هذا القوس المفقود
-    function fileToBase64(file) {
+  
+  // ✅ إظهار المودال في النهاية
+  document.getElementById('centerModal').style.display = 'flex';
+}
+  
+  function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
@@ -607,6 +665,9 @@ function viewCenter(id) {
     <p><strong>خطة الاشتراك:</strong> ${c.subscriptionPlan || ''}</p>
     <p><strong>بداية الاشتراك:</strong> ${c.subscriptionStart || ''}</p>
     <p><strong>انتهاء الاشتراك:</strong> ${c.subscriptionEnd || ''}</p>
+    <p><strong>أرقام التواصل:</strong> ${c.contactNumbers || '—'}</p>
+    <p><strong>فئة المركز:</strong> ${c.centerCategory || '—'}</p>
+    <p><strong>سياسة الإلغاء:</strong> ${c.cancelationPolicy || '—'}</p>
     <p><strong>الأنشطة:</strong> ${c.activities || '—'}</p>
     <p><strong>الحالة:</strong> ${(c.status === 'TRUE' || c.status === true) ? 'نشط' : 'غير نشط'}</p>
   `;
@@ -630,6 +691,9 @@ async function saveCenter(e) {
     commissionPolicy:document.getElementById('commissionPolicy').value,
     subscriptionStart:document.getElementById('subscriptionStart').value,
     subscriptionEnd:document.getElementById('subscriptionEnd').value,
+    contactNumbers: document.getElementById('contactNumbers')?.value || '',
+    centerCategory: document.getElementById('centerCategory')?.value || '',
+    cancelationPolicy: document.getElementById('cancelationPolicy')?.value || '',
     status:document.getElementById('centerStatus').value==='Active'?'TRUE':'FALSE',
     password:'123456',
     centerLogo: logoUrl,
