@@ -304,12 +304,35 @@ let cachedActivities = null;
 function jsonp(action, params={}) {
   return new Promise((res, rej) => {
     const cb = 'cb_' + Date.now() + '_' + Math.floor(Math.random()*99999);
-    params.action = action; params.callback = cb;
+    params.action = action; 
+    params.callback = cb;
     const qs = Object.entries(params).map(([k,v])=>k+'='+encodeURIComponent(String(v??''))).join('&');
     const sc = document.createElement('script');
-    const to = setTimeout(()=>{delete window[cb];sc.remove();rej(new Error('timeout'));}, 120000);
-    window[cb] = d => { clearTimeout(to); delete window[cb]; sc.remove(); res(d); };
-    sc.onerror = () => { clearTimeout(to); delete window[cb]; sc.remove(); rej(new Error('network error')); };
+    let timeoutId;
+    
+    // ✅ تنظيف الدالة بعد الانتهاء
+    const cleanup = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (window[cb]) delete window[cb];
+      if (sc && sc.parentNode) sc.remove();
+    };
+    
+    // ✅ زيادة المهلة إلى 120 ثانية (لرفع الصور)
+    timeoutId = setTimeout(() => {
+      cleanup();
+      rej(new Error('timeout - استغرق الطلب أكثر من 120 ثانية'));
+    }, 120000);
+    
+    window[cb] = d => { 
+      cleanup(); 
+      res(d); 
+    };
+    
+    sc.onerror = () => { 
+      cleanup(); 
+      rej(new Error('network error - فشل الاتصال بالخادم')); 
+    };
+    
     sc.src = GAS_URL + '?' + qs;
     document.head.appendChild(sc);
   });
