@@ -574,15 +574,126 @@ function renderCentersTable() {
       </div></td></tr>`;
   }).join('');
 }
+  function ensureExtraFields() {
+  if (document.getElementById('extraFields')) return;
+  
+  const form = document.getElementById('centerForm');
+  const actions = document.querySelector('#centerForm .modal-actions');
+  
+  const extraDiv = document.createElement('div');
+  extraDiv.id = 'extraFields';
+  extraDiv.innerHTML = `
+    <div class="form-row">
+      <div class="form-group"><label>أرقام التواصل (للتواصل)</label><input type="text" id="contactNumbers" placeholder="مثال: 01000000000, 01100000000"></div>
+      <div class="form-group"><label>فئة المركز</label>
+        <select id="centerCategory">
+          <option value="">-- اختر --</option>
+          <option value="Dive Center">مركز غوص</option>
+          <option value="Safari">سفاري</option>
+          <option value="Water Sports">ألعاب مائية</option>
+          <option value="Diving Center">مركز غوص متكامل</option>
+          <option value="Resort">منتجع</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group"><label>سياسة الإلغاء</label><textarea id="cancelationPolicy" rows="2" placeholder="سياسة الإلغاء والاسترداد..."></textarea></div>
+  `;
+  
+  form.insertBefore(extraDiv, actions);
+}
 
+function ensureLogoUploadField() {
+  if (document.getElementById('logoUploadField')) return;
+  
+  const form = document.getElementById('centerForm');
+  const logoDiv = document.createElement('div');
+  logoDiv.className = 'form-group';
+  logoDiv.id = 'logoUploadField';
+  logoDiv.innerHTML = `
+    <label>لوجو المركز</label>
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <input type="file" id="centerLogoFile" accept="image/*" style="flex:1;">
+      <div id="logoPreview" style="width:60px; height:60px; border:2px dashed #ccc; border-radius:12px; display:flex; align-items:center; justify-content:center; overflow:hidden;">
+        <span style="font-size:24px;">🖼️</span>
+      </div>
+    </div>
+    <input type="hidden" id="centerLogoUrl" value="">
+  `;
+  
+  const actions = document.querySelector('#centerForm .modal-actions');
+  form.insertBefore(logoDiv, actions);
+  
+  document.getElementById('centerLogoFile').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      document.getElementById('logoPreview').innerHTML = `<img src="${ev.target.result}" style="width:100%; height:100%; object-fit:cover;">`;
+    };
+    reader.readAsDataURL(file);
+    
+    try {
+      const result = await uploadLogoInChunks(file, document.getElementById('centerId').value || 'new');
+      if (result?.success) {
+        document.getElementById('centerLogoUrl').value = result.url;
+        showAlert('✅ تم رفع اللوجو بنجاح');
+      } else {
+        showAlert('❌ فشل رفع اللوجو: ' + (result?.message || 'خطأ غير معروف'));
+      }
+    } catch(err) {
+      console.error('Upload error:', err);
+      showAlert('❌ خطأ في رفع اللوجو: ' + err.message);
+    }
+  });
+}
+
+function convertDateToInput(dateStr) {
+  if (!dateStr) return '';
+  const parts = dateStr.split('/');
+  if (parts.length === 3) {
+    const months = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
+    const month = months[parts[1]];
+    if (month) {
+      return `${parts[2]}-${month}-${parts[0].padStart(2,'0')}`;
+    }
+  }
+  return '';
+}
+
+function getDriveDirectUrl(url) {
+  if (!url) return '';
+  // استخراج File ID من الرابط
+  let fileId = '';
+  const patterns = [
+    /\/file\/d\/([a-zA-Z0-9_-]+)/,
+    /[?&]id=([a-zA-Z0-9_-]+)/,
+    /\/d\/([a-zA-Z0-9_-]+)/,
+    /uc\?export=view&id=([a-zA-Z0-9_-]+)/
+  ];
+  for (const p of patterns) {
+    const m = url.match(p);
+    if (m) { fileId = m[1]; break; }
+  }
+  if (fileId) {
+    return 'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w200';
+  }
+  return url;
+}
 async function openCenterModal(id) {
-  let tempLogoUrl = '';
   const isEdit = !!id;
   document.getElementById('centerModalTitle').textContent = isEdit ? '✏️ تعديل المركز' : '➕ مركز جديد';
   document.getElementById('centerForm').reset();
   document.getElementById('centerId').value = id || '';
+  
+  // ✅ الخطوة 1: إنشاء الحقول الإضافية أولاً (بغض النظر عن isEdit)
+  ensureExtraFields();
+  ensureLogoUploadField();
+  
+  // ✅ الخطوة 2: تحميل الأنشطة
   await loadActivitiesCheckboxes([]);
   
+  // ✅ الخطوة 3: تعبئة البيانات (إذا كان تعديل)
   if (isEdit) {
     const c = centers.find(x => x.id === id);
     if (!c) { 
@@ -590,6 +701,7 @@ async function openCenterModal(id) {
       return; 
     }
     
+    // الحقول الأساسية
     document.getElementById('centerName').value = c.name || '';
     document.getElementById('ownerName').value = c.owner || '';
     document.getElementById('centerEmail').value = c.email || '';
@@ -599,141 +711,51 @@ async function openCenterModal(id) {
     document.getElementById('commissionPolicy').value = c.commissionPolicy || 'POL001';
     document.getElementById('centerStatus').value = (c.status === 'TRUE' || c.status === true) ? 'Active' : 'Inactive';
     
-    if (document.getElementById('contactNumbers')) document.getElementById('contactNumbers').value = c.contactNumbers || '';
-    if (document.getElementById('centerCategory')) document.getElementById('centerCategory').value = c.centerCategory || '';
-    if (document.getElementById('cancelationPolicy')) document.getElementById('cancelationPolicy').value = c.cancelationPolicy || '';
+    // ✅ تعبئة الحقول الجديدة (بعد التأكد من وجودها في DOM)
+    const contactNumbersField = document.getElementById('contactNumbers');
+    const centerCategoryField = document.getElementById('centerCategory');
+    const cancelationPolicyField = document.getElementById('cancelationPolicy');
     
-    const convertDateToInput = (dateStr) => {
-      if (!dateStr) return '';
-      const parts = dateStr.split('/');
-      if (parts.length === 3) {
-        const months = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
-        const month = months[parts[1]];
-        if (month) {
-          return `${parts[2]}-${month}-${parts[0].padStart(2,'0')}`;
-        }
-      }
-      return '';
-    };
+    if (contactNumbersField) contactNumbersField.value = c.contactNumbers || '';
+    if (centerCategoryField) centerCategoryField.value = c.centerCategory || '';
+    if (cancelationPolicyField) cancelationPolicyField.value = c.cancelationPolicy || '';
     
+    // التواريخ
     const startInput = convertDateToInput(c.subscriptionStart);
     const endInput = convertDateToInput(c.subscriptionEnd);
+    if (document.getElementById('subscriptionStart')) document.getElementById('subscriptionStart').value = startInput;
+    if (document.getElementById('subscriptionEnd')) document.getElementById('subscriptionEnd').value = endInput;
     
-    document.getElementById('subscriptionStart').value = startInput;
-    document.getElementById('subscriptionEnd').value = endInput;
-    
+    // الأنشطة
     await loadActivitiesCheckboxes(c.activities || '');
     
+    // اللوجو
     if (c.centerLogo && c.centerLogo.trim() !== '') {
       const logoUrlField = document.getElementById('centerLogoUrl');
       const logoPreview = document.getElementById('logoPreview');
       if (logoUrlField) logoUrlField.value = c.centerLogo;
       if (logoPreview) {
-        logoPreview.innerHTML = `<img src="${c.centerLogo}" style="width:100%; height:100%; object-fit:cover;">`;
+        const imgUrl = getDriveDirectUrl(c.centerLogo);
+        logoPreview.innerHTML = `<img src="${imgUrl}" style="width:100%; height:100%; object-fit:cover;">`;
       }
     }
   }
   
-  let extraFields = document.getElementById('extraFields');
-  if (!extraFields) {
-    const form = document.getElementById('centerForm');
-    const actions = document.querySelector('#centerForm .modal-actions');
-    
-    const extraDiv = document.createElement('div');
-    extraDiv.id = 'extraFields';
-    extraDiv.innerHTML = `
-      <div class="form-row">
-        <div class="form-group"><label>أرقام التواصل (للتواصل)</label><input type="text" id="contactNumbers" placeholder="مثال: 01000000000, 01100000000"></div>
-        <div class="form-group"><label>فئة المركز</label>
-          <select id="centerCategory">
-            <option value="">-- اختر --</option>
-            <option value="Dive Center">مركز غوص</option>
-            <option value="Safari">سفاري</option>
-            <option value="Water Sports">ألعاب مائية</option>
-            <option value="Diving Center">مركز غوص متكامل</option>
-            <option value="Resort">منتجع</option>
-          </select>
-        </div>
-      </div>
-      <div class="form-group"><label>سياسة الإلغاء</label><textarea id="cancelationPolicy" rows="2" placeholder="سياسة الإلغاء والاسترداد..."></textarea></div>
-    `;
-    
-    form.insertBefore(extraDiv, actions);
-  }
-  
-  let logoHtml = document.getElementById('logoUploadField');
-  if (!logoHtml) {
-    const form = document.getElementById('centerForm');
-    const logoDiv = document.createElement('div');
-    logoDiv.className = 'form-group';
-    logoDiv.id = 'logoUploadField';
-    logoDiv.innerHTML = `
-      <label>لوجو المركز</label>
-      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <input type="file" id="centerLogoFile" accept="image/*" style="flex:1;">
-        <div id="logoPreview" style="width:60px; height:60px; border:2px dashed #ccc; border-radius:12px; display:flex; align-items:center; justify-content:center; overflow:hidden;">
-          <span style="font-size:24px;">🖼️</span>
-        </div>
-      </div>
-      <input type="hidden" id="centerLogoUrl" value="">
-    `;
-    const actions = document.querySelector('#centerForm .modal-actions');
-    form.insertBefore(logoDiv, actions);
-    
-    document.getElementById('centerLogoFile').addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        document.getElementById('logoPreview').innerHTML = `<img src="${ev.target.result}" style="width:100%; height:100%; object-fit:cover;">`;
-      };
-      reader.readAsDataURL(file);
-      
-     try {
-  const result = await uploadLogoInChunks(file, document.getElementById('centerId').value || 'new');
-  if (result?.success) {
-    document.getElementById('centerLogoUrl').value = result.url;
-    // ✅ تحديث البيانات المحلية
-    if (document.getElementById('centerId').value) {
-      const center = centers.find(c => c.id === document.getElementById('centerId').value);
-      if (center) center.centerLogo = result.url;
-    }
-    showAlert('✅ تم رفع اللوجو بنجاح');
-  } else {
-    showAlert('❌ فشل رفع اللوجو: ' + (result?.message || 'خطأ غير معروف'));
-  }
-} catch(err) {
-  console.error('Upload error:', err);
-  showAlert('❌ خطأ في رفع اللوجو: ' + err.message);
-}
-    });
-  }
-  
   document.getElementById('centerModal').style.display = 'flex';
 }
-  function fileToBase64(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  }
-function viewCenter(id) {
+   function viewCenter(id) {
   const c = centers.find(x => x.id === id);
   if (!c) return;
   
-  // بناء رابط عرض اللوجو
   let logoHtml = '';
   if (c.centerLogo && c.centerLogo.trim() !== '') {
-    logoHtml = `
-      <div style="text-align:center; margin:15px 0;">
-        <img src="${c.centerLogo}" style="max-width:150px; max-height:150px; border-radius:12px; border:1px solid #ddd; padding:5px; background:white;">
-      </div>
-    `;
+    const imgUrl = getDriveDirectUrl(c.centerLogo);
+    logoHtml = `<div style="text-align:center; margin:15px 0;">
+      <img src="${imgUrl}" style="max-width:150px; max-height:150px; border-radius:12px; border:1px solid #ddd; padding:5px; background:white;">
+    </div>`;
   }
-  console.log('عرض المركز:', c.name, 'اللوجو:', c.centerLogo);
+ 
+ console.log('عرض المركز:', c.name, 'اللوجو:', c.centerLogo);
   document.getElementById('viewTitle').textContent = '🏢 تفاصيل المركز';
   document.getElementById('viewBody').innerHTML = `
     ${logoHtml}
