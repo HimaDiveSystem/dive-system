@@ -374,6 +374,57 @@ async function compressImage(file, maxWidth = 800, maxHeight = 800, quality = 0.
     reader.readAsDataURL(file);
   });
 }
+  async function uploadLogoInChunks(file, centerId) {
+  return new Promise(async (resolve, reject) => {
+    // ضغط الصورة أولاً
+    const compressedBase64 = await compressImage(file, 400, 400, 0.6);
+    let base64 = compressedBase64.split(',')[1];
+    
+    const CHUNK_SIZE = 500; // ✅ 500 حرف لكل جزء (آمن لـ JSONP)
+    const totalChunks = Math.ceil(base64.length / CHUNK_SIZE);
+    
+    console.log(`📤 تقسيم الصورة إلى ${totalChunks} جزء`);
+    showAlert(`جاري رفع الصورة (${totalChunks} جزء)...`, null);
+    
+    let uploadedChunks = 0;
+    let allResults = [];
+    
+    for (let i = 0; i < totalChunks; i++) {
+      const chunk = base64.substring(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+      
+      try {
+        const result = await jsonp('uploadCenterLogoChunk', {
+          b64: chunk,
+          chunkIndex: i,
+          totalChunks: totalChunks,
+          centerId: centerId,
+          mimeType: 'image/jpeg'
+        });
+        
+        uploadedChunks++;
+        allResults.push(result);
+        
+        if (result?.chunkReceived) {
+          console.log(`✅ الجزء ${i + 1}/${totalChunks} تم استلامه`);
+        } else {
+          throw new Error(`فشل الجزء ${i + 1}`);
+        }
+      } catch(err) {
+        reject(new Error(`فشل رفع الجزء ${i + 1}: ${err.message}`));
+        return;
+      }
+    }
+    
+    // ✅ بعد رفع كل الأجزاء، اطلب دمجها
+    const finalResult = await jsonp('assembleUploadedLogo', {
+      centerId: centerId,
+      totalChunks: totalChunks
+    });
+    
+    resolve(finalResult);
+  });
+}
+  
 // ══════════════════════════════════════════════════
 // Modals
 // ══════════════════════════════════════════════════
@@ -619,40 +670,30 @@ async function openCenterModal(id) {
     form.insertBefore(logoDiv, actions);
     
     // ✅ حدث رفع الصورة مع الضغط
-    document.getElementById('centerLogoFile').addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      
-      showAlert('جاري ضغط الصورة ورفعها...', null);
-      
-      try {
-        const compressedBase64 = await compressImage(file, 400, 400, 0.6);
-        const base64 = compressedBase64.split(',')[1];
-        
-        document.getElementById('logoPreview').innerHTML = `<img src="${compressedBase64}" style="width:100%; height:100%; object-fit:cover;">`;
-        
-        const result = await jsonp('uploadCenterLogo', {
-          b64: base64,
-          mimeType: 'image/jpeg',
-          centerId: document.getElementById('centerId').value || 'new'
-        });
-        
-        if (result?.success) {
-          document.getElementById('centerLogoUrl').value = result.url;
-          showAlert('✅ تم رفع اللوجو بنجاح');
-        } else {
-          showAlert('❌ فشل رفع اللوجو: ' + (result?.message || 'خطأ غير معروف'));
-        }
-      } catch(err) {
-        console.error('Upload error:', err);
-        showAlert('❌ خطأ في رفع اللوجو: ' + err.message);
-      }
-    });
-  }
+   document.getElementById('centerLogoFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
   
-  // ✅ إظهار المودال في النهاية
-  document.getElementById('centerModal').style.display = 'flex';
-}
+  // عرض معاينة
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    document.getElementById('logoPreview').innerHTML = `<img src="${ev.target.result}" style="width:100%; height:100%; object-fit:cover;">`;
+  };
+  reader.readAsDataURL(file);
+  
+  try {
+    const result = await uploadLogoInChunks(file, document.getElementById('centerId').value || 'new');
+    if (result?.success) {
+      document.getElementById('centerLogoUrl').value = result.url;
+      showAlert('✅ تم رفع اللوجو بنجاح');
+    } else {
+      showAlert('❌ فشل رفع اللوجو: ' + (result?.message || 'خطأ غير معروف'));
+    }
+  } catch(err) {
+    console.error('Upload error:', err);
+    showAlert('❌ خطأ في رفع اللوجو: ' + err.message);
+  }
+});
   
   function fileToBase64(file) {
   return new Promise((resolve, reject) => {
