@@ -27,6 +27,8 @@
     .status-tabs{background:white;border-bottom:2px solid var(--border);padding:10px 20px;display:flex;gap:8px;position:sticky;top:52px;z-index:99;flex-wrap:wrap;}
     .tab-btn{padding:7px 18px;border:2px solid var(--border);border-radius:40px;font-weight:700;font-size:12px;cursor:pointer;font-family:'Cairo',sans-serif;transition:all .2s;background:white;color:var(--text-lt);}
     .tab-btn:hover{border-color:var(--navy);}
+    .tab-btn.all.active{background:#e0e7ff;border-color:#4f46e5;color:#1e3a8a;}
+    .tab-btn.refund.active{background:#fef3c7;border-color:#d97706;color:#92400e;}
     .tab-btn.pending.active{background:#fef9c3;border-color:#f59e0b;color:#854d0e;}
     .tab-btn.confirmed.active{background:#dcfce7;border-color:#16a34a;color:#166534;}
     .tab-btn.cancel.active{background:#fee2e2;border-color:#dc2626;color:#991b1b;}
@@ -106,9 +108,11 @@
 </div>
 
 <div class="status-tabs">
-  <button class="tab-btn pending active" id="tabPending" onclick="switchTab('pending')">⏳ Pending <span class="cnt-badge" id="cntPending">0</span></button>
+  <button class="tab-btn all" id="tabAll" onclick="switchTab('all')">📊 ALL <span class="cnt-badge" id="cntAll">0</span></button>
+  <button class="tab-btn pending" id="tabPending" onclick="switchTab('pending')">⏳ Pending <span class="cnt-badge" id="cntPending">0</span></button>
   <button class="tab-btn confirmed" id="tabConfirmed" onclick="switchTab('confirmed')">✅ Done <span class="cnt-badge" id="cntConfirmed">0</span></button>
   <button class="tab-btn cancel" id="tabCancel" onclick="switchTab('cancel')">❌ Canceled <span class="cnt-badge" id="cntCancel">0</span></button>
+  <button class="tab-btn refund" id="tabRefund" onclick="switchTab('refund')">💰 Refund <span class="cnt-badge" id="cntRefund">0</span></button>
 </div>
 
 <div class="filter-bar">
@@ -153,7 +157,13 @@ function goBack(){window.location.href=DASH[currentUser?.type]||'SalesDashboard.
 
 function switchTab(status){
   curStatus=status;pg=1;
-  ['pending','confirmed','cancel'].forEach(s=>{const id='tab'+s.charAt(0).toUpperCase()+s.slice(1);const tb=document.getElementById(id);if(!tb)return;tb.classList.remove('active');if(s===status)tb.classList.add('active');});
+  ['all','pending','confirmed','cancel','refund'].forEach(s=>{
+    const id='tab'+s.charAt(0).toUpperCase()+s.slice(1);
+    const tb=document.getElementById(id);
+    if(!tb)return;
+    tb.classList.remove('active');
+    if(s===status)tb.classList.add('active');
+  });
   apply();
 }
 
@@ -161,18 +171,28 @@ function debounce(){clearTimeout(ftimer);ftimer=setTimeout(apply,300);}
 
 function loadInv(){
   document.getElementById('tblCont').innerHTML='<div class="loader-wrap"><div class="spinner"></div>Loading...</div>';
-  // ✅ أضف centerName إلى الطلب
   const centerName = currentUser?.centerName || '';
   fetch(GAS_URL+'?action=getAllInvoices&centerName=' + encodeURIComponent(centerName))
     .then(r=>r.json()).then(data=>{
       if(!Array.isArray(data))data=[];
       allInv=data.filter(inv=>inv.salesId===currentUser?.id);
-      /* counts */
-      ['pending','confirmed','cancel'].forEach(s=>{
-        const cnt=allInv.filter(i=>(i.state||'').toLowerCase()===s).length;
-        const el=document.getElementById('cnt'+s.charAt(0).toUpperCase()+s.slice(1));
-        if(el)el.textContent=cnt;
+      
+      // ✅ حساب الأعداد لكل الحالات
+      const counts = { all: allInv.length, pending: 0, confirmed: 0, cancel: 0, refund: 0 };
+      allInv.forEach(inv => {
+        const state = (inv.state || '').toLowerCase();
+        if (state === 'pending') counts.pending++;
+        else if (state === 'confirmed') counts.confirmed++;
+        else if (state === 'cancel') counts.cancel++;
+        else if (state === 'refund') counts.refund++;
       });
+      
+      document.getElementById('cntAll').textContent = counts.all;
+      document.getElementById('cntPending').textContent = counts.pending;
+      document.getElementById('cntConfirmed').textContent = counts.confirmed;
+      document.getElementById('cntCancel').textContent = counts.cancel;
+      document.getElementById('cntRefund').textContent = counts.refund;
+      
       apply();
     }).catch(e=>{document.getElementById('tblCont').innerHTML=`<div class="no-data">Error: ${e.message}</div>`;});
 }
@@ -182,8 +202,18 @@ function apply(){
   let fTs=null,tTs=null;
   if(fISO){const[y,m,d]=fISO.split('-').map(Number);fTs=new Date(y,m-1,d).getTime();}
   if(tISO){const[y,m,d]=tISO.split('-').map(Number);tTs=new Date(y,m-1,d,23,59,59,999).getTime();}
+  
   filtInv=allInv.filter(inv=>{
-    if((inv.state||'').trim().toLowerCase()!==curStatus)return false;
+    // ✅ تصفية حسب الحالة المختارة
+    const state = (inv.state || '').toLowerCase();
+    if (curStatus === 'all') {
+      // جميع الفواتير (لا تصفية)
+    } else if (curStatus === 'refund') {
+      if (state !== 'refund') return false;
+    } else {
+      if (state !== curStatus) return false;
+    }
+    
     const ts=parseDt(inv.activeDate);
     if(fTs!==null&&(ts===null||ts<fTs))return false;
     if(tTs!==null&&(ts===null||ts>tTs))return false;
