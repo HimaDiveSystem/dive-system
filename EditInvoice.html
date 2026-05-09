@@ -114,13 +114,113 @@ function showAlert(msg, icon = 'ℹ️', btns = null) {
 }
   function goBack() { location.href = sessionStorage.getItem('returnUrl') || 'Dashboard.html'; }
 
+// ══════════════════════════════════════════════════════════
+// JSONP Request (مطابق لباقي الملفات)
+// ══════════════════════════════════════════════════════════
+function jsonpRequest(action, params = {}, isPost = false) {
+  return new Promise((resolve, reject) => {
+    const cbName = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 99999);
+    
+    // إضافة centerName تلقائياً إذا كان موجوداً
+    if (currentInvoice && currentInvoice.centerName) {
+      params.centerName = currentInvoice.centerName;
+    }
+    
+    params.action = action;
+    params.callback = cbName;
+    
+    // ✅ زيادة المهلة لرفع الصور
+    const timeoutMs = isPost ? 120000 : 25000;
+    
+    if (isPost) {
+      // POST: لرفع الصور والبيانات الكبيرة
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = GAS_URL;
+      form.target = '_blank';
+      form.style.display = 'none';
+      
+      for (const [key, value] of Object.entries(params)) {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = key;
+        input.value = String(value ?? '');
+        form.appendChild(input);
+      }
+      
+      const iframeName = 'iframe_' + cbName;
+      const iframe = document.createElement('iframe');
+      iframe.name = iframeName;
+      iframe.style.display = 'none';
+      document.body.appendChild(iframe);
+      form.target = iframeName;
+      
+      let timeoutId;
+      const checkInterval = setInterval(() => {
+        try {
+          const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+          if (iframeDoc && iframeDoc.body && iframeDoc.body.innerText) {
+            const responseText = iframeDoc.body.innerText;
+            if (responseText && responseText.trim()) {
+              clearInterval(checkInterval);
+              clearTimeout(timeoutId);
+              document.body.removeChild(iframe);
+              try {
+                const result = JSON.parse(responseText);
+                resolve(result);
+              } catch(e) {
+                resolve({ success: false, message: responseText });
+              }
+            }
+          }
+        } catch(e) {}
+      }, 200);
+      
+      timeoutId = setTimeout(() => {
+        clearInterval(checkInterval);
+        document.body.removeChild(iframe);
+        reject(new Error('POST timeout - استغرق الطلب أكثر من 120 ثانية'));
+      }, timeoutMs);
+      
+      document.body.appendChild(form);
+      form.submit();
+      setTimeout(() => form.remove(), 1000);
+      
+    } else {
+      // GET: JSONP للطلبات الصغيرة
+      const qs = Object.entries(params).map(([k, v]) => k + '=' + encodeURIComponent(String(v ?? ''))).join('&');
+      const url = GAS_URL + '?' + qs;
+      const script = document.createElement('script');
+      
+      const timeoutId = setTimeout(() => {
+        delete window[cbName];
+        if (script.parentNode) script.remove();
+        reject(new Error('JSONP timeout - استغرق الطلب أكثر من ' + (timeoutMs / 1000) + ' ثانية'));
+      }, timeoutMs);
+      
+      window[cbName] = (data) => {
+        clearTimeout(timeoutId);
+        delete window[cbName];
+        if (script.parentNode) script.remove();
+        resolve(data);
+      };
+      
+      script.onerror = () => {
+        clearTimeout(timeoutId);
+        delete window[cbName];
+        if (script.parentNode) script.remove();
+        reject(new Error('Network error - فشل الاتصال بالخادم'));
+      };
+      
+      script.src = url;
+      document.head.appendChild(script);
+    }
+  });
+}
+
+// ✅ استبدال gas بـ jsonpRequest
 async function gas(action, params = {}) {
-  const url = new URL(GAS_URL);
-  url.searchParams.set('action', action);
-  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v ?? '')));
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  return res.json();
+  return jsonpRequest(action, params);
 }
 
 async function getRate(dateStr) {
@@ -197,24 +297,20 @@ function updateItemTotal(idx, price) {
 }
 
 let currentCollectionRest = 0;
-
 async function openCollectionModal() {
   if (!currentInvoice) return;
   const rest = parseFloat(document.getElementById('displayRest')?.textContent) || 0;
   if (rest <= 0.01) { showAlert('لا يوجد مبلغ متبقي للتحصيل'); return; }
   currentCollectionRest = rest;
   
-  if (allEmployees.length === 0) {
-    try { const employees = await gas('getAllEmployees'); allEmployees = Array.isArray(employees) ? employees : []; } catch(e) {}
-  }
-  
+  // ✅ استخدام allEmployees الذي تم جلبه مسبقاً
   let collectorsOptions = '<option value="">-- اختر المحصل --</option>';
   if (allEmployees.length) {
     allEmployees.forEach(emp => {
       collectorsOptions += `<option value="${esc(emp.serial)}|${esc(emp.name)}">${esc(emp.name)} (${esc(emp.position || 'موظف')})</option>`;
     });
   }
-  
+    
   const html = `
     <h3 style="margin-bottom:16px">💰 تحصيل دفعة</h3>
     <div style="font-size:28px;font-weight:bold;margin-bottom:8px">${R2(rest).toFixed(2)} ${currentInvoice.invoiceCurrency || 'LE'}</div>
@@ -457,17 +553,22 @@ async function saveChanges() {
 async function loadInvoice() {
   const params = new URLSearchParams(location.search);
   const voucherNo = params.get('voucherNo');
-  if (!voucherNo) { showAlert('رقم الفاتورة غير موجود', '<button class="btn btn-primary" onclick="goBack()">رجوع</button>'); return; }
+  const centerName = params.get('centerName');  // ✅ إضافة centerName من URL
+  
+  if (!voucherNo) { 
+    showAlert('رقم الفاتورة غير موجود', '<button class="btn btn-primary" onclick="goBack()">رجوع</button>'); 
+    return; 
+  }
   
   sessionStorage.setItem('returnUrl', document.referrer || 'Dashboard.html');
   showLoader(true, 'جاري تحميل الفاتورة...');
   
   try {
-    const [employees, invoiceResult] = await Promise.all([
-      gas('getAllEmployees'),
-      gas('getInvoiceByVoucher', { voucherNo })
-    ]);
-    allEmployees = Array.isArray(employees) ? employees : [];
+    // ✅ جلب الفاتورة مع centerName
+    const invoiceResult = await jsonpRequest('getInvoiceByVoucher', { 
+      voucherNo: voucherNo,
+      centerName: centerName 
+    });
     
     if (!invoiceResult.success || !invoiceResult.invoice) throw new Error('الفاتورة غير موجودة');
     
@@ -476,10 +577,24 @@ async function loadInvoice() {
     
     document.getElementById('voucherDisplay').textContent = voucherNo;
     
+    // ✅ جلب الموظفين من ملف المركز الخاص
+    let employees = [];
+    if (currentInvoice.centerName) {
+      try {
+        employees = await jsonpRequest('getEmployeesByCenter', { 
+          centerName: currentInvoice.centerName 
+        });
+        allEmployees = Array.isArray(employees) ? employees : [];
+      } catch(e) {
+        console.warn('فشل جلب الموظفين:', e);
+      }
+    }
+    
+    // ✅ جلب بيانات الرحلات (من الملف الرئيسي - عامة)
     const [tripData, tripPricesData, uniqueTrips] = await Promise.all([
-      gas('getTripData', { tripName: currentInvoice.trip, currency: currentInvoice.invoiceCurrency || 'LE' }),
-      gas('getTripPrices', { tripName: currentInvoice.trip, currency: currentInvoice.invoiceCurrency || 'LE', category: '' }),
-      gas('getUniqueTrips')
+      jsonpRequest('getTripData', { tripName: currentInvoice.trip, currency: currentInvoice.invoiceCurrency || 'LE' }),
+      jsonpRequest('getTripPrices', { tripName: currentInvoice.trip, currency: currentInvoice.invoiceCurrency || 'LE', category: '' }),
+      jsonpRequest('getUniqueTrips')
     ]);
     
     const tripPrices = (tripPricesData?.prices) ? tripPricesData.prices : [];
@@ -512,8 +627,18 @@ async function loadInvoice() {
     const disableCollection = isPastDate || (currentInvoice.rest || 0) <= 0.01;
     const warnHtml = isPastDate ? `<div class="warning-bar">⚠️ تاريخ الفاتورة (${currentInvoice.issueDate}) قد مضى — لا يمكن تعديل المدفوعات.</div>` : '';
     
+    // قائمة الموظفين لخيار المحصل
+    let collectorsOptions = '<option value="">-- اختر المحصل --</option>';
+    if (allEmployees.length) {
+      allEmployees.forEach(emp => {
+        collectorsOptions += `<option value="${esc(emp.serial)}|${esc(emp.name)}">${esc(emp.name)} (${esc(emp.position || 'موظف')})</option>`;
+      });
+    }
+    
     const formHtml = `
       ${warnHtml}
+      <input type="hidden" id="centerName" value="${esc(currentInvoice.centerName || '')}">
+      
       <div class="card">
         <div class="card-header">👤 بيانات العميل</div>
         <div class="card-body">
@@ -546,21 +671,20 @@ async function loadInvoice() {
             </select></div>
           </div>
           <div><label>الرحلة</label><select id="tripName" onchange="changeTrip()">${tripsOpts}</select></div>
-         <div class="trip-table">
-  <table>
-    <thead>
-      <tr>
-        <th style="text-align:left; padding:8px; background:#1a3260; color:#f5c842;">البند</th>
-        <th style="padding:8px; background:#1a3260; color:#f5c842;">الكمية</th>
-        <th style="padding:8px; background:#1a3260; color:#f5c842;">السعر</th>
-        <th style="padding:8px; background:#1a3260; color:#f5c842;">الإجمالي</th>
-      </tr>
-    </thead>
-    <tbody id="itemsBody">
-      ${tRows || '<tr><td colspan="4" style="text-align:center; padding:20px;">لا توجد بنود</td></tr>'}
-    </tbody>
-  </table>
-</div>
+          <div class="trip-table">
+            <table>
+              <thead>
+                <tr>
+                  <th style="text-align:left; padding:8px; background:#1a3260; color:#f5c842;">البند</th>
+                  <th style="padding:8px; background:#1a3260; color:#f5c842;">الكمية</th>
+                  <th style="padding:8px; background:#1a3260; color:#f5c842;">السعر</th>
+                  <th style="padding:8px; background:#1a3260; color:#f5c842;">الإجمالي</th>
+                </tr>
+              </thead>
+              <tbody id="itemsBody">
+                ${tRows || '<tr><td colspan="4" style="text-align:center; padding:20px;">لا توجد بنود</td></tr>'}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -606,7 +730,7 @@ async function loadInvoice() {
       </div>
       
       <div style="display:flex; gap:10px; justify-content:center; margin-top:20px">
-        <button class="btn btn-success" id="collectionBtn" ${disableCollection ? 'disabled' : ''}>💰 تحصيل</button>
+        <button class="btn btn-success" id="collectionBtn" ${disableCollection ? 'disabled' : ''} onclick="openCollectionModal()">💰 تحصيل</button>
         <button class="btn btn-primary" onclick="saveChanges()">💾 حفظ</button>
         <button class="btn btn-danger" onclick="confirmExit()">❌ إلغاء</button>
       </div>
@@ -616,11 +740,6 @@ async function loadInvoice() {
     document.getElementById('formContent').style.display = 'block';
     document.getElementById('formContent').innerHTML = formHtml;
     
-   const collectionBtn = document.getElementById('collectionBtn');
-if (collectionBtn) {
-  collectionBtn.onclick = null;
-  collectionBtn.addEventListener('click', openCollectionModal);
-}
     await updateTotals();
     showLoader(false);
     
@@ -629,7 +748,6 @@ if (collectionBtn) {
     showAlert('خطأ: ' + err.message, '<button class="btn btn-primary" onclick="goBack()">رجوع</button>');
   }
 }
-
 async function changeTrip() {
   const newTrip = document.getElementById('tripName')?.value;
   const currency = document.getElementById('invoiceCurrency')?.value;
