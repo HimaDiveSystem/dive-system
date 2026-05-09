@@ -119,7 +119,24 @@
 
     /* IMAGES */
     .image-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:15px; }
-    .image-preview { width:100%; height:120px; border:2px dashed #dee2e6; border-radius:12px; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:.2s; position:relative; overflow:hidden; flex-direction:column; gap:4px; background-size:cover; background-position:center; }
+    .image-preview { 
+  width: 100%; 
+  height: 150px;  /* زيادة الارتفاع */
+  border: 2px dashed #dee2e6; 
+  border-radius: 12px; 
+  display: flex; 
+  align-items: center; 
+  justify-content: center; 
+  cursor: pointer; 
+  transition: .2s; 
+  position: relative; 
+  overflow: hidden; 
+  flex-direction: column; 
+  gap: 4px; 
+  background-size: contain;  /* تغطية كاملة */
+  background-repeat: no-repeat;
+  background-position: center;
+}
     .image-preview:hover { border-color:#1e2b4f; background:#f0f4fa; }
     .image-preview.uploaded { border-color:#27ae60; border-style:solid; background:#f0fff4; }
     .img-ico { font-size:30px; }
@@ -1044,23 +1061,42 @@ async function openEditModal(serial) {
     }
   }
 
-  const imgDefs = [
-    { key:'Employee', url: emp.imgPhoto    || '', icon:'📸' },
-    { key:'IdFront',  url: emp.imgIdFront  || '', icon:'🪪' },
-    { key:'IdBack',   url: emp.imgIdBack   || '', icon:'🪪' },
-    { key:'Security', url: emp.imgSecurity || '', icon:'🔍' }
-  ];
-  imgDefs.forEach(def => {
-    const prev = document.getElementById('prev' + def.key);
-    if (!prev) return;
-    if (def.url) {
-      prev.style.backgroundImage    = 'url("' + def.url + '")';
-      prev.style.backgroundSize     = 'cover';
-      prev.style.backgroundPosition = 'center';
-      prev.classList.add('uploaded');
-      prev.innerHTML = '<div class="img-ok">✓ صورة محفوظة — اضغط للتغيير</div>';
-    }
-  });
+ // ✅ عرض الصور المحفوظة (مع تحسين العرض)
+const imgDefs = [
+  { key: 'Employee', url: emp.imgPhoto || '', icon: '📸', label: 'صورة الموظف' },
+  { key: 'IdFront',  url: emp.imgIdFront || '', icon: '🪪', label: 'البطاقة الشخصية (وجه)' },
+  { key: 'IdBack',   url: emp.imgIdBack || '', icon: '🪪', label: 'البطاقة الشخصية (ظهر)' },
+  { key: 'Security', url: emp.imgSecurity || '', icon: '🔍', label: 'الاستعلام الأمني' }
+];
+
+imgDefs.forEach(def => {
+  const prev = document.getElementById('prev' + def.key);
+  if (!prev) return;
+  
+  if (def.url && def.url.trim() !== '') {
+    const imgUrl = getDriveDirectUrl(def.url);
+    console.log(`📸 تحميل صورة ${def.key}:`, imgUrl);
+    
+    // ✅ طريقة أفضل لعرض الصورة
+    prev.style.backgroundImage = `url("${imgUrl}")`;
+    prev.style.backgroundSize = 'contain';      // تغطية كاملة
+    prev.style.backgroundRepeat = 'no-repeat';
+    prev.style.backgroundPosition = 'center';
+    prev.style.backgroundColor = '#f0f4fa';
+    prev.classList.add('uploaded');
+    
+    // ✅ إظهار الصورة بشكل واضح مع نص
+    prev.innerHTML = `
+      <div class="img-ok" style="background:rgba(0,0,0,0.7); position:absolute; bottom:0; left:0; right:0; text-align:center; padding:4px; font-size:10px;">
+        ✓ صورة محفوظة — اضغط للتغيير
+      </div>
+    `;
+  } else {
+    prev.style.backgroundImage = '';
+    prev.classList.remove('uploaded');
+    prev.innerHTML = `<span class="img-ico">${def.icon}</span><span class="img-lbl">${def.label}</span>`;
+  }
+});
 
   switchTab('basic', 0);
   document.getElementById('empModal').classList.add('open');
@@ -1184,18 +1220,27 @@ async function onFileSelect(input, key, prevId) {
   }
   
   const prev = document.getElementById(prevId);
-  prev.innerHTML = '<div class="img-ok">⏳ جاري الضغط والرفع...</div>';
+  
+  // ✅ معاينة فورية قبل الرفع
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    prev.style.backgroundImage = `url("${ev.target.result}")`;
+    prev.style.backgroundSize = 'contain';
+    prev.style.backgroundRepeat = 'no-repeat';
+    prev.style.backgroundPosition = 'center';
+    prev.classList.add('uploaded');
+    prev.innerHTML = '<div class="img-ok">⏳ جاري الرفع...</div>';
+  };
+  reader.readAsDataURL(file);
   
   try {
     const result = await uploadEmployeeImageInChunks(file, editingSerial || 'NEW', key);
     
     if (result && result.success && result.url) {
       imgData[key] = result.url;
-      prev.style.backgroundImage = `url("${result.url}")`;
-      prev.style.backgroundSize = 'cover';
-      prev.style.backgroundPosition = 'center';
-      prev.classList.add('uploaded');
-      prev.innerHTML = '<div class="img-ok">✓ تم الرفع بنجاح</div>';
+      const imgUrl = getDriveDirectUrl(result.url);
+      prev.style.backgroundImage = `url("${imgUrl}")`;
+      prev.innerHTML = '<div class="img-ok">✓ تم الرفع بنجاح — اضغط للتغيير</div>';
       showToast('✅ تم رفع الصورة', 'success');
     } else {
       throw new Error(result?.message || 'فشل الرفع');
@@ -1446,6 +1491,8 @@ function toInputDate(str) {
 // ✅ أضف هذه الدالة هنا
 function getDriveDirectUrl(url) {
   if (!url) return '';
+  console.log('🔍 Original URL:', url);
+  
   let fileId = '';
   const patterns = [
     /\/file\/d\/([a-zA-Z0-9_-]+)/,
@@ -1453,13 +1500,23 @@ function getDriveDirectUrl(url) {
     /\/d\/([a-zA-Z0-9_-]+)/,
     /uc\?export=view&id=([a-zA-Z0-9_-]+)/
   ];
+  
   for (const p of patterns) {
     const m = url.match(p);
-    if (m) { fileId = m[1]; break; }
+    if (m) { 
+      fileId = m[1]; 
+      console.log('✅ Extracted fileId:', fileId);
+      break; 
+    }
   }
+  
   if (fileId) {
-    return 'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w200';
+    const thumbnailUrl = 'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w400';
+    console.log('✅ Thumbnail URL:', thumbnailUrl);
+    return thumbnailUrl;
   }
+  
+  console.log('⚠️ Could not extract fileId, returning original:', url);
   return url;
 }
 
