@@ -446,19 +446,107 @@ let currentUser   = null;
 // ══════════════════════════════════════════════════════════
 // JSONP
 // ══════════════════════════════════════════════════════════
-function jsonpRequest(action, params = {}) {
+function jsonpRequest(action, params = {}, isPost = false) {
   return new Promise((resolve, reject) => {
     const cbName = 'cb_' + Date.now() + '_' + Math.floor(Math.random()*99999);
-    params.action   = action;
+    
+    // ✅ إضافة centerId تلقائياً من المستخدم الحالي
+    if (currentUser && currentUser.centerId) {
+      params.centerId = currentUser.centerId;
+    }
+    
+    params.action = action;
     params.callback = cbName;
-    const qs  = Object.entries(params).map(([k,v]) => k + '=' + encodeURIComponent(String(v ?? ''))).join('&');
-    const url = GAS + '?' + qs;
-    const sc  = document.createElement('script');
-    const to  = setTimeout(() => { delete window[cbName]; sc.remove(); reject(new Error('Timeout')); }, 25000);
-    window[cbName] = d => { clearTimeout(to); delete window[cbName]; sc.remove(); resolve(d); };
-    sc.onerror = () => { clearTimeout(to); delete window[cbName]; sc.remove(); reject(new Error('Network error')); };
-    sc.src = url;
-    document.head.appendChild(sc);
+    
+    // ✅ مهلة أطول لرفع الصور (120 ثانية)
+    const timeoutMs = isPost ? 120000 : 25000;
+    
+    if (isPost) {
+      // ========== POST: لرفع الصور والبيانات الكبيرة ==========
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = GAS;
+      form.target = '_blank';
+      form.style.display = 'none';
+      
+      // إضافة جميع المعامل كحقول مخفية
+      for (const [key, value] of Object.entries(params)) {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = key;
+        input.value = String(value ?? '');
+        form.appendChild(input);
+      }
+      
+      // إضافة iframe لاستلام الرد (لأن form target _blank لا يمكن قراءة الرد)
+      const iframeName = 'iframe_' + cbName;
+      const iframe = document.createElement('iframe');
+      iframe.name = iframeName;
+      iframe.style.display = 'none';
+      document.body.appendChild(iframe);
+      form.target = iframeName;
+      
+      // استلام الرد من iframe
+      let timeoutId;
+      const checkInterval = setInterval(() => {
+        try {
+          const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+          if (iframeDoc && iframeDoc.body && iframeDoc.body.innerText) {
+            const responseText = iframeDoc.body.innerText;
+            if (responseText && responseText.trim()) {
+              clearInterval(checkInterval);
+              clearTimeout(timeoutId);
+              document.body.removeChild(iframe);
+              try {
+                const result = JSON.parse(responseText);
+                resolve(result);
+              } catch(e) {
+                resolve({ success: false, message: responseText });
+              }
+            }
+          }
+        } catch(e) {}
+      }, 200);
+      
+      timeoutId = setTimeout(() => {
+        clearInterval(checkInterval);
+        document.body.removeChild(iframe);
+        reject(new Error('POST timeout - استغرق الطلب أكثر من 120 ثانية'));
+      }, timeoutMs);
+      
+      document.body.appendChild(form);
+      form.submit();
+      setTimeout(() => form.remove(), 1000);
+      
+    } else {
+      // ========== GET: JSONP للطلبات الصغيرة ==========
+      const qs = Object.entries(params).map(([k, v]) => k + '=' + encodeURIComponent(String(v ?? ''))).join('&');
+      const url = GAS + '?' + qs;
+      const sc = document.createElement('script');
+      
+      const timeoutId = setTimeout(() => {
+        delete window[cbName];
+        if (sc.parentNode) sc.remove();
+        reject(new Error('JSONP timeout - استغرق الطلب أكثر من ' + (timeoutMs/1000) + ' ثانية'));
+      }, timeoutMs);
+      
+      window[cbName] = (data) => {
+        clearTimeout(timeoutId);
+        delete window[cbName];
+        if (sc.parentNode) sc.remove();
+        resolve(data);
+      };
+      
+      sc.onerror = () => {
+        clearTimeout(timeoutId);
+        delete window[cbName];
+        if (sc.parentNode) sc.remove();
+        reject(new Error('Network error - فشل الاتصال بالخادم'));
+      };
+      
+      sc.src = url;
+      document.head.appendChild(sc);
+    }
   });
 }
 
@@ -569,7 +657,134 @@ function setupSearchDropdown() {
     }
   });
 }
+// ══════════════════════════════════════════════════
+// دالة ضغط الصورة (مطابقة لـ Dashboard.html)
+// ══════════════════════════════════════════════════
+async function compressImage(file, maxWidth = 800, maxHeight = 800, quality = 0.7) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        
+        if (width > maxWidth) {
+          height = (height * maxWidth) / width;
+          width = maxWidth;
+        }
+        if (height > maxHeight) {
+          width = (width * maxHeight) / height;
+          height = maxHeight;
+        }
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        const compressedBase64 = canvas.toDataURL('image/jpeg', quality);
+        resolve(compressedBase64);
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
+// ══════════════════════════════════════════════════
+// دالة رفع الصورة على شكل أجزاء (مطابقة لـ Dashboard.html)
+// ══════════════════════════════════════════════════
+async function uploadEmployeeImageInChunks(file, serial, imageKey) {
+  return new Promise(async (resolve, reject) => {
+    // إظهار شريط التقدم
+    let overlay = document.getElementById('progressOverlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'progressOverlay';
+      overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); align-items:center; justify-content:center; z-index:10000; flex-direction:column;';
+      overlay.innerHTML = `
+        <div style="background:white; border-radius:16px; padding:24px; width:300px; text-align:center;">
+          <div style="font-size:24px; margin-bottom:12px;">📤</div>
+          <div id="progressText" style="margin-bottom:12px;">جاري رفع الصورة...</div>
+          <div style="width:100%; background:#e0e0e0; border-radius:10px; overflow:hidden;">
+            <div id="progressBar" style="width:0%; height:10px; background:#1e2b4f; transition:width 0.3s;"></div>
+          </div>
+          <div id="progressPercent" style="margin-top:8px; font-size:12px;">0%</div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+    }
+    
+    const progressBar = document.getElementById('progressBar');
+    const progressPercent = document.getElementById('progressPercent');
+    const progressText = document.getElementById('progressText');
+    overlay.style.display = 'flex';
+    progressBar.style.width = '0%';
+    progressPercent.textContent = '0%';
+    
+    try {
+      // ضغط الصورة أولاً
+      progressText.textContent = 'جاري ضغط الصورة...';
+      const compressedBase64 = await compressImage(file, 400, 400, 0.6);
+      let base64 = compressedBase64.split(',')[1];
+      
+      const CHUNK_SIZE = 500 * 1024; // 500KB per chunk
+      const totalChunks = Math.ceil(base64.length / CHUNK_SIZE);
+      
+      console.log(`📤 بدء رفع الصورة: ${totalChunks} جزء, حجم Base64: ${base64.length}`);
+      progressText.textContent = `جاري رفع الصورة (0/${totalChunks})...`;
+      
+      for (let i = 0; i < totalChunks; i++) {
+        const chunk = base64.substring(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+        
+        console.log(`📤 رفع الجزء ${i + 1}/${totalChunks}...`);
+        const result = await jsonpRequest('uploadEmployeeImageChunk', {
+          b64: chunk,
+          chunkIndex: i,
+          totalChunks: totalChunks,
+          serial: serial,
+          imageKey: imageKey,
+          mimeType: 'image/jpeg'
+        }, true);  // ✅ POST request for large data
+        
+        if (!result?.chunkReceived) {
+          console.error(`❌ فشل الجزء ${i + 1}:`, result);
+          throw new Error(`فشل الجزء ${i + 1}`);
+        }
+        
+        console.log(`✅ الجزء ${i + 1}/${totalChunks} تم استلامه`);
+        
+        // تحديث شريط التقدم
+        const percent = Math.round(((i + 1) / totalChunks) * 100);
+        progressBar.style.width = percent + '%';
+        progressPercent.textContent = percent + '%';
+        progressText.textContent = `جاري رفع الصورة (${i + 1}/${totalChunks})...`;
+      }
+      
+      console.log(`📤 جميع الأجزاء (${totalChunks}) تم رفعها، جاري الدمج...`);
+      progressText.textContent = 'جاري دمج الأجزاء...';
+      const finalResult = await jsonpRequest('assembleUploadedEmployeeImage', {
+        serial: serial,
+        imageKey: imageKey,
+        totalChunks: totalChunks,
+        mimeType: 'image/jpeg'
+      }, true);  // ✅ POST request for assemble as well
+      
+      console.log('📤 نتيجة الدمج:', finalResult);
+      overlay.style.display = 'none';
+      resolve(finalResult);
+      
+    } catch(err) {
+      console.error('❌ خطأ في رفع الصورة:', err);
+      overlay.style.display = 'none';
+      reject(err);
+    }
+  });
+}
 // ══════════════════════════════════════════════════════════
 // تحميل الموظفين
 // ══════════════════════════════════════════════════════════
@@ -991,25 +1206,39 @@ function translitAr(str) {
 // ══════════════════════════════════════════════════════════
 // IMAGE HANDLING
 // ══════════════════════════════════════════════════════════
-function onFileSelect(input, key, prevId) {
+async function onFileSelect(input, key, prevId) {
   const file = input.files[0];
   if (!file) return;
-  if (file.size > 5 * 1024 * 1024) {
-    showToast('الصورة أكبر من 5MB، برجاء ضغطها', 'error');
+  if (file.size > 10 * 1024 * 1024) {
+    showToast('الصورة أكبر من 10MB، برجاء ضغطها', 'error');
     input.value = '';
     return;
   }
-  const reader = new FileReader();
-  reader.onload = ev => {
-    const prev = document.getElementById(prevId);
-    prev.style.cssText += 'background-image:url("' + ev.target.result + '");background-size:cover;background-position:center;';
-    prev.classList.add('uploaded');
-    prev.innerHTML = '<div class="img-ok">⏳ جاري الرفع...</div>';
-  };
-  reader.readAsDataURL(file);
-  uploadImageToDrive(file, key, prevId);
+  
+  const prev = document.getElementById(prevId);
+  prev.innerHTML = '<div class="img-ok">⏳ جاري الضغط والرفع...</div>';
+  
+  try {
+    // استخدام نفس آلية الرفع من Dashboard.html
+    const result = await uploadEmployeeImageInChunks(file, editingSerial || 'NEW', key);
+    
+    if (result && result.success && result.url) {
+      imgData[key] = result.url;
+      prev.style.backgroundImage = `url("${result.url}")`;
+      prev.style.backgroundSize = 'cover';
+      prev.style.backgroundPosition = 'center';
+      prev.classList.add('uploaded');
+      prev.innerHTML = '<div class="img-ok">✓ تم الرفع بنجاح</div>';
+      showToast('✅ تم رفع الصورة', 'success');
+    } else {
+      throw new Error(result?.message || 'فشل الرفع');
+    }
+  } catch(err) {
+    console.error('upload error:', err);
+    prev.innerHTML = '<div class="img-ok">⚠️ فشل الرفع</div>';
+    showToast('❌ فشل رفع الصورة: ' + err.message, 'error');
+  }
 }
-
 function uploadImageToDrive(file, key, prevId) {
   showToast('⏳ جاري ضغط الصورة...', 'info');
   
@@ -1165,19 +1394,71 @@ async function saveEmployee() {
 // ══════════════════════════════════════════════════════════
 async function viewHistory(serial) {
   try {
+    // جلب سجل الراتب أولاً
     const history = await jsonpRequest('getSalaryHistory', { serial: serial });
-    if (Array.isArray(history) && history.length > 0) {
-      let msg = '<b>سجل راتب الموظف ' + serial + '</b><br><br>';
-      history.forEach(h => {
-        msg += '💰 ' + Number(h.salary||0).toLocaleString() + ' LE — ' + (h.month||'') + '/' + (h.year||'') + '<br>';
-        msg += '<small style="color:#6c757d;">📅 ' + (h.effectiveDate||'') + ' — ' + (h.reason||'—') + '</small><br><br>';
-      });
-      showInfo(msg);
+    
+    // جلب بيانات الموظف الكاملة (بما فيها الصورة)
+    const employee = employees.find(e => e.serial === serial);
+    
+    let html = '';
+    
+    // ✅ إضافة الصورة الشخصية إن وجدت
+    if (employee && employee.imgPhoto && employee.imgPhoto.trim() !== '') {
+      const imgUrl = getDriveDirectUrl(employee.imgPhoto);
+      html += `
+        <div style="text-align:center; margin-bottom:20px;">
+          <img src="${imgUrl}" style="width:100px; height:100px; border-radius:50%; object-fit:cover; border:3px solid #1e2b4f; padding:3px; background:white;">
+          <div style="margin-top:8px; font-size:12px; color:#1e2b4f; font-weight:600;">📸 ${employee.name || ''}</div>
+        </div>
+      `;
     } else {
-      showToast('لا يوجد سجل لهذا الموظف', 'info');
+      // أيقونة افتراضية إذا لم توجد صورة
+      html += `
+        <div style="text-align:center; margin-bottom:20px;">
+          <div style="width:100px; height:100px; border-radius:50%; background:#e9ecef; display:inline-flex; align-items:center; justify-content:center;">
+            <span style="font-size:48px;">👤</span>
+          </div>
+          <div style="margin-top:8px; font-size:12px; color:#1e2b4f; font-weight:600;">${employee?.name || serial}</div>
+        </div>
+      `;
     }
+    
+    // ✅ إضافة معلومات الموظف الأساسية
+    if (employee) {
+      html += `
+        <div style="background:#f8f9fa; border-radius:12px; padding:12px; margin-bottom:16px;">
+          <table style="width:100%; font-size:12px;">
+            <tr><td style="padding:4px;"><strong>📱 الهاتف:</strong></td><td>${employee.phone || '—'}</td></tr>
+            <tr><td style="padding:4px;"><strong>🏢 الوظيفة:</strong></td><td>${employee.position || '—'}</td></tr>
+            <tr><td style="padding:4px;"><strong>💰 نظام الحساب:</strong></td><td>${employee.paymentSystem || '—'}</td></tr>
+            <tr><td style="padding:4px;"><strong>⚙️ الحالة:</strong></td><td class="${employee.status === 'نشط' ? 'status-active' : 'status-inactive'}">${employee.status || '—'}</td></tr>
+          </table>
+        </div>
+      `;
+    }
+    
+    // ✅ إضافة سجل الراتب
+    if (Array.isArray(history) && history.length > 0) {
+      html += `<div style="font-weight:700; color:#1e2b4f; margin-bottom:10px; border-right:3px solid #ffd966; padding-right:10px;">📋 سجل الراتب</div>`;
+      history.forEach(h => {
+        const salaryNum = Number(h.salary || 0);
+        const effectiveDate = h.effectiveDate ? new Date(h.effectiveDate).toLocaleDateString('ar-EG') : '—';
+        html += `
+          <div style="background:white; border:1px solid #e9ecef; border-radius:10px; padding:10px; margin-bottom:8px;">
+            <div><strong>💰 ${salaryNum.toLocaleString()} LE</strong> — ${h.month || ''}/${h.year || ''}</div>
+            <div style="font-size:11px; color:#6c757d;">📅 ${effectiveDate} — ${h.reason || '—'}</div>
+          </div>
+        `;
+      });
+    } else {
+      html += `<div style="text-align:center; color:#aaa; padding:20px;">لا يوجد سجل رواتب لهذا الموظف</div>`;
+    }
+    
+    showInfo(html);
+    
   } catch(e) {
     showToast('خطأ في تحميل السجل', 'error');
+    console.error('viewHistory error:', e);
   }
 }
 function viewAttendance(serial) {
@@ -1186,6 +1467,10 @@ function viewAttendance(serial) {
 // ══════════════════════════════════════════════════════════
 // HELPERS
 // ══════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════
+// HELPERS
+// ══════════════════════════════════════════════════════════
+
 function toInputDate(str) {
   if (!str) return '';
   const s = str.toString().trim();
@@ -1214,6 +1499,26 @@ function toInputDate(str) {
     }
   } catch(e) {}
   return '';
+}
+
+// ✅ أضف هذه الدالة هنا
+function getDriveDirectUrl(url) {
+  if (!url) return '';
+  let fileId = '';
+  const patterns = [
+    /\/file\/d\/([a-zA-Z0-9_-]+)/,
+    /[?&]id=([a-zA-Z0-9_-]+)/,
+    /\/d\/([a-zA-Z0-9_-]+)/,
+    /uc\?export=view&id=([a-zA-Z0-9_-]+)/
+  ];
+  for (const p of patterns) {
+    const m = url.match(p);
+    if (m) { fileId = m[1]; break; }
+  }
+  if (fileId) {
+    return 'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w200';
+  }
+  return url;
 }
 
 function showToast(msg, type) {
