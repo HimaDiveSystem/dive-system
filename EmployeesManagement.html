@@ -475,9 +475,12 @@ let currentUser   = null;
 // ══════════════════════════════════════════════════════════
 // JSONP
 // ══════════════════════════════════════════════════════════
-function jsonpRequest(action, params = {}, isPost = false) {
+// ══════════════════════════════════════════════════════════
+// JSONP — لكل الطلبات (مبسطة مثل Dashboard)
+// ══════════════════════════════════════════════════════════
+function jsonpRequest(action, params = {}) {
   return new Promise((resolve, reject) => {
-    const cbName = 'cb_' + Date.now() + '_' + Math.floor(Math.random()*99999);
+    const cbName = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 99999);
     
     // ✅ إضافة centerId تلقائياً من المستخدم الحالي
     if (currentUser && currentUser.centerId) {
@@ -487,98 +490,35 @@ function jsonpRequest(action, params = {}, isPost = false) {
     params.action = action;
     params.callback = cbName;
     
-    // ✅ مهلة أطول لرفع الصور (120 ثانية)
-    const timeoutMs = isPost ? 120000 : 25000;
+    const qs = Object.entries(params).map(([k, v]) => k + '=' + encodeURIComponent(String(v ?? ''))).join('&');
+    const url = GAS + '?' + qs;
+    const script = document.createElement('script');
     
-    if (isPost) {
-      // ========== POST: لرفع الصور والبيانات الكبيرة ==========
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = GAS;
-      form.target = '_blank';
-      form.style.display = 'none';
-      
-      // إضافة جميع المعامل كحقول مخفية
-      for (const [key, value] of Object.entries(params)) {
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = key;
-        input.value = String(value ?? '');
-        form.appendChild(input);
-      }
-      
-      // إضافة iframe لاستلام الرد (لأن form target _blank لا يمكن قراءة الرد)
-      const iframeName = 'iframe_' + cbName;
-      const iframe = document.createElement('iframe');
-      iframe.name = iframeName;
-      iframe.style.display = 'none';
-      document.body.appendChild(iframe);
-      form.target = iframeName;
-      
-      // استلام الرد من iframe
-      let timeoutId;
-      const checkInterval = setInterval(() => {
-        try {
-          const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-          if (iframeDoc && iframeDoc.body && iframeDoc.body.innerText) {
-            const responseText = iframeDoc.body.innerText;
-            if (responseText && responseText.trim()) {
-              clearInterval(checkInterval);
-              clearTimeout(timeoutId);
-              document.body.removeChild(iframe);
-              try {
-                const result = JSON.parse(responseText);
-                resolve(result);
-              } catch(e) {
-                resolve({ success: false, message: responseText });
-              }
-            }
-          }
-        } catch(e) {}
-      }, 200);
-      
-      timeoutId = setTimeout(() => {
-        clearInterval(checkInterval);
-        document.body.removeChild(iframe);
-        reject(new Error('POST timeout - استغرق الطلب أكثر من 120 ثانية'));
-      }, timeoutMs);
-      
-      document.body.appendChild(form);
-      form.submit();
-      setTimeout(() => form.remove(), 1000);
-      
-    } else {
-      // ========== GET: JSONP للطلبات الصغيرة ==========
-      const qs = Object.entries(params).map(([k, v]) => k + '=' + encodeURIComponent(String(v ?? ''))).join('&');
-      const url = GAS + '?' + qs;
-      const sc = document.createElement('script');
-      
-      const timeoutId = setTimeout(() => {
-        delete window[cbName];
-        if (sc.parentNode) sc.remove();
-        reject(new Error('JSONP timeout - استغرق الطلب أكثر من ' + (timeoutMs/1000) + ' ثانية'));
-      }, timeoutMs);
-      
-      window[cbName] = (data) => {
-        clearTimeout(timeoutId);
-        delete window[cbName];
-        if (sc.parentNode) sc.remove();
-        resolve(data);
-      };
-      
-      sc.onerror = () => {
-        clearTimeout(timeoutId);
-        delete window[cbName];
-        if (sc.parentNode) sc.remove();
-        reject(new Error('Network error - فشل الاتصال بالخادم'));
-      };
-      
-      sc.src = url;
-      document.head.appendChild(sc);
-    }
+    let timeoutId = setTimeout(() => {
+      cleanup();
+      reject(new Error('timeout - استغرق الطلب أكثر من 60 ثانية'));
+    }, 60000);
+    
+    const cleanup = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (window[cbName]) delete window[cbName];
+      if (script && script.parentNode) script.remove();
+    };
+    
+    window[cbName] = (data) => {
+      cleanup();
+      resolve(data);
+    };
+    
+    script.onerror = () => {
+      cleanup();
+      reject(new Error('network error - فشل الاتصال بالخادم'));
+    };
+    
+    script.src = url;
+    document.head.appendChild(script);
   });
 }
-
 // ══════════════════════════════════════════════════════════
 // INIT
 // ══════════════════════════════════════════════════════════
@@ -730,24 +670,7 @@ async function compressImage(file, maxWidth = 800, maxHeight = 800, quality = 0.
 async function uploadEmployeeImageInChunks(file, serial, imageKey) {
   return new Promise(async (resolve, reject) => {
     // إظهار شريط التقدم
-    let overlay = document.getElementById('progressOverlay');
-    if (!overlay) {
-      overlay = document.createElement('div');
-      overlay.id = 'progressOverlay';
-      overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); align-items:center; justify-content:center; z-index:10000; flex-direction:column;';
-      overlay.innerHTML = `
-        <div style="background:white; border-radius:16px; padding:24px; width:300px; text-align:center;">
-          <div style="font-size:24px; margin-bottom:12px;">📤</div>
-          <div id="progressText" style="margin-bottom:12px;">جاري رفع الصورة...</div>
-          <div style="width:100%; background:#e0e0e0; border-radius:10px; overflow:hidden;">
-            <div id="progressBar" style="width:0%; height:10px; background:#1e2b4f; transition:width 0.3s;"></div>
-          </div>
-          <div id="progressPercent" style="margin-top:8px; font-size:12px;">0%</div>
-        </div>
-      `;
-      document.body.appendChild(overlay);
-    }
-    
+    const overlay = document.getElementById('progressOverlay');
     const progressBar = document.getElementById('progressBar');
     const progressPercent = document.getElementById('progressPercent');
     const progressText = document.getElementById('progressText');
@@ -761,7 +684,7 @@ async function uploadEmployeeImageInChunks(file, serial, imageKey) {
       const compressedBase64 = await compressImage(file, 400, 400, 0.6);
       let base64 = compressedBase64.split(',')[1];
       
-      const CHUNK_SIZE = 500 * 1024; // 500KB per chunk
+      const CHUNK_SIZE = 500;  // ✅ نفس حجم Dashboard (500 حرف، وليس 500KB)
       const totalChunks = Math.ceil(base64.length / CHUNK_SIZE);
       
       console.log(`📤 بدء رفع الصورة: ${totalChunks} جزء, حجم Base64: ${base64.length}`);
@@ -778,7 +701,7 @@ async function uploadEmployeeImageInChunks(file, serial, imageKey) {
           serial: serial,
           imageKey: imageKey,
           mimeType: 'image/jpeg'
-        }, true);  // ✅ POST request for large data
+        });
         
         if (!result?.chunkReceived) {
           console.error(`❌ فشل الجزء ${i + 1}:`, result);
@@ -801,7 +724,7 @@ async function uploadEmployeeImageInChunks(file, serial, imageKey) {
         imageKey: imageKey,
         totalChunks: totalChunks,
         mimeType: 'image/jpeg'
-      }, true);  // ✅ POST request for assemble as well
+      });
       
       console.log('📤 نتيجة الدمج:', finalResult);
       overlay.style.display = 'none';
@@ -1254,7 +1177,6 @@ async function onFileSelect(input, key, prevId) {
   prev.innerHTML = '<div class="img-ok">⏳ جاري الضغط والرفع...</div>';
   
   try {
-    // استخدام نفس آلية الرفع من Dashboard.html
     const result = await uploadEmployeeImageInChunks(file, editingSerial || 'NEW', key);
     
     if (result && result.success && result.url) {
@@ -1273,61 +1195,6 @@ async function onFileSelect(input, key, prevId) {
     prev.innerHTML = '<div class="img-ok">⚠️ فشل الرفع</div>';
     showToast('❌ فشل رفع الصورة: ' + err.message, 'error');
   }
-}
-function uploadImageToDrive(file, key, prevId) {
-  showToast('⏳ جاري ضغط الصورة...', 'info');
-  
-  const reader = new FileReader();
-  reader.onload = function(ev) {
-    const img = new Image();
-    img.onload = function() {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      const maxWidth = 200;
-      const scale = maxWidth / img.width;
-      canvas.width = maxWidth;
-      canvas.height = img.height * scale;
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      
-      const compressedB64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
-      const mimeType = 'image/jpeg';
-      const label = (editingSerial || 'NEW') + '_' + key.toLowerCase();
-      
-      const callbackName = 'uploadCb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
-      const url = GAS + '?action=uploadEmployeeImage&b64=' + encodeURIComponent(compressedB64) + 
-                  '&mimeType=' + encodeURIComponent(mimeType) + 
-                  '&label=' + encodeURIComponent(label) + 
-                  '&callback=' + callbackName;
-      
-      window[callbackName] = function(result) {
-        delete window[callbackName];
-        if (result && result.success && result.url) {
-          imgData[key] = result.url;
-          const prev = document.getElementById(prevId);
-          prev.innerHTML = '<div class="img-ok">✓ ' + file.name + '</div>';
-          showToast('✅ تم رفع الصورة', 'success');
-        } else {
-          imgData[key] = 'data:image/jpeg;base64,' + compressedB64;
-          const prev = document.getElementById(prevId);
-          prev.innerHTML = '<div class="img-ok">⚠️ ' + file.name + ' (محلي)</div>';
-          showToast('⚠️ تم الحفظ محلياً', 'warning');
-        }
-      };
-      
-      const script = document.createElement('script');
-      script.src = url;
-      script.onerror = function() {
-        delete window[callbackName];
-        imgData[key] = 'data:image/jpeg;base64,' + compressedB64;
-        const prev = document.getElementById(prevId);
-        prev.innerHTML = '<div class="img-ok">⚠️ ' + file.name + ' (محلي)</div>';
-        showToast('⚠️ تم الحفظ محلياً (فشل الرفع)', 'warning');
-      };
-      document.head.appendChild(script);
-    };
-    img.src = ev.target.result;
-  };
-  reader.readAsDataURL(file);
 }
 
 // ══════════════════════════════════════════════════════════
