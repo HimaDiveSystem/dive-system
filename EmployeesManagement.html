@@ -213,6 +213,53 @@
 .toggle-password:hover {
   color: #1e2b4f;
 }
+    /* AutoComplete للوظائف */
+.autocomplete-container {
+  position: relative;
+  width: 100%;
+}
+.autocomplete-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 2px solid #e9ecef;
+  border-radius: 10px;
+  font-size: 13px;
+}
+.autocomplete-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 1000;
+  display: none;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+.autocomplete-item {
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  border-bottom: 1px solid #eee;
+}
+.autocomplete-item:hover {
+  background: #f0f2f5;
+}
+.autocomplete-item.selected {
+  background: #1e2b4f;
+  color: white;
+}
+.add-new-job {
+  color: #27ae60;
+  font-weight: bold;
+  border-top: 1px solid #ddd;
+}
+.add-new-job:hover {
+  background: #e8f5e9;
+}
     @media(max-width:600px) { 
       .form-grid { grid-template-columns:1fr; } 
       .image-grid { grid-template-columns:1fr 1fr; }
@@ -326,27 +373,20 @@
       <div class="tab" onclick="switchTab('images',2)">🖼️ الصور</div>
     </div>
 
-    <!-- تبويب 1: البيانات الأساسية -->
-    <div id="tab-basic" class="tab-content active">
-      <div class="form-grid">
-        <div class="form-group">
-          <label>الاسم الكامل *</label>
-          <input type="text" id="empName" placeholder="أدخل الاسم الكامل" oninput="onNameInput()">
-        </div>
-        <div class="form-group">
-          <label>الوظيفة *</label>
-          <select id="empPosition">
-            <option value="">اختر الوظيفة</option>
-            <option value="Accountant">محاسب</option>
-            <option value="Sales">سيلز</option>
-            <option value="Employee">موظف عادي</option>
-            <option value="Technician">فني</option>
-            <option value="Cleaner">عامل نظافة</option>
-            <option value="Driver">سائق</option>
-            <option value="Guard">أمن</option>
-            <option value="Other">أخرى</option>
-          </select>
-        </div>
+        <!-- تبويب 1: البيانات الأساسية -->
+        <div id="tab-basic" class="tab-content active">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>الاسم الكامل *</label>
+              <input type="text" id="empName" placeholder="أدخل الاسم الكامل" oninput="onNameInput()">
+            </div>
+            <div class="form-group">
+      <label>الوظيفة *</label>
+      <div class="autocomplete-container">
+        <input type="text" id="empPosition" class="autocomplete-input" placeholder="ابحث أو اكتب وظيفة جديدة..." autocomplete="off">
+        <div id="positionDropdown" class="autocomplete-dropdown"></div>
+      </div>
+    </div>
         <div class="form-group">
           <label>الراتب الشهري (LE)</label>
           <input type="number" id="empSalary" placeholder="0" min="0">
@@ -594,6 +634,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   document.getElementById('userNameDisplay').textContent = currentUser.name || '—';
   
+  // ✅ إعداد AutoComplete للوظائف
+  setupPositionAutocomplete();
+  
   // ✅ انتظر اكتمال تحميل الموظفين
   await loadEmployees();
   
@@ -832,6 +875,9 @@ async function loadEmployees() {
         populateBranchFilter(branchesResult);
       }
       
+      // ✅ تحميل قائمة الوظائف
+      await loadJobTitles();
+      
       populateNamesDropdown(employees);
       usedEmails = new Set(employees.filter(e=>e.email).map(e=>e.email.toLowerCase().trim()));
       
@@ -847,7 +893,6 @@ async function loadEmployees() {
     showToast('خطأ في الاتصال', 'error');
   }
 }
-
 function setupFilterListeners() {
   const filterIds = ['searchEmployeeXyz999', 'filterBranch', 'filterPosition', 'filterPaymentSystem', 'filterStatus', 'filterHasAccount'];
   filterIds.forEach(id => {
@@ -1051,11 +1096,15 @@ async function openAddModal() {
   document.getElementById('editBanner').style.display = 'none';
   document.getElementById('statusGroup').style.display = 'none';
   document.getElementById('saveBtn').textContent = '💾 حفظ الموظف';
+  
+  // ✅ تعيين قيمة الوظيفة فارغة
+  document.getElementById('empPosition').value = '';
+  selectedJobTitle = '';
+  
   await loadBranches();
   switchTab('basic', 0);
   document.getElementById('empModal').classList.add('open');
 }
-
 // ══════════════════════════════════════════════════════════
 // MODAL — فتح للتعديل
 // ══════════════════════════════════════════════════════════
@@ -1156,21 +1205,26 @@ function closeModal() {
 function resetForm() {
   ['empName','empSalary','empPhone','empStartDate','empUsername','empPassword','empEmail','empAddress']
     .forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
-  document.getElementById('empPosition').value      = '';
-  document.getElementById('empBranch').value        = '';
+  
+  // ✅ تعيين قيمة الوظيفة فارغة
+  document.getElementById('empPosition').value = '';
+  selectedJobTitle = '';
+  
+  document.getElementById('empBranch').value = '';
   document.getElementById('empPaymentSystem').value = 'مرتب فقط';
-  document.getElementById('empUserType').value      = 'Employee';
-  document.getElementById('empStatus').value        = 'نشط';
-  document.getElementById('empHasAccess').checked   = false;
+  document.getElementById('empUserType').value = 'Employee';
+  document.getElementById('empStatus').value = 'نشط';
+  document.getElementById('empHasAccess').checked = false;
   document.getElementById('systemFields').style.display = 'none';
   document.getElementById('emailInfo').classList.remove('show');
   document.getElementById('empStartDate').value = new Date().toISOString().split('T')[0];
+  
   const _icons = {Employee:'📸',IdFront:'🪪',IdBack:'🪪',Security:'🔍'};
   ['Employee','IdFront','IdBack','Security'].forEach(k => {
     const prev = document.getElementById('prev' + k);
     if (prev) {
-      prev.style.backgroundImage    = '';
-      prev.style.backgroundSize     = '';
+      prev.style.backgroundImage = '';
+      prev.style.backgroundSize = '';
       prev.style.backgroundPosition = '';
       prev.classList.remove('uploaded');
       prev.innerHTML = '<span class="img-ico">' + _icons[k] + '</span><span class="img-lbl">اضغط للرفع</span>';
@@ -1180,6 +1234,7 @@ function resetForm() {
     if (file) file.value = '';
   });
 }
+
 
 // عند إضافة أو تعديل موظف، تأكد من أن الفرع المختار يتبع مركز المستخدم الحالي
 async function loadBranches() {
@@ -1347,7 +1402,7 @@ async function saveEmployee() {
     const params = {
       serial: editingSerial || '',
       fullName: g('empName'),
-      position: g('empPosition'),
+      position: selectedJobTitle || g('empPosition'),
       monthlySalary: parseFloat(g('empSalary')) || 0,
       phone: g('empPhone'),
       startDate: g('empStartDate'),
@@ -1614,6 +1669,118 @@ function showInfo(html) {
   }
   
   document.getElementById('confirmModal').classList.add('open');
+}
+  // ══════════════════════════════════════════════════════════
+// دوال AutoComplete للوظائف
+// ══════════════════════════════════════════════════════════
+
+let jobTitles = [];
+let selectedJobTitle = '';
+
+async function loadJobTitles() {
+  try {
+    const result = await jsonpRequest('getAllJobTitles');
+    if (Array.isArray(result)) {
+      jobTitles = result.map(job => job.title);
+      jobTitles.sort((a, b) => a.localeCompare(b, 'ar'));
+    }
+  } catch(e) {
+    console.error('loadJobTitles error:', e);
+    jobTitles = [];
+  }
+}
+
+function filterJobTitles(searchText) {
+  if (!searchText) return jobTitles;
+  return jobTitles.filter(title => 
+    title.toLowerCase().includes(searchText.toLowerCase())
+  );
+}
+
+function showPositionDropdown(searchText) {
+  const dropdown = document.getElementById('positionDropdown');
+  const filtered = filterJobTitles(searchText);
+  
+  if (filtered.length === 0 && searchText.trim() !== '') {
+    // إظهار خيار إضافة وظيفة جديدة
+    dropdown.innerHTML = `
+      <div class="autocomplete-item add-new-job" onclick="addNewJobTitle('${searchText.replace(/'/g, "\\'")}')">
+        ➕ إضافة "${searchText}" كوظيفة جديدة
+      </div>
+    `;
+    dropdown.style.display = 'block';
+    return;
+  }
+  
+  if (filtered.length === 0) {
+    dropdown.style.display = 'none';
+    return;
+  }
+  
+  dropdown.innerHTML = filtered.map(title => `
+    <div class="autocomplete-item" onclick="selectJobTitle('${title.replace(/'/g, "\\'")}')">${title}</div>
+  `).join('');
+  dropdown.style.display = 'block';
+}
+
+function selectJobTitle(title) {
+  const input = document.getElementById('empPosition');
+  input.value = title;
+  selectedJobTitle = title;
+  document.getElementById('positionDropdown').style.display = 'none';
+}
+
+async function addNewJobTitle(newTitle) {
+  if (!newTitle || newTitle.trim() === '') return;
+  
+  showToast('⏳ جاري إضافة الوظيفة...', 'info');
+  
+  try {
+    const result = await jsonpRequest('addJobTitle', { title: newTitle });
+    if (result && result.success) {
+      showToast(`✅ تم إضافة "${newTitle}"`, 'success');
+      await loadJobTitles(); // إعادة تحميل القائمة
+      selectJobTitle(newTitle);
+    } else {
+      showToast('❌ ' + (result?.message || 'فشل الإضافة'), 'error');
+    }
+  } catch(e) {
+    showToast('❌ خطأ في الاتصال', 'error');
+  }
+}
+
+// إعداد أحداث AutoComplete
+function setupPositionAutocomplete() {
+  const input = document.getElementById('empPosition');
+  const dropdown = document.getElementById('positionDropdown');
+  
+  if (!input) return;
+  
+  input.addEventListener('input', (e) => {
+    showPositionDropdown(e.target.value);
+  });
+  
+  input.addEventListener('focus', () => {
+    if (input.value === '') {
+      showPositionDropdown('');
+    }
+  });
+  
+  document.addEventListener('click', (e) => {
+    if (!input.contains(e.target) && !dropdown.contains(e.target)) {
+      dropdown.style.display = 'none';
+    }
+  });
+  
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && dropdown.style.display === 'block') {
+      const firstItem = dropdown.querySelector('.autocomplete-item:not(.add-new-job)');
+      if (firstItem) {
+        e.preventDefault();
+        firstItem.click();
+      }
+    }
+  });
 }
 function togglePasswordVisibility(inputId, btn) {
   const input = document.getElementById(inputId);
