@@ -143,7 +143,38 @@
     .confirm-btns { display:flex; gap:10px; justify-content:center; }
     .confirm-ok { padding:8px 22px; background:#1e2b4f; color:#ffd966; border:none; border-radius:40px; font-size:13px; font-weight:700; cursor:pointer; }
     .confirm-cancel { padding:8px 16px; background:#f8f9fa; color:#6c757d; border:2px solid #dee2e6; border-radius:40px; font-size:13px; cursor:pointer; }
+    /* توسيع نافذة عرض المعلومات */
+#confirmModal .confirm-box {
+  width: 500px;
+  max-width: 90vw;
+  max-height: 80vh;
+  overflow-y: auto;
+}
 
+#confirmModal .confirm-box table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+#confirmModal .confirm-box td {
+  padding: 8px;
+  border-bottom: 1px solid #eee;
+  text-align: right;
+}
+
+#confirmModal .confirm-box tr:last-child td {
+  border-bottom: none;
+}
+
+.status-active {
+  color: #27ae60;
+  font-weight: bold;
+}
+
+.status-inactive {
+  color: #e74c3c;
+  font-weight: bold;
+}
     @media(max-width:600px) { 
       .form-grid { grid-template-columns:1fr; } 
       .image-grid { grid-template-columns:1fr 1fr; }
@@ -440,9 +471,7 @@ let branches      = [];
 let editingSerial = null;
 let imgData       = { Employee:'', IdFront:'', IdBack:'', Security:'' };
 let usedEmails    = new Set();
-let _confirmCb    = null;
 let currentUser   = null;
-
 // ══════════════════════════════════════════════════════════
 // JSONP
 // ══════════════════════════════════════════════════════════
@@ -792,28 +821,34 @@ async function loadEmployees() {
   document.getElementById('employeesTable').innerHTML = '<div class="loader"></div>';
   document.getElementById('statsRow').innerHTML = '';
   try {
-    const all = await jsonpRequest('getAllEmployees');
+    // ✅ استخدام getEmployeesByCenter بدلاً من getAllEmployees
+    const result = await jsonpRequest('getEmployeesByCenter', { 
+      centerId: currentUser?.centerId || '',
+      branchId: currentUser?.branchId || ''
+    });
     
-    if (Array.isArray(all)) {
-      let result = all;
+    if (Array.isArray(result)) {
+      employees = result;
+      
+      // ✅ تصفية الفروع للمستخدمين العاديين
       const userType = currentUser?.type || '';
       const canViewAll = ['Admin', 'Owner', 'AccountantManager', 'FinancialManager'].includes(userType);
       
       if (!canViewAll && currentUser?.branchId) {
-        result = all.filter(emp => emp.branchId === currentUser.branchId);
+        employees = employees.filter(emp => emp.branchId === currentUser.branchId);
         const branchFilterGroup = document.getElementById('filterBranchGroup');
         if (branchFilterGroup) branchFilterGroup.style.display = 'none';
       } else {
         const branchFilterGroup = document.getElementById('filterBranchGroup');
         if (branchFilterGroup) branchFilterGroup.style.display = 'block';
-        
-        const branchesResult = await jsonpRequest('getBranchesByCenter', { centerId: currentUser?.centerId || '' });
-        if (Array.isArray(branchesResult)) {
-          populateBranchFilter(branchesResult);
-        }
       }
       
-      employees = result;
+      // ✅ جلب الفروع لعنصر الفلترة
+      const branchesResult = await jsonpRequest('getBranchesByCenter', { centerId: currentUser?.centerId || '' });
+      if (Array.isArray(branchesResult)) {
+        populateBranchFilter(branchesResult);
+      }
+      
       populateNamesDropdown(employees);
       usedEmails = new Set(employees.filter(e=>e.email).map(e=>e.email.toLowerCase().trim()));
       renderStats();
@@ -1355,26 +1390,22 @@ async function saveEmployee() {
     const employeeSerial = result.serial || editingSerial;
     
     let savedImagesCount = 0;
-    for (const [key, imageData] of Object.entries(imagesToSave)) {
-      if (imageData) {
-        try {
-          await fetch(GAS, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'updateEmployeeImage',
-              serial: employeeSerial,
-              imageKey: key,
-              imageData: imageData
-            })
-          });
-          savedImagesCount++;
-        } catch(e) {
-          console.warn(`⚠️ فشل حفظ الصورة ${key}:`, e);
-        }
-      }
+for (const [key, imageData] of Object.entries(imagesToSave)) {
+  if (imageData) {
+    try {
+      // ✅ استخدام jsonpRequest مع isPost = true بدلاً من fetch
+      const imgResult = await jsonpRequest('updateEmployeeImage', {
+        serial: employeeSerial,
+        imageKey: key,
+        imageData: imageData,
+        centerId: currentUser?.centerId || ''
+      }, true);
+      if (imgResult && imgResult.success) savedImagesCount++;
+    } catch(e) {
+      console.warn(`⚠️ فشل حفظ الصورة ${key}:`, e);
     }
+  }
+}
     
     showToast(`✅ ${isEdit ? 'تم تعديل' : 'تم إضافة'} الموظف: ${employeeSerial} (تم حفظ ${savedImagesCount} صورة)`, 'success');
     closeModal();
@@ -1394,8 +1425,11 @@ async function saveEmployee() {
 // ══════════════════════════════════════════════════════════
 async function viewHistory(serial) {
   try {
-    // جلب سجل الراتب أولاً
-    const history = await jsonpRequest('getSalaryHistory', { serial: serial });
+    // جلب سجل الراتب مع centerId
+    const history = await jsonpRequest('getSalaryHistory', { 
+      serial: serial,
+      centerId: currentUser?.centerId || ''
+    });
     
     // جلب بيانات الموظف الكاملة (بما فيها الصورة)
     const employee = employees.find(e => e.serial === serial);
@@ -1408,30 +1442,57 @@ async function viewHistory(serial) {
       html += `
         <div style="text-align:center; margin-bottom:20px;">
           <img src="${imgUrl}" style="width:100px; height:100px; border-radius:50%; object-fit:cover; border:3px solid #1e2b4f; padding:3px; background:white;">
-          <div style="margin-top:8px; font-size:12px; color:#1e2b4f; font-weight:600;">📸 ${employee.name || ''}</div>
+          <div style="margin-top:8px; font-size:14px; color:#1e2b4f; font-weight:700;">📸 ${employee.name || ''}</div>
         </div>
       `;
     } else {
-      // أيقونة افتراضية إذا لم توجد صورة
       html += `
         <div style="text-align:center; margin-bottom:20px;">
           <div style="width:100px; height:100px; border-radius:50%; background:#e9ecef; display:inline-flex; align-items:center; justify-content:center;">
             <span style="font-size:48px;">👤</span>
           </div>
-          <div style="margin-top:8px; font-size:12px; color:#1e2b4f; font-weight:600;">${employee?.name || serial}</div>
+          <div style="margin-top:8px; font-size:14px; color:#1e2b4f; font-weight:700;">${employee?.name || serial}</div>
         </div>
       `;
     }
     
-    // ✅ إضافة معلومات الموظف الأساسية
+    // ✅ جدول المعلومات الأساسية بتنسيق أفضل
     if (employee) {
       html += `
-        <div style="background:#f8f9fa; border-radius:12px; padding:12px; margin-bottom:16px;">
-          <table style="width:100%; font-size:12px;">
-            <tr><td style="padding:4px;"><strong>📱 الهاتف:</strong></td><td>${employee.phone || '—'}</td></tr>
-            <tr><td style="padding:4px;"><strong>🏢 الوظيفة:</strong></td><td>${employee.position || '—'}</td></tr>
-            <tr><td style="padding:4px;"><strong>💰 نظام الحساب:</strong></td><td>${employee.paymentSystem || '—'}</td></tr>
-            <tr><td style="padding:4px;"><strong>⚙️ الحالة:</strong></td><td class="${employee.status === 'نشط' ? 'status-active' : 'status-inactive'}">${employee.status || '—'}</td></tr>
+        <div style="background:#f8f9fa; border-radius:12px; padding:16px; margin-bottom:20px; width:100%;">
+          <table style="width:100%; font-size:14px; border-collapse:collapse;">
+            <tr>
+              <td style="padding:8px; width:40%;"><strong>📱 الهاتف:</strong></td>
+              <td style="padding:8px; width:60%;">${employee.phone || '—'}</td>
+            </tr>
+            <tr>
+              <td style="padding:8px;"><strong>🏢 الوظيفة:</strong></td>
+              <td style="padding:8px;">${employee.position || '—'}</td>
+            </tr>
+            <tr>
+              <td style="padding:8px;"><strong>💰 نظام الحساب:</strong></td>
+              <td style="padding:8px;">${employee.paymentSystem || '—'}</td>
+            </tr>
+            <tr>
+              <td style="padding:8px;"><strong>⚙️ الحالة:</strong></td>
+              <td style="padding:8px;" class="${employee.status === 'نشط' ? 'status-active' : 'status-inactive'}">${employee.status || '—'}</td>
+            </tr>
+            <tr>
+              <td style="padding:8px;"><strong>🏷️ الرقم الوظيفي:</strong></td>
+              <td style="padding:8px;">${employee.serial || '—'}</td>
+            </tr>
+            <tr>
+              <td style="padding:8px;"><strong>📧 البريد الإلكتروني:</strong></td>
+              <td style="padding:8px;">${employee.email || '—'}</td>
+            </tr>
+            <tr>
+              <td style="padding:8px;"><strong>🏢 المركز:</strong></td>
+              <td style="padding:8px;">${employee.centerName || '—'}</td>
+            </tr>
+            <tr>
+              <td style="padding:8px;"><strong>🏛️ الفرع:</strong></td>
+              <td style="padding:8px;">${employee.branchName || '—'}</td>
+            </tr>
           </table>
         </div>
       `;
@@ -1439,14 +1500,18 @@ async function viewHistory(serial) {
     
     // ✅ إضافة سجل الراتب
     if (Array.isArray(history) && history.length > 0) {
-      html += `<div style="font-weight:700; color:#1e2b4f; margin-bottom:10px; border-right:3px solid #ffd966; padding-right:10px;">📋 سجل الراتب</div>`;
+      html += `<div style="font-weight:700; color:#1e2b4f; margin-bottom:12px; border-right:3px solid #ffd966; padding-right:10px; font-size:16px;">📋 سجل الراتب</div>`;
       history.forEach(h => {
         const salaryNum = Number(h.salary || 0);
-        const effectiveDate = h.effectiveDate ? new Date(h.effectiveDate).toLocaleDateString('ar-EG') : '—';
+        const effectiveDate = h.effectiveDate ? new Date(h.effectiveDate).toLocaleDateString('ar-EG', {
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric'
+    }) : '—';
         html += `
-          <div style="background:white; border:1px solid #e9ecef; border-radius:10px; padding:10px; margin-bottom:8px;">
-            <div><strong>💰 ${salaryNum.toLocaleString()} LE</strong> — ${h.month || ''}/${h.year || ''}</div>
-            <div style="font-size:11px; color:#6c757d;">📅 ${effectiveDate} — ${h.reason || '—'}</div>
+          <div style="background:white; border:1px solid #e9ecef; border-radius:10px; padding:12px; margin-bottom:10px;">
+            <div style="font-size:14px;"><strong>💰 ${salaryNum.toLocaleString()} LE</strong> — ${h.month || ''}/${h.year || ''}</div>
+            <div style="font-size:12px; color:#6c757d; margin-top:5px;">📅 ${effectiveDate} — ${h.reason || '—'}</div>
           </div>
         `;
       });
@@ -1462,7 +1527,7 @@ async function viewHistory(serial) {
   }
 }
 function viewAttendance(serial) {
-  window.open('MyAttendance.html?serial=' + serial, '_blank');
+  window.open('MyAttendance.html?serial=' + serial + '&centerId=' + currentUser?.centerId, '_blank');
 }
 // ══════════════════════════════════════════════════════════
 // HELPERS
@@ -1534,6 +1599,16 @@ function showInfo(html) {
   document.getElementById('confirmOkBtn').textContent = 'إغلاق';
   document.getElementById('confirmOkBtn').onclick = () => document.getElementById('confirmModal').classList.remove('open');
   document.getElementById('confirmCancelBtn').style.display = 'none';
+  
+  // ✅ زيادة عرض النافذة
+  const confirmBox = document.querySelector('#confirmModal .confirm-box');
+  if (confirmBox) {
+    confirmBox.style.width = '500px';
+    confirmBox.style.maxWidth = '90vw';
+    confirmBox.style.maxHeight = '80vh';
+    confirmBox.style.overflowY = 'auto';
+  }
+  
   document.getElementById('confirmModal').classList.add('open');
 }
 
