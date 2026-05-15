@@ -182,6 +182,60 @@
     }
     .action-btn.upsell { background: var(--orange); }
     .action-btn.instructor { background: var(--green); }
+    .summary-sec {
+  padding: 14px 20px;
+  background: white;
+  border-top: 2px solid var(--border);
+  direction: ltr;
+  overflow-x: auto;
+}
+.summary-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--navy);
+  margin-bottom: 8px;
+  text-align: center;
+}
+.summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  direction: ltr;
+  margin: 0 auto;
+}
+.summary-table th {
+  background: var(--navy2);
+  color: var(--gold);
+  padding: 10px 8px;
+  text-align: center;
+  font-weight: 700;
+}
+.summary-table td {
+  padding: 8px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+  vertical-align: middle;
+}
+.summary-table th:first-child,
+.summary-table td:first-child {
+  width: 28%;
+  text-align: center;
+  white-space: normal;
+  word-break: break-word;
+}
+.summary-table th:nth-child(2),
+.summary-table td:nth-child(2) {
+  width: 15%;
+  text-align: center;
+}
+.summary-table th:nth-child(3),
+.summary-table td:nth-child(3) {
+  width: 57%;
+  text-align: center;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.4;
+}
     
     /* Modal */
     .modal {
@@ -402,7 +456,11 @@
   <div id="tblCont"><div class="loader"><div class="spinner"></div>جاري التحميل...</div></div>
 </div>
 <div class="pagination" id="pagination"></div>
-
+  
+<div class="summary-sec" id="summarySec" style="display:none">
+  <div class="summary-title">🗺️ Trips Summary</div>
+  <div style="overflow-x:auto"><table class="summary-table" id="summaryTbl"></table></div>
+</div>
 <!-- Modal اختيار المدربين -->
 <div id="instructorsModal" class="modal">
   <div class="modal-content">
@@ -746,7 +804,122 @@ function resetFilters() {
   document.getElementById('filterState').value = '';
   applyFilters();
 }
+// ============================================================
+// دالة بناء صف الإجماليات (أعداد البنود فقط)
+// ============================================================
+function buildTotals(data) {
+  const sumField = (key, altKey) => {
+    return data.reduce((sum, row) => {
+      const val = row[key] !== undefined ? row[key] : (altKey ? row[altKey] : 0);
+      return sum + (parseFloat(val) || 0);
+    }, 0);
+  };
 
+  const formatSum = (val) => {
+    if (val === 0 || val === '') return '0';
+    const num = Number(val);
+    if (isNaN(num)) return '0';
+    return num % 1 === 0 ? num.toString() : num.toFixed(2).replace(/\.00$/, '');
+  };
+
+  const sums = {
+    item1: sumField('Sgl', 'sgl'),
+    item2: sumField('Dbl', 'dbl'),
+    item3: sumField('Trpl', 'trpl'),
+    item4: sumField('Extra', 'extra'),
+    item5: sumField('Camel', 'camel'),
+    item6: sumField('Dinner', 'dinner'),
+    item7: sumField('VIPDinner', 'vipDinner'),
+    item8: sumField('StarGazing', 'starGazing'),
+    item9: sumField('PrivateTrip', 'privateTrip'),
+    item10: sumField('PrivateTransfer', 'privateTransfer')
+  };
+
+  return `<tr class="totals-row">
+    <td colspan="6" style="text-align:center">
+      <span class="tv">${data.length} فاتورة من ${filteredInvoices.length}</span><br>
+      <span class="tl">(المعروضة / الإجمالي)</span>
+    </td>
+    <td class="amt"><span class="tl">Item1</span><span class="tv">${formatSum(sums.item1)}</span></td>
+    <td class="amt"><span class="tl">Item2</span><span class="tv">${formatSum(sums.item2)}</span></td>
+    <td class="amt"><span class="tl">Item3</span><span class="tv">${formatSum(sums.item3)}</span></td>
+    <td class="amt"><span class="tl">Item4</span><span class="tv">${formatSum(sums.item4)}</span></td>
+    <td class="amt"><span class="tl">Item5</span><span class="tv">${formatSum(sums.item5)}</span></td>
+    <td class="amt"><span class="tl">Item6</span><span class="tv">${formatSum(sums.item6)}</span></td>
+    <td class="amt"><span class="tl">Item7</span><span class="tv">${formatSum(sums.item7)}</span></td>
+    <td class="amt"><span class="tl">Item8</span><span class="tv">${formatSum(sums.item8)}</span></td>
+    <td class="amt"><span class="tl">Item9</span><span class="tv">${formatSum(sums.item9)}</span></td>
+    <td class="amt"><span class="tl">Item10</span><span class="tv">${formatSum(sums.item10)}</span></td>
+    <td colspan="9"></td>
+  </tr>`;
+}
+
+// ============================================================
+// دالة بناء ملخص الرحلات
+// ============================================================
+function buildSummary(data) {
+  const trips = {};
+  
+  data.forEach(inv => {
+    const tripName = (inv.Trip || inv.trip || 'Unknown').trim();
+    if (!trips[tripName]) trips[tripName] = { bookings: 0, activities: {} };
+    trips[tripName].bookings++;
+    
+    // جمع الأنشطة من ActivitiesText
+    const activitiesText = (inv.ActivitiesText || inv.activitiesText || '').toString().trim();
+    if (activitiesText) {
+      activitiesText.split('|').forEach(part => {
+        const match = part.trim().match(/^(.+?)×(\d+(\.\d+)?)$/);
+        if (match) {
+          const activityName = match[1].trim();
+          const quantity = parseFloat(match[2]) || 0;
+          trips[tripName].activities[activityName] = (trips[tripName].activities[activityName] || 0) + quantity;
+        }
+      });
+    }
+    
+    // أيضاً جمع من البنود المباشرة (Intro, Course, Diver)
+    const introCount = parseInt(inv.Extra || inv.extra || 0);
+    const courseCount = parseInt(inv.Dbl || inv.dbl || 0);
+    const diverCount = parseInt(inv.Sgl || inv.sgl || 0);
+    
+    if (introCount > 0) {
+      trips[tripName].activities['Intro'] = (trips[tripName].activities['Intro'] || 0) + introCount;
+    }
+    if (courseCount > 0) {
+      trips[tripName].activities['Course'] = (trips[tripName].activities['Course'] || 0) + courseCount;
+    }
+    if (diverCount > 0) {
+      trips[tripName].activities['Diver'] = (trips[tripName].activities['Diver'] || 0) + diverCount;
+    }
+  });
+  
+  if (Object.keys(trips).length === 0) {
+    document.getElementById('summarySec').style.display = 'none';
+    return;
+  }
+  
+  let rows = '';
+  Object.entries(trips)
+    .sort((a, b) => b[1].bookings - a[1].bookings)
+    .forEach(([tripName, info]) => {
+      const activitiesStr = Object.entries(info.activities)
+        .map(([act, qty]) => `${act}×${Number.isInteger(qty) ? qty : qty.toFixed(1)}`)
+        .join(' | ');
+      rows += `<tr>
+        <td><strong>${escapeHtml(tripName)}</strong></td>
+        <td style="text-align:center"><span style="background:var(--navy);color:var(--gold);padding:4px 10px;border-radius:20px;font-size:12px;font-weight:700">${info.bookings}</span></td>
+        <td class="acts-cell">${escapeHtml(activitiesStr || '—')}</td>
+      </tr>`;
+    });
+  
+  document.getElementById('summaryTbl').innerHTML = `<thead><tr><th>Trip</th><th style="text-align:center">Bookings</th><th>Activities</th></tr></thead><tbody>${rows}</tbody>`;
+  document.getElementById('summarySec').style.display = 'block';
+}
+  function renderAll() {
+  renderTable();
+  buildSummary(filteredInvoices);
+}
 function renderTable() {
   const start = (currentPage - 1) * pageSize;
   const end = Math.min(start + pageSize, filteredInvoices.length);
@@ -862,9 +1035,11 @@ function renderTable() {
     html += `</tr>`;
   }
 
-  html += '</tbody></table>';
+ // إضافة صف الإجماليات
+ html += buildTotals(pageData);   // إضافة صف الإجماليات
+  html += '</tbody>';              // إغلاق tbody
+  html += '</table>';                   // إغلاق الجدول
   document.getElementById('tblCont').innerHTML = html;
-}
 function editInvoice(voucherNo) {
   sessionStorage.setItem('editVoucherNo', voucherNo);
   window.open('EditInvoice.html', '_blank');
