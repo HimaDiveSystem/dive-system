@@ -316,6 +316,18 @@
     .amt { text-align: right; font-family: monospace; }
     
     @media(max-width: 640px) { .filter-bar { flex-direction: column; align-items: stretch; } }
+    .balance-positive {
+  color: #dc2626;
+  font-weight: 700;
+}
+.balance-zero {
+  color: #16a34a;
+  font-weight: 700;
+}
+.balance-text {
+  color: var(--blue);
+  font-weight: 700;
+}
         /* Modal Styles */
     .modal {
       display: none;
@@ -1016,7 +1028,16 @@ function renderTable() {
     const item10 = inv.PrivateTransfer || inv.privateTransfer || 0;
 
     html += `<tr>`;
-    html += `<td class="amt">${rest.toFixed(2)} ${currency}</td>`;
+    // ✅ تنسيق عمود المبلغ المتبقي 
+   et balanceHtml = '';
+if (rest > 0) {
+  balanceHtml = `<span class="balance-positive">${rest.toFixed(2)} ${currency}</span>`;
+} else if (rest === 0) {
+  balanceHtml = `<span class="balance-zero">✓</span>`;
+} else {
+  balanceHtml = `<span class="balance-text">${rest.toFixed(2)} ${currency}</span>`;
+}
+html += `<td class="amt">${balanceHtml}</td>`;
     html += `<td><span style="color:var(--blue);font-weight:700;">${escapeHtml(voucherNo)}</span></td>`;
     html += `<td>${formatDateDDMMMYYYY(inv.ActiveDate || inv.activeDate)}</td>`;
     html += `<td>${escapeHtml(inv.Trip || inv.trip || '')}</td>`;
@@ -1497,10 +1518,77 @@ async function openDistributeInstructors(voucherNo) {
   currentDistributeInvoice = invoice;
   currentDistributeInstructors = [...selectedInstructors];
   
-  const introCount = parseInt(invoice.Extra || invoice.extra || 0);
-  const courseCount = parseInt(invoice.Dbl || invoice.dbl || 0);
-  const diverCount = parseInt(invoice.Sgl || invoice.sgl || 0);
+  const tripName = invoice.Trip || invoice.trip || '';
   
+  // ✅ جلب بنود الرحلة من TripDefinitions
+  let tripItems = [];
+  try {
+    const tripData = await jsonpRequest('getTripData', { 
+      tripName: tripName, 
+      currency: invoice.InvoiceCurrency || invoice.invoiceCurrency || 'LE' 
+    });
+    if (tripData && tripData.items) {
+      tripItems = tripData.items;
+    }
+  } catch(e) {
+    console.warn('Could not load trip items:', e);
+  }
+  
+  // ✅ قراءة القيم من الفاتورة حسب ترتيب البنود
+  const itemValues = [
+    parseFloat(invoice.Sgl || invoice.sgl || 0),      // Item1
+    parseFloat(invoice.Dbl || invoice.dbl || 0),      // Item2
+    parseFloat(invoice.Trpl || invoice.trpl || 0),    // Item3
+    parseFloat(invoice.Extra || invoice.extra || 0),  // Item4
+    parseFloat(invoice.Camel || invoice.camel || 0),  // Item5
+    parseFloat(invoice.Dinner || invoice.dinner || 0),// Item6
+    parseFloat(invoice.VIPDinner || invoice.vipDinner || 0), // Item7
+    parseFloat(invoice.StarGazing || invoice.starGazing || 0), // Item8
+    parseFloat(invoice.PrivateTrip || invoice.privateTrip || 0), // Item9
+    parseFloat(invoice.PrivateTransfer || invoice.privateTransfer || 0) // Item10
+  ];
+  
+  // ✅ تحديد الأنشطة حسب أسماء البنود
+  let introCount = 0;
+  let diverCount = 0;
+  let courseCount = 0;
+  
+  for (let i = 0; i < tripItems.length && i < itemValues.length; i++) {
+    const itemName = (tripItems[i] || '').toLowerCase();
+    const itemValue = itemValues[i];
+    
+    if (itemValue === 0) continue;
+    
+    // الكشف عن Intro
+    if (itemName.includes('intro') || itemName === '1 intro' || itemName === '2 intro' || 
+        itemName === '*1 intro' || itemName === '*2 intro') {
+      introCount += itemValue;
+    }
+    // الكشف عن Diver
+    else if (itemName.includes('diver') || itemName.includes('dive') || 
+             itemName === '1 dive' || itemName === '2 dives') {
+      diverCount += itemValue;
+    }
+    // الكشف عن Course
+    else if (itemName.includes('course')) {
+      courseCount += itemValue;
+    }
+    // الكشف عن Check Dive / C.D.
+    else if (itemName === 'c.d.' || itemName.includes('check dive')) {
+      diverCount += itemValue;
+    }
+    // الكشف عن Scuba Review / S.R.
+    else if (itemName === 's.r.' || itemName.includes('scuba review')) {
+      diverCount += itemValue;
+    }
+    // Adult, Child, Inf - تجاهلها (للسيارات فقط)
+    else if (itemName === 'adult' || itemName === 'child' || itemName === 'inf' || 
+             itemName === 'adlt' || itemName === 'ch') {
+      // لا تفعل شيئاً - هذه للسيارات
+    }
+  }
+  
+  // ✅ بناء واجهة توزيع المدربين
   let instructorsHtml = '<div class="selection-list">';
   for (const instId of currentDistributeInstructors) {
     const instructor = await getInstructorById(instId);
@@ -1522,8 +1610,7 @@ async function openDistributeInstructors(voucherNo) {
   
   document.getElementById('distributeInstructorsList').innerHTML = instructorsHtml;
   openModal('distributeInstructorsModal');
-}
-  
+}  
 async function getInstructorById(id) {
   const instructors = await jsonpRequest('getInstructors', {});
   if (Array.isArray(instructors)) {
