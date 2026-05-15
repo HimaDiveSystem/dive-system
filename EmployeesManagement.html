@@ -527,30 +527,58 @@ async function compressImageToBase64(file, maxWidth = 200, maxHeight = 200, qual
   });
 }
 /**
- * ✅ رفع صورة واحدة بطلب JSONP واحد فقط
- */
-/**
- * ✅ رفع صورة واحدة باستخدام JSONP (أسرع من POST لـ Web App)
+ * ✅ رفع صورة واحدة باستخدام POST (أكثر استقراراً)
  */
 async function uploadSingleImage(b64, serial, imageKey) {
-  const startTime = Date.now();
-  const result = await jsonpRequest('uploadEmployeeImage', {
-    b64: b64,
-    mimeType: 'image/jpeg',
-    label: serial + '_' + imageKey,
-    centerId: currentUser?.centerId || ''
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const url = GAS;
+    
+    xhr.open('POST', url, true);
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    
+    xhr.onload = function() {
+      if (xhr.status === 200) {
+        try {
+          const response = JSON.parse(xhr.responseText);
+          if (response && response.success) {
+            resolve(response.url);
+          } else {
+            reject(new Error(response?.message || 'فشل الرفع'));
+          }
+        } catch(e) {
+          reject(new Error('خطأ في تحليل الاستجابة: ' + e.message));
+        }
+      } else {
+        reject(new Error('HTTP ' + xhr.status + ': ' + xhr.statusText));
+      }
+    };
+    
+    xhr.onerror = function() {
+      reject(new Error('network error - فشل الاتصال بالخادم'));
+    };
+    
+    xhr.ontimeout = function() {
+      reject(new Error('timeout - انتهى الوقت (60 ثانية)'));
+    };
+    
+    xhr.timeout = 60000;
+    
+    const params = new URLSearchParams();
+    params.append('action', 'uploadEmployeeImage');
+    params.append('b64', b64);
+    params.append('mimeType', 'image/jpeg');
+    params.append('label', serial + '_' + imageKey);
+    if (currentUser && currentUser.centerId) {
+      params.append('centerId', currentUser.centerId);
+    }
+    
+    xhr.send(params.toString());
   });
-  const elapsed = Date.now() - startTime;
-  console.log(`📤 رفع ${imageKey}: ${(b64.length/1024).toFixed(1)}KB في ${elapsed}ms`);
-  
-  if (!result || !result.success) {
-    throw new Error(result?.message || 'فشل الرفع');
-  }
-  return result.url;
 }
- /**
- * ✅ رفع الصور بالتوازي (أسرع بكثير من التسلسل)
- * رفع 4 صور في نفس الوقت بدلاً من واحدة تلو الأخرى
+
+/**
+ * ✅ رفع الصور بالتوازي باستخدام POST
  */
 async function uploadAllPendingImagesParallel(serial) {
   const keys = ['Employee', 'IdFront', 'IdBack', 'Security'];
@@ -563,17 +591,19 @@ async function uploadAllPendingImagesParallel(serial) {
   const progressDetail = document.getElementById('saveProgressDetail');
   progressArea.style.display = 'block';
 
-  // تحضير جميع الصور (ضغط متوازي)
   progressText.textContent = '⏳ جاري تحضير الصور...';
+  
+  // تحضير جميع الصور (ضغط متوازي)
   const prepared = await Promise.all(pending.map(async key => {
     const file = pendingFiles[key];
     const b64 = await compressImageToBase64(file);
     return { key, b64, file };
   }));
 
-  // رفع جميع الصور بالتوازي
   progressText.textContent = `📤 جاري رفع ${pending.length} صورة...`;
-  const uploadPromises = prepared.map(async ({ key, b64 }) => {
+  
+  // رفع جميع الصور بالتوازي
+  const uploadPromises = prepared.map(async ({ key, b64 }, index) => {
     const prev = document.getElementById('prev' + key);
     if (prev) {
       prev.classList.add('uploading');
@@ -584,6 +614,11 @@ async function uploadAllPendingImagesParallel(serial) {
       const url = await uploadSingleImage(b64, serial, key);
       uploadedUrls[key] = url;
       pendingFiles[key] = null;
+      
+      // تحديث شريط التقدم
+      const pct = Math.round(((index + 1) / pending.length) * 100);
+      progressBar.style.width = pct + '%';
+      progressDetail.textContent = getLabelForKey(key);
       
       if (prev) {
         const imgUrl = getDriveDirectUrl(url);
@@ -596,6 +631,7 @@ async function uploadAllPendingImagesParallel(serial) {
         prev.innerHTML = '<div class="img-ok">✓ تم الرفع</div>';
       }
       
+      // حفظ الرابط في قاعدة البيانات
       await jsonpRequest('updateEmployeeImage', {
         serial: serial,
         imageKey: key,
@@ -616,7 +652,6 @@ async function uploadAllPendingImagesParallel(serial) {
     }
   });
 
-  // انتظار اكتمال جميع الرفع
   const results = await Promise.all(uploadPromises);
   const successCount = results.filter(r => r.success).length;
   const failCount = results.filter(r => !r.success).length;
@@ -628,8 +663,6 @@ async function uploadAllPendingImagesParallel(serial) {
   
   return results;
 }
-
-
 function getLabelForKey(key) {
   const labels = {
     Employee: 'صورة الموظف',
@@ -1110,9 +1143,10 @@ async function saveEmployee() {
     showToast(`✅ ${isEdit ? 'تم تعديل' : 'تم إضافة'} الموظف`, 'success');
 
     const hasPending = Object.values(pendingFiles).some(f => f !== null);
-    if (hasPending) {
+   // في saveEmployee
+if (hasPending) {
   btn.textContent = '📤 جاري رفع الصور...';
-  await uploadAllPendingImagesParallel(empSerial);  // ✅ استخدم الدالة الصحيحة
+  await uploadAllPendingImagesParallel(empSerial);  // ✅ استخدم POST
 }
 
     closeModal();
