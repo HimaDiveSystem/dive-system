@@ -434,7 +434,15 @@ let selectedJobTitle = '';
 let usedEmails      = new Set();
 let sortColumn = 'serial';
 let sortDirection = 'asc';
+// ✅ كشف الأجهزة المحمولة
+let isMobileDevice = false;
 
+function checkMobileSupport() {
+  isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  if (isMobileDevice) {
+    console.log('📱 تم الكشف عن جهاز محمول - سيتم تقليل جودة الصور');
+  }
+}
 /**
  * ✅ تخزين الصور كـ File objects فقط — لا رفع قبل الحفظ
  */
@@ -468,6 +476,7 @@ function jsonpRequest(action, params = {}) {
 // INIT
 // ══════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', async () => {
+    checkMobileSupport(); // ✅ أضف هذا السطر أولاً
   const ud = sessionStorage.getItem('currentUser');
   if (!ud) {
     document.querySelector('.content').innerHTML =
@@ -502,24 +511,51 @@ document.addEventListener('DOMContentLoaded', async () => {
  * هذا يقلل حجم الصورة إلى ~5-10KB بدلاً من 18KB
  */
 async function compressImageToBase64(file, maxWidth = 200, maxHeight = 200, quality = 0.5) {
-  return new Promise((resolve, reject) => {
+  const mobileMaxWidth = 150;
+  const mobileQuality = 0.4;
+  
+  const finalMaxWidth = isMobileDevice ? mobileMaxWidth : maxWidth;
+  const finalMaxHeight = isMobileDevice ? mobileMaxWidth : maxHeight;
+  const finalQuality = isMobileDevice ? mobileQuality : quality;
+   return new Promise((resolve, reject) => {
+    // ✅ التحقق من صحة الملف أولاً
+    if (!file || !file.type || !file.type.startsWith('image/')) {
+      reject(new Error('ملف غير صالح'));
+      return;
+    }
+    
     const reader = new FileReader();
-    reader.onerror = reject;
+    reader.onerror = (e) => {
+      console.error('FileReader error:', e);
+      reject(new Error('فشل قراءة الملف'));
+    };
+    
     reader.onload = ev => {
       const img = new Image();
-      img.onerror = reject;
+      img.onerror = () => {
+        reject(new Error('فشل تحميل الصورة'));
+      };
       img.onload = () => {
-        let { width, height } = img;
-        if (width > maxWidth) { height = Math.round(height * maxWidth / width); width = maxWidth; }
-        if (height > maxHeight) { width = Math.round(width * maxHeight / height); height = maxHeight; }
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL('image/jpeg', quality);
-        const base64 = dataUrl.split(',')[1];
-        console.log(`📸 ضغط الصورة: ${(file.size/1024).toFixed(1)}KB → ${(base64.length/1024).toFixed(1)}KB (${width}x${height})`);
-        resolve(base64);
+        try {
+          let { width, height } = img;
+          if (width > maxWidth) { height = Math.round(height * maxWidth / width); width = maxWidth; }
+          if (height > maxHeight) { width = Math.round(width * maxHeight / height); height = maxHeight; }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL('image/jpeg', quality);
+          const base64 = dataUrl.split(',')[1];
+          if (!base64 || base64.length === 0) {
+            reject(new Error('فشل ضغط الصورة'));
+            return;
+          }
+          console.log(`📸 ضغط الصورة: ${(file.size/1024).toFixed(1)}KB → ${(base64.length/1024).toFixed(1)}KB`);
+          resolve(base64);
+        } catch(e) {
+          reject(e);
+        }
       };
       img.src = ev.target.result;
     };
@@ -686,8 +722,17 @@ function onFileSelect(input, key, prevId) {
   const file = input.files[0];
   if (!file) return;
 
-  if (file.size > 10 * 1024 * 1024) {
-    showToast('الصورة أكبر من 10MB', 'error');
+  // ✅ التحقق من نوع الملف
+  const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+  if (!validTypes.includes(file.type)) {
+    showToast('صيغة الصورة غير مدعومة. استخدم JPG أو PNG', 'error');
+    input.value = '';
+    return;
+  }
+
+  // ✅ تقليل الحد الأقصى للحجم للهواتف (5MB → 3MB)
+  if (file.size > 3 * 1024 * 1024) {
+    showToast('الصورة أكبر من 3MB للهواتف، برجاء اختيار صورة أصغر', 'error');
     input.value = '';
     return;
   }
@@ -695,19 +740,37 @@ function onFileSelect(input, key, prevId) {
   pendingFiles[key] = file;
 
   const prev = document.getElementById(prevId);
-  const reader = new FileReader();
-  reader.onload = ev => {
-    prev.style.backgroundImage = `url("${ev.target.result}")`;
-    prev.style.backgroundSize = 'contain';
-    prev.style.backgroundRepeat = 'no-repeat';
-    prev.style.backgroundPosition = 'center';
-    prev.classList.remove('uploading', 'upload-error');
-    prev.classList.add('uploaded');
-    prev.innerHTML = '<div class="img-ok">✓ جاهزة للحفظ</div>';
-  };
-  reader.readAsDataURL(file);
+  
+  // ✅ معاينة فورية مع معالجة أفضل للأخطاء
+  try {
+    const reader = new FileReader();
+    reader.onload = function(ev) {
+      try {
+        prev.style.backgroundImage = `url("${ev.target.result}")`;
+        prev.style.backgroundSize = 'contain';
+        prev.style.backgroundRepeat = 'no-repeat';
+        prev.style.backgroundPosition = 'center';
+        prev.classList.remove('uploading', 'upload-error');
+        prev.classList.add('uploaded');
+        prev.innerHTML = '<div class="img-ok">✓ جاهزة للحفظ</div>';
+      } catch(e) {
+        console.error('Error setting preview:', e);
+        prev.innerHTML = '<div class="img-error">⚠️ خطأ في المعاينة</div>';
+      }
+    };
+    reader.onerror = function(e) {
+      console.error('FileReader error:', e);
+      showToast('خطأ في قراءة الصورة', 'error');
+      prev.innerHTML = '<div class="img-error">⚠️ فشل القراءة</div>';
+      pendingFiles[key] = null;
+    };
+    reader.readAsDataURL(file);
+  } catch(e) {
+    console.error('onFileSelect error:', e);
+    showToast('خطأ في معالجة الصورة: ' + e.message, 'error');
+    pendingFiles[key] = null;
+  }
 }
-
 // ══════════════════════════════════════════════════════════
 // LOAD EMPLOYEES
 // ══════════════════════════════════════════════════════════
@@ -1175,37 +1238,76 @@ async function viewHistory(serial) {
       await jsonpRequest('getSalaryHistory', { serial, centerId: currentUser?.centerId || '' }),
       employees.find(e => e.serial === serial)
     ];
-    let html = '';
+    
+    // دالة لتنسيق التاريخ
+    function formatDateSimple(dateStr) {
+      if (!dateStr) return '—';
+      try {
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return dateStr;
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        return `${d.getDate().toString().padStart(2, '0')}/${months[d.getMonth()]}/${d.getFullYear()}`;
+      } catch(e) {
+        return dateStr;
+      }
+    }
+    
+    let html = `
+      <div style="direction:rtl; text-align:right;">
+        <style>
+          .history-table { width:100%; border-collapse:collapse; }
+          .history-table td { padding:6px; border-bottom:1px solid #e9ecef; }
+          .salary-card { background:#f8f9fa; border-radius:10px; padding:12px; margin-bottom:12px; }
+          .salary-date { font-size:11px; color:#6c757d; margin-top:4px; }
+        </style>
+    `;
+    
     if (emp?.imgPhoto) {
       html += `<div style="text-align:center;margin-bottom:16px;">
-        <img src="${getDriveDirectUrl(emp.imgPhoto)}" style="width:90px;height:90px;border-radius:50%;object-fit:cover;border:3px solid #1e2b4f;">
+        <img src="${getDriveDirectUrl(emp.imgPhoto)}" style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:3px solid #1e2b4f;">
         <div style="margin-top:6px;font-size:14px;font-weight:700;color:#1e2b4f;">${emp.name || ''}</div>
       </div>`;
     }
+    
     if (emp) {
-      html += `<div style="background:#f8f9fa;border-radius:10px;padding:14px;margin-bottom:16px;">
-        <table style="width:100%;font-size:13px;border-collapse:collapse;">
-          <tr><td><b>📱 الهاتف:</b></td><td>${emp.phone || '—'}</td></tr>
-          <tr><td><b>🏢 الوظيفة:</b></td><td>${emp.position || '—'}</td></tr>
-          <tr><td><b>💰 نظام الحساب:</b></td><td>${emp.paymentSystem || '—'}</td></tr>
-          <tr><td><b>⚙️ الحالة:</b></td><td class="${emp.status === 'نشط' ? 'status-active' : 'status-inactive'}">${emp.status || '—'}</td></tr>
-          <tr><td><b>🏷️ الرقم الوظيفي:</b></td><td>${emp.serial || '—'}</td></tr>
-        </table>
-      </div>`;
+      html += `
+        <div style="background:#f8f9fa;border-radius:10px;padding:14px;margin-bottom:16px;">
+          <table class="history-table">
+            <tr><td style="width:40%"><b>📱 الهاتف:</b></td><td>${emp.phone || '—'}</td></tr>
+            <tr><td><b>🏢 الوظيفة:</b></td><td>${emp.position || '—'}</td></tr>
+            <tr><td><b>💰 نظام الحساب:</b></td><td>${emp.paymentSystem || '—'}</td></tr>
+            <tr><td><b>⚙️ الحالة:</b></td><td class="${emp.status === 'نشط' ? 'status-active' : 'status-inactive'}">${emp.status || '—'}</td></tr>
+            <tr><td><b>🏷️ الرقم الوظيفي:</b></td><td>${emp.serial || '—'}</td></tr>
+          </table>
+        </div>
+      `;
     }
+    
     if (Array.isArray(history) && history.length) {
-      html += `<div style="font-weight:700;color:#1e2b4f;margin-bottom:10px;">📋 سجل الراتب</div>`;
+      html += `<div style="font-weight:700;color:#1e2b4f;margin-bottom:10px;border-right:3px solid #ffd966;padding-right:10px;">📋 سجل الراتب</div>`;
       history.forEach(h => {
-        html += `<div style="background:white;border:1px solid #e9ecef;border-radius:8px;padding:10px;margin-bottom:8px;">
-          <div><b>${Number(h.salary || 0).toLocaleString()} LE</b> — ${h.month || ''}/${h.year || ''}</div>
-          <div style="font-size:11px;color:#6c757d;">${h.effectiveDate || ''} — ${h.reason || '—'}</div>
-        </div>`;
+        const salaryNum = Number(h.salary || 0);
+        const monthName = h.month || '';
+        const yearNum = h.year || '';
+        const effectiveDate = formatDateSimple(h.effectiveDate);
+        html += `
+          <div class="salary-card">
+            <div style="font-weight:700;font-size:14px;">💰 ${salaryNum.toLocaleString()} LE</div>
+            <div style="font-size:12px;color:#1e2b4f;">📅 ${monthName}/${yearNum}</div>
+            <div class="salary-date">🔄 ${effectiveDate} — ${h.reason || 'تعديل'}</div>
+          </div>
+        `;
       });
     } else {
       html += '<div style="text-align:center;color:#aaa;padding:20px;">لا يوجد سجل رواتب</div>';
     }
+    
+    html += `</div>`;
     showInfo(html);
-  } catch(e) { showToast('خطأ في السجل', 'error'); }
+  } catch(e) { 
+    showToast('خطأ في السجل', 'error');
+    console.error('viewHistory error:', e);
+  }
 }
 
 function viewAttendance(serial) {
@@ -1306,8 +1408,56 @@ function showInfo(html) {
   document.getElementById('confirmOkBtn').textContent = 'إغلاق';
   document.getElementById('confirmOkBtn').onclick = () => document.getElementById('confirmModal').classList.remove('open');
   document.getElementById('confirmCancelBtn').style.display = 'none';
+  
   const box = document.querySelector('#confirmModal .confirm-box');
-  if (box) { box.style.width = '500px'; box.style.maxWidth = '90vw'; box.style.maxHeight = '80vh'; box.style.overflowY = 'auto'; }
+  if (box) {
+    box.style.width = '600px';
+    box.style.maxWidth = '90vw';
+    box.style.maxHeight = '80vh';
+    box.style.overflowY = 'auto';
+    box.style.overflowX = 'auto';
+    box.style.textAlign = 'right';
+  }
+  
+  // تحسين عرض الجداول داخل النافذة
+  const msgDiv = document.getElementById('confirmMsg');
+  if (msgDiv) {
+    // إضافة CSS مدمج للجداول
+    const style = document.createElement('style');
+    style.textContent = `
+      #confirmMsg table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      #confirmMsg td {
+        padding: 8px;
+        border-bottom: 1px solid #eee;
+        text-align: right;
+        word-break: break-word;
+      }
+      #confirmMsg tr:last-child td {
+        border-bottom: none;
+      }
+      #confirmMsg .status-active {
+        color: #27ae60;
+        font-weight: bold;
+      }
+      #confirmMsg .status-inactive {
+        color: #e74c3c;
+        font-weight: bold;
+      }
+      #confirmMsg .salary-record {
+        background: white;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        padding: 10px;
+        margin-bottom: 8px;
+      }
+    `;
+    msgDiv.appendChild(style);
+  }
+  
   document.getElementById('confirmModal').classList.add('open');
 }
 
