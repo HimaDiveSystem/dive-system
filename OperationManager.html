@@ -484,12 +484,21 @@ async function uploadSingleImage(b64, label, imageType) {
       if (xhr.status === 200) {
         try {
           const response = JSON.parse(xhr.responseText);
-          if (response && response.success) resolve(response.url);
-          else reject(new Error(response?.message || 'Upload failed'));
-        } catch(e) { reject(new Error('Parse error')); }
-      } else { reject(new Error('HTTP ' + xhr.status)); }
+          if (response && response.success) {
+            resolve({ success: true, url: response.url });
+          } else {
+            reject(new Error(response?.message || 'Upload failed'));
+          }
+        } catch(e) { 
+          reject(new Error('Parse error: ' + e.message)); 
+        }
+      } else { 
+        reject(new Error('HTTP ' + xhr.status)); 
+      }
     };
-    xhr.onerror = function() { reject(new Error('Network error')); };
+    xhr.onerror = function() { 
+      reject(new Error('Network error')); 
+    };
     xhr.timeout = 60000;
     const params = new URLSearchParams();
     params.append('action', 'uploadImage');
@@ -1119,7 +1128,9 @@ function onVehicleFileSelect(input, key, previewId) {
     return;
   }
   
+  // ✅ تخزين الملف في المتغير المؤقت
   pendingVehicleImages[key] = file;
+  
   const preview = document.getElementById(previewId);
   const reader = new FileReader();
   
@@ -1132,9 +1143,15 @@ function onVehicleFileSelect(input, key, previewId) {
     preview.innerHTML = '<div class="img-ok">✓ جاهزة للحفظ</div>';
   };
   
+  reader.onerror = function(e) {
+    console.error('FileReader error:', e);
+    showToast('خطأ في قراءة الصورة', 'error');
+    preview.innerHTML = '<div class="img-error">⚠️ فشل القراءة</div>';
+    pendingVehicleImages[key] = null;
+  };
+  
   reader.readAsDataURL(file);
 }
-
 function openAddVehicleModal() {
   editingVehicleId = null;
   document.getElementById('vehicleModalTitle').textContent = '➕ إضافة سيارة جديدة';
@@ -1154,6 +1171,7 @@ function openEditVehicleModal(id) {
   editingVehicleId = id;
   document.getElementById('vehicleModalTitle').textContent = '✏️ تعديل بيانات السيارة';
   
+  // تعبئة البيانات الأساسية
   document.getElementById('vehicleLicensePlate').value = vehicle.licensePlate || '';
   document.getElementById('vehicleType').value = vehicle.type || 'owned';
   document.getElementById('vehicleOwnerName').value = vehicle.ownerName || '';
@@ -1169,23 +1187,63 @@ function openEditVehicleModal(id) {
   document.getElementById('vehicleLicenseExpiry').value = vehicle.licenseExpiry || '';
   document.getElementById('vehicleNotes').value = vehicle.notes || '';
   
+  // ✅ عرض الصور الموجودة (إذا كانت موجودة)
   const licensePreview = document.getElementById('prevVehicleLicensePhoto');
   const regPreview = document.getElementById('prevVehicleRegistrationPhoto');
   
-  if (vehicle.licensePhoto) {
-    licensePreview.style.backgroundImage = 'url("' + vehicle.licensePhoto + '")';
-    licensePreview.classList.add('uploaded');
-    licensePreview.innerHTML = '<div class="img-ok">✓ صورة محفوظة</div>';
+  // ✅ إعادة تعيين معاينة الصور
+  if (licensePreview) {
+    if (vehicle.licensePhoto && vehicle.licensePhoto !== '') {
+      licensePreview.style.backgroundImage = 'url("' + vehicle.licensePhoto + '")';
+      licensePreview.style.backgroundSize = 'contain';
+      licensePreview.style.backgroundRepeat = 'no-repeat';
+      licensePreview.style.backgroundPosition = 'center';
+      licensePreview.classList.add('uploaded');
+      licensePreview.innerHTML = '<div class="img-ok">✓ صورة محفوظة</div>';
+    } else {
+      licensePreview.style.backgroundImage = '';
+      licensePreview.classList.remove('uploaded');
+      licensePreview.innerHTML = '<span>📸</span><span style="font-size:10px">اضغط للاختيار</span>';
+    }
   }
-  if (vehicle.registrationPhoto) {
-    regPreview.style.backgroundImage = 'url("' + vehicle.registrationPhoto + '")';
-    regPreview.classList.add('uploaded');
-    regPreview.innerHTML = '<div class="img-ok">✓ صورة محفوظة</div>';
+  
+  if (regPreview) {
+    if (vehicle.registrationPhoto && vehicle.registrationPhoto !== '') {
+      regPreview.style.backgroundImage = 'url("' + vehicle.registrationPhoto + '")';
+      regPreview.style.backgroundSize = 'contain';
+      regPreview.style.backgroundRepeat = 'no-repeat';
+      regPreview.style.backgroundPosition = 'center';
+      regPreview.classList.add('uploaded');
+      regPreview.innerHTML = '<div class="img-ok">✓ صورة محفوظة</div>';
+    } else {
+      regPreview.style.backgroundImage = '';
+      regPreview.classList.remove('uploaded');
+      regPreview.innerHTML = '<span>📋</span><span style="font-size:10px">اضغط للاختيار</span>';
+    }
   }
+  
+  // ✅ إعادة تعيين المتغيرات المؤقتة للصور
+  pendingVehicleImages = { licensePhoto: null, registrationPhoto: null };
+  
+  // ✅ إعادة ربط مستمعي الأحداث لاختيار الصور
+  const licenseInput = document.getElementById('fileVehicleLicensePhoto');
+  const regInput = document.getElementById('fileVehicleRegistrationPhoto');
+  
+  // إزالة المستمعات القديمة وإضافة جديدة
+  const newLicenseInput = licenseInput.cloneNode(true);
+  const newRegInput = regInput.cloneNode(true);
+  licenseInput.parentNode.replaceChild(newLicenseInput, licenseInput);
+  regInput.parentNode.replaceChild(newRegInput, regInput);
+  
+  newLicenseInput.onchange = function() { 
+    onVehicleFileSelect(newLicenseInput, 'licensePhoto', 'prevVehicleLicensePhoto'); 
+  };
+  newRegInput.onchange = function() { 
+    onVehicleFileSelect(newRegInput, 'registrationPhoto', 'prevVehicleRegistrationPhoto'); 
+  };
   
   document.getElementById('vehicleModal').classList.add('open');
 }
-
 function resetVehicleForm() {
   const fields = ['vehicleLicensePlate', 'vehicleType', 'vehicleOwnerName', 'vehicleUsageType',
     'vehicleCapacity', 'vehicleDriverName', 'vehicleDriverPhone', 'vehicleDriverSalary',
@@ -1228,7 +1286,10 @@ async function saveVehicle() {
     oneWayRate: parseFloat(document.getElementById('vehicleOneWayRate').value) || 0,
     licenseExpiry: document.getElementById('vehicleLicenseExpiry').value,
     notes: document.getElementById('vehicleNotes').value,
-    isActive: true
+    isActive: true,
+    // ✅ إضافة الصور الموجودة مسبقاً (لن يتم مسحها)
+    licensePhoto: pendingVehicleImages.licensePhoto ? null : null,
+    registrationPhoto: pendingVehicleImages.registrationPhoto ? null : null
   };
   
   const action = editingVehicleId ? 'updateVehicle' : 'addVehicle';
@@ -1237,24 +1298,51 @@ async function saveVehicle() {
   btn.textContent = '⏳ جاري الحفظ...';
   
   try {
+    // حفظ البيانات الأساسية أولاً
     const result = await jsonpRequest(action, data);
     if (result && result.success) {
       const vehicleId = result.id || editingVehicleId;
       
+      // ✅ رفع صورة الرخصة إذا تم اختيار صورة جديدة
       if (pendingVehicleImages.licensePhoto) {
         try {
+          showToast('جاري رفع صورة الرخصة...', 'info');
           const b64 = await compressImageToBase64(pendingVehicleImages.licensePhoto);
-          const url = await uploadSingleImage(b64, vehicleId + '_vehicle_license', 'vehicle_license');
-          await jsonpRequest('updateVehicleImage', { id: vehicleId, imageKey: 'LicensePhoto', imageData: url, centerName: currentUser?.centerName || '' });
-        } catch(e) { console.error('Vehicle license upload error:', e); }
+          const uploadResult = await uploadSingleImage(b64, vehicleId + '_vehicle_license', 'vehicle');
+          if (uploadResult.success) {
+            await jsonpRequest('updateVehicleImage', { 
+              id: vehicleId, 
+              imageKey: 'LicensePhoto', 
+              imageData: uploadResult.url, 
+              centerName: currentUser?.centerName || '' 
+            });
+            showToast('تم رفع صورة الرخصة', 'success');
+          }
+        } catch(e) { 
+          console.error('❌ Vehicle license upload error:', e);
+          showToast('فشل رفع صورة الرخصة', 'error');
+        }
       }
       
+      // ✅ رفع صورة التسجيل إذا تم اختيار صورة جديدة
       if (pendingVehicleImages.registrationPhoto) {
         try {
+          showToast('جاري رفع صورة التسجيل...', 'info');
           const b64 = await compressImageToBase64(pendingVehicleImages.registrationPhoto);
-          const url = await uploadSingleImage(b64, vehicleId + '_vehicle_registration', 'vehicle_registration');
-          await jsonpRequest('updateVehicleImage', { id: vehicleId, imageKey: 'RegistrationPhoto', imageData: url, centerName: currentUser?.centerName || '' });
-        } catch(e) { console.error('Vehicle registration upload error:', e); }
+          const uploadResult = await uploadSingleImage(b64, vehicleId + '_vehicle_registration', 'vehicle');
+          if (uploadResult.success) {
+            await jsonpRequest('updateVehicleImage', { 
+              id: vehicleId, 
+              imageKey: 'RegistrationPhoto', 
+              imageData: uploadResult.url, 
+              centerName: currentUser?.centerName || '' 
+            });
+            showToast('تم رفع صورة التسجيل', 'success');
+          }
+        } catch(e) { 
+          console.error('❌ Vehicle registration upload error:', e);
+          showToast('فشل رفع صورة التسجيل', 'error');
+        }
       }
       
       showToast(editingVehicleId ? '✅ تم التحديث' : '✅ تم الإضافة', 'success');
@@ -1268,9 +1356,10 @@ async function saveVehicle() {
   } finally {
     btn.disabled = false;
     btn.textContent = '💾 حفظ';
+    // ✅ إعادة تعيين المتغيرات المؤقتة
+    pendingVehicleImages = { licensePhoto: null, registrationPhoto: null };
   }
 }
-
 function deleteVehicle(id) {
   const vehicle = vehicles.find(v => v.id === id);
   showConfirmModal(`⚠️ هل أنت متأكد من حذف "${vehicle?.licensePlate}"؟`, 'vehicle', id);
@@ -1399,7 +1488,9 @@ function onBoatFileSelect(input, key, previewId) {
     return;
   }
   
+  // ✅ تخزين الملف في المتغير المؤقت
   pendingBoatImages[key] = file;
+  
   const preview = document.getElementById(previewId);
   const reader = new FileReader();
   
@@ -1412,9 +1503,15 @@ function onBoatFileSelect(input, key, previewId) {
     preview.innerHTML = '<div class="img-ok">✓ جاهزة للحفظ</div>';
   };
   
+  reader.onerror = function(e) {
+    console.error('FileReader error:', e);
+    showToast('خطأ في قراءة الصورة', 'error');
+    preview.innerHTML = '<div class="img-error">⚠️ فشل القراءة</div>';
+    pendingBoatImages[key] = null;
+  };
+  
   reader.readAsDataURL(file);
 }
-
 function openAddBoatModal() {
   editingBoatId = null;
   document.getElementById('boatModalTitle').textContent = '➕ إضافة مركب جديد';
@@ -1434,6 +1531,7 @@ function openEditBoatModal(id) {
   editingBoatId = id;
   document.getElementById('boatModalTitle').textContent = '✏️ تعديل بيانات المركب';
   
+  // تعبئة البيانات الأساسية
   document.getElementById('boatName').value = boat.name || '';
   document.getElementById('boatCapacity').value = boat.capacity || 0;
   document.getElementById('boatLicenseNumber').value = boat.licenseNumber || '';
@@ -1442,29 +1540,74 @@ function openEditBoatModal(id) {
   document.getElementById('boatOwnerPhone').value = boat.ownerPhone || '';
   document.getElementById('boatNotes').value = boat.notes || '';
   
+  // ✅ عرض الصور الموجودة (إذا كانت موجودة)
   const licensePreview = document.getElementById('prevBoatLicensePhoto');
   const insurancePreview = document.getElementById('prevBoatInsurancePhoto');
   
-  if (boat.licensePhoto) {
-    licensePreview.style.backgroundImage = 'url("' + boat.licensePhoto + '")';
-    licensePreview.classList.add('uploaded');
-    licensePreview.innerHTML = '<div class="img-ok">✓ صورة محفوظة</div>';
+  // ✅ إعادة تعيين معاينة صورة الرخصة
+  if (licensePreview) {
+    if (boat.licensePhoto && boat.licensePhoto !== '') {
+      licensePreview.style.backgroundImage = 'url("' + boat.licensePhoto + '")';
+      licensePreview.style.backgroundSize = 'contain';
+      licensePreview.style.backgroundRepeat = 'no-repeat';
+      licensePreview.style.backgroundPosition = 'center';
+      licensePreview.classList.add('uploaded');
+      licensePreview.innerHTML = '<div class="img-ok">✓ صورة محفوظة</div>';
+    } else {
+      licensePreview.style.backgroundImage = '';
+      licensePreview.classList.remove('uploaded');
+      licensePreview.innerHTML = '<span>📸</span><span style="font-size:10px">اضغط للاختيار</span>';
+    }
   }
-  if (boat.insurancePhoto) {
-    insurancePreview.style.backgroundImage = 'url("' + boat.insurancePhoto + '")';
-    insurancePreview.classList.add('uploaded');
-    insurancePreview.innerHTML = '<div class="img-ok">✓ صورة محفوظة</div>';
+  
+  // ✅ إعادة تعيين معاينة صورة التأمين
+  if (insurancePreview) {
+    if (boat.insurancePhoto && boat.insurancePhoto !== '') {
+      insurancePreview.style.backgroundImage = 'url("' + boat.insurancePhoto + '")';
+      insurancePreview.style.backgroundSize = 'contain';
+      insurancePreview.style.backgroundRepeat = 'no-repeat';
+      insurancePreview.style.backgroundPosition = 'center';
+      insurancePreview.classList.add('uploaded');
+      insurancePreview.innerHTML = '<div class="img-ok">✓ صورة محفوظة</div>';
+    } else {
+      insurancePreview.style.backgroundImage = '';
+      insurancePreview.classList.remove('uploaded');
+      insurancePreview.innerHTML = '<span>🛡️</span><span style="font-size:10px">اضغط للاختيار</span>';
+    }
   }
+  
+  // ✅ إعادة تعيين المتغيرات المؤقتة للصور
+  pendingBoatImages = { licensePhoto: null, insurancePhoto: null };
+  
+  // ✅ إعادة ربط مستمعي الأحداث لاختيار الصور
+  const licenseInput = document.getElementById('fileBoatLicensePhoto');
+  const insuranceInput = document.getElementById('fileBoatInsurancePhoto');
+  
+  // إزالة المستمعات القديمة وإضافة جديدة
+  const newLicenseInput = licenseInput.cloneNode(true);
+  const newInsuranceInput = insuranceInput.cloneNode(true);
+  licenseInput.parentNode.replaceChild(newLicenseInput, licenseInput);
+  insuranceInput.parentNode.replaceChild(newInsuranceInput, insuranceInput);
+  
+  newLicenseInput.onchange = function() { 
+    onBoatFileSelect(newLicenseInput, 'licensePhoto', 'prevBoatLicensePhoto'); 
+  };
+  newInsuranceInput.onchange = function() { 
+    onBoatFileSelect(newInsuranceInput, 'insurancePhoto', 'prevBoatInsurancePhoto'); 
+  };
   
   document.getElementById('boatModal').classList.add('open');
 }
-
 function resetBoatForm() {
   const fields = ['boatName', 'boatCapacity', 'boatLicenseNumber', 'boatLicenseExpiry', 'boatOwnerName', 'boatOwnerPhone', 'boatNotes'];
   fields.forEach(f => { const el = document.getElementById(f); if (el) el.value = ''; });
+  
+  // ✅ إعادة تعيين معاينة الصور
   pendingBoatImages = { licensePhoto: null, insurancePhoto: null };
+  
   const licensePreview = document.getElementById('prevBoatLicensePhoto');
   const insurancePreview = document.getElementById('prevBoatInsurancePhoto');
+  
   if (licensePreview) {
     licensePreview.style.backgroundImage = '';
     licensePreview.classList.remove('uploaded');
@@ -1475,6 +1618,12 @@ function resetBoatForm() {
     insurancePreview.classList.remove('uploaded');
     insurancePreview.innerHTML = '<span>🛡️</span><span style="font-size:10px">اضغط للاختيار</span>';
   }
+  
+  // ✅ إعادة تعيين حقول الملفات
+  const licenseInput = document.getElementById('fileBoatLicensePhoto');
+  const insuranceInput = document.getElementById('fileBoatInsurancePhoto');
+  if (licenseInput) licenseInput.value = '';
+  if (insuranceInput) insuranceInput.value = '';
 }
 
 async function saveBoat() {
@@ -1500,24 +1649,51 @@ async function saveBoat() {
   btn.textContent = '⏳ جاري الحفظ...';
   
   try {
+    // حفظ البيانات الأساسية أولاً
     const result = await jsonpRequest(action, data);
     if (result && result.success) {
       const boatId = result.id || editingBoatId;
       
+      // ✅ رفع صورة الرخصة إذا تم اختيار صورة جديدة
       if (pendingBoatImages.licensePhoto) {
         try {
+          showToast('جاري رفع صورة الرخصة...', 'info');
           const b64 = await compressImageToBase64(pendingBoatImages.licensePhoto);
-          const url = await uploadSingleImage(b64, boatId + '_boat_license', 'boat_license');
-          await jsonpRequest('updateBoatImage', { id: boatId, imageKey: 'LicensePhoto', imageData: url, centerName: currentUser?.centerName || '' });
-        } catch(e) { console.error('Boat license upload error:', e); }
+          const uploadResult = await uploadSingleImage(b64, boatId + '_boat_license', 'boat');
+          if (uploadResult.success) {
+            await jsonpRequest('updateBoatImage', { 
+              id: boatId, 
+              imageKey: 'LicensePhoto', 
+              imageData: uploadResult.url, 
+              centerName: currentUser?.centerName || '' 
+            });
+            showToast('تم رفع صورة الرخصة', 'success');
+          }
+        } catch(e) { 
+          console.error('❌ Boat license upload error:', e);
+          showToast('فشل رفع صورة الرخصة', 'error');
+        }
       }
       
+      // ✅ رفع صورة التأمين إذا تم اختيار صورة جديدة
       if (pendingBoatImages.insurancePhoto) {
         try {
+          showToast('جاري رفع صورة التأمين...', 'info');
           const b64 = await compressImageToBase64(pendingBoatImages.insurancePhoto);
-          const url = await uploadSingleImage(b64, boatId + '_boat_insurance', 'boat_insurance');
-          await jsonpRequest('updateBoatImage', { id: boatId, imageKey: 'InsurancePhoto', imageData: url, centerName: currentUser?.centerName || '' });
-        } catch(e) { console.error('Boat insurance upload error:', e); }
+          const uploadResult = await uploadSingleImage(b64, boatId + '_boat_insurance', 'boat');
+          if (uploadResult.success) {
+            await jsonpRequest('updateBoatImage', { 
+              id: boatId, 
+              imageKey: 'InsurancePhoto', 
+              imageData: uploadResult.url, 
+              centerName: currentUser?.centerName || '' 
+            });
+            showToast('تم رفع صورة التأمين', 'success');
+          }
+        } catch(e) { 
+          console.error('❌ Boat insurance upload error:', e);
+          showToast('فشل رفع صورة التأمين', 'error');
+        }
       }
       
       showToast(editingBoatId ? '✅ تم التحديث' : '✅ تم الإضافة', 'success');
@@ -1531,6 +1707,8 @@ async function saveBoat() {
   } finally {
     btn.disabled = false;
     btn.textContent = '💾 حفظ';
+    // ✅ إعادة تعيين المتغيرات المؤقتة
+    pendingBoatImages = { licensePhoto: null, insurancePhoto: null };
   }
 }
 
