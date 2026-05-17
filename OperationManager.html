@@ -111,7 +111,30 @@
     .loader { border:4px solid #f3f3f3; border-top:4px solid #1e2b4f; border-radius:50%; width:40px; height:40px; animation:spin 1s linear infinite; margin:40px auto; }
     @keyframes spin { to { transform:rotate(360deg); } }
 
-    @media(max-width:600px) { .form-grid { grid-template-columns:1fr; } }
+      @media(max-width:600px) { .form-grid { grid-template-columns:1fr; } }
+    
+    /* تحسين مودال التأكيد */
+    #confirmDeleteModal .modal-content {
+      animation: fadeIn 0.3s ease;
+    }
+    #confirmDeleteModal .btn-danger {
+      background: #e74c3c;
+      color: white;
+      border: none;
+      padding: 8px 20px;
+      border-radius: 40px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+    }
+    #confirmDeleteModal .btn-danger:hover {
+      background: #c0392b;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: scale(0.95); }
+      to { opacity: 1; transform: scale(1); }
+    }
+     
   </style>
 </head>
 <body>
@@ -442,16 +465,22 @@ function goBack() {
 // INSTRUCTORS
 // ══════════════════════════════════════════════════════════
 function formatDateDMY(dateStr) {
-  if (!dateStr) return '—';
+  if (!dateStr || dateStr === '') return '—';
   try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return dateStr;
+    let d;
+    if (dateStr instanceof Date) {
+      d = dateStr;
+    } else {
+      d = new Date(dateStr);
+    }
+    if (isNaN(d.getTime())) return '—';
     const day = d.getDate().toString().padStart(2, '0');
     const month = (d.getMonth() + 1).toString().padStart(2, '0');
     const year = d.getFullYear();
     return `${day}/${month}/${year}`;
   } catch(e) {
-    return dateStr;
+    console.warn('Date parse error:', dateStr, e.message);
+    return '—';
   }
 }
   async function loadInstructors() {
@@ -664,19 +693,10 @@ async function saveInstructor() {
     btn.textContent = '💾 حفظ';
   }
 }
-async function deleteInstructor(id) {
-  if (!confirm('هل أنت متأكد من حذف هذا المدرب؟')) return;
-  try {
-    const result = await jsonpRequest('deleteInstructor', { centerName: currentUser?.centerName || '', id: id });
-    if (result && result.success) {
-      showToast('✅ تم الحذف', 'success');
-      await loadInstructors();
-    } else {
-      showToast('❌ ' + (result?.message || 'فشل الحذف'), 'error');
-    }
-  } catch(e) {
-    showToast('❌ خطأ: ' + e.message, 'error');
-  }
+function deleteInstructor(id) {
+  const instructor = instructors.find(i => i.id === id);
+  const name = instructor?.name || 'هذا المدرب';
+  showConfirmModal(`⚠️ هل أنت متأكد من حذف "${name}"؟\nلا يمكن التراجع عن هذا الإجراء.`, 'instructor', id);
 }
 
 function closeInstructorModal() {
@@ -827,19 +847,10 @@ async function saveVehicle() {
   }
 }
 
-async function deleteVehicle(id) {
-  if (!confirm('هل أنت متأكد من حذف هذه السيارة؟')) return;
-  try {
-    const result = await jsonpRequest('deleteVehicle', { centerName: currentUser?.centerName || '', id: id });
-    if (result && result.success) {
-      showToast('✅ تم الحذف', 'success');
-      await loadVehicles();
-    } else {
-      showToast('❌ ' + (result?.message || 'فشل الحذف'), 'error');
-    }
-  } catch(e) {
-    showToast('❌ خطأ: ' + e.message, 'error');
-  }
+function deleteVehicle(id) {
+  const vehicle = vehicles.find(v => v.id === id);
+  const name = vehicle?.licensePlate || 'هذه السيارة';
+  showConfirmModal(`⚠️ هل أنت متأكد من حذف "${name}"؟\nلا يمكن التراجع عن هذا الإجراء.`, 'vehicle', id);
 }
 
 function closeVehicleModal() {
@@ -968,19 +979,10 @@ async function saveBoat() {
   }
 }
 
-async function deleteBoat(id) {
-  if (!confirm('هل أنت متأكد من حذف هذا المركب؟')) return;
-  try {
-    const result = await jsonpRequest('deleteBoat', { centerName: currentUser?.centerName || '', id: id });
-    if (result && result.success) {
-      showToast('✅ تم الحذف', 'success');
-      await loadBoats();
-    } else {
-      showToast('❌ ' + (result?.message || 'فشل الحذف'), 'error');
-    }
-  } catch(e) {
-    showToast('❌ خطأ: ' + e.message, 'error');
-  }
+function deleteBoat(id) {
+  const boat = boats.find(b => b.id === id);
+  const name = boat?.name || 'هذا المركب';
+  showConfirmModal(`⚠️ هل أنت متأكد من حذف "${name}"؟\nلا يمكن التراجع عن هذا الإجراء.`, 'boat', id);
 }
 
 function closeBoatModal() {
@@ -1005,6 +1007,65 @@ function renderStats() {
     <div class="stat-card" style="border-color:#27ae60"><div class="stat-num" style="color:#27ae60">${activeBoats}</div><div class="stat-lbl">مراكب نشطة</div></div>
   `;
 }
+  // متغير لتخزين نوع العنصر ومعرفه المراد حذفه
+let deleteTarget = { type: null, id: null };
+
+function showConfirmModal(message, type, id) {
+  deleteTarget = { type: type, id: id };
+  document.getElementById('confirmDeleteMessage').textContent = message;
+  document.getElementById('confirmDeleteModal').classList.add('open');
+}
+
+function closeConfirmModal() {
+  document.getElementById('confirmDeleteModal').classList.remove('open');
+  deleteTarget = { type: null, id: null };
+}
+
+async function executeDelete() {
+  const target = deleteTarget;
+  if (!target.type || !target.id) {
+    closeConfirmModal();
+    return;
+  }
+  
+  const btn = document.getElementById('confirmDeleteBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ جاري الحذف...';
+  
+  try {
+    let result;
+    switch(target.type) {
+      case 'instructor':
+        result = await jsonpRequest('deleteInstructor', { centerName: currentUser?.centerName || '', id: target.id });
+        break;
+      case 'vehicle':
+        result = await jsonpRequest('deleteVehicle', { centerName: currentUser?.centerName || '', id: target.id });
+        break;
+      case 'boat':
+        result = await jsonpRequest('deleteBoat', { centerName: currentUser?.centerName || '', id: target.id });
+        break;
+      default:
+        throw new Error('نوع غير معروف');
+    }
+    
+    if (result && result.success) {
+      showToast('✅ تم الحذف بنجاح', 'success');
+      // إعادة تحميل البيانات حسب النوع
+      if (target.type === 'instructor') await loadInstructors();
+      else if (target.type === 'vehicle') await loadVehicles();
+      else if (target.type === 'boat') await loadBoats();
+    } else {
+      showToast('❌ ' + (result?.message || 'فشل الحذف'), 'error');
+    }
+  } catch(e) {
+    showToast('❌ خطأ: ' + e.message, 'error');
+    console.error('Delete error:', e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'تأكيد الحذف';
+    closeConfirmModal();
+  }
+}
 
 function showToast(msg, type) {
   const t = document.getElementById('toast');
@@ -1013,5 +1074,24 @@ function showToast(msg, type) {
   setTimeout(() => t.className = 'toast', 3500);
 }
 </script>
+
+<!-- مودال تأكيد الحذف -->
+<div id="confirmDeleteModal" class="modal">
+  <div class="modal-content" style="max-width:400px; text-align:center;">
+    <div class="modal-header">
+      <h3>🗑️ تأكيد الحذف</h3>
+      <button class="close-modal" onclick="closeConfirmModal()">×</button>
+    </div>
+    <div style="padding:20px; text-align:center;">
+      <div style="font-size:48px; margin-bottom:10px;">⚠️</div>
+      <p id="confirmDeleteMessage" style="margin-bottom:20px; font-size:14px;">هل أنت متأكد من حذف هذا العنصر؟</p>
+      <div style="display:flex; gap:10px; justify-content:center;">
+        <button class="btn-primary" onclick="closeConfirmModal()">إلغاء</button>
+        <button class="btn-danger" id="confirmDeleteBtn" onclick="executeDelete()">تأكيد الحذف</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
