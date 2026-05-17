@@ -86,7 +86,28 @@
     .toast-success { background:#27ae60; }
     .toast-error { background:#e74c3c; }
     .toast-info { background:#3498db; }
-
+    .image-preview { 
+  width: 100%; 
+  height: 100px;
+  border: 2px dashed #dee2e6; 
+  border-radius: 12px; 
+  display: flex; 
+  align-items: center; 
+  justify-content: center; 
+  cursor: pointer; 
+  transition: .2s; 
+  position: relative; 
+  overflow: hidden; 
+  flex-direction: column; 
+  gap: 4px; 
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-color: #f8f9fa;
+}
+.image-preview:hover { border-color:#1e2b4f; background-color:#f0f4fa; }
+.image-preview.uploaded { border-color:#27ae60; border-style:solid; }
+.img-ok { position:absolute; bottom:0; left:0; right:0; background:rgba(39,174,96,0.88); color:white; font-size:10px; font-weight:700; text-align:center; padding:3px; }
     .loader { border:4px solid #f3f3f3; border-top:4px solid #1e2b4f; border-radius:50%; width:40px; height:40px; animation:spin 1s linear infinite; margin:40px auto; }
     @keyframes spin { to { transform:rotate(360deg); } }
 
@@ -169,6 +190,25 @@
       <div class="form-group"><label>عمولة باقي الكورسات</label><input type="number" id="instructorAdditionalCourseCommission" value="0"></div>
       <div class="form-group"><label>اللغات</label><input type="text" id="instructorLanguage" placeholder="عربي/إنجليزي/ألماني"></div>
       <div class="form-group"><label>ملاحظات</label><textarea id="instructorNotes" rows="2"></textarea></div>
+      <!-- حقل صورة الرخصة -->
+<div class="form-group">
+  <label>📸 صورة الرخصة</label>
+  <div class="image-preview" id="prevLicensePhoto" onclick="document.getElementById('fileLicensePhoto').click()">
+    <span>📸</span>
+    <span style="font-size:10px">اضغط للاختيار</span>
+  </div>
+  <input type="file" id="fileLicensePhoto" accept="image/*" style="display:none">
+</div>
+
+<!-- حقل صورة CDWS -->
+<div class="form-group">
+  <label>🪪 صورة CDWS</label>
+  <div class="image-preview" id="prevCdwsPhoto" onclick="document.getElementById('fileCdwsPhoto').click()">
+    <span>🪪</span>
+    <span style="font-size:10px">اضغط للاختيار</span>
+  </div>
+  <input type="file" id="fileCdwsPhoto" accept="image/*" style="display:none">
+</div>
     </div>
     <div style="display:flex; justify-content:flex-end; gap:10px;">
       <button class="btn-primary" onclick="closeInstructorModal()">إلغاء</button>
@@ -300,7 +340,87 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.error('Init error:', e);
   }
 });
+// ══════════════════════════════════════════════════════════
+// رفع الصور للمدربين (بنفس آلية الموظفين)
+// ══════════════════════════════════════════════════════════
+let pendingInstructorImages = { licensePhoto: null, cdwsPhoto: null };
 
+function compressImageToBase64(file, maxWidth = 300, maxHeight = 300, quality = 0.6) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = ev => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        let width = img.width, height = img.height;
+        if (width > maxWidth) { height = Math.round(height * maxWidth / width); width = maxWidth; }
+        if (height > maxHeight) { width = Math.round(width * maxHeight / height); height = maxHeight; }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        const base64 = dataUrl.split(',')[1];
+        resolve(base64);
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadSingleImage(b64, label) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const url = GAS;
+    xhr.open('POST', url, true);
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    xhr.onload = function() {
+      if (xhr.status === 200) {
+        try {
+          const response = JSON.parse(xhr.responseText);
+          if (response && response.success) resolve(response.url);
+          else reject(new Error(response?.message || 'Upload failed'));
+        } catch(e) { reject(new Error('Parse error')); }
+      } else { reject(new Error('HTTP ' + xhr.status)); }
+    };
+    xhr.onerror = function() { reject(new Error('Network error')); };
+    xhr.timeout = 60000;
+    const params = new URLSearchParams();
+    params.append('action', 'uploadInstructorImage');
+    params.append('b64', b64);
+    params.append('mimeType', 'image/jpeg');
+    params.append('label', label);
+    if (currentUser?.centerId) params.append('centerId', currentUser.centerId);
+    if (currentUser?.centerName) params.append('centerName', currentUser.centerName);
+    xhr.send(params.toString());
+  });
+}
+
+function onInstructorFileSelect(input, key, previewId) {
+  const file = input.files[0];
+  if (!file) return;
+  
+  if (file.size > 3 * 1024 * 1024) {
+    showToast('الصورة أكبر من 3MB', 'error');
+    input.value = '';
+    return;
+  }
+  
+  pendingInstructorImages[key] = file;
+  const preview = document.getElementById(previewId);
+  const reader = new FileReader();
+  reader.onload = ev => {
+    preview.style.backgroundImage = `url("${ev.target.result}")`;
+    preview.style.backgroundSize = 'contain';
+    preview.style.backgroundRepeat = 'no-repeat';
+    preview.style.backgroundPosition = 'center';
+    preview.classList.add('uploaded');
+    preview.innerHTML = '<div class="img-ok">✓ جاهزة للحفظ</div>';
+  };
+  reader.readAsDataURL(file);
+}
 function switchTab(tabName, idx) {
   document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', i === idx));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
@@ -395,6 +515,11 @@ function openAddInstructorModal() {
   editingInstructorId = null;
   document.getElementById('instructorModalTitle').textContent = '➕ إضافة مدرب جديد';
   resetInstructorForm();
+  
+  // إعداد مستمعي رفع الصور
+  document.getElementById('fileLicensePhoto').onchange = () => onInstructorFileSelect(document.getElementById('fileLicensePhoto'), 'licensePhoto', 'prevLicensePhoto');
+  document.getElementById('fileCdwsPhoto').onchange = () => onInstructorFileSelect(document.getElementById('fileCdwsPhoto'), 'cdwsPhoto', 'prevCdwsPhoto');
+  
   document.getElementById('instructorModal').classList.add('open');
 }
 
@@ -422,8 +547,27 @@ function openEditInstructorModal(id) {
   document.getElementById('instructorLanguage').value = instructor.language || '';
   document.getElementById('instructorNotes').value = instructor.notes || '';
   
+  // عرض الصور الموجودة
+  const licensePhoto = instructor.licensePhoto || '';
+  const cdwsPhoto = instructor.cdwsPhoto || '';
+  
+  const licensePreview = document.getElementById('prevLicensePhoto');
+  const cdwsPreview = document.getElementById('prevCdwsPhoto');
+  
+  if (licensePhoto && licensePreview) {
+    licensePreview.style.backgroundImage = 'url("' + licensePhoto + '")';
+    licensePreview.classList.add('uploaded');
+    licensePreview.innerHTML = '<div class="img-ok">✓ صورة محفوظة</div>';
+  }
+  if (cdwsPhoto && cdwsPreview) {
+    cdwsPreview.style.backgroundImage = 'url("' + cdwsPhoto + '")';
+    cdwsPreview.classList.add('uploaded');
+    cdwsPreview.innerHTML = '<div class="img-ok">✓ صورة محفوظة</div>';
+  }
+  
   document.getElementById('instructorModal').classList.add('open');
 }
+
 
 function resetInstructorForm() {
   const fields = ['instructorName', 'instructorRole', 'instructorEmploymentType', 'instructorOrganization',
@@ -434,7 +578,25 @@ function resetInstructorForm() {
   fields.forEach(f => { const el = document.getElementById(f); if (el) el.value = ''; });
   document.getElementById('instructorRole').value = 'Instructor';
   document.getElementById('instructorEmploymentType').value = 'freelance';
+  pendingInstructorImages = { licensePhoto: null, cdwsPhoto: null };
+  const licensePreview = document.getElementById('prevLicensePhoto');
+  const cdwsPreview = document.getElementById('prevCdwsPhoto');
+  if (licensePreview) {
+    licensePreview.style.backgroundImage = '';
+    licensePreview.classList.remove('uploaded');
+    licensePreview.innerHTML = '<span>📸</span><span style="font-size:10px">اضغط للاختيار</span>';
+  }
+  if (cdwsPreview) {
+    cdwsPreview.style.backgroundImage = '';
+    cdwsPreview.classList.remove('uploaded');
+    cdwsPreview.innerHTML = '<span>🪪</span><span style="font-size:10px">اضغط للاختيار</span>';
+  }
+  const licenseInput = document.getElementById('fileLicensePhoto');
+  const cdwsInput = document.getElementById('fileCdwsPhoto');
+  if (licenseInput) licenseInput.value = '';
+  if (cdwsInput) cdwsInput.value = '';
 }
+
 
 async function saveInstructor() {
   const name = document.getElementById('instructorName').value.trim();
@@ -469,14 +631,32 @@ async function saveInstructor() {
   btn.textContent = '⏳ جاري الحفظ...';
   
   try {
+    // حفظ بيانات المدرب أولاً
     const result = await jsonpRequest(action, data);
-    if (result && result.success) {
-      showToast(editingInstructorId ? '✅ تم التحديث' : '✅ تم الإضافة', 'success');
-      closeInstructorModal();
-      await loadInstructors();
-    } else {
-      showToast('❌ ' + (result?.message || 'فشل الحفظ'), 'error');
+    if (!result || !result.success) {
+      throw new Error(result?.message || 'فشل حفظ البيانات');
     }
+    
+    const instructorId = result.id || editingInstructorId;
+    
+    // رفع صورة الرخصة إذا وجدت
+    if (pendingInstructorImages.licensePhoto) {
+      const b64 = await compressImageToBase64(pendingInstructorImages.licensePhoto);
+      const url = await uploadSingleImage(b64, instructorId + '_license');
+      await jsonpRequest('updateInstructorImage', { id: instructorId, imageKey: 'LicensePhoto', imageData: url });
+    }
+    
+    // رفع صورة CDWS إذا وجدت
+    if (pendingInstructorImages.cdwsPhoto) {
+      const b64 = await compressImageToBase64(pendingInstructorImages.cdwsPhoto);
+      const url = await uploadSingleImage(b64, instructorId + '_cdws');
+      await jsonpRequest('updateInstructorImage', { id: instructorId, imageKey: 'CDWSPhoto', imageData: url });
+    }
+    
+    showToast(editingInstructorId ? '✅ تم التحديث' : '✅ تم الإضافة', 'success');
+    closeInstructorModal();
+    await loadInstructors();
+    
   } catch(e) {
     showToast('❌ خطأ: ' + e.message, 'error');
   } finally {
@@ -484,7 +664,6 @@ async function saveInstructor() {
     btn.textContent = '💾 حفظ';
   }
 }
-
 async function deleteInstructor(id) {
   if (!confirm('هل أنت متأكد من حذف هذا المدرب؟')) return;
   try {
