@@ -368,7 +368,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 // ══════════════════════════════════════════════════════════
 let pendingInstructorImages = { licensePhoto: null, cdwsPhoto: null };
 
-function compressImageToBase64(file, maxWidth = 300, maxHeight = 300, quality = 0.6) {
+async function compressImageToBase64(file, maxWidth = 300, maxHeight = 300, quality = 0.6) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = reject;
@@ -425,6 +425,15 @@ function onInstructorFileSelect(input, key, previewId) {
   const file = input.files[0];
   if (!file) return;
   
+  // التحقق من نوع الملف
+  const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+  if (!validTypes.includes(file.type)) {
+    showToast('صيغة الصورة غير مدعومة. استخدم JPG أو PNG', 'error');
+    input.value = '';
+    return;
+  }
+  
+  // التحقق من الحجم
   if (file.size > 3 * 1024 * 1024) {
     showToast('الصورة أكبر من 3MB', 'error');
     input.value = '';
@@ -434,14 +443,23 @@ function onInstructorFileSelect(input, key, previewId) {
   pendingInstructorImages[key] = file;
   const preview = document.getElementById(previewId);
   const reader = new FileReader();
-  reader.onload = ev => {
-    preview.style.backgroundImage = `url("${ev.target.result}")`;
+  
+  reader.onload = function(ev) {
+    preview.style.backgroundImage = 'url("' + ev.target.result + '")';
     preview.style.backgroundSize = 'contain';
     preview.style.backgroundRepeat = 'no-repeat';
     preview.style.backgroundPosition = 'center';
     preview.classList.add('uploaded');
     preview.innerHTML = '<div class="img-ok">✓ جاهزة للحفظ</div>';
   };
+  
+  reader.onerror = function(e) {
+    console.error('FileReader error:', e);
+    showToast('خطأ في قراءة الصورة', 'error');
+    preview.innerHTML = '<div class="img-error">⚠️ فشل القراءة</div>';
+    pendingInstructorImages[key] = null;
+  };
+  
   reader.readAsDataURL(file);
 }
 function switchTab(tabName, idx) {
@@ -545,9 +563,16 @@ function openAddInstructorModal() {
   document.getElementById('instructorModalTitle').textContent = '➕ إضافة مدرب جديد';
   resetInstructorForm();
   
-  // إعداد مستمعي رفع الصور
-  document.getElementById('fileLicensePhoto').onchange = () => onInstructorFileSelect(document.getElementById('fileLicensePhoto'), 'licensePhoto', 'prevLicensePhoto');
-  document.getElementById('fileCdwsPhoto').onchange = () => onInstructorFileSelect(document.getElementById('fileCdwsPhoto'), 'cdwsPhoto', 'prevCdwsPhoto');
+  // ✅ ربط مستمعي الأحداث لاختيار الصور
+  const licenseInput = document.getElementById('fileLicensePhoto');
+  const cdwsInput = document.getElementById('fileCdwsPhoto');
+  
+  licenseInput.onchange = function() { 
+    onInstructorFileSelect(licenseInput, 'licensePhoto', 'prevLicensePhoto'); 
+  };
+  cdwsInput.onchange = function() { 
+    onInstructorFileSelect(cdwsInput, 'cdwsPhoto', 'prevCdwsPhoto'); 
+  };
   
   document.getElementById('instructorModal').classList.add('open');
 }
@@ -587,11 +612,36 @@ function openEditInstructorModal(id) {
     licensePreview.style.backgroundImage = 'url("' + licensePhoto + '")';
     licensePreview.classList.add('uploaded');
     licensePreview.innerHTML = '<div class="img-ok">✓ صورة محفوظة</div>';
+  } else if (licensePreview) {
+    licensePreview.style.backgroundImage = '';
+    licensePreview.classList.remove('uploaded');
+    licensePreview.innerHTML = '<span>📸</span><span style="font-size:10px">اضغط للاختيار</span>';
   }
+  
   if (cdwsPhoto && cdwsPreview) {
     cdwsPreview.style.backgroundImage = 'url("' + cdwsPhoto + '")';
     cdwsPreview.classList.add('uploaded');
     cdwsPreview.innerHTML = '<div class="img-ok">✓ صورة محفوظة</div>';
+  } else if (cdwsPreview) {
+    cdwsPreview.style.backgroundImage = '';
+    cdwsPreview.classList.remove('uploaded');
+    cdwsPreview.innerHTML = '<span>🪪</span><span style="font-size:10px">اضغط للاختيار</span>';
+  }
+  
+  // ✅ ربط مستمعي الأحداث لاختيار الصور
+  const licenseInput = document.getElementById('fileLicensePhoto');
+  const cdwsInput = document.getElementById('fileCdwsPhoto');
+  
+  if (licenseInput) {
+    licenseInput.onchange = function() { 
+      onInstructorFileSelect(licenseInput, 'licensePhoto', 'prevLicensePhoto'); 
+    };
+  }
+  
+  if (cdwsInput) {
+    cdwsInput.onchange = function() { 
+      onInstructorFileSelect(cdwsInput, 'cdwsPhoto', 'prevCdwsPhoto'); 
+    };
   }
   
   document.getElementById('instructorModal').classList.add('open');
@@ -669,19 +719,43 @@ async function saveInstructor() {
     const instructorId = result.id || editingInstructorId;
     
     // رفع صورة الرخصة إذا وجدت
-    if (pendingInstructorImages.licensePhoto) {
-      const b64 = await compressImageToBase64(pendingInstructorImages.licensePhoto);
-      const url = await uploadSingleImage(b64, instructorId + '_license');
-      await jsonpRequest('updateInstructorImage', { id: instructorId, imageKey: 'LicensePhoto', imageData: url });
-    }
-    
-    // رفع صورة CDWS إذا وجدت
-    if (pendingInstructorImages.cdwsPhoto) {
-      const b64 = await compressImageToBase64(pendingInstructorImages.cdwsPhoto);
-      const url = await uploadSingleImage(b64, instructorId + '_cdws');
-      await jsonpRequest('updateInstructorImage', { id: instructorId, imageKey: 'CDWSPhoto', imageData: url });
-    }
-    
+  // داخل دالة saveInstructor، بعد حفظ بيانات المدرب والحصول على instructorId:
+
+// رفع صورة الرخصة إذا وجدت
+if (pendingInstructorImages.licensePhoto) {
+  try {
+    const b64 = await compressImageToBase64(pendingInstructorImages.licensePhoto);
+    const url = await uploadInstructorSingleImage(b64, instructorId + '_license');
+    await jsonpRequest('updateInstructorImage', { 
+      id: instructorId, 
+      imageKey: 'LicensePhoto', 
+      imageData: url, 
+      centerName: currentUser?.centerName || '' 
+    });
+    console.log('✅ تم رفع صورة الرخصة بنجاح');
+  } catch(e) {
+    console.error('❌ فشل رفع صورة الرخصة:', e);
+    showToast('⚠️ فشل رفع صورة الرخصة', 'error');
+  }
+}
+
+// رفع صورة CDWS إذا وجدت
+if (pendingInstructorImages.cdwsPhoto) {
+  try {
+    const b64 = await compressImageToBase64(pendingInstructorImages.cdwsPhoto);
+    const url = await uploadInstructorSingleImage(b64, instructorId + '_cdws');
+    await jsonpRequest('updateInstructorImage', { 
+      id: instructorId, 
+      imageKey: 'CDWSPhoto', 
+      imageData: url, 
+      centerName: currentUser?.centerName || '' 
+    });
+    console.log('✅ تم رفع صورة CDWS بنجاح');
+  } catch(e) {
+    console.error('❌ فشل رفع صورة CDWS:', e);
+    showToast('⚠️ فشل رفع صورة CDWS', 'error');
+  }
+}    
     showToast(editingInstructorId ? '✅ تم التحديث' : '✅ تم الإضافة', 'success');
     closeInstructorModal();
     await loadInstructors();
@@ -697,6 +771,53 @@ function deleteInstructor(id) {
   const instructor = instructors.find(i => i.id === id);
   const name = instructor?.name || 'هذا المدرب';
   showConfirmModal(`⚠️ هل أنت متأكد من حذف "${name}"؟\nلا يمكن التراجع عن هذا الإجراء.`, 'instructor', id);
+}
+  async function uploadInstructorSingleImage(b64, label) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const url = GAS;
+    
+    xhr.open('POST', url, true);
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    
+    xhr.onload = function() {
+      if (xhr.status === 200) {
+        try {
+          const response = JSON.parse(xhr.responseText);
+          if (response && response.success) {
+            resolve(response.url);
+          } else {
+            reject(new Error(response?.message || 'فشل الرفع'));
+          }
+        } catch(e) {
+          reject(new Error('خطأ في تحليل الاستجابة: ' + e.message));
+        }
+      } else {
+        reject(new Error('HTTP ' + xhr.status + ': ' + xhr.statusText));
+      }
+    };
+    
+    xhr.onerror = function() {
+      reject(new Error('network error - فشل الاتصال بالخادم'));
+    };
+    
+    xhr.ontimeout = function() {
+      reject(new Error('timeout - انتهى الوقت (60 ثانية)'));
+    };
+    
+    xhr.timeout = 60000;
+    
+    const params = new URLSearchParams();
+    params.append('action', 'uploadInstructorImage');  // ✅ action مخصص للمدربين
+    params.append('b64', b64);
+    params.append('mimeType', 'image/jpeg');
+    params.append('label', label);
+    if (currentUser && currentUser.centerName) {
+      params.append('centerName', currentUser.centerName);
+    }
+    
+    xhr.send(params.toString());
+  });
 }
 
 function closeInstructorModal() {
