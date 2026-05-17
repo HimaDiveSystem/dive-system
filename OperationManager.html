@@ -501,18 +501,62 @@ async function uploadSingleImage(b64, label, imageType) {
     };
     xhr.timeout = 60000;
     const params = new URLSearchParams();
-    params.append('action', 'uploadImage');
+    // ✅ استخدام الـ action الصحيح حسب نوع الصورة
+    if (imageType === 'vehicle') {
+      params.append('action', 'uploadVehicleImage');
+    } else if (imageType === 'boat') {
+      params.append('action', 'uploadBoatImage');
+    } else {
+      params.append('action', 'uploadImage');
+    }
     params.append('b64', b64);
     params.append('mimeType', 'image/jpeg');
     params.append('label', label);
-    params.append('imageType', imageType);
     if (currentUser?.centerId) params.append('centerId', currentUser.centerId);
     if (currentUser?.centerName) params.append('centerName', currentUser.centerName);
     xhr.send(params.toString());
   });
 }
-
-function getDriveDirectUrl(url) {
+// دالة تحويل التاريخ من أي صيغة إلى yyyy-MM-dd لـ input type="date"
+function formatDateToInput(dateStr) {
+  if (!dateStr || dateStr === '' || dateStr === 'mm/dd/yyyy') return '';
+  
+  try {
+    // إذا كانت الصيغة dd/MMM/yyyy (مثال: 15/Dec/2026)
+    const months = {
+      'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04',
+      'May': '05', 'Jun': '06', 'Jul': '07', 'Aug': '08',
+      'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12'
+    };
+    
+    const match = dateStr.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
+    if (match) {
+      const day = match[1].padStart(2, '0');
+      const month = months[match[2]];
+      const year = match[3];
+      if (month) return `${year}-${month}-${day}`;
+    }
+    
+    // إذا كانت الصيغة yyyy-MM-dd بالفعل
+    if (dateStr.match(/^\d{4}-\d{2}-\d{2}/)) {
+      return dateStr.substring(0, 10);
+    }
+    
+    // محاولة عامة
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) {
+      const year = d.getFullYear();
+      const month = (d.getMonth() + 1).toString().padStart(2, '0');
+      const day = d.getDate().toString().padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+    
+    return '';
+  } catch(e) {
+    return '';
+  }
+}
+  function getDriveDirectUrl(url) {
   if (!url) return '';
   const patterns = [/\/file\/d\/([a-zA-Z0-9_-]+)/, /[?&]id=([a-zA-Z0-9_-]+)/, /\/d\/([a-zA-Z0-9_-]+)/, /uc\?export=view&id=([a-zA-Z0-9_-]+)/];
   for (const p of patterns) {
@@ -1184,14 +1228,18 @@ function openEditVehicleModal(id) {
   document.getElementById('vehicleDailyRate').value = vehicle.dailyRate || 0;
   document.getElementById('vehicleRoundTripRate').value = vehicle.roundTripRate || 0;
   document.getElementById('vehicleOneWayRate').value = vehicle.oneWayRate || 0;
-  document.getElementById('vehicleLicenseExpiry').value = vehicle.licenseExpiry || '';
+  
+  // ✅ تحويل التاريخ إلى الصيغة الصحيحة لـ input type="date"
+  const licenseExpiryFormatted = formatDateToInput(vehicle.licenseExpiry);
+  document.getElementById('vehicleLicenseExpiry').value = licenseExpiryFormatted;
+  
   document.getElementById('vehicleNotes').value = vehicle.notes || '';
   
   // ✅ عرض الصور الموجودة (إذا كانت موجودة)
   const licensePreview = document.getElementById('prevVehicleLicensePhoto');
   const regPreview = document.getElementById('prevVehicleRegistrationPhoto');
   
-  // ✅ إعادة تعيين معاينة الصور
+  // ✅ إعادة تعيين معاينة صورة الرخصة
   if (licensePreview) {
     if (vehicle.licensePhoto && vehicle.licensePhoto !== '') {
       licensePreview.style.backgroundImage = 'url("' + vehicle.licensePhoto + '")';
@@ -1207,6 +1255,7 @@ function openEditVehicleModal(id) {
     }
   }
   
+  // ✅ إعادة تعيين معاينة صورة التسجيل
   if (regPreview) {
     if (vehicle.registrationPhoto && vehicle.registrationPhoto !== '') {
       regPreview.style.backgroundImage = 'url("' + vehicle.registrationPhoto + '")';
@@ -1229,18 +1278,21 @@ function openEditVehicleModal(id) {
   const licenseInput = document.getElementById('fileVehicleLicensePhoto');
   const regInput = document.getElementById('fileVehicleRegistrationPhoto');
   
-  // إزالة المستمعات القديمة وإضافة جديدة
-  const newLicenseInput = licenseInput.cloneNode(true);
-  const newRegInput = regInput.cloneNode(true);
-  licenseInput.parentNode.replaceChild(newLicenseInput, licenseInput);
-  regInput.parentNode.replaceChild(newRegInput, regInput);
+  if (licenseInput) {
+    const newLicenseInput = licenseInput.cloneNode(true);
+    licenseInput.parentNode.replaceChild(newLicenseInput, licenseInput);
+    newLicenseInput.onchange = function() { 
+      onVehicleFileSelect(newLicenseInput, 'licensePhoto', 'prevVehicleLicensePhoto'); 
+    };
+  }
   
-  newLicenseInput.onchange = function() { 
-    onVehicleFileSelect(newLicenseInput, 'licensePhoto', 'prevVehicleLicensePhoto'); 
-  };
-  newRegInput.onchange = function() { 
-    onVehicleFileSelect(newRegInput, 'registrationPhoto', 'prevVehicleRegistrationPhoto'); 
-  };
+  if (regInput) {
+    const newRegInput = regInput.cloneNode(true);
+    regInput.parentNode.replaceChild(newRegInput, regInput);
+    newRegInput.onchange = function() { 
+      onVehicleFileSelect(newRegInput, 'registrationPhoto', 'prevVehicleRegistrationPhoto'); 
+    };
+  }
   
   document.getElementById('vehicleModal').classList.add('open');
 }
@@ -1535,7 +1587,11 @@ function openEditBoatModal(id) {
   document.getElementById('boatName').value = boat.name || '';
   document.getElementById('boatCapacity').value = boat.capacity || 0;
   document.getElementById('boatLicenseNumber').value = boat.licenseNumber || '';
-  document.getElementById('boatLicenseExpiry').value = boat.licenseExpiry || '';
+  
+  // ✅ تحويل التاريخ إلى الصيغة الصحيحة لـ input type="date"
+  const licenseExpiryFormatted = formatDateToInput(boat.licenseExpiry);
+  document.getElementById('boatLicenseExpiry').value = licenseExpiryFormatted;
+  
   document.getElementById('boatOwnerName').value = boat.ownerName || '';
   document.getElementById('boatOwnerPhone').value = boat.ownerPhone || '';
   document.getElementById('boatNotes').value = boat.notes || '';
@@ -1583,18 +1639,21 @@ function openEditBoatModal(id) {
   const licenseInput = document.getElementById('fileBoatLicensePhoto');
   const insuranceInput = document.getElementById('fileBoatInsurancePhoto');
   
-  // إزالة المستمعات القديمة وإضافة جديدة
-  const newLicenseInput = licenseInput.cloneNode(true);
-  const newInsuranceInput = insuranceInput.cloneNode(true);
-  licenseInput.parentNode.replaceChild(newLicenseInput, licenseInput);
-  insuranceInput.parentNode.replaceChild(newInsuranceInput, insuranceInput);
+  if (licenseInput) {
+    const newLicenseInput = licenseInput.cloneNode(true);
+    licenseInput.parentNode.replaceChild(newLicenseInput, licenseInput);
+    newLicenseInput.onchange = function() { 
+      onBoatFileSelect(newLicenseInput, 'licensePhoto', 'prevBoatLicensePhoto'); 
+    };
+  }
   
-  newLicenseInput.onchange = function() { 
-    onBoatFileSelect(newLicenseInput, 'licensePhoto', 'prevBoatLicensePhoto'); 
-  };
-  newInsuranceInput.onchange = function() { 
-    onBoatFileSelect(newInsuranceInput, 'insurancePhoto', 'prevBoatInsurancePhoto'); 
-  };
+  if (insuranceInput) {
+    const newInsuranceInput = insuranceInput.cloneNode(true);
+    insuranceInput.parentNode.replaceChild(newInsuranceInput, insuranceInput);
+    newInsuranceInput.onchange = function() { 
+      onBoatFileSelect(newInsuranceInput, 'insurancePhoto', 'prevBoatInsurancePhoto'); 
+    };
+  }
   
   document.getElementById('boatModal').classList.add('open');
 }
