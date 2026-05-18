@@ -260,6 +260,7 @@
       animation: spin 1s linear infinite;
       margin: 0 auto 12px;
     }
+    .badge-upsell { background: var(--orange); color: white; }
     @keyframes spin { to { transform: rotate(360deg); } }
     
     /* Modal Styles */
@@ -806,7 +807,7 @@ function renderTable() {
     return;
   }
 
-  let html = '<div class="table-wrapper"><table>';
+  let html = '<div class="table-wrapper"></table>';
   html += '<thead><tr>';
   html += '<th onclick="setSort(\'VoucherNo\')">Voucher # ⇅</th>';
   html += '<th onclick="setSort(\'ActiveDate\')">Active Date ⇅</th>';
@@ -814,7 +815,8 @@ function renderTable() {
   html += '<th>Guest</th>';
   html += '<th>Adults</th><th>Children</th><th>Infants</th>';
   html += '<th>State</th>';
-  html += '<th>Vehicles</th><th>Boats</th><th>Instructors</th>';
+  html += '<th>Vehicles</th><th>Boats</th>';
+  html += '<th>Instructors (Exec)</th><th>Instructors (UpSell)</th>';
   html += '<th>Actions</th>';
   html += '</tr></thead><tbody>';
 
@@ -829,21 +831,44 @@ function renderTable() {
     const infantCount = parseInt(inv.Infants || inv.infants || 0);
     const totalPassengers = adultCount + childCount + infantCount;
     
+    // ✅ عرض السيارات (ركاب فقط، وليس المعدات)
     let vehiclesHtml = '';
-    let boatsHtml = '';
-    let instructorsHtml = '';
-    
     try {
       const vehiclesUsed = JSON.parse(inv.VehiclesUsed || '[]');
-      vehiclesHtml = vehiclesUsed.map(v => `<span class="badge badge-vehicle">${v.vehicleId}:${v.seats}</span>`).join(' ');
+      // ✅ تصفية: عرض فقط السيارات التي ليست من نوع equipment
+      const passengerVehicles = vehiclesUsed.filter(v => v.type !== 'equipment');
+      vehiclesHtml = passengerVehicles.map(v => `<span class="badge badge-vehicle">${v.vehicleId}:${v.seats}</span>`).join(' ');
     } catch(e) {}
+    
+    // ✅ عرض المراكب
+    let boatsHtml = '';
     try {
       const boatsUsed = JSON.parse(inv.BoatsUsed || '[]');
-      boatsHtml = boatsUsed.map(b => `<span class="badge badge-boat">${b.boatId}</span>`).join(' ');
+      boatsHtml = boatsUsed.map(b => `<span class="badge badge-boat">${b.boatId}:${b.passengers}</span>`).join(' ');
+    } catch(e) {}
+    
+    // ✅ عرض المدربين (منفصل: تنفيذ + مبيعات)
+    let execInstructorsHtml = '';
+    let upsellInstructorsHtml = '';
+    try {
+      const execInstructors = JSON.parse(inv.InstructorsExecution || '[]');
+      execInstructorsHtml = execInstructors.map(i => 
+        `<span class="badge badge-instructor">📋 ${i.instructorId}</span>`
+      ).join(' ');
     } catch(e) {}
     try {
-      const instructorsUsed = JSON.parse(inv.InstructorsUpSell || '[]');
-      instructorsHtml = instructorsUsed.map(i => `<span class="badge badge-instructor">${i.instructorId}</span>`).join(' ');
+      const upsellInstructors = JSON.parse(inv.InstructorsUpSell || '[]');
+      upsellInstructorsHtml = upsellInstructors.map(i => 
+        `<span class="badge badge-upsell">💰 ${i.instructorId}</span>`
+      ).join(' ');
+    } catch(e) {}
+    
+    // ✅ التحقق من وجود سيارات معدات مرتبطة بالرحلة (من ExecutionType)
+    let hasEquipmentVehicles = false;
+    let executionType = '';
+    try {
+      executionType = inv.ExecutionType || '';
+      hasEquipmentVehicles = executionType.includes('equipment') || executionType === 'has_equipment_vehicles';
     } catch(e) {}
     
     const stateClass = (inv.State || inv.state || '').toLowerCase() === 'confirmed' ? 'status-confirmed' : 'status-pending';
@@ -851,7 +876,7 @@ function renderTable() {
     
     html += `<tr>
       <td style="text-align:center"><strong>${escapeHtml(voucherNo)}</strong></td>
-      <td style="text-align:center">${formatDateDDMMMYYYY(activeDate)}</td>
+      <td style="text-align:center">${formatDateDDMMMYYYY(activeDate)}</span></td>
       <td style="text-align:center">${escapeHtml(inv.Trip || inv.trip || '')}</td>
       <td style="text-align:center">${escapeHtml(inv.GuestName || inv.guestName || '')}</td>
       <td style="text-align:center">${adultCount}</td>
@@ -860,17 +885,42 @@ function renderTable() {
       <td style="text-align:center"><span class="${stateClass}">${stateText}</span></td>
       <td style="text-align:center">${vehiclesHtml || '—'}</td>
       <td style="text-align:center">${boatsHtml || '—'}</td>
-      <td style="text-align:center">${instructorsHtml || '—'}</td>
+      <td style="text-align:center">${execInstructorsHtml || '—'}</td>
+      <td style="text-align:center">${upsellInstructorsHtml || '—'}</td>
       <td style="text-align:center">
-        <div style="display:flex; gap:4px; flex-wrap:wrap;">
-          <button class="action-btn vehicle ${disabledClass}" onclick="openAssignVehicles('${voucherNo}')" ${!canAssign ? 'disabled' : ''}>🚗 (${totalPassengers})</button>
-          <button class="action-btn equipment ${disabledClass}" onclick="openAssignEquipmentVehicles('${voucherNo}')" ${!canAssign ? 'disabled' : ''}>🚛 معدات</button>
-          <button class="action-btn boat ${disabledClass}" onclick="openAssignBoats('${voucherNo}')" ${!canAssign ? 'disabled' : ''}>⛵</button>
-          <button class="action-btn instructor ${disabledClass}" onclick="openAssignInstructors('${voucherNo}')" ${!canAssign ? 'disabled' : ''}>👨‍🏫</button>
-          <button class="action-btn upsell" onclick="openUpsell('${voucherNo}')">💰</button>
+        <div style="display:flex; gap:4px; flex-wrap:wrap; justify-content:center;">
+          <button class="action-btn vehicle ${disabledClass}" 
+                  onclick="openAssignVehicles('${voucherNo}')" 
+                  ${!canAssign ? 'disabled' : ''}
+                  title="توزيع الركاب على السيارات">
+            🚗 (${totalPassengers})
+          </button>
+          <button class="action-btn equipment ${disabledClass}" 
+                  onclick="openAssignEquipmentVehicles('${voucherNo}')" 
+                  ${!canAssign ? 'disabled' : ''}
+                  title="سيارات نقل المعدات (تكلفة مباشرة للرحلة)">
+            🚛 معدات ${hasEquipmentVehicles ? '✓' : ''}
+          </button>
+          <button class="action-btn boat ${disabledClass}" 
+                  onclick="openAssignBoats('${voucherNo}')" 
+                  ${!canAssign ? 'disabled' : ''}
+                  title="توزيع الركاب على المراكب">
+            ⛵
+          </button>
+          <button class="action-btn instructor ${disabledClass}" 
+                  onclick="openAssignInstructors('${voucherNo}')" 
+                  ${!canAssign ? 'disabled' : ''}
+                  title="توزيع الأنشطة على المدربين (تنفيذ)">
+            👨‍🏫
+          </button>
+          <button class="action-btn upsell" 
+                  onclick="openUpsell('${voucherNo}')"
+                  title="مبيعات إضافية (UpSell)">
+            💰
+          </button>
         </div>
       </td>
-    </tr>`;
+    </table>`;
   }
 
   html += '</tbody></table></div>';
@@ -1313,47 +1363,44 @@ async function saveEquipmentDistribution() {
     return;
   }
   
-  const equipmentJson = selectedEquipVehicles.map(vehId => ({
-    vehicleId: vehId,
-    type: 'equipment',
-    seats: 0,
-    passengers: { adults: 0, children: 0, infants: 0 }
-  }));
+  const activeDate = currentAssignInvoice.ActiveDate || currentAssignInvoice.activeDate || new Date().toISOString().split('T')[0];
+  const tripName = currentAssignInvoice.Trip || currentAssignInvoice.trip || '';
   
+  // ✅ تخزين فقط في Trip_Vehicles (لا يتم تخزين في الفاتورة)
   try {
-    // Get existing vehicles used and merge
-    let existingVehicles = [];
-    try {
-      existingVehicles = JSON.parse(currentAssignInvoice.VehiclesUsed || '[]');
-    } catch(e) {}
-    
-    const allVehicles = [...existingVehicles, ...equipmentJson];
-    
-    await gas('updateInvoiceField', {
-      voucherNo: currentAssignVoucher,
-      field: 'VehiclesUsed',
-      value: JSON.stringify(allVehicles)
-    });
-    
-    const activeDate = currentAssignInvoice.ActiveDate || currentAssignInvoice.activeDate || new Date().toISOString().split('T')[0];
     for (const vehId of selectedEquipVehicles) {
+      const vehicle = await getVehicleById(vehId);
+      // حساب التكلفة حسب نظام السيارة
+      let costCalculated = 0;
+      if (vehicle.dailyRate) costCalculated = vehicle.dailyRate;
+      else if (vehicle.roundTripRate) costCalculated = vehicle.roundTripRate;
+      else costCalculated = (vehicle.monthlyFixedCost || 0) / 30;
+      
       await gas('assignVehicleToTrip', {
-        voucherNo: currentAssignVoucher,
+        voucherNo: activeDate,  // ✅ استخدام التاريخ كمعرف للرحلة
         vehicleId: vehId,
         tripType: 'equipment',
+        tripName: tripName,
         bookedSeats: 0,
+        costCalculated: costCalculated,
         date: activeDate
       });
     }
     
-    showToast(`Assigned ${selectedEquipVehicles.length} equipment vehicles`, 'success');
+    // ✅ تحديث عمود ExecutionType في الفاتورة للإشارة إلى وجود سيارات معدات
+    await gas('updateInvoiceField', {
+      voucherNo: currentAssignVoucher,
+      field: 'ExecutionType',
+      value: 'has_equipment_vehicles'
+    });
+    
+    showToast(`Assigned ${selectedEquipVehicles.length} equipment vehicles (not added to invoice)`, 'success');
     closeModal('assignVehiclesModal');
     await loadInvoices();
   } catch(e) {
     showToast('Error: ' + e.message, 'error');
   }
 }
-
 // ============================================================
 // ASSIGN BOATS
 // ============================================================
@@ -1600,8 +1647,8 @@ async function saveInstructorDistribution() {
     return;
   }
   
-  // Prepare JSON for InstructorsUpSell column
-  const instructorsJson = assignments.map(a => ({
+  // ✅ تخزين في عمود InstructorsExecution (العمود 69)
+  const instructorsExecutionJson = assignments.map(a => ({
     instructorId: a.instructorId,
     intro: a.intro,
     course: a.course,
@@ -1611,8 +1658,8 @@ async function saveInstructorDistribution() {
   try {
     await gas('updateInvoiceField', {
       voucherNo: currentAssignVoucher,
-      field: 'InstructorsUpSell',
-      value: JSON.stringify(instructorsJson)
+      field: 'InstructorsExecution',
+      value: JSON.stringify(instructorsExecutionJson)
     });
     
     const activeDate = invoice.ActiveDate || invoice.activeDate || new Date().toISOString().split('T')[0];
@@ -1627,14 +1674,13 @@ async function saveInstructorDistribution() {
       });
     }
     
-    showToast(`Assigned ${assignments.length} instructors successfully`, 'success');
+    showToast(`Assigned ${assignments.length} instructors for execution`, 'success');
     closeModal('assignInstructorsModal');
     await loadInvoices();
   } catch(e) {
     showToast('Error: ' + e.message, 'error');
   }
 }
-
 // ============================================================
 // UPSELL
 // ============================================================
@@ -1774,16 +1820,32 @@ async function saveUpsell() {
     return;
   }
   
+  // ✅ تخزين في عمود InstructorsUpSell (العمود 70)
+  const upsellData = [{
+    instructorId: instructorId,
+    items: items,
+    totalAmount: totalAmount,
+    payments: amounts
+  }];
+  
   try {
     showToast('Creating UpSell invoice...', 'info');
     const result = await gas('createUpSellInvoice', {
       originalVoucherNo: currentUpsellVoucher,
       upSellItems: JSON.stringify(items),
       upSellAmounts: JSON.stringify(amounts),
-      instructorId: instructorId
+      instructorId: instructorId,
+      upsellData: JSON.stringify(upsellData)
     });
     
     if (result?.success) {
+      // ✅ تحديث عمود InstructorsUpSell في الفاتورة الأصلية
+      await gas('updateInvoiceField', {
+        voucherNo: currentUpsellVoucher,
+        field: 'InstructorsUpSell',
+        value: JSON.stringify(upsellData)
+      });
+      
       showToast(`UpSell invoice created: ${result.voucherNo}`, 'success');
       closeModal('upsellModal');
       await loadInvoices();
