@@ -208,13 +208,14 @@
     .totals-row td { background: #dbeafe; color: var(--navy); border-top: 2px solid var(--navy); border-bottom: 2px solid var(--navy); position: sticky; bottom: 0; z-index: 70; padding: 8px 5px; font-size: 11px; }
     .tl { font-size: 9px; color: #475569; display: block; margin-bottom: 1px; }
     .tv { font-size: 12px; font-weight: 800; color: var(--navy); }
-    .action-buttons {
+   .action-buttons {
   display: flex;
   flex-direction: row;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 4px;
   justify-content: center;
   align-items: center;
+  white-space: nowrap;
 }
 .action-btn {
   background: var(--blue-lt);
@@ -882,27 +883,47 @@ function applyFilters() {
   const state = document.getElementById('filterState').value;
   const selectedTrips = Array.from(document.getElementById('filterTrip').selectedOptions).map(opt => opt.value).filter(v => v);
 
+  // ✅ تحويل التواريخ إلى كائنات Date للمقارنة
+  let fromDateObj = null;
+  let toDateObj = null;
+  
+  if (fromDate) {
+    fromDateObj = new Date(fromDate);
+    fromDateObj.setHours(0, 0, 0, 0);
+  }
+  if (toDate) {
+    toDateObj = new Date(toDate);
+    toDateObj.setHours(23, 59, 59, 999);
+  }
+
   filteredInvoices = allInvoices.filter(inv => {
     const activeDate = inv.ActiveDate || inv.activeDate || '';
     const parsedDate = parseDateFromString(activeDate);
-    if (fromDate && parsedDate && parsedDate < new Date(fromDate)) return false;
-    if (toDate && parsedDate && parsedDate > new Date(toDate)) return false;
+    
+    // ✅ مقارنة التواريخ بشكل صحيح
+    if (fromDateObj && parsedDate && parsedDate < fromDateObj) return false;
+    if (toDateObj && parsedDate && parsedDate > toDateObj) return false;
+    
     if (state && (inv.State || inv.state || '').toLowerCase() !== state) return false;
     if (selectedTrips.length > 0 && !selectedTrips.includes(inv.Trip || inv.trip)) return false;
+    
     if (search) {
       const voucher = (inv.VoucherNo || inv.voucherNo || '').toLowerCase();
       const guest = (inv.GuestName || inv.guestName || '').toLowerCase();
-      if (!voucher.includes(search) && !guest.includes(search)) return false;
+      const trip = (inv.Trip || inv.trip || '').toLowerCase();
+      if (!voucher.includes(search) && !guest.includes(search) && !trip.includes(search)) return false;
     }
+    
     return true;
   });
 
+  console.log('📊 Filtered invoices:', filteredInvoices.length);
+  
   doSort();
   currentPage = 1;
   renderTable();
   renderPagination();
 }
-
 function resetFilters() {
   document.getElementById('filterFromDate').value = '';
   document.getElementById('filterToDate').value = '';
@@ -1208,35 +1229,51 @@ async function openAssignVehicles(voucherNo) {
   
   console.log('📊 Passengers:', { adultCount, childCount, infantCount, totalPassengers });
   
-  
-  
   let vehiclesHtml = `
     <div style="margin-bottom: 16px;">
       <div style="background: #f8f9fa; padding: 12px; border-radius: 8px; margin-bottom: 16px;">
-        <strong>Total Passengers:</strong> ${totalPassengers} (Adults: ${adultCount}, Children: ${childCount}, Infants: ${infantCount})
+        <strong>Total Passengers:</strong> ${totalPassengers} (Adults/Diver: ${adultCount}, Children/Course: ${childCount}, Infants/Intro: ${infantCount})
         <div style="font-size: 11px; color: var(--text-lt);">⚠️ يمكن توزيع الركاب على أكثر من سيارة حسب السعة</div>
       </div>
       <table class="dist-table">
-        <thead><tr><th>Vehicle</th><th>Capacity</th><th>Adults</th><th>Children</th><th>Infants</th><th>Total Seats</th></tr></thead>
+        <thead><tr><th>Vehicle</th><th>Capacity</th><th>Available</th><th>Diver</th><th>Course</th><th>Intro</th><th>Total</th></tr></thead>
         <tbody>
   `;
   
   let remainingAdults = adultCount;
   let remainingChildren = childCount;
   let remainingInfants = infantCount;
+  const activeDate = invoice.ActiveDate || invoice.activeDate || new Date().toISOString().split('T')[0];
   
   for (const vehId of selectedVehicles) {
     const vehicle = await getVehicleById(vehId);
     if (!vehicle) continue;
     const capacity = vehicle.capacity || 0;
+    
+    // ✅ حساب المقاعد المتاحة لهذه السيارة في هذا التاريخ
+    let availableSeats = capacity;
+    try {
+      const availability = await jsonpRequest('calculateAvailableSeats', { 
+        vehicleId: vehId, 
+        date: activeDate, 
+        excludeVoucher: voucherNo 
+      });
+      if (availability.success) {
+        availableSeats = availability.availableSeats;
+      }
+    } catch(e) {
+      console.warn('Could not calculate available seats:', e);
+    }
+    
     vehiclesHtml += `
       <tr>
         <td><strong>${escapeHtml(vehicle.licensePlate || vehId)}</strong></td>
-        <td>${capacity}</td>
-        <td><input type="number" id="adults_${vehId}" value="0" min="0" max="${remainingAdults}" style="width:70px" onchange="updateVehicleSeats('${vehId}', ${capacity})"></td>
-        <td><input type="number" id="children_${vehId}" value="0" min="0" max="${remainingChildren}" style="width:70px" onchange="updateVehicleSeats('${vehId}', ${capacity})"></td>
-        <td><input type="number" id="infants_${vehId}" value="0" min="0" max="${remainingInfants}" style="width:70px" onchange="updateVehicleSeats('${vehId}', ${capacity})"></td>
-        <td style="text-align:center" id="total_${vehId}">0</td>
+        <td>${capacity}</span></td>
+        <td style="text-align:center" id="avail_${vehId}">${availableSeats}</span></td>
+        <td><input type="number" id="adults_${vehId}" value="0" min="0" max="${Math.min(remainingAdults, availableSeats)}" style="width:70px" onchange="updateVehicleSeats('${vehId}', ${capacity})"></span></td>
+        <td><input type="number" id="children_${vehId}" value="0" min="0" max="${Math.min(remainingChildren, availableSeats)}" style="width:70px" onchange="updateVehicleSeats('${vehId}', ${capacity})"></span></td>
+        <td><input type="number" id="infants_${vehId}" value="0" min="0" max="${Math.min(remainingInfants, availableSeats)}" style="width:70px" onchange="updateVehicleSeats('${vehId}', ${capacity})"></span></td>
+        <td style="text-align:center" id="total_${vehId}">0</span></td>
       </tr>
     `;
   }
@@ -1254,7 +1291,6 @@ async function openAssignVehicles(voucherNo) {
   document.getElementById('assignVehiclesContent').innerHTML = vehiclesHtml;
   openModal('assignVehiclesModal');
 }
-
 function updateVehicleSeats(vehicleId, capacity) {
   const adults = parseInt(document.getElementById(`adults_${vehicleId}`).value) || 0;
   const children = parseInt(document.getElementById(`children_${vehicleId}`).value) || 0;
@@ -2076,12 +2112,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     }).catch(e => console.warn('Preload error:', e));
     
     await loadInvoices();
+    
+    // ✅ بعد تحميل الصفحة، أضف مستمع للحدث (داخل try-catch وبعد وجود العنصر)
+    const singleDateInput = document.getElementById('filterSingleDate');
+    if (singleDateInput) {
+      singleDateInput.addEventListener('change', function() {
+        const singleDate = this.value;
+        if (singleDate) {
+          document.getElementById('filterFromDate').value = singleDate;
+          document.getElementById('filterToDate').value = singleDate;
+          applyFilters();
+        }
+      });
+    }
+    
   } catch(e) { 
     console.error('Init error:', e);
     window.location.href = 'index.html'; 
   }
 });
-
 </script>
 </body>
 </html>
