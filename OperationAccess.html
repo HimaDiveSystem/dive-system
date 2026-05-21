@@ -369,36 +369,75 @@
     }
     .close-modal:hover { color: var(--red); }
     
-    .assign-table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-bottom: 16px;
-    }
-    .assign-table th {
-      background: var(--navy);
-      color: var(--gold);
-      padding: 10px;
-      font-size: 11px;
-      text-align: center;
-    }
-    .assign-table td {
-      padding: 8px;
-      text-align: center;
-      border-bottom: 1px solid var(--border);
-    }
-    .assign-table input {
-      width: 60px;
-      padding: 4px;
-      text-align: center;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-    }
-    .assign-table input[type="checkbox"] {
-      width: 18px;
-      height: 18px;
-      cursor: pointer;
-    }
-    
+    /* تحسين عرض نوافذ التعيين - استخدام flexbox بدلاً من الجداول */
+.assign-container {
+  overflow-x: auto;
+  max-height: 400px;
+}
+
+.assign-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+}
+
+.assign-item > div {
+  flex: 1;
+  min-width: 60px;
+  text-align: center;
+}
+
+.assign-item .vehicle-name {
+  flex: 2;
+  text-align: left;
+  font-weight: bold;
+}
+
+.assign-item input {
+  width: 55px;
+  padding: 4px;
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.assign-item input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.assign-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 10px;
+  background: var(--navy);
+  color: var(--gold);
+  font-weight: bold;
+  gap: 8px;
+}
+
+.assign-header > div {
+  flex: 1;
+  min-width: 60px;
+  text-align: center;
+}
+
+.assign-header .vehicle-name {
+  flex: 2;
+  text-align: left;
+}
+
+@media (max-width: 768px) {
+  .assign-item, .assign-header {
+    min-width: 500px;
+  }
+}    
     .summary-box {
       background: #f8f9fa;
       padding: 12px;
@@ -1197,7 +1236,8 @@ function renderTable() {
   html += `</tr>`;
   
   html += '</tbody></table>';
-  document.getElementById('tblCont').innerHTML = html;
+    document.getElementById('tblCont').innerHTML = html;
+  renderSummary();
 }
   
 function renderPagination() {
@@ -1212,7 +1252,87 @@ function renderPagination() {
   }
   document.getElementById('pagination').innerHTML = html;
 }
-
+// ============================================================
+// عرض جدول الإحصائيات (Trips Summary)
+// ============================================================
+function renderSummary() {
+  const trips = {};
+  
+  filteredInvoices.forEach(inv => {
+    const tripName = (inv.trip || 'Unknown').trim();
+    if (!trips[tripName]) {
+      trips[tripName] = { bookings: 0, activities: {} };
+    }
+    trips[tripName].bookings++;
+    
+    // جمع الأنشطة من ActivitiesText
+    const activitiesText = (inv.activitiesText || '').toString().trim();
+    if (activitiesText) {
+      activitiesText.split('|').forEach(part => {
+        const match = part.trim().match(/^(.+?)×(\d+(\.\d+)?)$/);
+        if (match) {
+          const activityName = match[1].trim();
+          const quantity = parseFloat(match[2]) || 0;
+          trips[tripName].activities[activityName] = (trips[tripName].activities[activityName] || 0) + quantity;
+        }
+      });
+    }
+    
+    // إضافة الأنشطة من البنود
+    const sgl = parseInt(inv.sgl) || 0;
+    const dbl = parseInt(inv.dbl) || 0;
+    const trpl = parseInt(inv.trpl) || 0;
+    const extra = parseInt(inv.extra) || 0;
+    
+    if (sgl > 0) trips[tripName].activities['Adult'] = (trips[tripName].activities['Adult'] || 0) + sgl;
+    if (dbl > 0) trips[tripName].activities['Child'] = (trips[tripName].activities['Child'] || 0) + dbl;
+    if (trpl > 0) trips[tripName].activities['Infant'] = (trips[tripName].activities['Infant'] || 0) + trpl;
+    if (extra > 0) trips[tripName].activities['Extra'] = (trips[tripName].activities['Extra'] || 0) + extra;
+  });
+  
+  if (Object.keys(trips).length === 0) {
+    document.getElementById('summarySec').style.display = 'none';
+    return;
+  }
+  
+  let rows = '';
+  Object.entries(trips).sort((a, b) => b[1].bookings - a[1].bookings).forEach(([tripName, info]) => {
+    const activitiesStr = Object.entries(info.activities)
+      .map(([act, qty]) => `${act}×${Number.isInteger(qty) ? qty : qty.toFixed(1)}`)
+      .join(' | ');
+    rows += `<tr>
+      <td><strong>${escapeHtml(tripName)}</strong></td>
+      <td style="text-align:center"><span style="background:var(--navy);color:var(--gold);padding:4px 10px;border-radius:20px;font-size:12px;font-weight:700">${info.bookings}</span></td>
+      <td class="acts-cell" style="white-space:normal; word-break:break-word;">${escapeHtml(activitiesStr || '—')}</span></td>
+    </tr>`;
+  });
+  
+  let summaryHtml = `
+    <div class="summary-sec" id="summarySec" style="margin-top:16px; padding:14px 20px; background:white; border-top:2px solid var(--border); overflow-x:auto;">
+      <div class="summary-title" style="font-size:13px; font-weight:700; color:var(--navy); margin-bottom:8px; text-align:center;">🗺️ Trips Summary</div>
+      <div style="overflow-x:auto;">
+        <table class="summary-table" style="width:100%; border-collapse:collapse; font-size:12px; margin:0 auto;">
+          <thead>
+            <tr style="background:var(--navy2); color:var(--gold);">
+              <th style="padding:10px 8px; text-align:center; width:28%;">Trip</th>
+              <th style="padding:10px 8px; text-align:center; width:15%;">Bookings</th>
+              <th style="padding:10px 8px; text-align:center; width:57%;">Activities</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  
+  // إضافة القسم بعد الجدول إذا لم يكن موجوداً
+  if (!document.getElementById('summarySec')) {
+    const tblWrap = document.querySelector('.tbl-wrap');
+    tblWrap.insertAdjacentHTML('afterend', summaryHtml);
+  } else {
+    document.getElementById('summarySec').outerHTML = summaryHtml;
+  }
+}
 function gotoPage(page) {
   currentPage = page;
   renderTable();
@@ -1787,16 +1907,78 @@ async function saveBeachInstructors() {
     return;
   }
   
+  // التحقق من توفر كل مدرب قبل الحفظ
+  for (const instructorId of selectedBeachInstructors) {
+    const instructor = cachedInstructors.find(i => i.id === instructorId);
+    const check = await checkInstructorAvailabilityBeforeSave(instructorId, 'Beach', '', '');
+    if (!check.available) {
+      showToast(check.message || `المدرب ${instructor?.name || instructorId} غير متوفر`, 'error');
+      return;
+    }
+  }
+  
   const assignments = currentAssignments || {};
   assignments.beachInstructors = selectedBeachInstructors;
   
   if (await saveAssignmentsForDate(currentDate, assignments)) {
     currentAssignments = assignments;
+    
+    // تسجيل كل مدرب في DailyLog
+    for (const instructorId of selectedBeachInstructors) {
+      const instructor = cachedInstructors.find(i => i.id === instructorId);
+      if (instructor) {
+        await recordInstructorAssignment(instructorId, instructor.name, 'Beach', '', '');
+      }
+    }
+    
     showToast(`Saved ${selectedBeachInstructors.length} beach instructors`, 'success');
     closeModal('beachInstructorsModal');
+    updateSelectionBadges();
+  }
+}
+// ============================================================
+// التحقق من توفر المدرب قبل الحفظ
+// ============================================================
+async function checkInstructorAvailabilityBeforeSave(instructorId, assignmentType, boatId, boatName) {
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) return { available: true };
+  
+  try {
+    const result = await gas('checkInstructorAvailability', {
+      date: currentDate,
+      instructorId: instructorId,
+      centerName: currentUser?.centerName
+    });
+    return result;
+  } catch(e) {
+    console.warn('checkInstructorAvailability error:', e);
+    return { available: true };
   }
 }
 
+// ============================================================
+// تسجيل المدرب في DailyLog بعد الحفظ
+// ============================================================
+async function recordInstructorAssignment(instructorId, instructorName, assignmentType, boatId, boatName) {
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) return false;
+  
+  try {
+    await gas('assignInstructorToDailyLog', {
+      date: currentDate,
+      instructorId: instructorId,
+      instructorName: instructorName,
+      assignmentType: assignmentType,
+      boatId: boatId,
+      boatName: boatName,
+      centerName: currentUser?.centerName
+    });
+    return true;
+  } catch(e) {
+    console.warn('recordInstructorAssignment error:', e);
+    return false;
+  }
+}
 function openBeachInstructorsModal() {
   if (!isSingleDateRange()) {
     showToast('لا يمكن اختيار المدربين إلا عند تحديد تاريخ واحد', 'error');
@@ -1909,12 +2091,45 @@ async function saveBoatsAndInstructors() {
     return;
   }
   
+  // جمع جميع المدربين المختارين للمراكب مع معلومات المركب
+  const boatInstructorsToSave = [];
+  for (const [boatId, instructors] of Object.entries(boatInstructorsMap)) {
+    const boat = cachedBoats.find(b => b.id === boatId);
+    const boatName = boat?.name || boatId;
+    for (const instructorId of instructors) {
+      boatInstructorsToSave.push({
+        instructorId: instructorId,
+        boatId: boatId,
+        boatName: boatName
+      });
+    }
+  }
+  
+  // التحقق من توفر كل مدرب قبل الحفظ
+  for (const item of boatInstructorsToSave) {
+    const instructor = cachedInstructors.find(i => i.id === item.instructorId);
+    const check = await checkInstructorAvailabilityBeforeSave(item.instructorId, 'Boat', item.boatId, item.boatName);
+    if (!check.available) {
+      showToast(check.message || `المدرب ${instructor?.name || item.instructorId} غير متوفر`, 'error');
+      return;
+    }
+  }
+  
   const assignments = currentAssignments || {};
   assignments.boats = selectedBoats;
   assignments.boatInstructorsMap = boatInstructorsMap;
   
   if (await saveAssignmentsForDate(currentDate, assignments)) {
     currentAssignments = assignments;
+    
+    // تسجيل كل مدرب في DailyLog
+    for (const item of boatInstructorsToSave) {
+      const instructor = cachedInstructors.find(i => i.id === item.instructorId);
+      if (instructor) {
+        await recordInstructorAssignment(item.instructorId, instructor.name, 'Boat', item.boatId, item.boatName);
+      }
+    }
+    
     showToast(`Saved ${selectedBoats.length} boats with instructors`, 'success');
     closeModal('boatsModal');
     updateSelectionBadges();
