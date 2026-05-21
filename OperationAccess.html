@@ -1008,7 +1008,12 @@ async function loadInvoices() {
 }
 
 // دالة مساعدة لتطبيع بيانات الفاتورة
-function normalizeInvoice(inv) {
+// ============================================================
+// إصلاح دالة normalizeInvoice وإعادة تحميل البيانات
+// ============================================================
+
+// إعادة تعريف دالة normalizeInvoice بشكل صحيح
+window.normalizeInvoice = function(inv) {
   return {
     ...inv,
     voucherNo: inv.VoucherNo || inv.voucherNo || '',
@@ -1016,19 +1021,20 @@ function normalizeInvoice(inv) {
     issueDate: inv.IssueDate || inv.issueDate || '',
     trip: inv.Trip || inv.trip || '',
     rest: inv.Rest !== undefined ? inv.Rest : inv.rest,
-    sgl: inv.Sgl || inv.sgl || 0,
-    dbl: inv.Dbl || inv.dbl || 0,
-    trpl: inv.Trpl || inv.trpl || 0,
-    extra: inv.Extra || inv.extra || 0,
-    camel: inv.Camel || inv.camel || 0,
-    dinner: inv.Dinner || inv.dinner || 0,
-    vipDinner: inv.VIPDinner || inv.vipDinner || 0,
-    starGazing: inv.StarGazing || inv.starGazing || 0,
-    privateTrip: inv.PrivateTrip || inv.privateTrip || 0,
-    privateTransfer: inv.PrivateTransfer || inv.privateTransfer || 0,
-    adultCount: inv.AdultCount || inv.adultCount || 0,
-    childCount: inv.ChildCount || inv.childCount || 0,
-    infantCount: inv.InfantCount || inv.infantCount || 0,
+    // ✅ تصحيح: الأرقام من الحقول الصحيحة
+    sgl: Number(inv.Sgl) || Number(inv.sgl) || 0,
+    dbl: Number(inv.Dbl) || Number(inv.dbl) || 0,
+    trpl: Number(inv.Trpl) || Number(inv.trpl) || 0,
+    extra: Number(inv.Extra) || Number(inv.extra) || 0,
+    camel: Number(inv.Camel) || Number(inv.camel) || 0,
+    dinner: Number(inv.Dinner) || Number(inv.dinner) || 0,
+    vipDinner: Number(inv.VIPDinner) || Number(inv.vipDinner) || 0,
+    starGazing: Number(inv.StarGazing) || Number(inv.starGazing) || 0,
+    privateTrip: Number(inv.PrivateTrip) || Number(inv.privateTrip) || 0,
+    privateTransfer: Number(inv.PrivateTransfer) || Number(inv.privateTransfer) || 0,
+    adultCount: Number(inv.AdultCount) || Number(inv.adultCount) || 0,
+    childCount: Number(inv.ChildCount) || Number(inv.childCount) || 0,
+    infantCount: Number(inv.InfantCount) || Number(inv.infantCount) || 0,
     hotel: inv.Hotel || inv.hotel || '',
     roomNo: inv.RoomNo || inv.roomNo || '',
     nationality: inv.Nationality || inv.nationality || '',
@@ -1041,9 +1047,76 @@ function normalizeInvoice(inv) {
     invoiceCurrency: inv.InvoiceCurrency || inv.invoiceCurrency || 'LE',
     time: inv.Time || inv.time || '',
     salesName: inv.SalesName || inv.salesName || '',
-    discount: inv.Discount || inv.discount || 0
+    discount: inv.Discount || inv.discount || 0,
+    activitiesText: inv.ActivitiesText || inv.activitiesText || ''
   };
+};
+
+// إعادة تحميل البيانات من الخادم
+async function reloadData() {
+  console.log('🔄 إعادة تحميل البيانات...');
+  
+  const fromDate = document.getElementById('filterFromDate').value;
+  const toDate = document.getElementById('filterToDate').value;
+  const isSingleDate = fromDate && fromDate === toDate;
+  
+  let result;
+  if (isSingleDate) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const parts = fromDate.split('-');
+    const formattedDate = `${parts[2]}/${months[parseInt(parts[1]) - 1]}/${parts[0]}`;
+    result = await gas('getInvoicesByDate', { 
+      dateStr: formattedDate,
+      centerName: currentUser?.centerName
+    });
+  } else {
+    result = await gas('getAllInvoices', { 
+      includeCollection: 'true',
+      centerName: currentUser?.centerName
+    });
+  }
+  
+  if (Array.isArray(result)) {
+    allInvoices = result.filter(inv => {
+      const state = (inv.State || inv.state || '').toLowerCase();
+      return state === 'confirmed' || state === 'pending';
+    }).map(inv => normalizeInvoice(inv));
+    
+    console.log('📊 أول فاتورة بعد التصحيح:', {
+      voucherNo: allInvoices[0]?.voucherNo,
+      sgl: allInvoices[0]?.sgl,
+      dbl: allInvoices[0]?.dbl,
+      trpl: allInvoices[0]?.trpl,
+      extra: allInvoices[0]?.extra
+    });
+    
+    // حساب الإجمالي للتحقق
+    let totalSgl = 0, totalDbl = 0, totalTrpl = 0, totalExtra = 0;
+    allInvoices.forEach(inv => {
+      totalSgl += inv.sgl;
+      totalDbl += inv.dbl;
+      totalTrpl += inv.trpl;
+      totalExtra += inv.extra;
+    });
+    console.log('📊 إجمالي البنود بعد التصحيح:', { totalSgl, totalDbl, totalTrpl, totalExtra });
+    
+    // تحديث الفلاتر وإعادة العرض
+    const tripSet = new Set();
+    allInvoices.forEach(inv => { if (inv.trip) tripSet.add(inv.trip); });
+    uniqueTrips = Array.from(tripSet).sort();
+    initTripFilter();
+    applyFilters();
+    
+    // إعادة تنفيذ renderSummary
+    renderSummary();
+  } else {
+    console.error('فشل تحميل البيانات');
+  }
 }
+
+  
+// تنفيذ إعادة التحميل
+await reloadData();
 function applyFilters() {
   const fromDate = document.getElementById('filterFromDate').value;
   const toDate = document.getElementById('filterToDate').value;
