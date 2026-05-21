@@ -957,7 +957,6 @@ let currentFilterDate = null;
 
 async function loadInvoices() {
   try {
-    // تحديد التاريخ الحالي من الفلاتر
     const fromDate = document.getElementById('filterFromDate').value;
     const toDate = document.getElementById('filterToDate').value;
     const isSingleDate = fromDate && fromDate === toDate;
@@ -965,41 +964,38 @@ async function loadInvoices() {
     let result;
     
     if (isSingleDate) {
-      // ✅ تحسين الأداء: جلب فقط فواتير التاريخ المحدد
       const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
       const parts = fromDate.split('-');
       const formattedDate = `${parts[2]}/${months[parseInt(parts[1]) - 1]}/${parts[0]}`;
-      currentFilterDate = formattedDate;
-      
       result = await gas('getInvoicesByDate', { 
         dateStr: formattedDate,
         centerName: currentUser?.centerName
       });
-      
-      if (!Array.isArray(result)) result = [];
     } else {
-      // للفترات الطويلة، نجلب الكل
       result = await gas('getAllInvoices', { 
         includeCollection: 'true',
         centerName: currentUser?.centerName
       });
-      currentFilterDate = null;
     }
     
     if (Array.isArray(result)) {
+      // ✅ لا تستخدم normalizeInvoice، احتفظ بالبيانات كما هي
       allInvoices = result.filter(inv => {
         const state = (inv.State || inv.state || '').toLowerCase();
         return state === 'confirmed' || state === 'pending';
-      }).map(inv => normalizeInvoice(inv));
+      });
+      
+      console.log('📊 أول فاتورة (بدون تطبيع):', allInvoices[0]);
       
       const tripSet = new Set();
-      allInvoices.forEach(inv => { if (inv.trip) tripSet.add(inv.trip); });
+      allInvoices.forEach(inv => { 
+        const trip = inv.Trip || inv.trip;
+        if (trip) tripSet.add(trip); 
+      });
       uniqueTrips = Array.from(tripSet).sort();
       
       initTripFilter();
       applyFilters();
-    } else {
-      showToast('Failed to load invoices', 'error');
     }
   } catch(e) {
     console.error('loadInvoices error:', e);
@@ -1362,15 +1358,18 @@ function renderPagination() {
 function renderSummary() {
   const trips = {};
   
-  filteredInvoices.forEach(inv => {
-    const tripName = (inv.trip || 'Unknown').trim();
+  // استخدام filteredInvoices بدلاً من allInvoices
+  const invoicesToProcess = filteredInvoices.length > 0 ? filteredInvoices : allInvoices;
+  
+  invoicesToProcess.forEach(inv => {
+    const tripName = (inv.Trip || inv.trip || 'Unknown').trim();
     if (!trips[tripName]) {
       trips[tripName] = { bookings: 0, activities: {} };
     }
     trips[tripName].bookings++;
     
-    // ✅ 1. جمع الأنشطة من ActivitiesText (UpSell)
-    const activitiesText = (inv.activitiesText || '').toString().trim();
+    // ✅ 1. جمع الأنشطة من ActivitiesText
+    const activitiesText = (inv.ActivitiesText || inv.activitiesText || '').toString().trim();
     if (activitiesText) {
       activitiesText.split('|').forEach(part => {
         const match = part.trim().match(/^(.+?)×(\d+(\.\d+)?)$/);
@@ -1382,25 +1381,23 @@ function renderSummary() {
       });
     }
     
-    // ✅ 2. جمع الأنشطة من البنود الأساسية (وهذا كان مفقوداً)
-    const sgl = parseInt(inv.sgl) || 0;      // Single / Adult
-    const dbl = parseInt(inv.dbl) || 0;      // Double / Child
-    const trpl = parseInt(inv.trpl) || 0;    // Triple / Infant
-    const extra = parseInt(inv.extra) || 0;  // Extra / Intro
+    // ✅ 2. جمع الأنشطة من البنود الأساسية (استخدام كلا الصيغتين)
+    const sgl = parseInt(inv.Sgl) || parseInt(inv.sgl) || 0;
+    const dbl = parseInt(inv.Dbl) || parseInt(inv.dbl) || 0;
+    const trpl = parseInt(inv.Trpl) || parseInt(inv.trpl) || 0;
+    const extra = parseInt(inv.Extra) || parseInt(inv.extra) || 0;
+    const camel = parseInt(inv.Camel) || parseInt(inv.camel) || 0;
+    const dinner = parseInt(inv.Dinner) || parseInt(inv.dinner) || 0;
+    const vipDinner = parseInt(inv.VIPDinner) || parseInt(inv.vipDinner) || 0;
+    const starGazing = parseInt(inv.StarGazing) || parseInt(inv.starGazing) || 0;
+    const privateTrip = parseInt(inv.PrivateTrip) || parseInt(inv.privateTrip) || 0;
+    const privateTransfer = parseInt(inv.PrivateTransfer) || parseInt(inv.privateTransfer) || 0;
     
-    const camel = parseInt(inv.camel) || 0;
-    const dinner = parseInt(inv.dinner) || 0;
-    const vipDinner = parseInt(inv.vipDinner) || 0;
-    const starGazing = parseInt(inv.starGazing) || 0;
-    const privateTrip = parseInt(inv.privateTrip) || 0;
-    const privateTransfer = parseInt(inv.privateTransfer) || 0;
-    
-    // تعيين الأسماء حسب الرحلة (يمكن تعديلها حسب احتياجك)
+    // تعيين الأسماء حسب الرحلة
     if (sgl > 0) trips[tripName].activities['Adult'] = (trips[tripName].activities['Adult'] || 0) + sgl;
     if (dbl > 0) trips[tripName].activities['Child'] = (trips[tripName].activities['Child'] || 0) + dbl;
     if (trpl > 0) trips[tripName].activities['Infant'] = (trips[tripName].activities['Infant'] || 0) + trpl;
     if (extra > 0) trips[tripName].activities['Intro'] = (trips[tripName].activities['Intro'] || 0) + extra;
-    
     if (camel > 0) trips[tripName].activities['Camel'] = (trips[tripName].activities['Camel'] || 0) + camel;
     if (dinner > 0) trips[tripName].activities['Dinner'] = (trips[tripName].activities['Dinner'] || 0) + dinner;
     if (vipDinner > 0) trips[tripName].activities['VIP Dinner'] = (trips[tripName].activities['VIP Dinner'] || 0) + vipDinner;
@@ -1448,16 +1445,13 @@ function renderSummary() {
     </div>
   `;
   
-  // إضافة القسم بعد الجدول إذا لم يكن موجوداً
-  if (!document.getElementById('summarySec')) {
+  const existingSummary = document.getElementById('summarySec');
+  if (existingSummary) {
+    existingSummary.outerHTML = summaryHtml;
+  } else {
     const tblWrap = document.querySelector('.tbl-wrap');
     if (tblWrap) {
       tblWrap.insertAdjacentHTML('afterend', summaryHtml);
-    }
-  } else {
-    const oldSummary = document.getElementById('summarySec');
-    if (oldSummary) {
-      oldSummary.outerHTML = summaryHtml;
     }
   }
 }
