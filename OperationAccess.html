@@ -952,56 +952,48 @@ function updateLocalInvoice(voucherNo, field, value) {
 // ============================================================
 // LOAD INVOICES (ONLY ONCE)
 // ============================================================
+// متغير لتخزين التاريخ الحالي للفلاتر
+let currentFilterDate = null;
+
 async function loadInvoices() {
   try {
-    const result = await jsonpRequest('getAllInvoices', { 
-      includeCollection: 'true',
-      centerName: currentUser?.centerName
-    });
+    // تحديد التاريخ الحالي من الفلاتر
+    const fromDate = document.getElementById('filterFromDate').value;
+    const toDate = document.getElementById('filterToDate').value;
+    const isSingleDate = fromDate && fromDate === toDate;
+    
+    let result;
+    
+    if (isSingleDate) {
+      // ✅ تحسين الأداء: جلب فقط فواتير التاريخ المحدد
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const parts = fromDate.split('-');
+      const formattedDate = `${parts[2]}/${months[parseInt(parts[1]) - 1]}/${parts[0]}`;
+      currentFilterDate = formattedDate;
+      
+      result = await gas('getInvoicesByDate', { 
+        dateStr: formattedDate,
+        centerName: currentUser?.centerName
+      });
+      
+      if (!Array.isArray(result)) result = [];
+    } else {
+      // للفترات الطويلة، نجلب الكل
+      result = await gas('getAllInvoices', { 
+        includeCollection: 'true',
+        centerName: currentUser?.centerName
+      });
+      currentFilterDate = null;
+    }
     
     if (Array.isArray(result)) {
       allInvoices = result.filter(inv => {
         const state = (inv.State || inv.state || '').toLowerCase();
         return state === 'confirmed' || state === 'pending';
-      }).map(inv => ({
-        ...inv,
-        voucherNo: inv.VoucherNo || inv.voucherNo || '',
-        activeDate: inv.ActiveDate || inv.activeDate || '',
-        issueDate: inv.IssueDate || inv.issueDate || '',
-        trip: inv.Trip || inv.trip || '',
-        rest: inv.Rest !== undefined ? inv.Rest : inv.rest,
-        sgl: inv.Sgl || inv.sgl || 0,
-        dbl: inv.Dbl || inv.dbl || 0,
-        trpl: inv.Trpl || inv.trpl || 0,
-        extra: inv.Extra || inv.extra || 0,
-        camel: inv.Camel || inv.camel || 0,
-        dinner: inv.Dinner || inv.dinner || 0,
-        vipDinner: inv.VIPDinner || inv.vipDinner || 0,
-        starGazing: inv.StarGazing || inv.starGazing || 0,
-        privateTrip: inv.PrivateTrip || inv.privateTrip || 0,
-        privateTransfer: inv.PrivateTransfer || inv.privateTransfer || 0,
-        adultCount: inv.AdultCount || inv.adultCount || 0,
-        childCount: inv.ChildCount || inv.childCount || 0,
-        infantCount: inv.InfantCount || inv.infantCount || 0,
-        hotel: inv.Hotel || inv.hotel || '',
-        roomNo: inv.RoomNo || inv.roomNo || '',
-        nationality: inv.Nationality || inv.nationality || '',
-        guestName: inv.GuestName || inv.guestName || '',
-        contactNo: inv.ContactNo || inv.contactNo || '',
-        notes: inv.Notes || inv.notes || '',
-        supplier: inv.Supplier || inv.supplier || '',
-        customer: inv.Customer || inv.customer || '',
-        state: inv.State || inv.state || '',
-        invoiceCurrency: inv.InvoiceCurrency || inv.invoiceCurrency || 'LE',
-        time: inv.Time || inv.time || '',
-        salesName: inv.SalesName || inv.salesName || '',
-        discount: inv.Discount || inv.discount || 0
-      }));
+      }).map(inv => normalizeInvoice(inv));
       
       const tripSet = new Set();
-      allInvoices.forEach(inv => {
-        if (inv.trip) tripSet.add(inv.trip);
-      });
+      allInvoices.forEach(inv => { if (inv.trip) tripSet.add(inv.trip); });
       uniqueTrips = Array.from(tripSet).sort();
       
       initTripFilter();
@@ -1015,6 +1007,43 @@ async function loadInvoices() {
   }
 }
 
+// دالة مساعدة لتطبيع بيانات الفاتورة
+function normalizeInvoice(inv) {
+  return {
+    ...inv,
+    voucherNo: inv.VoucherNo || inv.voucherNo || '',
+    activeDate: inv.ActiveDate || inv.activeDate || '',
+    issueDate: inv.IssueDate || inv.issueDate || '',
+    trip: inv.Trip || inv.trip || '',
+    rest: inv.Rest !== undefined ? inv.Rest : inv.rest,
+    sgl: inv.Sgl || inv.sgl || 0,
+    dbl: inv.Dbl || inv.dbl || 0,
+    trpl: inv.Trpl || inv.trpl || 0,
+    extra: inv.Extra || inv.extra || 0,
+    camel: inv.Camel || inv.camel || 0,
+    dinner: inv.Dinner || inv.dinner || 0,
+    vipDinner: inv.VIPDinner || inv.vipDinner || 0,
+    starGazing: inv.StarGazing || inv.starGazing || 0,
+    privateTrip: inv.PrivateTrip || inv.privateTrip || 0,
+    privateTransfer: inv.PrivateTransfer || inv.privateTransfer || 0,
+    adultCount: inv.AdultCount || inv.adultCount || 0,
+    childCount: inv.ChildCount || inv.childCount || 0,
+    infantCount: inv.InfantCount || inv.infantCount || 0,
+    hotel: inv.Hotel || inv.hotel || '',
+    roomNo: inv.RoomNo || inv.roomNo || '',
+    nationality: inv.Nationality || inv.nationality || '',
+    guestName: inv.GuestName || inv.guestName || '',
+    contactNo: inv.ContactNo || inv.contactNo || '',
+    notes: inv.Notes || inv.notes || '',
+    supplier: inv.Supplier || inv.supplier || '',
+    customer: inv.Customer || inv.customer || '',
+    state: inv.State || inv.state || '',
+    invoiceCurrency: inv.InvoiceCurrency || inv.invoiceCurrency || 'LE',
+    time: inv.Time || inv.time || '',
+    salesName: inv.SalesName || inv.salesName || '',
+    discount: inv.Discount || inv.discount || 0
+  };
+}
 function applyFilters() {
   const fromDate = document.getElementById('filterFromDate').value;
   const toDate = document.getElementById('filterToDate').value;
@@ -1881,8 +1910,19 @@ async function loadBeachInstructorsList() {
       instructors = await gas('getInstructors');
       cachedInstructors = instructors;
     }
-    if (Array.isArray(instructors)) {
-      const listHtml = instructors.map(inst => {
+    
+    // ✅ استبعاد المدربين الموجودين في المراكب
+    const allBoatInstructors = [];
+    for (const instructors of Object.values(boatInstructorsMap)) {
+      allBoatInstructors.push(...instructors);
+    }
+    
+    const availableInstructors = instructors.filter(inst => 
+      !allBoatInstructors.includes(inst.id)
+    );
+    
+    if (Array.isArray(availableInstructors)) {
+      const listHtml = availableInstructors.map(inst => {
         const isSelected = selectedBeachInstructors.includes(inst.id);
         return `
           <div class="selection-item" onclick="toggleBeachInstructor('${inst.id}')">
@@ -1891,11 +1931,13 @@ async function loadBeachInstructorsList() {
           </div>
         `;
       }).join('');
-      document.getElementById('beachInstructorsList').innerHTML = listHtml || '<div class="selection-item">No instructors found</div>';
+      document.getElementById('beachInstructorsList').innerHTML = listHtml || '<div class="selection-item">لا يوجد مدربين متاحين</div>';
     }
-  } catch(e) { showToast('Error loading instructors', 'error'); }
+  } catch(e) { 
+    showToast('خطأ في تحميل المدربين', 'error'); 
+  }
 }
-
+  
 function toggleBeachInstructor(id) {
   const index = selectedBeachInstructors.indexOf(id);
   if (index === -1) selectedBeachInstructors.push(id);
@@ -1907,7 +1949,23 @@ function toggleBeachInstructor(id) {
 async function saveBeachInstructors() {
   const currentDate = getCurrentDateISO();
   if (!currentDate) {
-    showToast('Please select a single date first', 'error');
+    showToast('الرجاء تحديد تاريخ واحد أولاً', 'error');
+    return;
+  }
+  
+  // ✅ التحقق من عدم وجود مدرب في قائمة الشاطئ موجود بالفعل في المراكب
+  const allBoatInstructors = [];
+  for (const instructors of Object.values(boatInstructorsMap)) {
+    allBoatInstructors.push(...instructors);
+  }
+  
+  const duplicateInBoats = selectedBeachInstructors.filter(id => allBoatInstructors.includes(id));
+  if (duplicateInBoats.length > 0) {
+    const duplicateNames = duplicateInBoats.map(id => {
+      const inst = cachedInstructors.find(i => i.id === id);
+      return inst?.name || id;
+    }).join(', ');
+    showToast(`⚠️ لا يمكن تعيين نفس المدرب في الشاطئ والمركب: ${duplicateNames}`, 'error');
     return;
   }
   
@@ -1917,12 +1975,55 @@ async function saveBeachInstructors() {
   const success = await saveAssignmentsForDate(currentDate, assignments);
   if (success) {
     currentAssignments = assignments;
-    showToast(`Saved ${selectedBeachInstructors.length} beach instructors`, 'success');
+    
+    // تسجيل مدربي الشاطئ في DailyLog
+    for (const instructorId of selectedBeachInstructors) {
+      const instructor = cachedInstructors.find(i => i.id === instructorId);
+      if (instructor) {
+        await recordInstructorAssignment(instructorId, instructor.name, 'Beach', '', '');
+      }
+    }
+    
+    showToast(`✅ تم حفظ ${selectedBeachInstructors.length} مدرب شاطئ`, 'success');
     closeModal('beachInstructorsModal');
     updateSelectionBadges();
+    
+    // ✅ تحديث الجدول محلياً فقط
+    refreshTableData();
   } else {
-    showToast('Failed to save assignments', 'error');
+    showToast('فشل حفظ البيانات', 'error');
   }
+}
+  // دالة لتحديث الجدول من البيانات الموجودة (بدون API)
+function refreshTableData() {
+  // إعادة تطبيق الفلاتر على البيانات الموجودة
+  applyFilters();
+  
+  // إذا كان هناك تاريخ محدد، أعد تحميل التعيينات
+  const currentDate = getCurrentDateISO();
+  if (currentDate) {
+    loadAndPopulateAssignments(currentDate);
+  }
+}
+
+// استبدل دالة onDateChange بهذه النسخة
+async function onDateChange() {
+  const currentDate = getCurrentDateISO();
+  if (currentDate) {
+    // تحميل البيانات من الخادم (مرة واحدة فقط)
+    await loadInvoices();
+    await loadAndPopulateAssignments(currentDate);
+  } else {
+    // إذا لم يكن تاريخ واحد، أعد تحميل الكل
+    await loadInvoices();
+    selectedBeachInstructors = [];
+    selectedBoats = [];
+    boatInstructorsMap = {};
+    selectedVehicles = [];
+    updateSelectionBadges();
+  }
+  applyFilters();
+  updateSelectionButtonsState();
 }
 // ============================================================
 // التحقق من توفر المدرب قبل الحفظ
@@ -1992,8 +2093,12 @@ async function loadBoatsWithInstructors() {
       cachedInstructors = instructors;
     }
     
+    // ✅ استبعاد المدربين الموجودين في Beach Instructors
+    const availableInstructors = instructors.filter(inst => 
+      !selectedBeachInstructors.includes(inst.id)
+    );
+    
     if (!Array.isArray(boats)) boats = [];
-    if (!Array.isArray(instructors)) instructors = [];
     
     let html = '';
     for (const boat of boats) {
@@ -2004,14 +2109,14 @@ async function loadBoatsWithInstructors() {
         <div class="boat-card">
           <div class="boat-card-header">
             <input type="checkbox" class="boat-select" data-id="${boat.id}" data-name="${escapeHtml(boat.name)}" ${isBoatSelected ? 'checked' : ''} onchange="toggleBoatSelection('${boat.id}')">
-            <span style="margin-left:8px;">⛵ ${escapeHtml(boat.name)} (Capacity: ${boat.capacity || 0})</span>
+            <span style="margin-left:8px;">⛵ ${escapeHtml(boat.name)} (السعة: ${boat.capacity || 0})</span>
           </div>
           <div id="boat-instructors-${boat.id}" style="margin-top:8px; padding-left:24px; ${isBoatSelected ? '' : 'display:none;'}">
-            <div style="font-size:11px; font-weight:700; margin-bottom:6px;">👨‍🏫 Select Instructors for this boat:</div>
+            <div style="font-size:11px; font-weight:700; margin-bottom:6px;">👨‍🏫 اختيار مدربين لهذا المركب:</div>
             <div class="selection-list" style="max-height:200px;">
       `;
       
-      for (const inst of instructors) {
+      for (const inst of availableInstructors) {
         const isSelected = selectedInstructorsForBoat.includes(inst.id);
         html += `
           <div class="selection-item" onclick="toggleBoatInstructor('${boat.id}', '${inst.id}')">
@@ -2028,10 +2133,10 @@ async function loadBoatsWithInstructors() {
       `;
     }
     
-    document.getElementById('boatsSelectionContainer').innerHTML = html || '<div>No boats found</div>';
+    document.getElementById('boatsSelectionContainer').innerHTML = html || '<div>لا توجد مراكب</div>';
     
   } catch(e) {
-    showToast('Error loading boats: ' + e.message, 'error');
+    showToast('خطأ في تحميل المراكب: ' + e.message, 'error');
   }
 }
 
@@ -2079,6 +2184,35 @@ async function saveBoatsAndInstructors() {
     return;
   }
   
+  // ✅ التحقق من عدم تكرار المدربين
+  const allBoatInstructors = [];
+  for (const instructors of Object.values(boatInstructorsMap)) {
+    allBoatInstructors.push(...instructors);
+  }
+  
+  // التحقق من عدم وجود مدرب في قائمة الشاطئ وفي المراكب معاً
+  const duplicateInBeach = selectedBeachInstructors.filter(id => allBoatInstructors.includes(id));
+  if (duplicateInBeach.length > 0) {
+    const duplicateNames = duplicateInBeach.map(id => {
+      const inst = cachedInstructors.find(i => i.id === id);
+      return inst?.name || id;
+    }).join(', ');
+    showToast(`⚠️ لا يمكن تعيين نفس المدرب في الشاطئ والمركب: ${duplicateNames}`, 'error');
+    return;
+  }
+  
+  // التحقق من عدم وجود مدرب في أكثر من مركب
+  const instructorCount = {};
+  for (const id of allBoatInstructors) {
+    instructorCount[id] = (instructorCount[id] || 0) + 1;
+    if (instructorCount[id] > 1) {
+      const inst = cachedInstructors.find(i => i.id === id);
+      showToast(`⚠️ المدرب ${inst?.name || id} موجود في أكثر من مركب`, 'error');
+      return;
+    }
+  }
+  
+  // ✅ حفظ البيانات (بدون إعادة تحميل الفواتير بالكامل)
   const assignments = currentAssignments || {};
   assignments.boats = selectedBoats;
   assignments.boatInstructorsMap = boatInstructorsMap;
@@ -2087,7 +2221,7 @@ async function saveBoatsAndInstructors() {
   if (success) {
     currentAssignments = assignments;
     
-    // ✅ أضف هذا القسم لتسجيل مدربي المراكب
+    // تسجيل مدربي المراكب في DailyLog
     for (const [boatId, instructors] of Object.entries(boatInstructorsMap)) {
       const boat = cachedBoats.find(b => b.id === boatId);
       const boatName = boat?.name || boatId;
@@ -2099,11 +2233,14 @@ async function saveBoatsAndInstructors() {
       }
     }
     
-    showToast(`Saved ${selectedBoats.length} boats with instructors`, 'success');
+    showToast(`✅ تم حفظ ${selectedBoats.length} مركب مع المدربين`, 'success');
     closeModal('boatsModal');
     updateSelectionBadges();
+    
+    // ✅ تحديث الجدول محلياً فقط (بدون إعادة تحميل كامل)
+    refreshTableData();
   } else {
-    showToast('Failed to save assignments', 'error');
+    showToast('فشل حفظ البيانات', 'error');
   }
 }
   
