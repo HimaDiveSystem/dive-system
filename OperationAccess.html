@@ -2180,7 +2180,7 @@ function toggleBoatInstructor(boatId, instructorId) {
 async function saveBoatsAndInstructors() {
   const currentDate = getCurrentDateISO();
   if (!currentDate) {
-    showToast('Please select a single date first', 'error');
+    showToast('الرجاء تحديد تاريخ واحد أولاً', 'error');
     return;
   }
   
@@ -2212,23 +2212,32 @@ async function saveBoatsAndInstructors() {
     }
   }
   
-  // ✅ حفظ البيانات (بدون إعادة تحميل الفواتير بالكامل)
+  // ✅ حفظ البيانات
   const assignments = currentAssignments || {};
   assignments.boats = selectedBoats;
   assignments.boatInstructorsMap = boatInstructorsMap;
   
   const success = await saveAssignmentsForDate(currentDate, assignments);
   if (success) {
-    currentAssignments = assignments;
+    // ✅ تحديث المتغيرات العامة
+    window.currentAssignments = assignments;
+    window.selectedBoats = [...selectedBoats];
+    window.boatInstructorsMap = JSON.parse(JSON.stringify(boatInstructorsMap));
     
-    // تسجيل مدربي المراكب في DailyLog
+    // ✅ تسجيل مدربي المراكب في DailyLog (مع التحقق من عدم التكرار)
     for (const [boatId, instructors] of Object.entries(boatInstructorsMap)) {
       const boat = cachedBoats.find(b => b.id === boatId);
       const boatName = boat?.name || boatId;
       for (const instructorId of instructors) {
         const instructor = cachedInstructors.find(i => i.id === instructorId);
         if (instructor) {
-          await recordInstructorAssignment(instructorId, instructor.name, 'Boat', boatId, boatName);
+          // ✅ التحقق من عدم وجود تسجيل مسبق قبل الإضافة
+          const alreadyAssigned = await checkInstructorAssignmentExists(currentDate, instructorId, boatId);
+          if (!alreadyAssigned) {
+            await recordInstructorAssignment(instructorId, instructor.name, 'Boat', boatId, boatName);
+          } else {
+            console.log(`⏭️ المدرب ${instructor.name} مسجل مسبقاً في هذا التاريخ للمركب ${boatName}`);
+          }
         }
       }
     }
@@ -2237,11 +2246,31 @@ async function saveBoatsAndInstructors() {
     closeModal('boatsModal');
     updateSelectionBadges();
     
-    // ✅ تحديث الجدول محلياً فقط (بدون إعادة تحميل كامل)
+    // تحديث الجدول
     refreshTableData();
   } else {
     showToast('فشل حفظ البيانات', 'error');
   }
+}
+
+  // دالة للتحقق من وجود تسجيل مسبق للمدرب في نفس اليوم
+async function checkInstructorAssignmentExists(date, instructorId, boatId) {
+  try {
+    const result = await gas('getInstructorAssignments', { 
+      date: date,
+      centerName: currentUser?.centerName
+    });
+    
+    if (result && result.success && result.data) {
+      return result.data.some(assignment => 
+        assignment.instructorId === instructorId && 
+        assignment.boatId === boatId
+      );
+    }
+  } catch(e) {
+    console.warn('checkInstructorAssignmentExists error:', e);
+  }
+  return false;
 }
   
 function openBoatsModal() {
