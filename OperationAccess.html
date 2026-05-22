@@ -718,7 +718,16 @@ function jsonpRequest(action, params = {}) {
 }
 
 function gas(action, params = {}) {
-  return jsonpRequest(action, params);
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      reject(new Error('Request timeout after 15 seconds'));
+    }, 15000);  // ✅ 15 ثانية كافية لـ 90 فاتورة
+    
+    jsonpRequest(action, params)
+      .then(resolve)
+      .catch(reject)
+      .finally(() => clearTimeout(timeoutId));
+  });
 }
 
 // ============================================================
@@ -977,17 +986,24 @@ function updateLocalInvoice(voucherNo, field, value) {
 // ============================================================
 // LOAD INVOICES (ONLY ONCE)
 // ============================================================
-// متغير لتخزين التاريخ الحالي للفلاتر
-let currentFilterDate = null;
+let invoicesLoaded = false;
 
 async function loadInvoices() {
+  // ✅ إذا كانت البيانات محملة مسبقاً، لا تعيد التحميل
+  if (invoicesLoaded && allInvoices.length > 0) {
+    console.log('📦 استخدام البيانات المخزنة (${allInvoices.length} فاتورة)');
+    applyFilters();
+    return;
+  }
+  
   try {
+    showToast('جاري تحميل البيانات...', 'info');
+    
     const fromDate = document.getElementById('filterFromDate').value;
     const toDate = document.getElementById('filterToDate').value;
     const isSingleDate = fromDate && fromDate === toDate;
     
     let result;
-    
     if (isSingleDate) {
       const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
       const parts = fromDate.split('-');
@@ -1004,19 +1020,12 @@ async function loadInvoices() {
     }
     
     if (Array.isArray(result)) {
-      // ✅ IMPORTANT: Reset allInvoices before adding new data
-      allInvoices = [];
-      
-      const filtered = result.filter(inv => {
+      allInvoices = result.filter(inv => {
         const state = (inv.State || inv.state || '').toLowerCase();
         return state === 'confirmed' || state === 'pending';
       });
       
-      // ✅ إضافة البيانات إلى allInvoices
-      allInvoices.push(...filtered);
-      
-      console.log('📊 عدد الفواتير بعد التصفية:', allInvoices.length);
-      console.log('📊 أرقام الفواتير الفريدة:', [...new Set(allInvoices.map(inv => inv.VoucherNo || inv.voucherNo))]);
+      invoicesLoaded = true;  // ✅ علامة بأن البيانات محملة
       
       const tripSet = new Set();
       allInvoices.forEach(inv => { 
@@ -1027,8 +1036,7 @@ async function loadInvoices() {
       
       initTripFilter();
       applyFilters();
-    } else {
-      showToast('Failed to load invoices', 'error');
+      showToast(`تم تحميل ${allInvoices.length} فاتورة`, 'success');
     }
   } catch(e) {
     console.error('loadInvoices error:', e);
@@ -1143,12 +1151,22 @@ async function reloadData() {
 }
 
 
+let lastFilterParams = {};
+
 function applyFilters() {
   const fromDate = document.getElementById('filterFromDate').value;
   const toDate = document.getElementById('filterToDate').value;
   const search = document.getElementById('filterSearch').value.toLowerCase();
   const state = document.getElementById('filterState').value;
   const selectedTrips = getSelectedTrips();
+  
+  // ✅ التحقق إذا كانت الفلاتر لم تتغير
+  const currentParams = JSON.stringify({ fromDate, toDate, search, state, selectedTrips });
+  if (currentParams === lastFilterParams && filteredInvoices.length > 0) {
+    console.log('⏭️ الفلاتر لم تتغير، تخطي');
+    return;
+  }
+  lastFilterParams = currentParams;
   
   let fromDateObj = null;
   let toDateObj = null;
@@ -1162,27 +1180,28 @@ function applyFilters() {
     toDateObj.setHours(23, 59, 59, 999);
   }
   
-  filteredInvoices = allInvoices.filter(inv => {
-    const activeDate = inv.ActiveDate || inv.activeDate || '';
+  // ✅ استخدام for loop بدلاً من filter (أسرع قليلاً)
+  filteredInvoices = [];
+  for (let i = 0; i < allInvoices.length; i++) {
+    const inv = allInvoices[i];
+    const activeDate = inv.activeDate || '';
     const parsedDate = parseDateFromString(activeDate);
     
-    if (fromDateObj && parsedDate && parsedDate < fromDateObj) return false;
-    if (toDateObj && parsedDate && parsedDate > toDateObj) return false;
-    if (state && (inv.State || inv.state || '').toLowerCase() !== state) return false;
-    if (selectedTrips.length > 0 && !selectedTrips.includes(inv.Trip || inv.trip)) return false;
+    if (fromDateObj && parsedDate && parsedDate < fromDateObj) continue;
+    if (toDateObj && parsedDate && parsedDate > toDateObj) continue;
+    if (state && (inv.state || '').toLowerCase() !== state) continue;
+    if (selectedTrips.length > 0 && !selectedTrips.includes(inv.trip)) continue;
     
     if (search) {
-      const voucher = (inv.VoucherNo || inv.voucherNo || '').toLowerCase();
-      const guest = (inv.GuestName || inv.guestName || '').toLowerCase();
-      if (!voucher.includes(search) && !guest.includes(search)) return false;
+      const voucher = (inv.voucherNo || '').toLowerCase();
+      const guest = (inv.guestName || '').toLowerCase();
+      if (!voucher.includes(search) && !guest.includes(search)) continue;
     }
     
-    return true;
-  });
+    filteredInvoices.push(inv);
+  }
   
-  // تحديث قائمة الرحلات بناءً على الفلاتر الحالية
   updateTripFilterFromCurrentData();
-  
   doSort();
   currentPage = 1;
   renderTable();
@@ -2768,7 +2787,10 @@ async function saveVehiclesSelection() {
 // تخزين مؤقت للصفوف المضافة
 let tempVehicleRows = [];
 
-function openVehiclesModal() {
+async function openVehiclesModal() {
+  // ✅ إظهار مؤشر التحميل
+  showToast('جاري تحميل البيانات...', 'info');
+  
   if (!isSingleDateRange()) {
     showToast('لا يمكن اختيار السيارات إلا عند تحديد تاريخ واحد', 'error');
     return;
@@ -2789,7 +2811,13 @@ function openVehiclesModal() {
   }
   
   // جلب السيارات من نوع passengers
-  const passengerVehicles = cachedVehicles.filter(v => 
+  let allVehicles = cachedVehicles;
+  if (!allVehicles || allVehicles.length === 0) {
+    allVehicles = await gas('getVehicles');
+    cachedVehicles = allVehicles;
+  }
+  
+  const passengerVehicles = allVehicles.filter(v => 
     v.isActive === true && v.usageType === 'passengers' && v.capacity > 0
   );
   
@@ -2799,28 +2827,28 @@ function openVehiclesModal() {
   }
   
   // تحميل السجلات المحفوظة
-  loadSavedVehicleRecords(currentDate);
+  await loadSavedVehicleRecords(currentDate);
   
   let html = `
     <div class="summary-box" style="background: var(--navy); color: white; margin-bottom: 16px;">
       <strong>📅 Date:</strong> ${currentDate}<br>
       <strong>🚌 Available Trips:</strong> ${tripsOnDate.join(', ')}
     </div>
-    <div id="vehicleRowsContainer" style="margin-bottom: 16px;">
+    <div id="vehicleRowsContainer" style="margin-bottom: 16px; max-height: 500px; overflow-y: auto;">
   `;
   
   // عرض الصفوف المحفوظة
-  for (let i = 0; i < tempVehicleRows.length; i++) {
-    const row = tempVehicleRows[i];
-    html += generateVehicleRowHTML(i, row.vehicleId, row.tripName, row.goCount, row.returnCount, passengerVehicles, tripsOnDate);
-  }
-  
-  // إذا لم توجد صفوف، اعرض صفاً فارغاً واحداً
-  if (tempVehicleRows.length === 0) {
+  if (tempVehicleRows.length > 0) {
+    for (let i = 0; i < tempVehicleRows.length; i++) {
+      const row = tempVehicleRows[i];
+      html += generateVehicleRowHTML(i, row.vehicleId, row.tripName, row.goCount, row.returnCount, passengerVehicles, tripsOnDate);
+    }
+  } else {
+    // إذا لم توجد صفوف، اعرض صفاً فارغاً واحداً
     html += generateVehicleRowHTML(0, '', '', 0, 0, passengerVehicles, tripsOnDate);
   }
   
- html += `
+  html += `
     </div>
     <div style="display: flex; gap: 10px; justify-content: space-between; margin-top: 16px; flex-wrap: wrap;">
       <button class="btn btn-success" onclick="addVehicleRow()" style="background: var(--green); color: white;">➕ Add Row</button>
@@ -2833,11 +2861,17 @@ function openVehiclesModal() {
   
   document.getElementById('vehiclesList').innerHTML = html;
   openModal('vehiclesModal');
+  
+  // ربط المستمعين للصفوف الموجودة
+  for (let i = 0; i < tempVehicleRows.length; i++) {
+    attachVehicleRowEvents(i);
+  }
+  if (tempVehicleRows.length === 0) {
+    attachVehicleRowEvents(0);
+  }
 }
   
-// دالة لتوليد HTML لصف واحد
-// دالة لتوليد HTML لصف واحد
-function generateVehicleRowHTML(index, selectedVehicleId, selectedTrip, goCount, returnCount, vehicles, trips) {
+  function generateVehicleRowHTML(index, selectedVehicleId, selectedTrip, goCount, returnCount, vehicles, trips) {
   // إخفاء الأصفار: إذا كانت القيمة 0، اعرض سلسلة فارغة
   const goValue = (goCount > 0) ? goCount : '';
   const returnValue = (returnCount > 0) ? returnCount : '';
@@ -2892,13 +2926,21 @@ function addVehicleRow() {
   
   // إضافة مستمعي الأحداث للعناصر الجديدة
   attachVehicleRowEvents(newIndex);
+  
+  // التمرير إلى الصف الجديد
+  const newRow = container.lastElementChild;
+  if (newRow) {
+    newRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
 }
-
 // حذف صف
 function removeVehicleRow(index) {
-  tempVehicleRows.splice(index, 1);
-  // إعادة بناء القائمة بالكامل
-  rebuildVehicleRows();
+  if (confirm('هل أنت متأكد من حذف هذا الصف؟')) {
+    tempVehicleRows.splice(index, 1);
+    // إعادة بناء القائمة بالكامل
+    rebuildVehicleRows();
+    showToast('تم حذف الصف', 'info');
+  }
 }
 
 // إعادة بناء جميع الصفوف
@@ -2931,7 +2973,6 @@ function rebuildVehicleRows() {
 }
 
 // ربط مستمعي الأحداث لصف معين
-// ربط مستمعي الأحداث لصف معين
 function attachVehicleRowEvents(index) {
   const vehicleSelect = document.querySelector(`.vehicle-select[data-row="${index}"]`);
   const tripSelect = document.querySelector(`.trip-select[data-row="${index}"]`);
@@ -2942,29 +2983,137 @@ function attachVehicleRowEvents(index) {
     vehicleSelect.onchange = function() {
       if (!tempVehicleRows[index]) tempVehicleRows[index] = {};
       tempVehicleRows[index].vehicleId = this.value;
-      console.log('Updated tempVehicleRows', tempVehicleRows);
     };
   }
   if (tripSelect) {
     tripSelect.onchange = function() {
       if (!tempVehicleRows[index]) tempVehicleRows[index] = {};
       tempVehicleRows[index].tripName = this.value;
-      console.log('Updated tempVehicleRows', tempVehicleRows);
     };
   }
   if (goInput) {
     goInput.oninput = function() {
       if (!tempVehicleRows[index]) tempVehicleRows[index] = {};
       tempVehicleRows[index].goCount = parseInt(this.value) || 0;
-      console.log('Updated goCount:', tempVehicleRows[index].goCount);
     };
   }
   if (returnInput) {
     returnInput.oninput = function() {
       if (!tempVehicleRows[index]) tempVehicleRows[index] = {};
       tempVehicleRows[index].returnCount = parseInt(this.value) || 0;
-      console.log('Updated returnCount:', tempVehicleRows[index].returnCount);
     };
+  }
+}
+
+// تحميل السجلات المحفوظة
+async function loadSavedVehicleRecords(date) {
+  try {
+    const result = await gas('getVehicleTripRecords', { 
+      date: date,
+      centerName: currentUser?.centerName
+    });
+    if (result && result.success && result.data) {
+      tempVehicleRows = [];
+      for (const [key, record] of Object.entries(result.data)) {
+        const [tripName, vehicleId] = key.split('|');
+        tempVehicleRows.push({
+          vehicleId: vehicleId,
+          tripName: tripName,
+          goCount: record.goCount || 0,
+          returnCount: record.returnCount || 0
+        });
+      }
+    } else {
+      tempVehicleRows = [];
+    }
+  } catch(e) {
+    console.warn('loadSavedVehicleRecords error:', e);
+    tempVehicleRows = [];
+  }
+}
+
+// حفظ جميع الصفوف - قراءة مباشرة من DOM
+async function saveAllVehicleRows() {
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) {
+    showToast('الرجاء تحديد تاريخ أولاً', 'error');
+    return;
+  }
+  
+  // ✅ منع الضغط المتكرر
+  const saveBtn = document.querySelector('#vehiclesModal .btn-primary');
+  const originalText = saveBtn ? saveBtn.textContent : '✅ Save All';
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = '⏳ Saving...';
+  }
+  
+  try {
+    // قراءة جميع الصفوف من DOM مباشرة
+    const rows = document.querySelectorAll('.vehicle-row');
+    const records = [];
+    
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const vehicleSelect = row.querySelector('.vehicle-select');
+      const tripSelect = row.querySelector('.trip-select');
+      const goInput = row.querySelector('.go-count');
+      const returnInput = row.querySelector('.return-count');
+      
+      const vehicleId = vehicleSelect ? vehicleSelect.value : '';
+      const tripName = tripSelect ? tripSelect.value : '';
+      const goCount = parseInt(goInput ? goInput.value : 0) || 0;
+      const returnCount = parseInt(returnInput ? returnInput.value : 0) || 0;
+      
+      if (vehicleId && tripName && (goCount > 0 || returnCount > 0)) {
+        // التحقق من عدم التكرار في نفس الطلب
+        const exists = records.some(r => r.vehicleId === vehicleId && r.tripName === tripName);
+        if (!exists) {
+          records.push({
+            tripName: tripName,
+            vehicleId: vehicleId,
+            goCount: goCount,
+            returnCount: returnCount
+          });
+        }
+      }
+    }
+    
+    if (records.length === 0) {
+      showToast('⚠️ الرجاء اختيار سيارة ورحلة وإدخال أرقام', 'error');
+      return;
+    }
+    
+    const result = await gas('saveVehicleTripRecords', {
+      date: currentDate,
+      records: JSON.stringify(records),
+      centerName: currentUser?.centerName
+    });
+    
+    if (result && result.success) {
+      showToast(`✅ تم حفظ ${result.savedCount || records.length} تشغيل`, 'success');
+      
+      // تحديث tempVehicleRows
+      tempVehicleRows = records.map(r => ({
+        vehicleId: r.vehicleId,
+        tripName: r.tripName,
+        goCount: r.goCount,
+        returnCount: r.returnCount
+      }));
+      
+      closeModal('vehiclesModal');
+      await loadAndPopulateAssignments(currentDate);
+    } else {
+      showToast('فشل حفظ البيانات: ' + (result?.message || 'خطأ غير معروف'), 'error');
+    }
+  } catch(e) {
+    console.error('saveAllVehicleRows error:', e);
+    showToast('Error: ' + e.message, 'error');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = originalText;
+    }
   }
 }
  
@@ -3215,103 +3364,6 @@ async function saveTimeUpdate() {
   closeModal('timeModal');
   pendingTimeVoucher = null;
 }
-// ============================================================
-// LOGISTICS VEHICLES - Professional Version (Luggage Only)
-// ============================================================
-
-// تحميل السجلات المحفوظة
-async function loadSavedVehicleRecords(date) {
-  try {
-    const result = await gas('getVehicleTripRecords', { date: date });
-    if (result && result.success && result.data) {
-      tempVehicleRows = [];
-      for (const [key, record] of Object.entries(result.data)) {
-        const [tripName, vehicleId] = key.split('|');
-        tempVehicleRows.push({
-          vehicleId: vehicleId,
-          tripName: tripName,
-          goCount: record.goCount || 0,
-          returnCount: record.returnCount || 0
-        });
-      }
-    } else {
-      tempVehicleRows = [];
-    }
-  } catch(e) {
-    console.warn('loadSavedVehicleRecords error:', e);
-    tempVehicleRows = [];
-  }
-}
-
-// حفظ جميع الصفوف
-// حفظ جميع الصفوف - قراءة مباشرة من DOM
-async function saveAllVehicleRows() {
-  const currentDate = getCurrentDateISO();
-  if (!currentDate) {
-    showToast('الرجاء تحديد تاريخ أولاً', 'error');
-    return;
-  }
-  
-  // قراءة جميع الصفوف من DOM مباشرة
-  const rows = document.querySelectorAll('.vehicle-row');
-  const records = [];
-  
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const vehicleSelect = row.querySelector('.vehicle-select');
-    const tripSelect = row.querySelector('.trip-select');
-    const goInput = row.querySelector('.go-count');
-    const returnInput = row.querySelector('.return-count');
-    
-    const vehicleId = vehicleSelect ? vehicleSelect.value : '';
-    const tripName = tripSelect ? tripSelect.value : '';
-    const goCount = parseInt(goInput ? goInput.value : 0) || 0;
-    const returnCount = parseInt(returnInput ? returnInput.value : 0) || 0;
-    
-    if (vehicleId && tripName && (goCount > 0 || returnCount > 0)) {
-      records.push({
-        tripName: tripName,
-        vehicleId: vehicleId,
-        goCount: goCount,
-        returnCount: returnCount
-      });
-    }
-  }
-  
-  if (records.length === 0) {
-    showToast('⚠️ الرجاء اختيار سيارة ورحلة وإدخال أرقام', 'error');
-    return;
-  }
-  
-  try {
-    const result = await gas('saveVehicleTripRecords', {
-      date: currentDate,
-      records: JSON.stringify(records),
-      centerName: currentUser?.centerName
-    });
-    
-    if (result && result.success) {
-      showToast(`✅ تم حفظ ${records.length} تشغيل`, 'success');
-      
-      // تحديث tempVehicleRows
-      tempVehicleRows = records.map(r => ({
-        vehicleId: r.vehicleId,
-        tripName: r.tripName,
-        goCount: r.goCount,
-        returnCount: r.returnCount
-      }));
-      
-      closeModal('vehiclesModal');
-      await loadAndPopulateAssignments(currentDate);
-    } else {
-      showToast('فشل حفظ البيانات: ' + (result?.message || 'خطأ غير معروف'), 'error');
-    }
-  } catch(e) {
-    console.error('saveAllVehicleRows error:', e);
-    showToast('Error: ' + e.message, 'error');
-  }
-}
-
 
 // ============================================================
 // LOGISTICS VEHICLES - Professional Dynamic Version (Luggage Only)
