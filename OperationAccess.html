@@ -720,8 +720,8 @@ function jsonpRequest(action, params = {}) {
 function gas(action, params = {}) {
   return new Promise((resolve, reject) => {
     const timeoutId = setTimeout(() => {
-      reject(new Error('Request timeout after 15 seconds'));
-    }, 15000);  // ✅ 15 ثانية كافية لـ 90 فاتورة
+      reject(new Error('Request timeout after 30 seconds'));
+    }, 30000);  // ✅ زيادة إلى 30 ثانية
     
     jsonpRequest(action, params)
       .then(resolve)
@@ -3191,8 +3191,6 @@ async function loadSavedVehicleRecords(date) {
     tempVehicleRows = [];
   }
 }
-
-// حفظ جميع الصفوف - قراءة مباشرة من DOM
 async function saveAllVehicleRows() {
   const currentDate = getCurrentDateISO();
   if (!currentDate) {
@@ -3200,10 +3198,12 @@ async function saveAllVehicleRows() {
     return;
   }
   
+  // ✅ منع الضغط المتكرر
   const saveBtn = document.querySelector('#vehiclesModal .btn-primary');
   const addRowBtn = document.querySelector('#vehiclesModal .btn-success');
   const cancelBtn = document.querySelector('#vehiclesModal .btn-secondary');
   
+  const originalText = saveBtn ? saveBtn.textContent : '✅ Save All';
   if (saveBtn) {
     saveBtn.disabled = true;
     saveBtn.textContent = '⏳ جاري الحفظ...';
@@ -3212,6 +3212,10 @@ async function saveAllVehicleRows() {
   if (cancelBtn) cancelBtn.disabled = true;
   
   try {
+    // ✅ تأخير بسيط قبل الحفظ لتجنب الضغط على الخادم
+    await delay(300);
+    
+    // قراءة جميع الصفوف من DOM مباشرة
     const rows = document.querySelectorAll('.vehicle-row');
     const records = [];
     
@@ -3228,12 +3232,16 @@ async function saveAllVehicleRows() {
       const returnCount = parseInt(returnInput ? returnInput.value : 0) || 0;
       
       if (vehicleId && tripName && (goCount > 0 || returnCount > 0)) {
-        records.push({
-          tripName: tripName,
-          vehicleId: vehicleId,
-          goCount: goCount,
-          returnCount: returnCount
-        });
+        // التحقق من عدم التكرار في نفس الطلب
+        const exists = records.some(r => r.vehicleId === vehicleId && r.tripName === tripName);
+        if (!exists) {
+          records.push({
+            tripName: tripName,
+            vehicleId: vehicleId,
+            goCount: goCount,
+            returnCount: returnCount
+          });
+        }
       }
     }
     
@@ -3256,7 +3264,15 @@ async function saveAllVehicleRows() {
     if (result && result.success) {
       showToast(`✅ تم حفظ ${result.savedCount || records.length} تشغيل`, 'success');
       
-      // تحديث البيانات المحملة مسبقاً
+      // تحديث tempVehicleRows
+      tempVehicleRows = records.map(r => ({
+        vehicleId: r.vehicleId,
+        tripName: r.tripName,
+        goCount: r.goCount,
+        returnCount: r.returnCount
+      }));
+      
+      // تحديث preloadedData
       const newRecords = {};
       for (const r of records) {
         newRecords[`${r.tripName}|${r.vehicleId}`] = {
@@ -3279,11 +3295,16 @@ async function saveAllVehicleRows() {
   } finally {
     if (saveBtn) {
       saveBtn.disabled = false;
-      saveBtn.textContent = '✅ Save All';
+      saveBtn.textContent = originalText;
     }
     if (addRowBtn) addRowBtn.disabled = false;
     if (cancelBtn) cancelBtn.disabled = false;
   }
+}
+
+// دالة مساعدة للتأخير
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 // دالة لجلب السجلات المحفوظة للسيارات
 function getVehicleTripRecords(date) {
