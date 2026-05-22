@@ -924,14 +924,23 @@ async function loadAssignmentsForDate(dateISO) {
 async function saveAssignmentsForDate(dateISO, assignments) {
   if (!dateISO) return false;
   try {
-    await gas('saveDailyAssignments', { date: dateISO, data: JSON.stringify(assignments) });
-    return true;
+    console.log('💾 saveAssignmentsForDate called:', { dateISO, assignments });
+    
+    // ✅ استخدام gas مباشرة
+    const result = await gas('saveDailyAssignments', { 
+      date: dateISO, 
+      data: JSON.stringify(assignments),
+      centerName: currentUser?.centerName
+    });
+    
+    console.log('📥 saveAssignmentsForDate result:', result);
+    return result && result.success !== false;
   } catch(e) {
+    console.error('❌ saveAssignmentsForDate error:', e);
     showToast('Error saving assignments: ' + e.message, 'error');
     return false;
   }
 }
-
 // ============================================================
 // UPDATE INVOICE LOCALLY (without reloading all)
 // ============================================================
@@ -2385,49 +2394,85 @@ window.saveBoatsAndInstructors = async function() {
   const boatsFromMap = Object.keys(window.boatInstructorsMap || {});
   const allSelectedBoats = [...new Set([...window.selectedBoats, ...boatsFromMap])];
   
-  console.log('📋 حفظ البيانات:');
-  console.log('   selectedBoats:', window.selectedBoats);
-  console.log('   boatsFromMap:', boatsFromMap);
-  console.log('   allSelectedBoats:', allSelectedBoats);
-  console.log('   boatInstructorsMap:', window.boatInstructorsMap);
-  
-  // ✅ حفظ في DailyAssignments أولاً
   const assignments = {
     boats: allSelectedBoats,
     boatInstructorsMap: window.boatInstructorsMap
   };
   
-  const success = await saveAssignmentsForDate(currentDate, assignments);
+  console.log('📋 حفظ البيانات:', {
+    date: currentDate,
+    selectedBoats: window.selectedBoats,
+    boatsFromMap: boatsFromMap,
+    allSelectedBoats: allSelectedBoats,
+    boatInstructorsMap: window.boatInstructorsMap
+  });
   
-  if (success) {
-    // ✅ تحديث المتغيرات العامة
-    window.currentAssignments = assignments;
-    window.selectedBoats = allSelectedBoats;
+  try {
+    // ✅ حفظ في DailyAssignments مباشرة
+    const saveResult = await gas('saveDailyAssignments', {
+      date: currentDate,
+      data: JSON.stringify(assignments),
+      centerName: currentUser?.centerName
+    });
     
-    // ✅ تسجيل في InstructorDailyAssignments (معawait لكل واحدة)
-    for (const [boatId, instructors] of Object.entries(window.boatInstructorsMap)) {
-      const boat = window.cachedBoats?.find(b => b.id === boatId);
-      const boatName = boat?.name || boatId;
-      for (const instructorId of instructors) {
-        const instructor = window.cachedInstructors?.find(i => i.id === instructorId);
-        if (instructor) {
-          try {
-            const logResult = await gas('assignInstructorToDailyLog', {
-              date: currentDate,
-              instructorId: instructorId,
-              instructorName: instructor.name,
-              assignmentType: 'Boat',
-              boatId: boatId,
-              boatName: boatName,
-              centerName: currentUser?.centerName
-            });
-            console.log(`   ✅ تسجيل المدرب ${instructor.name}:`, logResult);
-          } catch(e) {
-            console.warn(`   ⚠️ فشل تسجيل المدرب ${instructor.name}:`, e);
+    console.log('📥 saveDailyAssignments result:', saveResult);
+    
+    if (saveResult && saveResult.success !== false) {
+      // ✅ تحديث المتغيرات العامة
+      window.currentAssignments = assignments;
+      window.selectedBoats = allSelectedBoats;
+      
+      // ✅ تسجيل في InstructorDailyAssignments
+      for (const [boatId, instructors] of Object.entries(window.boatInstructorsMap)) {
+        const boat = window.cachedBoats?.find(b => b.id === boatId);
+        const boatName = boat?.name || boatId;
+        for (const instructorId of instructors) {
+          const instructor = window.cachedInstructors?.find(i => i.id === instructorId);
+          if (instructor) {
+            // ✅ التحقق من عدم وجود تكرار قبل التسجيل
+            const existingAssignments = await gas('getInstructorAssignments', { date: currentDate });
+            const alreadyExists = existingAssignments?.data?.some(a => 
+              a.instructorId === instructorId && a.boatId === boatId
+            );
+            
+            if (!alreadyExists) {
+              const logResult = await gas('assignInstructorToDailyLog', {
+                date: currentDate,
+                instructorId: instructorId,
+                instructorName: instructor.name,
+                assignmentType: 'Boat',
+                boatId: boatId,
+                boatName: boatName,
+                centerName: currentUser?.centerName
+              });
+              console.log(`   ✅ تسجيل المدرب ${instructor.name}:`, logResult);
+            } else {
+              console.log(`   ⏭️ المدرب ${instructor.name} مسجل مسبقاً`);
+            }
           }
         }
       }
+      
+      // ✅ تحديث الشارات
+      updateSelectionBadges();
+      
+      const boatsBadge = document.getElementById('selectedBoatsBadge');
+      if (boatsBadge) boatsBadge.textContent = allSelectedBoats.length;
+      
+      showToast(`✅ تم حفظ ${allSelectedBoats.length} مركب مع ${Object.values(window.boatInstructorsMap).flat().length} مدرب`, 'success');
+      closeModal('boatsModal');
+      
+      return true;
+    } else {
+      showToast('فشل حفظ البيانات', 'error');
+      return false;
     }
+  } catch(e) {
+    console.error('❌ saveBoatsAndInstructors error:', e);
+    showToast('خطأ: ' + e.message, 'error');
+    return false;
+  }
+};
     
     // ✅ تحديث الشارات
     if (typeof updateSelectionBadges === 'function') {
