@@ -2891,6 +2891,7 @@ async function preloadAllData() {
 }
 
 // تحديث التحميل عند تغيير التاريخ
+// تحديث التحميل عند تغيير التاريخ
 async function refreshPreloadedData() {
   const currentDate = getCurrentDateISO();
   if (!currentDate) {
@@ -2901,11 +2902,51 @@ async function refreshPreloadedData() {
   console.log('🔄 تحديث البيانات للتاريخ:', currentDate);
   
   try {
-    const [logistics, vehicleTrips, assignments] = await Promise.all([
-      gas('getLogisticsRecords', { date: currentDate, centerName: currentUser?.centerName }),
-      gas('getVehicleTripRecords', { date: currentDate, centerName: currentUser?.centerName }),
-      loadAssignmentsForDate(currentDate)
-    ]);
+    // ✅ تنفيذ الطلبات بشكل منفصل مع معالجة الأخطاء لكل منها
+    showToast('جاري تحميل البيانات...', 'info');
+    
+    let logistics = { success: true, data: [] };
+    let vehicleTrips = { success: true, data: {} };
+    let assignments = null;
+    
+    // 1. محاولة جلب سجلات اللوجستيك
+    try {
+      logistics = await gas('getLogisticsRecords', { 
+        date: currentDate, 
+        centerName: currentUser?.centerName 
+      });
+      console.log('✅ Logistics records loaded:', logistics?.data?.length || 0);
+    } catch(e) {
+      console.warn('⚠️ Failed to load logistics records:', e.message);
+      logistics = { success: true, data: [] };
+    }
+    
+    // تأخير بسيط
+    await delay(300);
+    
+    // 2. محاولة جلب سجلات السيارات
+    try {
+      vehicleTrips = await gas('getVehicleTripRecords', { 
+        date: currentDate, 
+        centerName: currentUser?.centerName 
+      });
+      console.log('✅ Vehicle trips loaded:', Object.keys(vehicleTrips?.data || {}).length);
+    } catch(e) {
+      console.warn('⚠️ Failed to load vehicle trips:', e.message);
+      vehicleTrips = { success: true, data: {} };
+    }
+    
+    // تأخير بسيط
+    await delay(300);
+    
+    // 3. محاولة جلب التعيينات اليومية
+    try {
+      assignments = await loadAssignmentsForDate(currentDate);
+      console.log('✅ Daily assignments loaded:', assignments ? 'yes' : 'no');
+    } catch(e) {
+      console.warn('⚠️ Failed to load daily assignments:', e.message);
+      assignments = null;
+    }
     
     preloadedData.logisticsRecords = logistics?.data || {};
     preloadedData.vehicleTripRecords = vehicleTrips?.data || {};
@@ -2922,12 +2963,23 @@ async function refreshPreloadedData() {
     updateSelectionBadges();
     
     console.log('✅ تم تحديث البيانات للتاريخ:', currentDate);
-    console.log('📋 مدربي الشاطئ:', selectedBeachInstructors);
-    console.log('📋 المراكب:', selectedBoats);
-    console.log('📋 مدربي المراكب:', boatInstructorsMap);
+    console.log('📋 مدربي الشاطئ:', selectedBeachInstructors.length);
+    console.log('📋 المراكب:', selectedBoats.length);
+    console.log('📋 السيارات:', selectedVehicles.length);
+    
+    // ✅ تحديث عدد اللوجستيك في البادج
+    let logisticsCount = 0;
+    if (Array.isArray(preloadedData.logisticsRecords)) {
+      logisticsCount = preloadedData.logisticsRecords.length;
+    } else if (typeof preloadedData.logisticsRecords === 'object') {
+      logisticsCount = Object.keys(preloadedData.logisticsRecords).length;
+    }
+    const logisticsBadge = document.getElementById('selectedLogisticsBadge');
+    if (logisticsBadge) logisticsBadge.textContent = logisticsCount;
     
   } catch(e) {
     console.error('refreshPreloadedData error:', e);
+    // لا نعرض رسالة خطأ للمستخدم لأن بعض البيانات قد تكون محملة مسبقاً
   }
 }
   // ============================================================
