@@ -2002,14 +2002,13 @@ async function saveEquipmentAssignment() {
 
 window.loadBeachInstructorsList = async function() {
   try {
-    // ✅ تحميل أحدث البيانات
     let instructors = window.cachedInstructors;
     if (!instructors || instructors.length === 0) {
       instructors = await gas('getInstructors');
       window.cachedInstructors = instructors;
     }
     
-    // ✅ تحميل التعيينات الحالية للمركبات
+    // ✅ تحميل التعيينات الحالية للمركبات (لمنع التكرار)
     const currentDate = getCurrentDateISO();
     let boatInstructors = [];
     
@@ -2036,10 +2035,10 @@ window.loadBeachInstructorsList = async function() {
     }
     
     const listHtml = availableInstructors.map(inst => {
-      const isSelected = window.selectedBeachInstructors?.includes(inst.id) || false;
+      const isSelected = selectedBeachInstructors.includes(inst.id);
       return `
         <div class="selection-item" onclick="toggleBeachInstructor('${inst.id}')">
-          <input type="checkbox" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation(); toggleBeachInstructor('${inst.id}')">
+          <input type="checkbox" class="beach-instructor-checkbox" data-id="${inst.id}" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation(); toggleBeachInstructor('${inst.id}')">
           <div class="info"><div class="name">${escapeHtml(inst.name)}</div></div>
         </div>
       `;
@@ -2054,13 +2053,33 @@ window.loadBeachInstructorsList = async function() {
 };
   
 function toggleBeachInstructor(id) {
-  const index = selectedBeachInstructors.indexOf(id);
-  if (index === -1) selectedBeachInstructors.push(id);
-  else selectedBeachInstructors.splice(index, 1);
-  loadBeachInstructorsList();
+  const checkbox = document.querySelector(`.beach-instructor-checkbox[data-id="${id}"]`);
+  const isSelected = checkbox ? checkbox.checked : false;
+  
+  if (isSelected) {
+    // ✅ إضافة مدرب شاطئ
+    if (!selectedBeachInstructors.includes(id)) {
+      selectedBeachInstructors.push(id);
+      console.log(`✅ Beach instructor ${id} added`);
+    }
+  } else {
+    // ✅ إزالة مدرب شاطئ
+    const index = selectedBeachInstructors.indexOf(id);
+    if (index !== -1) {
+      selectedBeachInstructors.splice(index, 1);
+      console.log(`✅ Beach instructor ${id} removed`);
+    }
+  }
+  
+  // ✅ تحديث الشارات
   updateSelectionBadges();
+  
+  const instructorsBadge = document.getElementById('selectedInstructorsBadge');
+  if (instructorsBadge) instructorsBadge.textContent = selectedBeachInstructors.length;
+  
+  // ✅ إعادة تحميل القائمة
+  loadBeachInstructorsList();
 }
-
 async function saveBeachInstructors() {
   const currentDate = getCurrentDateISO();
   if (!currentDate) {
@@ -2210,10 +2229,30 @@ async function loadBoatsWithInstructors() {
     
     if (!Array.isArray(boats)) boats = [];
     
+    // ✅ تجميع جميع المدربين المختارين في أي مركب
+    const allSelectedInstructors = new Set();
+    for (const [boatId, instructorList] of Object.entries(boatInstructorsMap)) {
+      instructorList.forEach(instId => allSelectedInstructors.add(instId));
+    }
+    
+    console.log('📋 جميع المدربين المختارين في المراكب:', Array.from(allSelectedInstructors));
+    
     let html = '';
     for (const boat of boats) {
       const isBoatSelected = selectedBoats.includes(boat.id);
       const selectedInstructorsForBoat = boatInstructorsMap[boat.id] || [];
+      
+      // ✅ المدربون المتاحون لهذا المركب = جميع المدربين - المدربين المختارين في مراكب أخرى
+      const availableInstructors = instructors.filter(inst => {
+        // إذا كان المدرب مختاراً في هذا المركب بالذات، يظهر (مختار)
+        if (selectedInstructorsForBoat.includes(inst.id)) return true;
+        // إذا كان المدرب مختاراً في مركب آخر، لا يظهر
+        if (allSelectedInstructors.has(inst.id)) return false;
+        // باقي المدربين يظهرون
+        return true;
+      });
+      
+      console.log(`🚤 المركب ${boat.name}: المدربين المتاحين = ${availableInstructors.length}, المختارين = ${selectedInstructorsForBoat.length}`);
       
       html += `
         <div class="boat-card">
@@ -2226,7 +2265,7 @@ async function loadBoatsWithInstructors() {
             <div class="selection-list" style="max-height:200px;">
       `;
       
-      for (const inst of instructors) {
+      for (const inst of availableInstructors) {
         const isSelected = selectedInstructorsForBoat.includes(inst.id);
         html += `
           <div class="selection-item" onclick="toggleBoatInstructor('${boat.id}', '${inst.id}')">
@@ -2250,6 +2289,7 @@ async function loadBoatsWithInstructors() {
     showToast('خطأ في تحميل المراكب: ' + e.message, 'error');
   }
 }
+  
 function toggleBoatSelection(boatId) {
   const checkbox = document.querySelector(`.boat-select[data-id="${boatId}"]`);
   const isSelected = checkbox ? checkbox.checked : false;
@@ -2305,32 +2345,29 @@ function toggleBoatInstructor(boatId, instructorId) {
       boatInstructorsMap[boatId].splice(index, 1);
       console.log(`✅ Instructor ${instructorId} removed from boat ${boatId}`);
     }
-    // إذا لم يبق مدربين لهذا المركب، قم بإزالته من selectedBoats
+    
+    // ✅ إذا لم يبق مدربين، قم بإزالة المركب أيضاً
     if (boatInstructorsMap[boatId].length === 0) {
       const boatIndex = selectedBoats.indexOf(boatId);
       if (boatIndex !== -1) {
         selectedBoats.splice(boatIndex, 1);
         console.log(`✅ Boat ${boatId} removed (no instructors left)`);
-        // إخفاء قسم المدربين
+        
         const instructorsDiv = document.getElementById(`boat-instructors-${boatId}`);
         if (instructorsDiv) instructorsDiv.style.display = 'none';
-        // إلغاء تحديد checkbox المركب
+        
         const boatCheckbox = document.querySelector(`.boat-select[data-id="${boatId}"]`);
         if (boatCheckbox) boatCheckbox.checked = false;
       }
     }
   }
   
-  console.log('📋 boatInstructorsMap:', boatInstructorsMap);
-  console.log('📋 selectedBoats:', selectedBoats);
+  // ✅ إعادة تحميل القائمة لتحديث المدربين المتاحين في المراكب الأخرى
+  loadBoatsWithInstructors();
   
-  // ✅ تحديث الشارات
   updateSelectionBadges();
-  
   const boatsBadge = document.getElementById('selectedBoatsBadge');
-  if (boatsBadge) {
-    boatsBadge.textContent = selectedBoats.length;
-  }
+  if (boatsBadge) boatsBadge.textContent = selectedBoats.length;
 }
 
 // ============================================================
@@ -2501,29 +2538,52 @@ async function loadVehiclesList() {
       vehicles = await gas('getVehicles');
       cachedVehicles = vehicles;
     }
+    
     if (Array.isArray(vehicles)) {
       const listHtml = vehicles.map(veh => {
         const isSelected = selectedVehicles.includes(veh.id);
         return `
           <div class="selection-item" onclick="toggleVehicle('${veh.id}')">
-            <input type="checkbox" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation(); toggleVehicle('${veh.id}')">
+            <input type="checkbox" class="vehicle-checkbox" data-id="${veh.id}" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation(); toggleVehicle('${veh.id}')">
             <div class="info"><div class="name">${escapeHtml(veh.licensePlate || veh.id)} (${veh.capacity || 0} seats)</div></div>
           </div>
         `;
       }).join('');
       document.getElementById('vehiclesList').innerHTML = listHtml || '<div class="selection-item">No vehicles found</div>';
     }
-  } catch(e) { showToast('Error loading vehicles', 'error'); }
+  } catch(e) { 
+    console.error('loadVehiclesList error:', e);
+    showToast('Error loading vehicles', 'error'); 
+  }
 }
-
 function toggleVehicle(id) {
-  const index = selectedVehicles.indexOf(id);
-  if (index === -1) selectedVehicles.push(id);
-  else selectedVehicles.splice(index, 1);
-  loadVehiclesList();
+  const checkbox = document.querySelector(`.vehicle-checkbox[data-id="${id}"]`);
+  const isSelected = checkbox ? checkbox.checked : false;
+  
+  if (isSelected) {
+    // ✅ إضافة السيارة
+    if (!selectedVehicles.includes(id)) {
+      selectedVehicles.push(id);
+      console.log(`✅ Vehicle ${id} added`);
+    }
+  } else {
+    // ✅ إزالة السيارة
+    const index = selectedVehicles.indexOf(id);
+    if (index !== -1) {
+      selectedVehicles.splice(index, 1);
+      console.log(`✅ Vehicle ${id} removed`);
+    }
+  }
+  
+  // ✅ تحديث الشارات
   updateSelectionBadges();
+  
+  const vehiclesBadge = document.getElementById('selectedVehiclesBadge');
+  if (vehiclesBadge) vehiclesBadge.textContent = selectedVehicles.length;
+  
+  // ✅ إعادة تحميل القائمة
+  loadVehiclesList();
 }
-
 async function saveVehiclesSelection() {
   const currentDate = getCurrentDateISO();
   if (!currentDate) {
@@ -2534,10 +2594,12 @@ async function saveVehiclesSelection() {
   const assignments = currentAssignments || {};
   assignments.vehicles = selectedVehicles;
   
+  console.log('📋 حفظ السيارات:', selectedVehicles);
+  
   const success = await saveAssignmentsForDate(currentDate, assignments);
   if (success) {
     currentAssignments = assignments;
-    showToast(`Saved ${selectedVehicles.length} vehicles`, 'success');
+    showToast(`✅ تم حفظ ${selectedVehicles.length} سيارة`, 'success');
     closeModal('vehiclesModal');
     updateSelectionBadges();
   } else {
@@ -2550,6 +2612,7 @@ function openVehiclesModal() {
     showToast('لا يمكن اختيار السيارات إلا عند تحديد تاريخ واحد', 'error');
     return;
   }
+  // ✅ تحميل أحدث البيانات
   loadVehiclesList();
   openModal('vehiclesModal');
 }
