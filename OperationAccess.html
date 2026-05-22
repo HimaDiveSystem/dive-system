@@ -2565,27 +2565,20 @@ window.saveBoatsAndInstructors = async function() {
   if (cancelBtn) cancelBtn.disabled = true;
   
   try {
-    // ✅ جمع البيانات من الـ DOM مباشرة
-    const boatCheckboxes = document.querySelectorAll('.boat-select');
-    const newSelectedBoats = [];
+    // ✅ قراءة من المتغيرات العامة المُحدَّثة بـ toggleBoatSelection
+    const newSelectedBoats = [...selectedBoats];
     const newBoatInstructorsMap = {};
     
-    for (const cb of boatCheckboxes) {
-      const boatId = cb.getAttribute('data-id');
-      const boatName = cb.getAttribute('data-name');
-      if (cb.checked) {
-        newSelectedBoats.push(boatId);
-        
-        // جمع المدربين لهذا المركب
-        const instructorCheckboxes = document.querySelectorAll(`.boat-instructor-checkbox-${boatId}`);
-        const instructors = [];
-        for (const instCb of instructorCheckboxes) {
-          if (instCb.checked) {
-            instructors.push(instCb.getAttribute('data-id'));
-          }
-        }
-        if (instructors.length > 0) {
-          newBoatInstructorsMap[boatId] = instructors;
+    // ✅ قراءة المدربين من DOM لكل مركب محدد
+    for (const boatId of newSelectedBoats) {
+      const instructorCheckboxes = document.querySelectorAll(`#boatsModal .boat-instructor-checkbox-${boatId}:checked`);
+      const instructors = Array.from(instructorCheckboxes).map(cb => cb.getAttribute('data-id')).filter(Boolean);
+      if (instructors.length > 0) {
+        newBoatInstructorsMap[boatId] = instructors;
+      } else {
+        // ✅ احتفظ بالمدربين من boatInstructorsMap إذا لم تجد checkboxes
+        if (boatInstructorsMap[boatId] && boatInstructorsMap[boatId].length > 0) {
+          newBoatInstructorsMap[boatId] = boatInstructorsMap[boatId];
         }
       }
     }
@@ -2663,6 +2656,7 @@ window.saveBoatsAndInstructors = async function() {
     if (cancelBtn) cancelBtn.disabled = false;
   }
 };
+
   // دالة للتحقق من وجود تسجيل مسبق للمدرب في نفس اليوم
 async function checkInstructorAssignmentExists(date, instructorId, boatId) {
   try {
@@ -2695,44 +2689,36 @@ window.openBoatsModal = async function() {
   // ✅ إظهار مؤشر التحميل
   showToast('جاري تحميل البيانات...', 'info');
   
-  try {
-    const [boats, instructors] = await Promise.all([
-      gas('getBoats'),
-      gas('getInstructors')
-    ]);
-    
-    window.cachedBoats = boats;
-    window.cachedInstructors = instructors;
-    
-    // ✅ تحميل التعيينات المحفوظة مسبقاً
-    const currentDate = getCurrentDateISO();
-    if (currentDate) {
-      const savedAssignments = await loadAssignmentsForDate(currentDate);
-      if (savedAssignments) {
-        window.selectedBoats = savedAssignments.boats || [];
-        window.boatInstructorsMap = savedAssignments.boatInstructorsMap || {};
-        window.currentAssignments = savedAssignments;
-        
-        // تحديث الشارات
-        if (typeof updateSelectionBadges === 'function') {
-          updateSelectionBadges();
-        }
-        
-        const boatsBadge = document.getElementById('selectedBoatsBadge');
-        if (boatsBadge) {
-          boatsBadge.textContent = window.selectedBoats.length;
-        }
-      }
+  // ✅ استخدام البيانات المخزنة مسبقاً بدلاً من API جديد
+  if (!cachedBoats || cachedBoats.length === 0 || !cachedInstructors || cachedInstructors.length === 0) {
+    try {
+      const [boats, instructors] = await Promise.all([
+        gas('getBoats'),
+        gas('getInstructors')
+      ]);
+      cachedBoats = boats;
+      cachedInstructors = instructors;
+    } catch(e) {
+      showToast('خطأ في تحميل البيانات', 'error');
+      return;
     }
-    
-    await loadBoatsWithInstructors();
-    openModal('boatsModal');
-    
-  } catch(e) {
-    console.error('Error loading boats modal:', e);
-    showToast('خطأ في تحميل البيانات', 'error');
   }
+  
+  const currentDate = getCurrentDateISO();
+  if (currentDate) {
+    const savedAssignments = await loadAssignmentsForDate(currentDate);
+    if (savedAssignments) {
+      selectedBoats = savedAssignments.boats || [];
+      boatInstructorsMap = savedAssignments.boatInstructorsMap || {};
+      currentAssignments = savedAssignments;
+      updateSelectionBadges();
+    }
+  }
+  
+  await loadBoatsWithInstructors();
+  openModal('boatsModal');
 };
+
 // ============================================================
 // VEHICLES MODAL
 // ============================================================
@@ -3286,103 +3272,16 @@ function getVehicleTripRecords(date) {
 }
 
 // دالة لحفظ سجلات السيارات
-async function saveVehicleTripRecords() {
-  const currentDate = getCurrentDateISO();
-  if (!currentDate) {
-    showToast('الرجاء تحديد تاريخ أولاً', 'error');
-    return;
-  }
-  
-  const records = [];
-  const goInputs = document.querySelectorAll('.vehicle-go-input');
-  
-  for (const input of goInputs) {
-    const tripName = input.getAttribute('data-trip');
-    const vehicleId = input.getAttribute('data-vehicle');
-    const goCount = parseInt(input.value) || 0;
-    
-    const returnInput = document.querySelector(`.vehicle-return-input[data-trip="${tripName}"][data-vehicle="${vehicleId}"]`);
-    const returnCount = parseInt(returnInput?.value) || 0;
-    
-    const checkbox = document.querySelector(`.vehicle-select[data-trip="${tripName}"][data-vehicle="${vehicleId}"]`);
-    const isSelected = checkbox?.checked || false;
-    
-    if (isSelected || goCount > 0 || returnCount > 0) {
-      records.push({
-        tripName: tripName,
-        vehicleId: vehicleId,
-        goCount: goCount,
-        returnCount: returnCount,
-        selected: isSelected
-      });
-    }
-  }
-  
-  if (records.length === 0) {
-    showToast('⚠️ الرجاء اختيار سيارة أو إدخال تشغيلات', 'error');
-    return;
-  }
-  
-  try {
-    // حفظ في localStorage مؤقتاً
-    const savedMap = {};
-    for (const r of records) {
-      savedMap[`${r.tripName}|${r.vehicleId}`] = { goCount: r.goCount, returnCount: r.returnCount };
-    }
-    localStorage.setItem(`vehicle_trips_${currentDate}`, JSON.stringify(savedMap));
-    
-    // حفظ في الخادم
-    const result = await gas('saveVehicleTripRecords', {
-      date: currentDate,
-      records: JSON.stringify(records),
-      centerName: currentUser?.centerName
-    });
-    
-    if (result && result.success) {
-      showToast(`✅ تم حفظ ${records.length} تشغيل`, 'success');
-      closeModal('vehiclesModal');
-      await loadAndPopulateAssignments(currentDate);
-    } else {
-      showToast('فشل حفظ البيانات', 'error');
-    }
-  } catch(e) {
-    showToast('Error: ' + e.message, 'error');
-  }
-}
 
 function updateSelectionBadges() {
   document.getElementById('selectedInstructorsBadge').textContent = selectedBeachInstructors.length;
   document.getElementById('selectedBoatsBadge').textContent = selectedBoats.length;
   document.getElementById('selectedVehiclesBadge').textContent = selectedVehicles.length;
   
-  // ✅ إضافة عداد لوجستيك للسيارات
-  const currentDate = getCurrentDateISO();
-  let logisticsCount = 0;
-  if (currentDate && preloadedData.logisticsRecords) {
-    if (Array.isArray(preloadedData.logisticsRecords)) {
-      logisticsCount = preloadedData.logisticsRecords.length;
-    } else if (typeof preloadedData.logisticsRecords === 'object') {
-      logisticsCount = Object.keys(preloadedData.logisticsRecords).length;
-    }
-  }
-  
+  // ✅ عداد بسيط للوجستيك
+  const logisticsCount = (tempLogisticsRows && tempLogisticsRows.length) ? tempLogisticsRows.filter(r => r.vehicleId && r.tripName && (r.goCount > 0 || r.returnCount > 0)).length : 0;
   const logisticsBadge = document.getElementById('selectedLogisticsBadge');
-  if (logisticsBadge) {
-    logisticsBadge.textContent = logisticsCount;
-  } else {
-    // إنشاء البادج إذا لم يكن موجوداً
-    const btn = document.getElementById('btnLogisticsVehicles');
-    if (btn && !btn.querySelector('.selection-badge')) {
-      const badge = document.createElement('span');
-      badge.id = 'selectedLogisticsBadge';
-      badge.className = 'selection-badge';
-      badge.textContent = '0';
-      btn.appendChild(badge);
-    } else if (btn) {
-      const badge = btn.querySelector('.selection-badge');
-      if (badge) badge.textContent = logisticsCount;
-    }
-  }
+  if (logisticsBadge) logisticsBadge.textContent = logisticsCount;
 }
 
 function resetAllSelections() {
@@ -3591,25 +3490,32 @@ async function openLogisticsVehicles() {
     return;
   }
   
-  // ✅ تحميل السجلات عند فتح النافذة فقط
+  // ✅ تحميل السجلات عند فتح النافذة فقط مع console.log للتشخيص
   tempLogisticsRows = [];
   try {
+    console.log('🔍 Loading logistics for date:', currentDate, 'center:', currentUser?.centerName);
     const result = await gas('getLogisticsRecords', { 
       date: currentDate,
       centerName: currentUser?.centerName 
     });
-    if (result && result.success && result.data) {
+    console.log('📥 Logistics result:', JSON.stringify(result));
+    if (result && result.success && Array.isArray(result.data) && result.data.length > 0) {
       for (const record of result.data) {
-        tempLogisticsRows.push({
-          vehicleId: record.vehicleId,
-          tripName: record.tripName,
-          goCount: record.goCount || 0,
-          returnCount: record.returnCount || 0
-        });
+        if (record.vehicleId && record.tripName) {
+          tempLogisticsRows.push({
+            vehicleId: record.vehicleId,
+            tripName: record.tripName,
+            goCount: parseInt(record.goCount) || 0,
+            returnCount: parseInt(record.returnCount) || 0
+          });
+        }
       }
+      console.log('✅ Loaded logistics rows:', tempLogisticsRows.length);
+    } else {
+      console.log('⚠️ No logistics data found or empty:', result);
     }
   } catch(e) {
-    console.warn('Failed to load logistics records:', e);
+    console.warn('Failed to load logistics records:', e.message);
   }
   
   let html = `
@@ -3650,6 +3556,7 @@ async function openLogisticsVehicles() {
     attachLogisticsRowEvents(0);
   }
 }
+
   
 // دالة تحديث الإجمالي لكل صف
 function updateLogisticsTotal(tripName, vehicleId) {
