@@ -2845,9 +2845,7 @@ async function preloadAllData() {
   showToast('جاري تحميل البيانات...', 'info');
   
   try {
-    const currentDate = getCurrentDateISO();
-    
-    // تحميل جميع البيانات بالتوازي
+    // تحميل البيانات الأساسية فقط (بدون السجلات المحفوظة)
     const [instructors, vehicles, boats] = await Promise.all([
       gas('getInstructors'),
       gas('getVehicles'),
@@ -2858,31 +2856,8 @@ async function preloadAllData() {
     cachedVehicles = vehicles;
     cachedBoats = boats;
     
-    // تحميل السجلات إذا كان هناك تاريخ محدد
-    if (currentDate) {
-      const [logistics, vehicleTrips, assignments] = await Promise.all([
-        gas('getLogisticsRecords', { date: currentDate, centerName: currentUser?.centerName }),
-        gas('getVehicleTripRecords', { date: currentDate, centerName: currentUser?.centerName }),
-        loadAssignmentsForDate(currentDate)
-      ]);
-      
-      preloadedData.logisticsRecords = logistics?.data || {};
-      preloadedData.vehicleTripRecords = vehicleTrips?.data || {};
-      preloadedData.dailyAssignments = assignments || {};
-      
-      // تحديث المتغيرات العامة
-      if (assignments) {
-        selectedBeachInstructors = assignments.beachInstructors || [];
-        selectedBoats = assignments.boats || [];
-        boatInstructorsMap = assignments.boatInstructorsMap || {};
-        selectedVehicles = assignments.vehicles || [];
-        updateSelectionBadges();
-      }
-    }
-    
     dataLoaded = true;
-    console.log('✅ تم تحميل جميع البيانات بنجاح');
-    showToast('تم تحميل البيانات', 'success');
+    console.log('✅ تم تحميل البيانات الأساسية بنجاح');
     
   } catch(e) {
     console.error('preloadAllData error:', e);
@@ -2890,96 +2865,29 @@ async function preloadAllData() {
   }
 }
 
-// تحديث التحميل عند تغيير التاريخ
-// تحديث التحميل عند تغيير التاريخ
+// تحديث التحميل عند تغيير التاريخ - نسخة مبسطة وآمنة
 async function refreshPreloadedData() {
   const currentDate = getCurrentDateISO();
   if (!currentDate) {
-    dataLoaded = false;
     return;
   }
   
   console.log('🔄 تحديث البيانات للتاريخ:', currentDate);
   
+  // ✅ فقط تحميل التعيينات اليومية (المدربين والمراكب)
   try {
-    // ✅ تنفيذ الطلبات بشكل منفصل مع معالجة الأخطاء لكل منها
-    showToast('جاري تحميل البيانات...', 'info');
-    
-    let logistics = { success: true, data: [] };
-    let vehicleTrips = { success: true, data: {} };
-    let assignments = null;
-    
-    // 1. محاولة جلب سجلات اللوجستيك
-    try {
-      logistics = await gas('getLogisticsRecords', { 
-        date: currentDate, 
-        centerName: currentUser?.centerName 
-      });
-      console.log('✅ Logistics records loaded:', logistics?.data?.length || 0);
-    } catch(e) {
-      console.warn('⚠️ Failed to load logistics records:', e.message);
-      logistics = { success: true, data: [] };
-    }
-    
-    // تأخير بسيط
-    await delay(300);
-    
-    // 2. محاولة جلب سجلات السيارات
-    try {
-      vehicleTrips = await gas('getVehicleTripRecords', { 
-        date: currentDate, 
-        centerName: currentUser?.centerName 
-      });
-      console.log('✅ Vehicle trips loaded:', Object.keys(vehicleTrips?.data || {}).length);
-    } catch(e) {
-      console.warn('⚠️ Failed to load vehicle trips:', e.message);
-      vehicleTrips = { success: true, data: {} };
-    }
-    
-    // تأخير بسيط
-    await delay(300);
-    
-    // 3. محاولة جلب التعيينات اليومية
-    try {
-      assignments = await loadAssignmentsForDate(currentDate);
-      console.log('✅ Daily assignments loaded:', assignments ? 'yes' : 'no');
-    } catch(e) {
-      console.warn('⚠️ Failed to load daily assignments:', e.message);
-      assignments = null;
-    }
-    
-    preloadedData.logisticsRecords = logistics?.data || {};
-    preloadedData.vehicleTripRecords = vehicleTrips?.data || {};
-    preloadedData.dailyAssignments = assignments || {};
-    
+    const assignments = await loadAssignmentsForDate(currentDate);
     if (assignments) {
+      currentAssignments = assignments;
       selectedBeachInstructors = assignments.beachInstructors || [];
       selectedBoats = assignments.boats || [];
       boatInstructorsMap = assignments.boatInstructorsMap || {};
       selectedVehicles = assignments.vehicles || [];
+      updateSelectionBadges();
+      console.log('✅ تم تحديث التعيينات');
     }
-    
-    // ✅ تحديث البادجات بعد تحميل البيانات
-    updateSelectionBadges();
-    
-    console.log('✅ تم تحديث البيانات للتاريخ:', currentDate);
-    console.log('📋 مدربي الشاطئ:', selectedBeachInstructors.length);
-    console.log('📋 المراكب:', selectedBoats.length);
-    console.log('📋 السيارات:', selectedVehicles.length);
-    
-    // ✅ تحديث عدد اللوجستيك في البادج
-    let logisticsCount = 0;
-    if (Array.isArray(preloadedData.logisticsRecords)) {
-      logisticsCount = preloadedData.logisticsRecords.length;
-    } else if (typeof preloadedData.logisticsRecords === 'object') {
-      logisticsCount = Object.keys(preloadedData.logisticsRecords).length;
-    }
-    const logisticsBadge = document.getElementById('selectedLogisticsBadge');
-    if (logisticsBadge) logisticsBadge.textContent = logisticsCount;
-    
   } catch(e) {
-    console.error('refreshPreloadedData error:', e);
-    // لا نعرض رسالة خطأ للمستخدم لأن بعض البيانات قد تكون محملة مسبقاً
+    console.warn('⚠️ refreshPreloadedData error:', e.message);
   }
 }
   // ============================================================
@@ -3028,20 +2936,28 @@ async function openVehiclesModal() {
     return;
   }
   
-  // ✅ استخدام البيانات المحملة مسبقاً
+  // ✅ تحميل السجلات عند فتح النافذة فقط
   tempVehicleRows = [];
-  const savedRecords = preloadedData.vehicleTripRecords || {};
-  
-  for (const [key, record] of Object.entries(savedRecords)) {
-    const [tripName, vehicleId] = key.split('|');
-    if (tripName && vehicleId) {
-      tempVehicleRows.push({
-        vehicleId: vehicleId,
-        tripName: tripName,
-        goCount: record.goCount || 0,
-        returnCount: record.returnCount || 0
-      });
+  try {
+    const result = await gas('getVehicleTripRecords', { 
+      date: currentDate,
+      centerName: currentUser?.centerName 
+    });
+    if (result && result.success && result.data) {
+      for (const [key, record] of Object.entries(result.data)) {
+        const [tripName, vehicleId] = key.split('|');
+        if (tripName && vehicleId) {
+          tempVehicleRows.push({
+            vehicleId: vehicleId,
+            tripName: tripName,
+            goCount: record.goCount || 0,
+            returnCount: record.returnCount || 0
+          });
+        }
+      }
     }
+  } catch(e) {
+    console.warn('Failed to load vehicle records:', e);
   }
   
   let html = `
@@ -3675,31 +3591,25 @@ async function openLogisticsVehicles() {
     return;
   }
   
-  // ✅ استخدام البيانات المحملة مسبقاً
+  // ✅ تحميل السجلات عند فتح النافذة فقط
   tempLogisticsRows = [];
-  const savedRecords = preloadedData.logisticsRecords || {};
-  
-  if (Array.isArray(savedRecords)) {
-    for (const record of savedRecords) {
-      tempLogisticsRows.push({
-        vehicleId: record.vehicleId,
-        tripName: record.tripName,
-        goCount: record.goCount || 0,
-        returnCount: record.returnCount || 0
-      });
-    }
-  } else if (typeof savedRecords === 'object') {
-    for (const [key, record] of Object.entries(savedRecords)) {
-      const [tripName, vehicleId] = key.split('|');
-      if (tripName && vehicleId) {
+  try {
+    const result = await gas('getLogisticsRecords', { 
+      date: currentDate,
+      centerName: currentUser?.centerName 
+    });
+    if (result && result.success && result.data) {
+      for (const record of result.data) {
         tempLogisticsRows.push({
-          vehicleId: vehicleId,
-          tripName: tripName,
+          vehicleId: record.vehicleId,
+          tripName: record.tripName,
           goCount: record.goCount || 0,
           returnCount: record.returnCount || 0
         });
       }
     }
+  } catch(e) {
+    console.warn('Failed to load logistics records:', e);
   }
   
   let html = `
