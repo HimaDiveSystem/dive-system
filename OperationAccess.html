@@ -1646,18 +1646,6 @@ function updateVehicleAssignmentTotals() {
   }
 }
   
-async function getBookedSeatsForVehicles(date) {
-  try {
-    const result = await gas('getVehicleBookings', { date: date });
-    if (result && result.success) {
-      return result.data;
-    }
-  } catch(e) {
-    console.warn('Could not get vehicle bookings:', e);
-  }
-  return {};
-}
-
 async function saveVehicleAssignment() {
   const selectedRows = [];
   const checkboxes = document.querySelectorAll('#assignVehiclesModal .assign-select:checked');
@@ -1739,16 +1727,17 @@ async function openAssignBoats(voucherNo) {
   currentAssignVoucher = voucherNo;
   currentAssignInvoice = invoice;
   
-  // ✅ التصحيح: قراءة البيانات من invoice.sgl, invoice.dbl, invoice.trpl
   const totalAdults = parseInt(invoice.sgl) || 0;
   const totalChildren = parseInt(invoice.dbl) || 0;
   const totalInfants = parseInt(invoice.trpl) || 0;
   const totalPassengers = totalAdults + totalChildren + totalInfants;
-  
-  console.log('📊 Boat Invoice data:', { totalAdults, totalChildren, totalInfants, totalPassengers });
+  const tripName = invoice.trip || '';
   
   const currentDate = getCurrentDateISO();
-  const bookedSeatsMap = await getBookedSeatsForBoats(currentDate);
+  
+  // ✅ استخدام الدالة مع تمرير اسم الرحلة
+  const bookedSeatsMap = await getBookedSeatsForBoats(currentDate, tripName);
+ 
   
   let boatsHtml = `
     <div class="summary-box">
@@ -1808,9 +1797,12 @@ async function openAssignBoats(voucherNo) {
   openModal('assignBoatsModal');
 }
   
-async function getBookedSeatsForBoats(date) {
+async function getBookedSeatsForBoats(date, tripName) {
   try {
-    const result = await gas('getBoatBookings', { date: date });
+    const result = await gas('getBoatBookings', { 
+      date: date,
+      tripName: tripName
+    });
     if (result && result.success) {
       return result.data;
     }
@@ -1819,7 +1811,6 @@ async function getBookedSeatsForBoats(date) {
   }
   return {};
 }
-
 async function saveBoatAssignment() {
   const selectedRows = [];
   const checkboxes = document.querySelectorAll('#assignBoatsModal .assign-select:checked');
@@ -2656,17 +2647,29 @@ async function loadVehiclesList() {
       cachedVehicles = vehicles;
     }
     
-    if (Array.isArray(vehicles)) {
-      const listHtml = vehicles.map(veh => {
+    // ✅ تصفية: فقط السيارات النشطة ومن نوع passengers
+    const passengerVehicles = vehicles.filter(v => 
+      v.isActive === true && 
+      v.usageType === 'passengers' &&
+      v.capacity > 0
+    );
+    
+    if (Array.isArray(passengerVehicles) && passengerVehicles.length > 0) {
+      const listHtml = passengerVehicles.map(veh => {
         const isSelected = selectedVehicles.includes(veh.id);
         return `
           <div class="selection-item" onclick="toggleVehicle('${veh.id}')">
             <input type="checkbox" class="vehicle-checkbox" data-id="${veh.id}" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation(); toggleVehicle('${veh.id}')">
-            <div class="info"><div class="name">${escapeHtml(veh.licensePlate || veh.id)} (${veh.capacity || 0} seats)</div></div>
+            <div class="info">
+              <div class="name">${escapeHtml(veh.licensePlate || veh.id)}</div>
+              <div style="font-size: 10px; color: gray;">Capacity: ${veh.capacity || 0} seats | Driver: ${escapeHtml(veh.driverName || 'N/A')}</div>
+            </div>
           </div>
         `;
       }).join('');
-      document.getElementById('vehiclesList').innerHTML = listHtml || '<div class="selection-item">No vehicles found</div>';
+      document.getElementById('vehiclesList').innerHTML = listHtml;
+    } else {
+      document.getElementById('vehiclesList').innerHTML = '<div class="selection-item">⚠️ لا توجد سيارات متاحة لنقل الركاب (usageType = passengers)</div>';
     }
   } catch(e) { 
     console.error('loadVehiclesList error:', e);
@@ -2905,6 +2908,10 @@ async function saveTimeUpdate() {
   closeModal('timeModal');
   pendingTimeVoucher = null;
 }
+// ============================================================
+// LOGISTICS VEHICLES - Professional Version (Luggage Only)
+// ============================================================
+
 async function openLogisticsVehicles() {
   const currentDate = getCurrentDateISO();
   if (!currentDate) {
@@ -2935,156 +2942,202 @@ async function openLogisticsVehicles() {
       v.usageType === 'luggage'
     );
     
+    if (luggageVehicles.length === 0) {
+      showToast('⚠️ لا توجد سيارات مخصصة لنقل المعدات (usageType = luggage)', 'error');
+      return;
+    }
+    
     // تحميل السجلات المحفوظة
     const savedLogs = await getLogisticsRecords(currentDate);
     
+    // تجميع السجلات في Map للعرض
+    const recordsMap = new Map();
+    for (const log of savedLogs) {
+      const key = `${log.tripName}|${log.vehicleId}`;
+      recordsMap.set(key, log);
+    }
+    
     let html = `
-      <div class="summary-box">
+      <div class="summary-box" style="background: var(--navy); color: white; margin-bottom: 16px;">
         <strong>📅 Date:</strong> ${currentDate}<br>
         <strong>🚌 Available Trips:</strong> ${tripsOnDate.join(', ')}
       </div>
-      <div style="max-height: 500px; overflow-y: auto;">
+      <div style="overflow-x: visible; max-height: 500px; overflow-y: auto;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+          <thead>
+            <tr style="background: var(--navy); color: var(--gold); position: sticky; top: 0;">
+              <th style="padding: 10px; text-align: center; width: 25%;">🚌 Trip Name</th>
+              <th style="padding: 10px; text-align: center; width: 30%;">🚛 Vehicle</th>
+              <th style="padding: 10px; text-align: center; width: 15%;">🔄 Go Trips</th>
+              <th style="padding: 10px; text-align: center; width: 15%;">🔙 Return Trips</th>
+              <th style="padding: 10px; text-align: center; width: 15%;">⚙️ Actions</th>
+            </tr>
+          </thead>
+          <tbody>
     `;
     
-    // عرض كل رحلة على حدة
+    // عرض جميع التركيبات الممكنة (رحلة × سيارة)
     for (const trip of tripsOnDate) {
-      const tripRecords = savedLogs.filter(log => log.tripName === trip);
+      let hasRecords = false;
       
-      html += `
-        <div class="boat-card" style="margin-bottom: 20px;">
-          <div class="boat-card-header" style="background: var(--navy); color: var(--gold); padding: 10px; border-radius: 8px;">
-            🚌 ${escapeHtml(trip)}
-          </div>
-          <div style="padding: 12px;">
-            <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
-              <thead>
-                <tr style="background: var(--gray-100);">
-                  <th style="padding: 8px; text-align: center;">Vehicle</th>
-                  <th style="padding: 8px; text-align: center;">Go Trip</th>
-                  <th style="padding: 8px; text-align: center;">Return Trip</th>
-                  <th style="padding: 8px; text-align: center;">Total</th>
-                  <th style="padding: 8px; text-align: center;">Actions</th>
-                </table>
-              </thead>
-              <tbody>
-      `;
-      
-      if (tripRecords.length === 0) {
-        // صف فارغ لإضافة سيارة جديدة
-        html += `
-          <tr id="new-row-${escapeHtml(trip)}">
-            <td style="padding: 8px;">
-              <select class="logistics-vehicle-select" data-trip="${escapeHtml(trip)}" style="width: 100%; padding: 6px;">
-                <option value="">-- Select Vehicle --</option>
-                ${luggageVehicles.map(v => `<option value="${v.id}">${escapeHtml(v.licensePlate)} (Capacity: ${v.capacity || 0})</option>`).join('')}
-              </select>
-            </td>
-            <td style="padding: 8px; text-align: center;">
-              <input type="number" class="logistics-go" data-trip="${escapeHtml(trip)}" value="0" min="0" max="20" style="width: 70px; text-align: center; padding: 6px;">
-            </td>
-            <td style="padding: 8px; text-align: center;">
-              <input type="number" class="logistics-return" data-trip="${escapeHtml(trip)}" value="0" min="0" max="20" style="width: 70px; text-align: center; padding: 6px;">
-            </td>
-            <td style="padding: 8px; text-align: center;">
-              <span class="logistics-total" data-trip="${escapeHtml(trip)}">0</span>
-            </td>
-            <td style="padding: 8px; text-align: center;">
-              <button class="btn btn-primary" style="padding: 4px 12px; font-size: 11px;" onclick="addLogisticsRecord('${escapeHtml(trip)}')">+ Add</button>
-            </td>
-          </tr>
-        `;
-      } else {
-        // عرض السجلات الموجودة
-        for (let idx = 0; idx < tripRecords.length; idx++) {
-          const record = tripRecords[idx];
-          const vehicle = luggageVehicles.find(v => v.id === record.vehicleId);
-          html += `
-            <tr id="record-${escapeHtml(trip)}-${record.vehicleId}">
-              <td style="padding: 8px;">
-                <strong>${escapeHtml(vehicle?.licensePlate || record.vehicleId)}</strong>
-                <br><span style="font-size: 10px; color: gray;">${escapeHtml(vehicle?.driverName || 'No driver')}</span>
-              </td>
-              <td style="padding: 8px; text-align: center; font-weight: bold; color: var(--green);">
-                ${record.goCount}
-              </td>
-              <td style="padding: 8px; text-align: center; font-weight: bold; color: var(--blue);">
-                ${record.returnCount}
-              </td>
-              <td style="padding: 8px; text-align: center; font-weight: bold;">
-                ${record.goCount + record.returnCount}
-              </td>
-              <td style="padding: 8px; text-align: center;">
-                <button class="btn btn-danger" style="padding: 4px 8px; font-size: 10px;" onclick="deleteLogisticsRecord('${escapeHtml(trip)}', '${record.vehicleId}')">🗑️ Remove</button>
-              </td>
-            </tr>
-          `;
+      for (const vehicle of luggageVehicles) {
+        const key = `${trip}|${vehicle.id}`;
+        const record = recordsMap.get(key);
+        const goCount = record?.goCount || 0;
+        const returnCount = record?.returnCount || 0;
+        
+        if (goCount > 0 || returnCount > 0) {
+          hasRecords = true;
         }
         
-        // صف لإضافة سيارة إضافية لنفس الرحلة
         html += `
-          <tr style="background: var(--gray-50);">
-            <td style="padding: 8px;">
-              <select class="logistics-vehicle-select" data-trip="${escapeHtml(trip)}" style="width: 100%; padding: 6px;">
-                <option value="">-- Add Another Vehicle --</option>
-                ${luggageVehicles.map(v => `<option value="${v.id}">${escapeHtml(v.licensePlate)} (Capacity: ${v.capacity || 0})</option>`).join('')}
-              </select>
+          <tr id="log-row-${escapeHtml(trip)}-${vehicle.id}" style="border-bottom: 1px solid var(--border);">
+            <td style="padding: 10px; text-align: center; font-weight: bold; background: ${!hasRecords && goCount === 0 ? 'var(--gray-50)' : 'white'};">
+              ${!hasRecords && goCount === 0 ? escapeHtml(trip) : escapeHtml(trip)}
             </td>
-            <td style="padding: 8px; text-align: center;">
-              <input type="number" class="logistics-go" data-trip="${escapeHtml(trip)}" value="0" min="0" max="20" style="width: 70px; text-align: center;">
+            <td style="padding: 10px;">
+              <strong>${escapeHtml(vehicle.licensePlate)}</strong>
+              <div style="font-size: 10px; color: gray;">Driver: ${escapeHtml(vehicle.driverName || 'N/A')} | Capacity: ${vehicle.capacity || 0}</div>
             </td>
-            <td style="padding: 8px; text-align: center;">
-              <input type="number" class="logistics-return" data-trip="${escapeHtml(trip)}" value="0" min="0" max="20" style="width: 70px; text-align: center;">
+            <td style="padding: 10px; text-align: center;">
+              <input type="number" 
+                     class="logistics-go-input" 
+                     data-trip="${escapeHtml(trip)}" 
+                     data-vehicle="${vehicle.id}"
+                     value="${goCount}" 
+                     min="0" 
+                     max="50" 
+                     style="width: 70px; padding: 6px; text-align: center; border: 1px solid var(--border); border-radius: 6px;"
+                     onchange="updateLogisticsTotal('${escapeHtml(trip)}', '${vehicle.id}')">
             </td>
-            <td style="padding: 8px; text-align: center;">
-              <span class="logistics-total" data-trip="${escapeHtml(trip)}">0</span>
+            <td style="padding: 10px; text-align: center;">
+              <input type="number" 
+                     class="logistics-return-input" 
+                     data-trip="${escapeHtml(trip)}" 
+                     data-vehicle="${vehicle.id}"
+                     value="${returnCount}" 
+                     min="0" 
+                     max="50" 
+                     style="width: 70px; padding: 6px; text-align: center; border: 1px solid var(--border); border-radius: 6px;"
+                     onchange="updateLogisticsTotal('${escapeHtml(trip)}', '${vehicle.id}')">
             </td>
-            <td style="padding: 8px; text-align: center;">
-              <button class="btn btn-primary" style="padding: 4px 12px; font-size: 11px;" onclick="addLogisticsRecord('${escapeHtml(trip)}')">+ Add</button>
+            <td style="padding: 10px; text-align: center;">
+              <span id="log-total-${escapeHtml(trip)}-${vehicle.id}" style="font-weight: bold; color: var(--green);">
+                ${goCount + returnCount}
+              </span>
             </td>
           </tr>
         `;
       }
       
-      html += `
-              </tbody>
-            </table>
-          </div>
-        </div>
-      `;
+      // إضافة صف فاصل بين الرحلات
+      html += `<tr><td colspan="5" style="height: 10px; background: var(--gray-100);"></td></tr>`;
     }
     
-    // Summary section
-    const totalGo = savedLogs.reduce((sum, r) => sum + (r.goCount || 0), 0);
-    const totalReturn = savedLogs.reduce((sum, r) => sum + (r.returnCount || 0), 0);
-    const totalTrips = totalGo + totalReturn;
+    // حساب الإجماليات
+    let totalGo = 0, totalReturn = 0;
+    for (const record of savedLogs) {
+      totalGo += record.goCount || 0;
+      totalReturn += record.returnCount || 0;
+    }
     
     html += `
+          </tbody>
+        </table>
       </div>
-      <div class="summary-box" style="margin-top: 16px; background: var(--navy); color: white;">
+      <div class="summary-box" style="margin-top: 20px; background: var(--navy); color: white; text-align: center;">
         <strong>📊 Total Summary for ${currentDate}:</strong><br>
-        🚀 Total Go Trips: ${totalGo} | 🔄 Total Return Trips: ${totalReturn} | 🎯 Total Trips: ${totalTrips}
+        🚀 Go Trips: ${totalGo} &nbsp;&nbsp;|&nbsp;&nbsp; 🔄 Return Trips: ${totalReturn} &nbsp;&nbsp;|&nbsp;&nbsp; 🎯 Total Trips: ${totalGo + totalReturn}
       </div>
       <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
         <button class="btn btn-secondary" onclick="closeModal('logisticsVehiclesModal')">Cancel</button>
-        <button class="btn btn-primary" onclick="saveAllLogisticsRecords()">✅ Save All</button>
+        <button class="btn btn-primary" onclick="saveAllLogisticsRecordsV2()">✅ Save All</button>
       </div>
     `;
     
     document.getElementById('logisticsVehiclesContent').innerHTML = html;
-    
-    // إضافة مستمعي الأحداث لتحديث الإجمالي تلقائياً
-    document.querySelectorAll('.logistics-go, .logistics-return').forEach(input => {
-      input.addEventListener('input', function() {
-        const trip = this.getAttribute('data-trip');
-        updateLogisticsTotal(trip);
-      });
-    });
-    
     openModal('logisticsVehiclesModal');
     
   } catch(e) {
     console.error('openLogisticsVehicles error:', e);
     showToast('خطأ: ' + e.message, 'error');
+  }
+}
+
+// دالة تحديث الإجمالي لكل صف
+function updateLogisticsTotal(tripName, vehicleId) {
+  const goInput = document.querySelector(`.logistics-go-input[data-trip="${tripName}"][data-vehicle="${vehicleId}"]`);
+  const returnInput = document.querySelector(`.logistics-return-input[data-trip="${tripName}"][data-vehicle="${vehicleId}"]`);
+  const totalSpan = document.getElementById(`log-total-${tripName}-${vehicleId}`);
+  
+  if (goInput && returnInput && totalSpan) {
+    const go = parseInt(goInput.value) || 0;
+    const ret = parseInt(returnInput.value) || 0;
+    totalSpan.textContent = go + ret;
+    
+    // تغيير لون الخلفية إذا كان هناك تشغيلات
+    const row = goInput.closest('tr');
+    if (row) {
+      if (go > 0 || ret > 0) {
+        row.style.backgroundColor = '#e8f5e9';
+      } else {
+        row.style.backgroundColor = '';
+      }
+    }
+  }
+}
+
+// دالة حفظ السجلات الجديدة
+async function saveAllLogisticsRecordsV2() {
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) {
+    showToast('الرجاء تحديد تاريخ واحد أولاً', 'error');
+    return;
+  }
+  
+  // جمع جميع البيانات من المدخلات
+  const records = [];
+  const goInputs = document.querySelectorAll('.logistics-go-input');
+  
+  for (const input of goInputs) {
+    const tripName = input.getAttribute('data-trip');
+    const vehicleId = input.getAttribute('data-vehicle');
+    const goCount = parseInt(input.value) || 0;
+    
+    const returnInput = document.querySelector(`.logistics-return-input[data-trip="${tripName}"][data-vehicle="${vehicleId}"]`);
+    const returnCount = parseInt(returnInput?.value) || 0;
+    
+    if (goCount > 0 || returnCount > 0) {
+      records.push({
+        tripName: tripName,
+        vehicleId: vehicleId,
+        goCount: goCount,
+        returnCount: returnCount
+      });
+    }
+  }
+  
+  if (records.length === 0) {
+    showToast('⚠️ لا توجد تشغيلات لحفظها', 'error');
+    return;
+  }
+  
+  try {
+    const result = await gas('saveLogisticsRecords', {
+      date: currentDate,
+      records: JSON.stringify(records),
+      centerName: currentUser?.centerName
+    });
+    
+    if (result && result.success) {
+      showToast(`✅ تم حفظ ${records.length} تشغيل`, 'success');
+      closeModal('logisticsVehiclesModal');
+      await loadAndPopulateAssignments(currentDate);
+    } else {
+      showToast('فشل حفظ البيانات', 'error');
+    }
+  } catch(e) {
+    showToast('Error: ' + e.message, 'error');
   }
 }
 // جلب سجلات السيارات اللوجستية لليوم
@@ -3099,135 +3152,10 @@ async function getLogisticsRecords(date) {
   }
   return [];
 }
-  function updateLogisticsTotal(tripName) {
-  const goInput = document.querySelector(`.logistics-go[data-trip="${tripName}"]`);
-  const returnInput = document.querySelector(`.logistics-return[data-trip="${tripName}"]`);
-  const totalSpan = document.querySelector(`.logistics-total[data-trip="${tripName}"]`);
-  
-  if (goInput && returnInput && totalSpan) {
-    const go = parseInt(goInput.value) || 0;
-    const ret = parseInt(returnInput.value) || 0;
-    totalSpan.textContent = go + ret;
-    totalSpan.style.fontWeight = 'bold';
-    totalSpan.style.color = (go + ret) > 0 ? 'var(--green)' : 'var(--gray-500)';
-  }
-}
+ 
+ 
 
-async function addLogisticsRecord(tripName) {
-  const vehicleSelect = document.querySelector(`.logistics-vehicle-select[data-trip="${tripName}"]`);
-  const goInput = document.querySelector(`.logistics-go[data-trip="${tripName}"]`);
-  const returnInput = document.querySelector(`.logistics-return[data-trip="${tripName}"]`);
-  
-  const vehicleId = vehicleSelect?.value;
-  const goCount = parseInt(goInput?.value) || 0;
-  const returnCount = parseInt(returnInput?.value) || 0;
-  
-  if (!vehicleId) {
-    showToast('الرجاء اختيار سيارة', 'error');
-    return;
-  }
-  
-  if (goCount === 0 && returnCount === 0) {
-    showToast('الرجاء إدخال عدد الرحلات (ذهاب أو عودة)', 'error');
-    return;
-  }
-  
-  // التحقق من عدم وجود تكرار لنفس السيارة في نفس الرحلة
-  const existingRecord = pendingLogisticsRecords.find(r => 
-    r.tripName === tripName && r.vehicleId === vehicleId
-  );
-  
-  if (existingRecord) {
-    showToast('هذه السيارة مسجلة بالفعل لهذه الرحلة', 'error');
-    return;
-  }
-  
-  // إضافة إلى القائمة المؤقتة
-  pendingLogisticsRecords.push({
-    tripName: tripName,
-    vehicleId: vehicleId,
-    goCount: goCount,
-    returnCount: returnCount
-  });
-  
-  showToast(`✅ Added: ${vehicleId} for ${tripName} (Go: ${goCount}, Return: ${returnCount})`, 'success');
-  
-  // إعادة تحميل النافذة
-  await openLogisticsVehicles();
-}
 
-// إضافة سجل جديد مؤقتاً
-let pendingLogisticsRecords = [];
-
-function addLogisticsRecord(tripName) {
-  const vehicleSelect = document.querySelector(`.logistics-vehicle-select[data-trip="${tripName}"]`);
-  const goInput = document.querySelector(`.logistics-go[data-trip="${tripName}"]`);
-  const returnInput = document.querySelector(`.logistics-return[data-trip="${tripName}"]`);
-  
-  const vehicleId = vehicleSelect?.value;
-  const goCount = parseInt(goInput?.value) || 0;
-  const returnCount = parseInt(returnInput?.value) || 0;
-  
-  if (!vehicleId) {
-    showToast('الرجاء اختيار سيارة', 'error');
-    return;
-  }
-  
-  if (goCount === 0 && returnCount === 0) {
-    showToast('الرجاء إدخال عدد الرحلات', 'error');
-    return;
-  }
-  
-  // إضافة إلى القائمة المؤقتة
-  pendingLogisticsRecords.push({
-    tripName: tripName,
-    vehicleId: vehicleId,
-    goCount: goCount,
-    returnCount: returnCount
-  });
-  
-  showToast(`Added: ${vehicleId} for ${tripName}`, 'success');
-  
-  // إعادة تحميل النافذة
-  openLogisticsVehicles();
-}
-
-function deleteLogisticsRecord(tripName, vehicleId) {
-  pendingLogisticsRecords = pendingLogisticsRecords.filter(r => 
-    !(r.tripName === tripName && r.vehicleId === vehicleId)
-  );
-  showToast(`🗑️ Removed record for ${tripName}`, 'info');
-  openLogisticsVehicles();
-}
-
-async function saveAllLogisticsRecords() {
-  const currentDate = getCurrentDateISO();
-  if (!currentDate) {
-    showToast('الرجاء تحديد تاريخ واحد أولاً', 'error');
-    return;
-  }
-  
-  try {
-    const result = await gas('saveLogisticsRecords', {
-      date: currentDate,
-      records: JSON.stringify(pendingLogisticsRecords),
-      centerName: currentUser?.centerName
-    });
-    
-    if (result && result.success) {
-      showToast(`✅ تم حفظ ${pendingLogisticsRecords.length} سجل`, 'success');
-      pendingLogisticsRecords = [];
-      closeModal('logisticsVehiclesModal');
-      
-      // تحديث البيانات المحلية
-      await loadAndPopulateAssignments(currentDate);
-    } else {
-      showToast('فشل حفظ البيانات', 'error');
-    }
-  } catch(e) {
-    showToast('Error: ' + e.message, 'error');
-  }
-}
 // ============================================================
 // HELPER FUNCTIONS
 // ============================================================
