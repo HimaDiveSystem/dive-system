@@ -1376,13 +1376,22 @@ function renderSummary() {
   }
   
   filteredInvoices.forEach(inv => {
+    // ✅ فقط الفواتير التي لها كميات فعلية
+    const sgl = parseInt(inv.Sgl) || parseInt(inv.sgl) || 0;
+    const dbl = parseInt(inv.Dbl) || parseInt(inv.dbl) || 0;
+    const trpl = parseInt(inv.Trpl) || parseInt(inv.trpl) || 0;
+    const extra = parseInt(inv.Extra) || parseInt(inv.extra) || 0;
+    
+    // ✅ تخطي الفواتير التي ليس لها كميات (فواتير تحصيل أو استرداد)
+    if (sgl === 0 && dbl === 0 && trpl === 0 && extra === 0) return;
+    
     const tripName = (inv.Trip || inv.trip || 'Unknown').trim();
     if (!trips[tripName]) {
       trips[tripName] = { bookings: 0, activities: {} };
     }
     trips[tripName].bookings++;
     
-    // ✅ فقط من ActivitiesText (مثل Bookings by Active Date)
+    // ✅ جمع الأنشطة من ActivitiesText (إذا وجدت)
     const activitiesText = (inv.ActivitiesText || inv.activitiesText || '').toString().trim();
     if (activitiesText) {
       activitiesText.split('|').forEach(part => {
@@ -1393,6 +1402,12 @@ function renderSummary() {
           trips[tripName].activities[activityName] = (trips[tripName].activities[activityName] || 0) + quantity;
         }
       });
+    } else {
+      // ✅ استخدام البنود مباشرة
+      if (sgl > 0) trips[tripName].activities['Adult'] = (trips[tripName].activities['Adult'] || 0) + sgl;
+      if (dbl > 0) trips[tripName].activities['Child'] = (trips[tripName].activities['Child'] || 0) + dbl;
+      if (trpl > 0) trips[tripName].activities['Infant'] = (trips[tripName].activities['Infant'] || 0) + trpl;
+      if (extra > 0) trips[tripName].activities['Intro'] = (trips[tripName].activities['Intro'] || 0) + extra;
     }
   });
   
@@ -1413,7 +1428,7 @@ function renderSummary() {
       <td><strong>${escapeHtml(tripName)}</strong></td>
       <td style="text-align:center"><span style="background:var(--navy);color:var(--gold);padding:4px 10px;border-radius:20px;font-size:12px;font-weight:700">${info.bookings}</span></td>
       <td class="acts-cell" style="white-space:normal; word-break:break-word;">${escapeHtml(activitiesStr || '—')}</span></td>
-    </tr>`;
+    <tr>`;
   });
   
   let summaryHtml = `
@@ -1444,7 +1459,7 @@ function renderSummary() {
     }
   }
 }
-function gotoPage(page) {
+  function gotoPage(page) {
   currentPage = page;
   renderTable();
 }
@@ -2193,11 +2208,6 @@ async function loadBoatsWithInstructors() {
       cachedInstructors = instructors;
     }
     
-    // ✅ استبعاد المدربين الموجودين في Beach Instructors
-    const availableInstructors = instructors.filter(inst => 
-      !selectedBeachInstructors.includes(inst.id)
-    );
-    
     if (!Array.isArray(boats)) boats = [];
     
     let html = '';
@@ -2216,7 +2226,7 @@ async function loadBoatsWithInstructors() {
             <div class="selection-list" style="max-height:200px;">
       `;
       
-      for (const inst of availableInstructors) {
+      for (const inst of instructors) {
         const isSelected = selectedInstructorsForBoat.includes(inst.id);
         html += `
           <div class="selection-item" onclick="toggleBoatInstructor('${boat.id}', '${inst.id}')">
@@ -2236,44 +2246,90 @@ async function loadBoatsWithInstructors() {
     document.getElementById('boatsSelectionContainer').innerHTML = html || '<div>لا توجد مراكب</div>';
     
   } catch(e) {
+    console.error('loadBoatsWithInstructors error:', e);
     showToast('خطأ في تحميل المراكب: ' + e.message, 'error');
   }
 }
-
 function toggleBoatSelection(boatId) {
   const checkbox = document.querySelector(`.boat-select[data-id="${boatId}"]`);
-  const isSelected = checkbox.checked;
+  const isSelected = checkbox ? checkbox.checked : false;
   const instructorsDiv = document.getElementById(`boat-instructors-${boatId}`);
   
   if (isSelected) {
-    if (!selectedBoats.includes(boatId)) selectedBoats.push(boatId);
+    // ✅ إضافة المركب
+    if (!selectedBoats.includes(boatId)) {
+      selectedBoats.push(boatId);
+      console.log(`✅ Boat ${boatId} added to selectedBoats`);
+    }
     if (instructorsDiv) instructorsDiv.style.display = 'block';
   } else {
+    // ✅ إزالة المركب بالكامل
     const index = selectedBoats.indexOf(boatId);
-    if (index !== -1) selectedBoats.splice(index, 1);
+    if (index !== -1) {
+      selectedBoats.splice(index, 1);
+      console.log(`✅ Boat ${boatId} removed from selectedBoats`);
+    }
     if (instructorsDiv) instructorsDiv.style.display = 'none';
+    // ✅ إزالة جميع المدربين المرتبطين بهذا المركب
     delete boatInstructorsMap[boatId];
-    updateSelectionBadges();
+    console.log(`✅ Instructors for boat ${boatId} removed`);
+  }
+  
+  // ✅ تحديث الشارات
+  updateSelectionBadges();
+  
+  // ✅ تحديث عدد المراكب في الزر
+  const boatsBadge = document.getElementById('selectedBoatsBadge');
+  if (boatsBadge) {
+    boatsBadge.textContent = selectedBoats.length;
   }
 }
-
 function toggleBoatInstructor(boatId, instructorId) {
-  if (!boatInstructorsMap[boatId]) boatInstructorsMap[boatId] = [];
-  const index = boatInstructorsMap[boatId].indexOf(instructorId);
-  if (index === -1) {
-    boatInstructorsMap[boatId].push(instructorId);
-  } else {
-    boatInstructorsMap[boatId].splice(index, 1);
+  if (!boatInstructorsMap[boatId]) {
+    boatInstructorsMap[boatId] = [];
   }
-  const container = document.getElementById(`boat-instructors-${boatId}`);
-  if (container) {
-    const checkboxes = container.querySelectorAll(`input[type="checkbox"]`);
-    checkboxes.forEach(cb => {
-      const instId = cb.getAttribute('data-id');
-      if (instId) {
-        cb.checked = boatInstructorsMap[boatId]?.includes(instId) || false;
+  
+  const checkbox = document.querySelector(`.boat-instructor-checkbox-${boatId}[data-id="${instructorId}"]`);
+  const isSelected = checkbox ? checkbox.checked : false;
+  
+  if (isSelected) {
+    // ✅ إضافة المدرب
+    if (!boatInstructorsMap[boatId].includes(instructorId)) {
+      boatInstructorsMap[boatId].push(instructorId);
+      console.log(`✅ Instructor ${instructorId} added to boat ${boatId}`);
+    }
+  } else {
+    // ✅ إزالة المدرب
+    const index = boatInstructorsMap[boatId].indexOf(instructorId);
+    if (index !== -1) {
+      boatInstructorsMap[boatId].splice(index, 1);
+      console.log(`✅ Instructor ${instructorId} removed from boat ${boatId}`);
+    }
+    // إذا لم يبق مدربين لهذا المركب، قم بإزالته من selectedBoats
+    if (boatInstructorsMap[boatId].length === 0) {
+      const boatIndex = selectedBoats.indexOf(boatId);
+      if (boatIndex !== -1) {
+        selectedBoats.splice(boatIndex, 1);
+        console.log(`✅ Boat ${boatId} removed (no instructors left)`);
+        // إخفاء قسم المدربين
+        const instructorsDiv = document.getElementById(`boat-instructors-${boatId}`);
+        if (instructorsDiv) instructorsDiv.style.display = 'none';
+        // إلغاء تحديد checkbox المركب
+        const boatCheckbox = document.querySelector(`.boat-select[data-id="${boatId}"]`);
+        if (boatCheckbox) boatCheckbox.checked = false;
       }
-    });
+    }
+  }
+  
+  console.log('📋 boatInstructorsMap:', boatInstructorsMap);
+  console.log('📋 selectedBoats:', selectedBoats);
+  
+  // ✅ تحديث الشارات
+  updateSelectionBadges();
+  
+  const boatsBadge = document.getElementById('selectedBoatsBadge');
+  if (boatsBadge) {
+    boatsBadge.textContent = selectedBoats.length;
   }
 }
 
