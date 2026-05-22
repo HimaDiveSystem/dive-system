@@ -570,6 +570,9 @@
     🚗 Vehicles <span id="selectedVehiclesBadge" class="selection-badge">0</span>
   </button>
   <button class="reset-selection" onclick="resetAllSelections()">🗑️ Clear All</button>
+  <button class="selection-btn" id="btnLogisticsVehicles" onclick="openLogisticsVehicles()">
+  🚛 Logistics Vehicles
+</button>
 </div>
 
 <div class="filter-bar">
@@ -628,7 +631,15 @@
 <div id="vehiclesModal" class="modal"><div class="modal-content"><div class="modal-header"><h3>🚗 Choose Vehicles</h3><button class="close-modal" onclick="closeModal('vehiclesModal')">×</button></div><div id="vehiclesList"></div><div style="display:flex; gap:10px; justify-content:flex-end;"><button class="btn btn-secondary" onclick="closeModal('vehiclesModal')">Cancel</button><button class="btn btn-primary" onclick="saveVehiclesSelection()">✅ Save</button></div></div></div>
 <div id="timeModal" class="modal"><div class="modal-content"><div class="modal-header"><h3>🕐 تعديل وقت التنفيذ</h3><button class="close-modal" onclick="closeModal('timeModal')">×</button></div><div style="text-align:center"><input type="time" id="timePickerInput" step="60" style="font-size:32px; text-align:center; padding:16px; width:200px; margin:20px auto; display:block;"><div style="display:flex; gap:10px; justify-content:center;"><button class="btn btn-secondary" onclick="closeModal('timeModal')">إلغاء</button><button class="btn btn-primary" onclick="saveTimeUpdate()">حفظ</button></div></div></div></div>
 <div id="upsellModal" class="modal"><div class="modal-content" style="max-width:850px;"><div class="modal-header"><h3>💰 UpSell - Additional Sales</h3><button class="close-modal" onclick="closeModal('upsellModal')">×</button></div><div id="upsellContent"></div></div></div>
-
+<div id="logisticsVehiclesModal" class="modal">
+  <div class="modal-content" style="max-width:700px;">
+    <div class="modal-header">
+      <h3>🚛 Logistics Vehicles - Trip Equipment Transport</h3>
+      <button class="close-modal" onclick="closeModal('logisticsVehiclesModal')">×</button>
+    </div>
+    <div id="logisticsVehiclesContent"></div>
+  </div>
+</div>
 <script>
 // ============================================================
 // CONFIGURATION & GLOBALS
@@ -855,22 +866,23 @@ function changePageSize() {
 // ============================================================
 function initTripFilter() {
   const select = document.getElementById('filterTrip');
-  // الاحتفاظ بخيار "All Trips" كأول عنصر
   select.innerHTML = '<option value="">All Trips</option>';
-  uniqueTrips.forEach(trip => {
+  
+  // استخدام uniqueTrips من البيانات الحالية (وليس كل الرحلات)
+  const tripsToShow = uniqueTrips.length > 0 ? uniqueTrips : [];
+  
+  tripsToShow.forEach(trip => {
     const option = document.createElement('option');
     option.value = trip;
     option.textContent = trip;
     select.appendChild(option);
   });
   
-  // إضافة مستمع الحدث لمعالجة الاختيارات
   select.addEventListener('change', function() {
     const selectedValues = Array.from(this.selectedOptions).map(opt => opt.value);
     const hasAllTrips = selectedValues.includes('');
     
     if (hasAllTrips && selectedValues.length > 1) {
-      // إذا تم اختيار "All Trips" مع أي رحلة أخرى، قم بإلغاء تحديد "All Trips"
       for (let i = 0; i < this.options.length; i++) {
         if (this.options[i].value === '') {
           this.options[i].selected = false;
@@ -878,33 +890,27 @@ function initTripFilter() {
         }
       }
       showToast('تم إلغاء تحديد "All Trips" تلقائياً', 'info');
-    } else if (!hasAllTrips && selectedValues.length >= 1) {
-      // إذا تم اختيار رحلة ولم يتم اختيار "All Trips" - لا تفعل شيئاً
-      // (هذا هو السلوك المطلوب)
-    } else if (hasAllTrips && selectedValues.length === 1) {
-      // إذا كان "All Trips" فقط هو المحدد - هذا صحيح
     }
-    
-    // تطبيق الفلترة بعد التغيير
     applyFilters();
   });
 }
-
+  
 function getSelectedTrips() {
   const select = document.getElementById('filterTrip');
+  if (!select) return [];
   const selected = [];
   for (let i = 0; i < select.options.length; i++) {
     if (select.options[i].selected && select.options[i].value !== '') {
       selected.push(select.options[i].value);
     }
   }
-  // إذا كان "All Trips" هو المحدد الوحيد أو لم يتم تحديد أي شيء، نرجع مصفوفة فارغة
   const hasAllTrips = Array.from(select.options).some(opt => opt.selected && opt.value === '');
   if (hasAllTrips || selected.length === 0) {
-    return []; // مصفوفة فارغة تعني "كل الرحلات"
+    return [];
   }
   return selected;
 }
+
 // ============================================================
 // LOAD ASSIGNMENTS FOR A DATE
 // ============================================================
@@ -1123,7 +1129,6 @@ async function reloadData() {
 
 
 function applyFilters() {
-  // ✅ تأكد من أن filteredInvoices يتم إعادة تعيينها
   const fromDate = document.getElementById('filterFromDate').value;
   const toDate = document.getElementById('filterToDate').value;
   const search = document.getElementById('filterSearch').value.toLowerCase();
@@ -1142,7 +1147,6 @@ function applyFilters() {
     toDateObj.setHours(23, 59, 59, 999);
   }
   
-  // ✅ إعادة تعيين filteredInvoices
   filteredInvoices = allInvoices.filter(inv => {
     const activeDate = inv.ActiveDate || inv.activeDate || '';
     const parsedDate = parseDateFromString(activeDate);
@@ -1161,7 +1165,8 @@ function applyFilters() {
     return true;
   });
   
-  console.log('📊 filteredInvoices بعد التطبيق:', filteredInvoices.length);
+  // تحديث قائمة الرحلات بناءً على الفلاتر الحالية
+  updateTripFilterFromCurrentData();
   
   doSort();
   currentPage = 1;
@@ -1172,6 +1177,21 @@ function applyFilters() {
   const currentDate = getCurrentDateISO();
   if (currentDate) {
     loadAndPopulateAssignments(currentDate);
+  }
+}
+
+  // إضافة دالة جديدة لتحديث قائمة الرحلات من البيانات الحالية
+function updateTripFilterFromCurrentData() {
+  const tripsInCurrentData = new Set();
+  filteredInvoices.forEach(inv => {
+    const trip = inv.Trip || inv.trip;
+    if (trip) tripsInCurrentData.add(trip);
+  });
+  
+  const currentTrips = Array.from(tripsInCurrentData).sort();
+  if (JSON.stringify(currentTrips) !== JSON.stringify(uniqueTrips)) {
+    uniqueTrips = currentTrips;
+    initTripFilter();
   }
 }
 
@@ -1325,7 +1345,6 @@ function renderTable() {
     html += `<td style="text-align:center; max-width:150px; white-space:normal; word-break:break-word;">${escapeHtml((inv.notes || '').substring(0, 60))}${(inv.notes || '').length > 60 ? '...' : ''}</span></td>`;
     html += `<td style="text-align:center;"><div class="action-buttons">`;
     html += `<button class="action-btn vehicle ${actionClass}" onclick="openAssignVehicles('${voucherNo}')" ${!showActions ? 'disabled' : ''}>🚗</button>`;
-    html += `<button class="action-btn equipment ${actionClass}" onclick="openAssignEquipmentVehicles('${voucherNo}')" ${!showActions ? 'disabled' : ''}>🚛</button>`;
     html += `<button class="action-btn boat ${actionClass}" onclick="openAssignBoats('${voucherNo}')" ${!showActions ? 'disabled' : ''}>⛵</button>`;
     html += `<button class="action-btn instructor ${actionClass}" onclick="openAssignInstructors('${voucherNo}')" ${!showActions ? 'disabled' : ''}>👨‍🏫</button>`;
     html += `<button class="action-btn upsell" onclick="openUpsell('${voucherNo}')">💰</button>`;
@@ -1475,21 +1494,38 @@ async function openAssignVehicles(voucherNo) {
   const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
   if (!invoice) return;
   
+  // جلب السيارات من النوع passengers فقط (وليس luggage)
+  let allVehicles = cachedVehicles;
+  if (!allVehicles || allVehicles.length === 0) {
+    allVehicles = await gas('getVehicles');
+    cachedVehicles = allVehicles;
+  }
+  
+  // ✅ تصفية: فقط السيارات النشطة ومن نوع passengers (وليست luggage)
+  const vehicles = allVehicles.filter(v => 
+    v.isActive === true && 
+    v.usageType !== 'luggage' &&
+    v.capacity > 0
+  );
+  
+  if (vehicles.length === 0) {
+    showToast('لا توجد سيارات متاحة لنقل الركاب', 'error');
+    return;
+  }
+  
   if (selectedVehicles.length === 0) {
-    showToast('Please select vehicles first from the Vehicles button', 'error');
+    showToast('الرجاء اختيار السيارات أولاً من زر السيارات', 'error');
     return;
   }
   
   currentAssignVoucher = voucherNo;
   currentAssignInvoice = invoice;
   
-  // ✅ التصحيح: قراءة البيانات من invoice.sgl, invoice.dbl, invoice.trpl
+  // ✅ تصحيح حساب الأفراد
   const totalAdults = parseInt(invoice.sgl) || 0;
   const totalChildren = parseInt(invoice.dbl) || 0;
   const totalInfants = parseInt(invoice.trpl) || 0;
   const totalPassengers = totalAdults + totalChildren + totalInfants;
-  
-  console.log('📊 Invoice data:', { totalAdults, totalChildren, totalInfants, totalPassengers });
   
   const currentDate = getCurrentDateISO();
   const bookedSeatsMap = await getBookedSeatsForVehicles(currentDate);
@@ -1500,12 +1536,12 @@ async function openAssignVehicles(voucherNo) {
       Total Passengers: ${totalPassengers} (Adult: ${totalAdults}, Child: ${totalChildren}, Infant: ${totalInfants})
     </div>
     <div style="overflow-x:auto; max-height:400px;">
-      <table style="width:100%; border-collapse:collapse; font-size:12px;">
+      <table style="width:100%; border-collapse:collapse; font-size:12px; min-width:600px;">
         <thead>
           <tr style="background:var(--navy); color:var(--gold);">
             <th style="padding:8px;">Vehicle</th>
             <th style="padding:8px;">Capacity</th>
-            <th style="padding:8px;">Booked Today</th>
+            <th style="padding:8px;">Booked</th>
             <th style="padding:8px;">Available</th>
             <th style="padding:8px;">Adult</th>
             <th style="padding:8px;">Child</th>
@@ -1517,7 +1553,7 @@ async function openAssignVehicles(voucherNo) {
   `;
   
   for (const vehId of selectedVehicles) {
-    const vehicle = await getVehicleById(vehId);
+    const vehicle = vehicles.find(v => v.id === vehId);
     if (!vehicle) continue;
     const capacity = vehicle.capacity || 0;
     const bookedToday = bookedSeatsMap[vehId] || 0;
@@ -1525,23 +1561,29 @@ async function openAssignVehicles(voucherNo) {
     
     vehiclesHtml += `
       <tr>
-        <td style="padding:6px;"><strong>${escapeHtml(vehicle.licensePlate || vehId)}</strong></td>
+        <td style="padding:6px;"><strong>${escapeHtml(vehicle.licensePlate || vehId)}</strong><br><span style="font-size:9px; color:gray;">${escapeHtml(vehicle.driverName || 'No driver')}</span></td>
         <td style="padding:6px; text-align:center;">${capacity}</td>
         <td style="padding:6px; text-align:center;">${bookedToday}</td>
         <td style="padding:6px; text-align:center; color:${available > 0 ? 'green' : 'red'};">${available}</td>
-        <td style="padding:6px; text-align:center;"><input type="number" class="assign-adult" data-id="${vehId}" value="0" min="0" max="${totalAdults}" style="width:55px; text-align:center;"></td>
-        <td style="padding:6px; text-align:center;"><input type="number" class="assign-child" data-id="${vehId}" value="0" min="0" max="${totalChildren}" style="width:55px; text-align:center;"></td>
-        <td style="padding:6px; text-align:center;"><input type="number" class="assign-infant" data-id="${vehId}" value="0" min="0" max="${totalInfants}" style="width:55px; text-align:center;"></td>
-        <td style="padding:6px; text-align:center;"><input type="checkbox" class="assign-select" data-id="${vehId}"></td>
+        <td style="padding:6px; text-align:center;"><input type="number" class="assign-adult" data-id="${vehId}" value="0" min="0" max="${Math.min(available, totalAdults)}" style="width:50px; text-align:center;" onchange="updateVehicleAssignmentTotals()"></td>
+        <td style="padding:6px; text-align:center;"><input type="number" class="assign-child" data-id="${vehId}" value="0" min="0" max="${Math.min(available, totalChildren)}" style="width:50px; text-align:center;" onchange="updateVehicleAssignmentTotals()"></td>
+        <td style="padding:6px; text-align:center;"><input type="number" class="assign-infant" data-id="${vehId}" value="0" min="0" max="${Math.min(available, totalInfants)}" style="width:50px; text-align:center;" onchange="updateVehicleAssignmentTotals()"></td>
+        <td style="padding:6px; text-align:center;"><input type="checkbox" class="assign-select" data-id="${vehId}" onchange="updateVehicleAssignmentTotals()"></td>
       </tr>
     `;
   }
   
   vehiclesHtml += `
         </tbody>
-      </table>
+       </table>
     </div>
     <div class="warning-box" id="assignWarning" style="margin-top:12px;"></div>
+    <div id="assignTotalsInfo" style="margin-top:8px; padding:8px; background:#f8f9fa; border-radius:6px; font-size:11px;">
+      <span id="assignedAdults">0</span> Adult | 
+      <span id="assignedChildren">0</span> Child | 
+      <span id="assignedInfants">0</span> Infant | 
+      Total: <span id="assignedTotal">0</span> / ${totalPassengers}
+    </div>
     <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:16px;">
       <button class="btn btn-secondary" onclick="closeModal('assignVehiclesModal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveVehicleAssignment()">✅ Assign</button>
@@ -1550,6 +1592,41 @@ async function openAssignVehicles(voucherNo) {
   
   document.getElementById('assignVehiclesContent').innerHTML = vehiclesHtml;
   openModal('assignVehiclesModal');
+}
+
+// إضافة دالة مساعدة لتحديث الإجماليات في نافذة السيارات
+function updateVehicleAssignmentTotals() {
+  let totalAdult = 0, totalChild = 0, totalInfant = 0;
+  const selectedCheckboxes = document.querySelectorAll('#assignVehiclesModal .assign-select:checked');
+  
+  for (const cb of selectedCheckboxes) {
+    const vehId = cb.getAttribute('data-id');
+    const adult = parseInt(document.querySelector(`#assignVehiclesModal .assign-adult[data-id="${vehId}"]`).value) || 0;
+    const child = parseInt(document.querySelector(`#assignVehiclesModal .assign-child[data-id="${vehId}"]`).value) || 0;
+    const infant = parseInt(document.querySelector(`#assignVehiclesModal .assign-infant[data-id="${vehId}"]`).value) || 0;
+    totalAdult += adult;
+    totalChild += child;
+    totalInfant += infant;
+  }
+  
+  const totalAssigned = totalAdult + totalChild + totalInfant;
+  const invoiceTotal = (parseInt(currentAssignInvoice.sgl) || 0) + 
+                       (parseInt(currentAssignInvoice.dbl) || 0) + 
+                       (parseInt(currentAssignInvoice.trpl) || 0);
+  
+  document.getElementById('assignedAdults').textContent = totalAdult;
+  document.getElementById('assignedChildren').textContent = totalChild;
+  document.getElementById('assignedInfants').textContent = totalInfant;
+  document.getElementById('assignedTotal').textContent = totalAssigned;
+  
+  const warningDiv = document.getElementById('assignWarning');
+  if (totalAssigned !== invoiceTotal) {
+    warningDiv.innerHTML = `⚠️ Total assigned (${totalAssigned}) does not match invoice total (${invoiceTotal})`;
+    warningDiv.style.color = 'var(--red)';
+  } else {
+    warningDiv.innerHTML = `✅ All passengers assigned (${totalAssigned}/${invoiceTotal})`;
+    warningDiv.style.color = 'var(--green)';
+  }
 }
   
 async function getBookedSeatsForVehicles(date) {
@@ -1566,14 +1643,14 @@ async function getBookedSeatsForVehicles(date) {
 
 async function saveVehicleAssignment() {
   const selectedRows = [];
-  const checkboxes = document.querySelectorAll('.assign-select:checked');
+  const checkboxes = document.querySelectorAll('#assignVehiclesModal .assign-select:checked');
   let totalAdult = 0, totalChild = 0, totalInfant = 0;
   
   for (const cb of checkboxes) {
     const vehId = cb.getAttribute('data-id');
-    const adult = parseInt(document.querySelector(`.assign-adult[data-id="${vehId}"]`).value) || 0;
-    const child = parseInt(document.querySelector(`.assign-child[data-id="${vehId}"]`).value) || 0;
-    const infant = parseInt(document.querySelector(`.assign-infant[data-id="${vehId}"]`).value) || 0;
+    const adult = parseInt(document.querySelector(`#assignVehiclesModal .assign-adult[data-id="${vehId}"]`).value) || 0;
+    const child = parseInt(document.querySelector(`#assignVehiclesModal .assign-child[data-id="${vehId}"]`).value) || 0;
+    const infant = parseInt(document.querySelector(`#assignVehiclesModal .assign-infant[data-id="${vehId}"]`).value) || 0;
     
     totalAdult += adult;
     totalChild += child;
@@ -1585,17 +1662,17 @@ async function saveVehicleAssignment() {
   }
   
   const totalAssigned = totalAdult + totalChild + totalInfant;
-  const invoiceTotal = (parseInt(currentAssignInvoice.adultCount) || 0) + 
-                       (parseInt(currentAssignInvoice.childCount) || 0) + 
-                       (parseInt(currentAssignInvoice.infantCount) || 0);
+  const invoiceTotal = (parseInt(currentAssignInvoice.sgl) || 0) + 
+                       (parseInt(currentAssignInvoice.dbl) || 0) + 
+                       (parseInt(currentAssignInvoice.trpl) || 0);
   
   if (totalAssigned !== invoiceTotal) {
-    document.getElementById('assignWarning').innerHTML = `⚠️ Total assigned (${totalAssigned}) does not match invoice total (${invoiceTotal})`;
+    showToast(`⚠️ Total assigned (${totalAssigned}) does not match invoice total (${invoiceTotal})`, 'error');
     return;
   }
   
   if (selectedRows.length === 0) {
-    document.getElementById('assignWarning').innerHTML = '⚠️ Please assign at least one vehicle';
+    showToast('⚠️ Please assign at least one vehicle', 'error');
     return;
   }
   
@@ -1617,14 +1694,15 @@ async function saveVehicleAssignment() {
     
     updateLocalInvoice(currentAssignVoucher, 'VehiclesUsed', JSON.stringify(vehiclesUsedJson));
     
-    showToast(`Assigned ${selectedRows.length} vehicles`, 'success');
+    showToast(`✅ Assigned ${selectedRows.length} vehicles (${totalAssigned} passengers)`, 'success');
     closeModal('assignVehiclesModal');
-    renderTable();
+    
+    // إعادة تحميل البيانات لتحديث المقاعد المحجوزة
+    await loadInvoices();
   } catch(e) { 
     showToast('Error: ' + e.message, 'error'); 
   }
 }
-
 // ============================================================
 // ASSIGN BOATS
 // ============================================================
@@ -2806,7 +2884,195 @@ async function saveTimeUpdate() {
   closeModal('timeModal');
   pendingTimeVoucher = null;
 }
+// دالة لفتح نافذة السيارات اللوجستية (مرتبطة بالرحلة وليس الفاتورة)
+async function openLogisticsVehicles() {
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) {
+    showToast('الرجاء تحديد تاريخ واحد أولاً', 'error');
+    return;
+  }
+  
+  // جلب جميع الرحلات في هذا التاريخ
+  const tripsOnDate = [...new Set(filteredInvoices.map(inv => inv.trip).filter(t => t))];
+  
+  if (tripsOnDate.length === 0) {
+    showToast('لا توجد رحلات في هذا التاريخ', 'error');
+    return;
+  }
+  
+  // جلب السيارات من نوع luggage فقط
+  let allVehicles = cachedVehicles;
+  if (!allVehicles || allVehicles.length === 0) {
+    allVehicles = await gas('getVehicles');
+    cachedVehicles = allVehicles;
+  }
+  
+  const luggageVehicles = allVehicles.filter(v => 
+    v.isActive === true && 
+    v.usageType === 'luggage'
+  );
+  
+  if (luggageVehicles.length === 0) {
+    showToast('لا توجد سيارات مخصصة لنقل المعدات', 'error');
+    return;
+  }
+  
+  // تحميل السجلات المحفوظة مسبقاً
+  const savedLogs = await getLogisticsRecords(currentDate);
+  
+  let html = `
+    <div class="summary-box">
+      <strong>📅 Date:</strong> ${currentDate}<br>
+      <strong>🚌 Trips on this date:</strong> ${tripsOnDate.join(', ')}
+    </div>
+    <div style="overflow-x:auto; max-height:400px;">
+      <table style="width:100%; border-collapse:collapse; font-size:12px;">
+        <thead>
+          <tr style="background:var(--navy); color:var(--gold);">
+            <th style="padding:8px;">Trip Name</th>
+            <th style="padding:8px;">Vehicle</th>
+            <th style="padding:8px;">Go Trip</th>
+            <th style="padding:8px;">Return Trip</th>
+            <th style="padding:8px;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+  `;
+  
+  for (const trip of tripsOnDate) {
+    const tripRecords = savedLogs.filter(log => log.tripName === trip);
+    
+    if (tripRecords.length === 0) {
+      // صف فارغ لإضافة سيارة جديدة
+      html += `
+        <tr>
+          <td rowspan="1"><strong>${escapeHtml(trip)}</strong></td>
+          <td>
+            <select class="logistics-vehicle-select" data-trip="${escapeHtml(trip)}" style="width:120px;">
+              <option value="">Select Vehicle</option>
+              ${luggageVehicles.map(v => `<option value="${v.id}">${escapeHtml(v.licensePlate)}</option>`).join('')}
+            </select>
+          </td>
+          <td style="text-align:center;"><input type="number" class="logistics-go" data-trip="${escapeHtml(trip)}" value="0" min="0" max="10" style="width:50px; text-align:center;"></td>
+          <td style="text-align:center;"><input type="number" class="logistics-return" data-trip="${escapeHtml(trip)}" value="0" min="0" max="10" style="width:50px; text-align:center;"></td>
+          <td style="text-align:center;"><button class="btn btn-primary" onclick="addLogisticsRecord('${escapeHtml(trip)}')">+ Add</button></td>
+        </tr>
+      `;
+    } else {
+      // عرض السجلات الموجودة
+      for (let idx = 0; idx < tripRecords.length; idx++) {
+        const record = tripRecords[idx];
+        const vehicle = luggageVehicles.find(v => v.id === record.vehicleId);
+        html += `
+          <tr>
+            ${idx === 0 ? `<td rowspan="${tripRecords.length}"><strong>${escapeHtml(trip)}</strong></td>` : ''}
+            <td>${escapeHtml(vehicle?.licensePlate || record.vehicleId)}</td>
+            <td style="text-align:center;">${record.goCount}</td>
+            <td style="text-align:center;">${record.returnCount}</td>
+            <td style="text-align:center;">
+              <button class="btn btn-danger" style="padding:2px 8px; font-size:10px;" onclick="deleteLogisticsRecord('${escapeHtml(trip)}', '${record.vehicleId}')">🗑️</button>
+            </td>
+           </tr>
+        `;
+      }
+    }
+  }
+  
+  html += `
+        </tbody>
+      </table>
+    </div>
+    <div class="warning-box" style="margin-top:12px;" id="logisticsWarning"></div>
+    <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:16px;">
+      <button class="btn btn-secondary" onclick="closeModal('logisticsVehiclesModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveAllLogisticsRecords()">✅ Save All</button>
+    </div>
+  `;
+  
+  document.getElementById('logisticsVehiclesContent').innerHTML = html;
+  openModal('logisticsVehiclesModal');
+}
 
+// جلب سجلات السيارات اللوجستية لليوم
+async function getLogisticsRecords(date) {
+  try {
+    const result = await gas('getLogisticsRecords', { date: date });
+    if (result && result.success) {
+      return result.data || [];
+    }
+  } catch(e) {
+    console.warn('getLogisticsRecords error:', e);
+  }
+  return [];
+}
+
+// إضافة سجل جديد مؤقتاً
+let pendingLogisticsRecords = [];
+
+function addLogisticsRecord(tripName) {
+  const vehicleSelect = document.querySelector(`.logistics-vehicle-select[data-trip="${tripName}"]`);
+  const goInput = document.querySelector(`.logistics-go[data-trip="${tripName}"]`);
+  const returnInput = document.querySelector(`.logistics-return[data-trip="${tripName}"]`);
+  
+  const vehicleId = vehicleSelect?.value;
+  const goCount = parseInt(goInput?.value) || 0;
+  const returnCount = parseInt(returnInput?.value) || 0;
+  
+  if (!vehicleId) {
+    showToast('الرجاء اختيار سيارة', 'error');
+    return;
+  }
+  
+  if (goCount === 0 && returnCount === 0) {
+    showToast('الرجاء إدخال عدد الرحلات', 'error');
+    return;
+  }
+  
+  // إضافة إلى القائمة المؤقتة
+  pendingLogisticsRecords.push({
+    tripName: tripName,
+    vehicleId: vehicleId,
+    goCount: goCount,
+    returnCount: returnCount
+  });
+  
+  showToast(`Added: ${vehicleId} for ${tripName}`, 'success');
+  
+  // إعادة تحميل النافذة
+  openLogisticsVehicles();
+}
+
+function deleteLogisticsRecord(tripName, vehicleId) {
+  pendingLogisticsRecords = pendingLogisticsRecords.filter(r => 
+    !(r.tripName === tripName && r.vehicleId === vehicleId)
+  );
+  openLogisticsVehicles();
+}
+
+async function saveAllLogisticsRecords() {
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) {
+    showToast('الرجاء تحديد تاريخ واحد أولاً', 'error');
+    return;
+  }
+  
+  try {
+    const result = await gas('saveLogisticsRecords', {
+      date: currentDate,
+      records: JSON.stringify(pendingLogisticsRecords)
+    });
+    
+    if (result && result.success) {
+      showToast(`✅ تم حفظ ${pendingLogisticsRecords.length} سجل`, 'success');
+      pendingLogisticsRecords = [];
+      closeModal('logisticsVehiclesModal');
+    } else {
+      showToast('فشل حفظ البيانات', 'error');
+    }
+  } catch(e) {
+    showToast('Error: ' + e.message, 'error');
+  }
+}
 // ============================================================
 // HELPER FUNCTIONS
 // ============================================================
