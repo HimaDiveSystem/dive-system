@@ -2727,14 +2727,186 @@ async function saveVehiclesSelection() {
   }
 }
 
+// ============================================================
+// VEHICLES MODAL - مع اختيار الرحلة وعدد التشغيلات
+// ============================================================
+
 function openVehiclesModal() {
   if (!isSingleDateRange()) {
     showToast('لا يمكن اختيار السيارات إلا عند تحديد تاريخ واحد', 'error');
     return;
   }
-  // ✅ تحميل أحدث البيانات
-  loadVehiclesList();
+  
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) {
+    showToast('الرجاء تحديد تاريخ أولاً', 'error');
+    return;
+  }
+  
+  // جلب الرحلات في هذا التاريخ
+  const tripsOnDate = [...new Set(filteredInvoices.map(inv => inv.trip).filter(t => t))];
+  
+  if (tripsOnDate.length === 0) {
+    showToast('لا توجد رحلات في هذا التاريخ', 'error');
+    return;
+  }
+  
+  // بناء النافذة
+  let html = `
+    <div class="summary-box" style="background: var(--navy); color: white;">
+      <strong>📅 Date:</strong> ${currentDate}<br>
+      <strong>🚌 Available Trips:</strong> ${tripsOnDate.join(', ')}
+    </div>
+    <div style="max-height: 500px; overflow-y: auto;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+        <thead>
+          <tr style="background: var(--navy); color: var(--gold); position: sticky; top: 0;">
+            <th style="padding: 10px;">🚌 Trip</th>
+            <th style="padding: 10px;">🚗 Vehicle</th>
+            <th style="padding: 10px;">🔄 Go Trips</th>
+            <th style="padding: 10px;">🔙 Return Trips</th>
+            <th style="padding: 10px;">✅ Select</th>
+           </tr>
+        </thead>
+        <tbody>
+  `;
+  
+  // الحصول على السيارات من نوع passengers
+  const passengerVehicles = cachedVehicles.filter(v => 
+    v.isActive === true && v.usageType === 'passengers' && v.capacity > 0
+  );
+  
+  // تحميل السجلات المحفوظة
+  const savedRecords = getVehicleTripRecords(currentDate);
+  
+  for (const trip of tripsOnDate) {
+    for (const vehicle of passengerVehicles) {
+      const recordKey = `${trip}|${vehicle.id}`;
+      const saved = savedRecords[recordKey] || { goCount: 0, returnCount: 0 };
+      
+      html += `
+        <tr style="border-bottom: 1px solid var(--border);">
+          <td style="padding: 8px; text-align: center;">${escapeHtml(trip)}</td>
+          <td style="padding: 8px;">
+            <strong>${escapeHtml(vehicle.licensePlate)}</strong>
+            <div style="font-size: 10px; color: gray;">Capacity: ${vehicle.capacity} | Driver: ${escapeHtml(vehicle.driverName || 'N/A')}</div>
+          </td>
+          <td style="padding: 8px; text-align: center;">
+            <input type="number" 
+                   class="vehicle-go-input" 
+                   data-trip="${escapeHtml(trip)}" 
+                   data-vehicle="${vehicle.id}"
+                   value="${saved.goCount}" 
+                   min="0" 
+                   max="20" 
+                   style="width: 60px; padding: 6px; text-align: center; border: 1px solid var(--border); border-radius: 6px;">
+          </td>
+          <td style="padding: 8px; text-align: center;">
+            <input type="number" 
+                   class="vehicle-return-input" 
+                   data-trip="${escapeHtml(trip)}" 
+                   data-vehicle="${vehicle.id}"
+                   value="${saved.returnCount}" 
+                   min="0" 
+                   max="20" 
+                   style="width: 60px; padding: 6px; text-align: center; border: 1px solid var(--border); border-radius: 6px;">
+          </td>
+          <td style="padding: 8px; text-align: center;">
+            <input type="checkbox" class="vehicle-select" data-trip="${escapeHtml(trip)}" data-vehicle="${vehicle.id}">
+          </td>
+        </tr>
+      `;
+    }
+  }
+  
+  html += `
+        </tbody>
+      </table>
+    </div>
+    <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
+      <button class="btn btn-secondary" onclick="closeModal('vehiclesModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveVehicleTripRecords()">✅ Save</button>
+    </div>
+  `;
+  
+  document.getElementById('vehiclesList').innerHTML = html;
   openModal('vehiclesModal');
+}
+
+// دالة لجلب السجلات المحفوظة للسيارات
+function getVehicleTripRecords(date) {
+  try {
+    const saved = localStorage.getItem(`vehicle_trips_${date}`);
+    if (saved) {
+      return JSON.parse(saved);
+    }
+  } catch(e) {}
+  return {};
+}
+
+// دالة لحفظ سجلات السيارات
+async function saveVehicleTripRecords() {
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) {
+    showToast('الرجاء تحديد تاريخ أولاً', 'error');
+    return;
+  }
+  
+  const records = [];
+  const goInputs = document.querySelectorAll('.vehicle-go-input');
+  
+  for (const input of goInputs) {
+    const tripName = input.getAttribute('data-trip');
+    const vehicleId = input.getAttribute('data-vehicle');
+    const goCount = parseInt(input.value) || 0;
+    
+    const returnInput = document.querySelector(`.vehicle-return-input[data-trip="${tripName}"][data-vehicle="${vehicleId}"]`);
+    const returnCount = parseInt(returnInput?.value) || 0;
+    
+    const checkbox = document.querySelector(`.vehicle-select[data-trip="${tripName}"][data-vehicle="${vehicleId}"]`);
+    const isSelected = checkbox?.checked || false;
+    
+    if (isSelected || goCount > 0 || returnCount > 0) {
+      records.push({
+        tripName: tripName,
+        vehicleId: vehicleId,
+        goCount: goCount,
+        returnCount: returnCount,
+        selected: isSelected
+      });
+    }
+  }
+  
+  if (records.length === 0) {
+    showToast('⚠️ الرجاء اختيار سيارة أو إدخال تشغيلات', 'error');
+    return;
+  }
+  
+  try {
+    // حفظ في localStorage مؤقتاً
+    const savedMap = {};
+    for (const r of records) {
+      savedMap[`${r.tripName}|${r.vehicleId}`] = { goCount: r.goCount, returnCount: r.returnCount };
+    }
+    localStorage.setItem(`vehicle_trips_${currentDate}`, JSON.stringify(savedMap));
+    
+    // حفظ في الخادم
+    const result = await gas('saveVehicleTripRecords', {
+      date: currentDate,
+      records: JSON.stringify(records),
+      centerName: currentUser?.centerName
+    });
+    
+    if (result && result.success) {
+      showToast(`✅ تم حفظ ${records.length} تشغيل`, 'success');
+      closeModal('vehiclesModal');
+      await loadAndPopulateAssignments(currentDate);
+    } else {
+      showToast('فشل حفظ البيانات', 'error');
+    }
+  } catch(e) {
+    showToast('Error: ' + e.message, 'error');
+  }
 }
 
 function updateSelectionBadges() {
