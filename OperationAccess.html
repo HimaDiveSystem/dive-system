@@ -1229,17 +1229,35 @@ async function loadAndPopulateAssignments(dateISO) {
 }
 
 function resetFilters() {
+  // مسح قيم الفلاتر
   document.getElementById('filterFromDate').value = '';
   document.getElementById('filterToDate').value = '';
   document.getElementById('filterSearch').value = '';
   document.getElementById('filterState').value = '';
+  
   const select = document.getElementById('filterTrip');
   for (let i = 0; i < select.options.length; i++) {
     select.options[i].selected = false;
   }
-  applyFilters();
+  
+  // ✅ إعادة تعيين filteredInvoices من allInvoices بدون أي فلتر
+  filteredInvoices = [...allInvoices];
+  
+  // إعادة الترتيب والعرض
+  doSort();
+  currentPage = 1;
+  renderTable();
+  renderPagination();
+  updateSelectionButtonsState();
+  
+  // إعادة تحميل التعيينات إذا كان هناك تاريخ محدد
+  const currentDate = getCurrentDateISO();
+  if (currentDate) {
+    loadAndPopulateAssignments(currentDate);
+  }
+  
+  showToast('تم إعادة تعيين الفلاتر', 'success');
 }
-
 function onDateChange() {
   const currentDate = getCurrentDateISO();
   if (currentDate) {
@@ -2913,6 +2931,7 @@ function rebuildVehicleRows() {
 }
 
 // ربط مستمعي الأحداث لصف معين
+// ربط مستمعي الأحداث لصف معين
 function attachVehicleRowEvents(index) {
   const vehicleSelect = document.querySelector(`.vehicle-select[data-row="${index}"]`);
   const tripSelect = document.querySelector(`.trip-select[data-row="${index}"]`);
@@ -2920,23 +2939,31 @@ function attachVehicleRowEvents(index) {
   const returnInput = document.querySelector(`.return-count[data-row="${index}"]`);
   
   if (vehicleSelect) {
-    vehicleSelect.onchange = () => {
-      if (tempVehicleRows[index]) tempVehicleRows[index].vehicleId = vehicleSelect.value;
+    vehicleSelect.onchange = function() {
+      if (!tempVehicleRows[index]) tempVehicleRows[index] = {};
+      tempVehicleRows[index].vehicleId = this.value;
+      console.log('Updated tempVehicleRows', tempVehicleRows);
     };
   }
   if (tripSelect) {
-    tripSelect.onchange = () => {
-      if (tempVehicleRows[index]) tempVehicleRows[index].tripName = tripSelect.value;
+    tripSelect.onchange = function() {
+      if (!tempVehicleRows[index]) tempVehicleRows[index] = {};
+      tempVehicleRows[index].tripName = this.value;
+      console.log('Updated tempVehicleRows', tempVehicleRows);
     };
   }
   if (goInput) {
-    goInput.oninput = () => {
-      if (tempVehicleRows[index]) tempVehicleRows[index].goCount = parseInt(goInput.value) || 0;
+    goInput.oninput = function() {
+      if (!tempVehicleRows[index]) tempVehicleRows[index] = {};
+      tempVehicleRows[index].goCount = parseInt(this.value) || 0;
+      console.log('Updated goCount:', tempVehicleRows[index].goCount);
     };
   }
   if (returnInput) {
-    returnInput.oninput = () => {
-      if (tempVehicleRows[index]) tempVehicleRows[index].returnCount = parseInt(returnInput.value) || 0;
+    returnInput.oninput = function() {
+      if (!tempVehicleRows[index]) tempVehicleRows[index] = {};
+      tempVehicleRows[index].returnCount = parseInt(this.value) || 0;
+      console.log('Updated returnCount:', tempVehicleRows[index].returnCount);
     };
   }
 }
@@ -3217,6 +3244,7 @@ async function loadSavedVehicleRecords(date) {
 }
 
 // حفظ جميع الصفوف
+// حفظ جميع الصفوف - قراءة مباشرة من DOM
 async function saveAllVehicleRows() {
   const currentDate = getCurrentDateISO();
   if (!currentDate) {
@@ -3224,48 +3252,34 @@ async function saveAllVehicleRows() {
     return;
   }
   
-  // تجميع البيانات من الصفوف الحالية
+  // قراءة جميع الصفوف من DOM مباشرة
+  const rows = document.querySelectorAll('.vehicle-row');
   const records = [];
-  for (let i = 0; i < tempVehicleRows.length; i++) {
-    const row = tempVehicleRows[i];
-    if (row.vehicleId && row.tripName && (row.goCount > 0 || row.returnCount > 0)) {
+  
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const vehicleSelect = row.querySelector('.vehicle-select');
+    const tripSelect = row.querySelector('.trip-select');
+    const goInput = row.querySelector('.go-count');
+    const returnInput = row.querySelector('.return-count');
+    
+    const vehicleId = vehicleSelect ? vehicleSelect.value : '';
+    const tripName = tripSelect ? tripSelect.value : '';
+    const goCount = parseInt(goInput ? goInput.value : 0) || 0;
+    const returnCount = parseInt(returnInput ? returnInput.value : 0) || 0;
+    
+    if (vehicleId && tripName && (goCount > 0 || returnCount > 0)) {
       records.push({
-        tripName: row.tripName,
-        vehicleId: row.vehicleId,
-        goCount: row.goCount,
-        returnCount: row.returnCount
+        tripName: tripName,
+        vehicleId: vehicleId,
+        goCount: goCount,
+        returnCount: returnCount
       });
     }
   }
   
-  // أيضاً جمع من عناصر DOM المباشرة (للتأكد)
-  const vehicleSelects = document.querySelectorAll('.vehicle-select');
-  for (let i = 0; i < vehicleSelects.length; i++) {
-    const vehicleId = vehicleSelects[i].value;
-    const tripSelect = document.querySelector(`.trip-select[data-row="${i}"]`);
-    const goInput = document.querySelector(`.go-count[data-row="${i}"]`);
-    const returnInput = document.querySelector(`.return-count[data-row="${i}"]`);
-    
-    if (vehicleId && tripSelect && tripSelect.value) {
-      const goCount = parseInt(goInput?.value) || 0;
-      const returnCount = parseInt(returnInput?.value) || 0;
-      if (goCount > 0 || returnCount > 0) {
-        // تجنب التكرار
-        const exists = records.some(r => r.vehicleId === vehicleId && r.tripName === tripSelect.value);
-        if (!exists) {
-          records.push({
-            tripName: tripSelect.value,
-            vehicleId: vehicleId,
-            goCount: goCount,
-            returnCount: returnCount
-          });
-        }
-      }
-    }
-  }
-  
   if (records.length === 0) {
-    showToast('⚠️ لا توجد تشغيلات لحفظها', 'error');
+    showToast('⚠️ الرجاء اختيار سيارة ورحلة وإدخال أرقام', 'error');
     return;
   }
   
@@ -3278,16 +3292,25 @@ async function saveAllVehicleRows() {
     
     if (result && result.success) {
       showToast(`✅ تم حفظ ${records.length} تشغيل`, 'success');
+      
+      // تحديث tempVehicleRows
+      tempVehicleRows = records.map(r => ({
+        vehicleId: r.vehicleId,
+        tripName: r.tripName,
+        goCount: r.goCount,
+        returnCount: r.returnCount
+      }));
+      
       closeModal('vehiclesModal');
       await loadAndPopulateAssignments(currentDate);
     } else {
-      showToast('فشل حفظ البيانات', 'error');
+      showToast('فشل حفظ البيانات: ' + (result?.message || 'خطأ غير معروف'), 'error');
     }
   } catch(e) {
+    console.error('saveAllVehicleRows error:', e);
     showToast('Error: ' + e.message, 'error');
   }
 }
-
 
 
 // ============================================================
@@ -3581,6 +3604,7 @@ async function loadSavedLogisticsRecords(date) {
   }
 }
 
+// حفظ جميع صفوف السيارات اللوجستية - قراءة مباشرة من DOM
 async function saveAllLogisticsRows() {
   const currentDate = getCurrentDateISO();
   if (!currentDate) {
@@ -3588,21 +3612,34 @@ async function saveAllLogisticsRows() {
     return;
   }
   
+  // قراءة جميع الصفوف من DOM مباشرة
+  const rows = document.querySelectorAll('.logistics-row');
   const records = [];
-  for (let i = 0; i < tempLogisticsRows.length; i++) {
-    const row = tempLogisticsRows[i];
-    if (row.vehicleId && row.tripName && (row.goCount > 0 || row.returnCount > 0)) {
+  
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const vehicleSelect = row.querySelector('.logistics-vehicle-select');
+    const tripSelect = row.querySelector('.logistics-trip-select');
+    const goInput = row.querySelector('.logistics-go-count');
+    const returnInput = row.querySelector('.logistics-return-count');
+    
+    const vehicleId = vehicleSelect ? vehicleSelect.value : '';
+    const tripName = tripSelect ? tripSelect.value : '';
+    const goCount = parseInt(goInput ? goInput.value : 0) || 0;
+    const returnCount = parseInt(returnInput ? returnInput.value : 0) || 0;
+    
+    if (vehicleId && tripName && (goCount > 0 || returnCount > 0)) {
       records.push({
-        tripName: row.tripName,
-        vehicleId: row.vehicleId,
-        goCount: row.goCount,
-        returnCount: row.returnCount
+        tripName: tripName,
+        vehicleId: vehicleId,
+        goCount: goCount,
+        returnCount: returnCount
       });
     }
   }
   
   if (records.length === 0) {
-    showToast('⚠️ لا توجد تشغيلات لحفظها', 'error');
+    showToast('⚠️ الرجاء اختيار سيارة ورحلة وإدخال أرقام', 'error');
     return;
   }
   
@@ -3615,16 +3652,47 @@ async function saveAllLogisticsRows() {
     
     if (result && result.success) {
       showToast(`✅ تم حفظ ${records.length} تشغيل`, 'success');
+      
+      // تحديث tempLogisticsRows
+      tempLogisticsRows = records.map(r => ({
+        vehicleId: r.vehicleId,
+        tripName: r.tripName,
+        goCount: r.goCount,
+        returnCount: r.returnCount
+      }));
+      
       closeModal('logisticsVehiclesModal');
       await loadAndPopulateAssignments(currentDate);
     } else {
-      showToast('فشل حفظ البيانات', 'error');
+      showToast('فشل حفظ البيانات: ' + (result?.message || 'خطأ غير معروف'), 'error');
     }
   } catch(e) {
+    console.error('saveAllLogisticsRows error:', e);
     showToast('Error: ' + e.message, 'error');
   }
 }
-
+// تحديث جميع الصفوف الموجودة في DOM (لإعادة ربط المستمعين)
+function refreshAllVehicleRows() {
+  const rows = document.querySelectorAll('.vehicle-row');
+  for (let i = 0; i < rows.length; i++) {
+    // تحديث attribute data-row
+    rows[i].setAttribute('data-row-index', i);
+    
+    // تحديث الـ selects والـ inputs
+    const vehicleSelect = rows[i].querySelector('.vehicle-select');
+    const tripSelect = rows[i].querySelector('.trip-select');
+    const goInput = rows[i].querySelector('.go-count');
+    const returnInput = rows[i].querySelector('.return-count');
+    
+    if (vehicleSelect) vehicleSelect.setAttribute('data-row', i);
+    if (tripSelect) tripSelect.setAttribute('data-row', i);
+    if (goInput) goInput.setAttribute('data-row', i);
+    if (returnInput) returnInput.setAttribute('data-row', i);
+    
+    // إعادة ربط المستمعين
+    attachVehicleRowEvents(i);
+  }
+}
 
  
 
