@@ -983,19 +983,7 @@ async function saveAssignmentsForDate(dateISO, assignments) {
 // ============================================================
 // UPDATE INVOICE LOCALLY (without reloading all)
 // ============================================================
-function updateLocalInvoice(voucherNo, field, value) {
-  const updateInArray = (arr) => {
-    for (let i = 0; i < arr.length; i++) {
-      if ((arr[i].voucherNo === voucherNo || arr[i].VoucherNo === voucherNo)) {
-        arr[i][field] = value;
-        return true;
-      }
-    }
-    return false;
-  };
-  updateInArray(allInvoices);
-  updateInArray(filteredInvoices);
-}
+
 
 // ============================================================
 // LOAD INVOICES (ONLY ONCE)
@@ -1733,10 +1721,10 @@ function updateVehicleAssignmentTotals() {
 }
   
 async function saveVehicleAssignment() {
+  console.log('🚗 saveVehicleAssignment called');
+  
   var selectedVehiclesData = [];
   var checkboxes = document.querySelectorAll('#assignVehiclesModal .assign-select:checked');
-  var currentDate = getCurrentDateISO();
-  var tripName = currentAssignInvoice?.trip || '';
   
   for (var cb of checkboxes) {
     var vehId = cb.getAttribute('data-id');
@@ -1749,25 +1737,20 @@ async function saveVehicleAssignment() {
     
     if (total === 0) continue;
     
-    // التحقق من صحة التشغيلات
-    var tripValidation = validateTripType(goCount, returnCount);
-    if (tripValidation.warning) {
-      var confirmMsg = tripValidation.warning + '\nهل تريد المتابعة مع الحفظ؟';
-      if (!confirm(confirmMsg)) return;
-    }
-    
+    // الحصول على بيانات السيارة
     var vehicle = cachedVehicles.find(v => v.id === vehId);
+    
     selectedVehiclesData.push({
       vehicleId: vehId,
       licensePlate: vehicle?.licensePlate || vehId,
       driverName: vehicle?.driverName || '',
-      tripType: tripValidation.type,
-      goSeats: goCount,
-      returnSeats: returnCount,
+      goCount: goCount,
+      returnCount: returnCount,
       adults: adult,
       children: child,
       infants: infant,
-      totalSeats: total
+      totalSeats: total,
+      savedAt: new Date().toISOString()
     });
   }
   
@@ -1776,7 +1759,7 @@ async function saveVehicleAssignment() {
     return;
   }
   
-  // ✅ إظهار مؤشر التحميل
+  // إظهار مؤشر التحميل
   var saveBtn = document.querySelector('#assignVehiclesModal .btn-primary');
   var originalText = saveBtn ? saveBtn.textContent : '✅ Assign';
   if (saveBtn) {
@@ -1785,20 +1768,27 @@ async function saveVehicleAssignment() {
   }
   
   try {
+    console.log('📤 إرسال البيانات للحفظ:', JSON.stringify(selectedVehiclesData));
+    
     var result = await gas('assignVehiclesToInvoice', {
       voucherNo: currentAssignVoucher,
       vehiclesData: JSON.stringify(selectedVehiclesData),
       centerName: currentUser?.centerName
     });
     
+    console.log('📥 نتيجة الحفظ:', result);
+    
     if (result && result.success) {
       showToast(`✅ تم حفظ ${selectedVehiclesData.length} سيارة`, 'success');
       closeModal('assignVehiclesModal');
-      await reloadData();
+      // تحديث الجدول محلياً
+      updateLocalInvoice(currentAssignVoucher, 'VehiclesUsed', JSON.stringify(selectedVehiclesData));
+      renderTable();
     } else {
-      showToast('❌ فشل الحفظ: ' + (result.message || 'خطأ غير معروف'), 'error');
+      showToast('❌ فشل الحفظ: ' + (result?.message || 'خطأ غير معروف'), 'error');
     }
   } catch(e) {
+    console.error('❌ saveVehicleAssignment error:', e);
     showToast('❌ خطأ: ' + e.message, 'error');
   } finally {
     if (saveBtn) {
@@ -1923,6 +1913,8 @@ async function getBookedSeatsForBoats(date, tripName) {
   return {};
 }
 async function saveBoatAssignment() {
+  console.log('⛵ saveBoatAssignment called');
+  
   var selectedBoatsData = [];
   var checkboxes = document.querySelectorAll('#assignBoatsModal .assign-select:checked');
   
@@ -1936,13 +1928,15 @@ async function saveBoatAssignment() {
     if (total === 0) continue;
     
     var boat = cachedBoats.find(b => b.id === boatId);
+    
     selectedBoatsData.push({
       boatId: boatId,
       boatName: boat?.name || boatId,
       adults: adult,
       children: child,
       infants: infant,
-      totalSeats: total
+      totalSeats: total,
+      savedAt: new Date().toISOString()
     });
   }
   
@@ -1959,20 +1953,26 @@ async function saveBoatAssignment() {
   }
   
   try {
+    console.log('📤 إرسال البيانات للحفظ:', JSON.stringify(selectedBoatsData));
+    
     var result = await gas('assignBoatsToInvoice', {
       voucherNo: currentAssignVoucher,
       boatsData: JSON.stringify(selectedBoatsData),
       centerName: currentUser?.centerName
     });
     
+    console.log('📥 نتيجة الحفظ:', result);
+    
     if (result && result.success) {
       showToast(`✅ تم حفظ ${selectedBoatsData.length} مركب`, 'success');
       closeModal('assignBoatsModal');
-      await reloadData();
+      updateLocalInvoice(currentAssignVoucher, 'BoatsUsed', JSON.stringify(selectedBoatsData));
+      renderTable();
     } else {
-      showToast('❌ فشل الحفظ: ' + (result.message || 'خطأ غير معروف'), 'error');
+      showToast('❌ فشل الحفظ: ' + (result?.message || 'خطأ غير معروف'), 'error');
     }
   } catch(e) {
+    console.error('❌ saveBoatAssignment error:', e);
     showToast('❌ خطأ: ' + e.message, 'error');
   } finally {
     if (saveBtn) {
@@ -4113,7 +4113,19 @@ async function getBoatById(id) {
   if (Array.isArray(boats)) return boats.find(b => b.id === id);
   return null;
 }
-
+function updateLocalInvoice(voucherNo, field, value) {
+  const updateInArray = (arr) => {
+    for (let i = 0; i < arr.length; i++) {
+      if ((arr[i].voucherNo === voucherNo || arr[i].VoucherNo === voucherNo)) {
+        arr[i][field] = value;
+        return true;
+      }
+    }
+    return false;
+  };
+  updateInArray(allInvoices);
+  updateInArray(filteredInvoices);
+}
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 function exportToExcel() { showToast('Export feature coming soon', 'info'); }
