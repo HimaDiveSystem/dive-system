@@ -2398,36 +2398,33 @@ async function loadBoatsWithInstructors() {
     
     if (!Array.isArray(boats)) boats = [];
     
-    // ✅ تجميع جميع المدربين المختارين في أي مركب
-    const allSelectedInstructors = new Set();
-    for (const [boatId, instructorList] of Object.entries(boatInstructorsMap)) {
-      instructorList.forEach(instId => allSelectedInstructors.add(instId));
+    // ✅ تجميع المدربين المشغولين (مراكب + شاطئ)
+    const busyInstructors = new Set();
+    for (const instructors of Object.values(boatInstructorsMap)) {
+      instructors.forEach(id => busyInstructors.add(id));
     }
+    selectedBeachInstructors.forEach(id => busyInstructors.add(id));
     
-    console.log('📋 جميع المدربين المختارين في المراكب:', Array.from(allSelectedInstructors));
+    console.log('📋 المشغولين (مراكب + شاطئ):', Array.from(busyInstructors));
     
     let html = '';
     for (const boat of boats) {
       const isBoatSelected = selectedBoats.includes(boat.id);
       const selectedInstructorsForBoat = boatInstructorsMap[boat.id] || [];
       
-      // ✅ المدربون المتاحون لهذا المركب = جميع المدربين - المدربين المختارين في مراكب أخرى
       const availableInstructors = instructors.filter(inst => {
-        // إذا كان المدرب مختاراً في هذا المركب بالذات، يظهر (مختار)
         if (selectedInstructorsForBoat.includes(inst.id)) return true;
-        // إذا كان المدرب مختاراً في مركب آخر، لا يظهر
-        if (allSelectedInstructors.has(inst.id)) return false;
-        // باقي المدربين يظهرون
+        if (busyInstructors.has(inst.id)) return false;
         return true;
       });
       
-      console.log(`🚤 المركب ${boat.name}: المدربين المتاحين = ${availableInstructors.length}, المختارين = ${selectedInstructorsForBoat.length}`);
+      console.log(`🚤 ${boat.name}: متاح ${availableInstructors.length}, مختار ${selectedInstructorsForBoat.length}`);
       
       html += `
         <div class="boat-card">
           <div class="boat-card-header">
             <input type="checkbox" class="boat-select" data-id="${boat.id}" data-name="${escapeHtml(boat.name)}" ${isBoatSelected ? 'checked' : ''} onchange="toggleBoatSelection('${boat.id}')">
-            <span style="margin-left:8px;">⛵ ${escapeHtml(boat.name)} (السعة: ${boat.capacity || 0})</span>
+            <span>⛵ ${escapeHtml(boat.name)} (السعة: ${boat.capacity || 0})</span>
           </div>
           <div id="boat-instructors-${boat.id}" style="margin-top:8px; padding-left:24px; ${isBoatSelected ? '' : 'display:none;'}">
             <div style="font-size:11px; font-weight:700; margin-bottom:6px;">👨‍🏫 اختيار مدربين لهذا المركب:</div>
@@ -2452,7 +2449,6 @@ async function loadBoatsWithInstructors() {
     }
     
     document.getElementById('boatsSelectionContainer').innerHTML = html || '<div>لا توجد مراكب</div>';
-    
   } catch(e) {
     console.error('loadBoatsWithInstructors error:', e);
     showToast('خطأ في تحميل المراكب: ' + e.message, 'error');
@@ -3452,7 +3448,6 @@ async function saveTimeUpdate() {
 let tempLogisticsRows = [];
 
 async function openLogisticsVehicles() {
-  // ✅ إظهار مؤشر التحميل
   showToast('جاري تحميل البيانات...', 'info');
   
   const currentDate = getCurrentDateISO();
@@ -3461,15 +3456,12 @@ async function openLogisticsVehicles() {
     return;
   }
   
-  // جلب الرحلات في هذا التاريخ
   const tripsOnDate = [...new Set(filteredInvoices.map(inv => inv.trip).filter(t => t))];
-  
   if (tripsOnDate.length === 0) {
     showToast('لا توجد رحلات في هذا التاريخ', 'error');
     return;
   }
   
-  // جلب السيارات من نوع luggage
   let allVehicles = cachedVehicles;
   if (!allVehicles || allVehicles.length === 0) {
     allVehicles = await gas('getVehicles');
@@ -3485,16 +3477,14 @@ async function openLogisticsVehicles() {
     return;
   }
   
-  // ✅ تحميل السجلات عند فتح النافذة فقط مع console.log للتشخيص
+  // ✅ جلب البيانات مباشرة من الخادم
   tempLogisticsRows = [];
   try {
-    console.log('🔍 Loading logistics for date:', currentDate, 'center:', currentUser?.centerName);
     const result = await gas('getLogisticsRecords', { 
       date: currentDate,
       centerName: currentUser?.centerName 
     });
-    console.log('📥 Logistics result:', JSON.stringify(result));
-    if (result && result.success && Array.isArray(result.data) && result.data.length > 0) {
+    if (result?.success && Array.isArray(result.data)) {
       for (const record of result.data) {
         if (record.vehicleId && record.tripName) {
           tempLogisticsRows.push({
@@ -3505,14 +3495,13 @@ async function openLogisticsVehicles() {
           });
         }
       }
-      console.log('✅ Loaded logistics rows:', tempLogisticsRows.length);
-    } else {
-      console.log('⚠️ No logistics data found or empty:', result);
+      console.log(`✅ تحميل ${tempLogisticsRows.length} سجل logistics`);
     }
   } catch(e) {
-    console.warn('Failed to load logistics records:', e.message);
+    console.warn('فشل تحميل logistics:', e.message);
   }
   
+  // بناء HTML (نفسه)
   let html = `
     <div class="summary-box" style="background: var(--navy); color: white; margin-bottom: 16px;">
       <strong>📅 Date:</strong> ${currentDate}<br>
@@ -3532,9 +3521,9 @@ async function openLogisticsVehicles() {
   
   html += `
     </div>
-    <div style="display: flex; gap: 10px; justify-content: space-between; margin-top: 16px; flex-wrap: wrap;">
-      <button class="btn btn-success" onclick="addLogisticsRow()" style="background: var(--green); color: white;">➕ Add Row</button>
-      <div style="display: flex; gap: 10px;">
+    <div style="display: flex; gap: 10px; justify-content: space-between; margin-top: 16px;">
+      <button class="btn btn-success" onclick="addLogisticsRow()">➕ Add Row</button>
+      <div>
         <button class="btn btn-secondary" onclick="closeModal('logisticsVehiclesModal')">Cancel</button>
         <button class="btn btn-primary" onclick="saveAllLogisticsRows()">✅ Save All</button>
       </div>
@@ -3544,14 +3533,9 @@ async function openLogisticsVehicles() {
   document.getElementById('logisticsVehiclesContent').innerHTML = html;
   openModal('logisticsVehiclesModal');
   
-  for (let i = 0; i < tempLogisticsRows.length; i++) {
-    attachLogisticsRowEvents(i);
-  }
-  if (tempLogisticsRows.length === 0) {
-    attachLogisticsRowEvents(0);
-  }
+  for (let i = 0; i < tempLogisticsRows.length; i++) attachLogisticsRowEvents(i);
+  if (tempLogisticsRows.length === 0) attachLogisticsRowEvents(0);
 }
-
   
 // دالة تحديث الإجمالي لكل صف
 function updateLogisticsTotal(tripName, vehicleId) {
@@ -3848,7 +3832,7 @@ async function saveAllLogisticsRows() {
         goCount: r.goCount,
         returnCount: r.returnCount
       }));
-      
+      preloadedData.logisticsRecords = records;
       closeModal('logisticsVehiclesModal');
       await loadAndPopulateAssignments(currentDate);
     } else {
