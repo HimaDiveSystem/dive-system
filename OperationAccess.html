@@ -1735,26 +1735,40 @@ function updateVehicleAssignmentTotals() {
 async function saveVehicleAssignment() {
   var selectedVehiclesData = [];
   var checkboxes = document.querySelectorAll('#assignVehiclesModal .assign-select:checked');
+  var currentDate = getCurrentDateISO();
+  var tripName = currentAssignInvoice?.trip || '';
   
   for (var cb of checkboxes) {
     var vehId = cb.getAttribute('data-id');
+    var goCount = parseInt(document.querySelector(`.assign-go[data-id="${vehId}"]`).value) || 0;
+    var returnCount = parseInt(document.querySelector(`.assign-return[data-id="${vehId}"]`).value) || 0;
     var adult = parseInt(document.querySelector(`.assign-adult[data-id="${vehId}"]`).value) || 0;
     var child = parseInt(document.querySelector(`.assign-child[data-id="${vehId}"]`).value) || 0;
     var infant = parseInt(document.querySelector(`.assign-infant[data-id="${vehId}"]`).value) || 0;
     var total = adult + child + infant;
     
-    if (total > 0) {
-      var vehicle = cachedVehicles.find(v => v.id === vehId);
-      selectedVehiclesData.push({
-        vehicleId: vehId,
-        licensePlate: vehicle?.licensePlate || vehId,
-        driverName: vehicle?.driverName || '',
-        adults: adult,
-        children: child,
-        infants: infant,
-        totalSeats: total
-      });
+    if (total === 0) continue;
+    
+    // التحقق من صحة التشغيلات
+    var tripValidation = validateTripType(goCount, returnCount);
+    if (tripValidation.warning) {
+      var confirmMsg = tripValidation.warning + '\nهل تريد المتابعة مع الحفظ؟';
+      if (!confirm(confirmMsg)) return;
     }
+    
+    var vehicle = cachedVehicles.find(v => v.id === vehId);
+    selectedVehiclesData.push({
+      vehicleId: vehId,
+      licensePlate: vehicle?.licensePlate || vehId,
+      driverName: vehicle?.driverName || '',
+      tripType: tripValidation.type,
+      goSeats: goCount,
+      returnSeats: returnCount,
+      adults: adult,
+      children: child,
+      infants: infant,
+      totalSeats: total
+    });
   }
   
   if (selectedVehiclesData.length === 0) {
@@ -1780,7 +1794,6 @@ async function saveVehicleAssignment() {
     if (result && result.success) {
       showToast(`✅ تم حفظ ${selectedVehiclesData.length} سيارة`, 'success');
       closeModal('assignVehiclesModal');
-      // ✅ إعادة تحميل الجدول لعرض البيانات المحدثة
       await reloadData();
     } else {
       showToast('❌ فشل الحفظ: ' + (result.message || 'خطأ غير معروف'), 'error');
@@ -1793,6 +1806,22 @@ async function saveVehicleAssignment() {
       saveBtn.textContent = originalText;
     }
   }
+}
+
+function validateTripType(goCount, returnCount) {
+  if (goCount > 0 && returnCount === 0) {
+    return { type: 'go_only', warning: '⚠️ هذه السيارة ذهاب فقط. ستحتاج سيارة أخرى للعودة.' };
+  }
+  if (goCount === 0 && returnCount > 0) {
+    return { type: 'return_only', warning: '⚠️ هذه السيارة عودة فقط. ستحتاج سيارة أخرى للذهاب.' };
+  }
+  if (goCount === returnCount && goCount > 0) {
+    return { type: 'round_trip', warning: null };
+  }
+  if (goCount !== returnCount && goCount > 0 && returnCount > 0) {
+    return { type: 'mixed', warning: '⚠️ عدد الركاب في الذهاب والعودة مختلف. تأكد من صحة البيانات.' };
+  }
+  return { type: 'none', warning: null };
 }
 // ============================================================
 // ASSIGN BOATS
@@ -1904,17 +1933,17 @@ async function saveBoatAssignment() {
     var infant = parseInt(document.querySelector(`.assign-infant[data-id="${boatId}"]`).value) || 0;
     var total = adult + child + infant;
     
-    if (total > 0) {
-      var boat = cachedBoats.find(b => b.id === boatId);
-      selectedBoatsData.push({
-        boatId: boatId,
-        boatName: boat?.name || boatId,
-        adults: adult,
-        children: child,
-        infants: infant,
-        totalSeats: total
-      });
-    }
+    if (total === 0) continue;
+    
+    var boat = cachedBoats.find(b => b.id === boatId);
+    selectedBoatsData.push({
+      boatId: boatId,
+      boatName: boat?.name || boatId,
+      adults: adult,
+      children: child,
+      infants: infant,
+      totalSeats: total
+    });
   }
   
   if (selectedBoatsData.length === 0) {
@@ -1956,83 +1985,186 @@ async function saveBoatAssignment() {
 // ASSIGN INSTRUCTORS
 // ============================================================
 async function openAssignInstructors(voucherNo) {
-  const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
+  var invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
   if (!invoice) return;
   
-  let availableInstructorIds = [...selectedBeachInstructors];
-  for (const [boatId, instructors] of Object.entries(boatInstructorsMap)) {
-    availableInstructorIds.push(...instructors);
-  }
-  availableInstructorIds = [...new Set(availableInstructorIds)];
+  // جلب بنود الرحلة الخاصة بالمدربين فقط
+  var tripItems = await gas('getTripItemsForInstructors', { tripName: invoice.trip });
+  var itemsList = (tripItems && tripItems.items) ? tripItems.items : [];
   
-  if (availableInstructorIds.length === 0) {
-    showToast('No instructors assigned for this date. Please select beach instructors or boat instructors first.', 'error');
+  if (itemsList.length === 0) {
+    showToast('لا توجد أنشطة للمدربين في هذه الرحلة', 'error');
     return;
   }
   
-  let instructors = cachedInstructors;
+  // تحويل كل بند إلى mapping
+  var activityMappings = [];
+  for (var i = 0; i < itemsList.length; i++) {
+    var mapping = await gas('getActivityMapping', { activityName: itemsList[i] });
+    if (mapping && mapping.column) {
+      activityMappings.push({
+        originalName: itemsList[i],
+        displayName: mapping.displayName || itemsList[i],
+        column: mapping.column,
+        multiplier: mapping.multiplier || 1
+      });
+    } else {
+      activityMappings.push({
+        originalName: itemsList[i],
+        displayName: itemsList[i],
+        column: 'extra',
+        multiplier: 1
+      });
+    }
+  }
+  
+  // جلب المدربين المتاحين
+  var availableInstructorIds = [...selectedBeachInstructors];
+  for (var boatId in boatInstructorsMap) {
+    availableInstructorIds.push(...boatInstructorsMap[boatId]);
+  }
+  availableInstructorIds = [...new Set(availableInstructorIds)];
+  
+  var instructors = cachedInstructors;
   if (!instructors || instructors.length === 0) {
     instructors = await gas('getInstructors');
     cachedInstructors = instructors;
   }
-  const availableInstructors = instructors.filter(inst => availableInstructorIds.includes(inst.id));
+  var availableInstructors = instructors.filter(inst => availableInstructorIds.includes(inst.id));
+  
+  if (availableInstructors.length === 0) {
+    showToast('لا يوجد مدربين متاحين لهذا اليوم', 'error');
+    return;
+  }
   
   currentAssignVoucher = voucherNo;
   currentAssignInvoice = invoice;
   
-  // ✅ التصحيح: Diver من sgl، Course من dbl، Intro من extra
-  const diverCount = parseInt(invoice.sgl) || 0;   // Diver
-  const courseCount = parseInt(invoice.dbl) || 0;  // Course
-  const introCount = parseInt(invoice.extra) || 0; // Intro
+  // بناء رأس الجدول
+  var headersHtml = '<th style="padding:8px;">Instructor</th>';
+  for (var i = 0; i < activityMappings.length; i++) {
+    headersHtml += `<th style="padding:8px;">${escapeHtml(activityMappings[i].displayName)}</th>`;
+  }
   
-  console.log('📊 Instructor Required Activities:', { diverCount, courseCount, introCount });
+  // بناء صفوف المدربين
+  var rowsHtml = '';
+  for (var inst of availableInstructors) {
+    rowsHtml += `<tr>`;
+    rowsHtml += `<td style="padding:6px;"><strong>${escapeHtml(inst.name)}</strong></td>`;
+    for (var j = 0; j < activityMappings.length; j++) {
+      rowsHtml += `<td style="padding:6px; text-align:center;">
+        <input type="number" class="assign-activity" data-instructor="${inst.id}" data-activity-index="${j}" value="0" min="0" style="width:60px; text-align:center;">
+      </td>`;
+    }
+    rowsHtml += `</tr>`;
+  }
   
-  let instructorsHtml = `
+  var instructorsHtml = `
     <div class="summary-box">
-      <strong>📊 Required Activities:</strong><br>
-      Diver: ${diverCount} | Course: ${courseCount} | Intro: ${introCount}
+      <strong>📊 Invoice Summary:</strong><br>
+      Trip: ${escapeHtml(invoice.trip)}<br>
+      Activities to assign: ${activityMappings.map(m => m.displayName).join(', ')}
     </div>
     <div style="overflow-x:auto; max-height:400px;">
       <table style="width:100%; border-collapse:collapse; font-size:12px;">
         <thead>
           <tr style="background:var(--navy); color:var(--gold);">
-            <th style="padding:8px;">Instructor</th>
-            <th style="padding:8px;">Diver</th>
-            <th style="padding:8px;">Course</th>
-            <th style="padding:8px;">Intro</th>
-            <th style="padding:8px;">Select</th>
-          </tr>
+            ${headersHtml}
+           </tr>
         </thead>
         <tbody>
-  `;
-  
-  for (const inst of availableInstructors) {
-    instructorsHtml += `
-      <tr>
-        <td style="padding:6px;"><strong>${escapeHtml(inst.name)}</strong></td>
-        <td style="padding:6px; text-align:center;"><input type="number" class="assign-diver" data-id="${inst.id}" value="0" min="0" max="${diverCount}" style="width:55px; text-align:center;"></td>
-        <td style="padding:6px; text-align:center;"><input type="number" class="assign-course" data-id="${inst.id}" value="0" min="0" max="${courseCount}" style="width:55px; text-align:center;"></td>
-        <td style="padding:6px; text-align:center;"><input type="number" class="assign-intro" data-id="${inst.id}" value="0" min="0" max="${introCount}" style="width:55px; text-align:center;"></td>
-        <td style="padding:6px; text-align:center;"><input type="checkbox" class="assign-select" data-id="${inst.id}"></td>
-      </tr>
-    `;
-  }
-  
-  instructorsHtml += `
+          ${rowsHtml}
         </tbody>
-      </table>
+       </table>
     </div>
     <div class="warning-box" id="assignWarning" style="margin-top:12px;"></div>
     <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:16px;">
       <button class="btn btn-secondary" onclick="closeModal('assignInstructorsModal')">Cancel</button>
-      <button class="btn btn-primary" onclick="saveInstructorAssignment()">✅ Assign</button>
+      <button class="btn btn-primary" onclick="saveInstructorAssignmentV2(${JSON.stringify(activityMappings).replace(/"/g, '&quot;')})">✅ Assign</button>
     </div>
   `;
   
   document.getElementById('assignInstructorsContent').innerHTML = instructorsHtml;
   openModal('assignInstructorsModal');
 }
+  async function saveInstructorAssignmentV2(activityMappings) {
+  var selectedRows = [];
+  var inputs = document.querySelectorAll('#assignInstructorsModal .assign-activity');
   
+  // تجميع البيانات لكل مدرب
+  var instructorsMap = {};
+  for (var input of inputs) {
+    var instructorId = input.getAttribute('data-instructor');
+    var activityIndex = parseInt(input.getAttribute('data-activity-index'));
+    var value = parseInt(input.value) || 0;
+    
+    if (!instructorsMap[instructorId]) {
+      instructorsMap[instructorId] = {};
+    }
+    instructorsMap[instructorId][activityIndex] = value;
+  }
+  
+  // تحويل إلى مصفوفة
+  for (var instructorId in instructorsMap) {
+    var activities = [];
+    for (var i = 0; i < activityMappings.length; i++) {
+      var qty = instructorsMap[instructorId][i] || 0;
+      if (qty > 0) {
+        activities.push({
+          activityName: activityMappings[i].originalName,
+          displayName: activityMappings[i].displayName,
+          quantity: qty,
+          column: activityMappings[i].column,
+          multiplier: activityMappings[i].multiplier
+        });
+      }
+    }
+    
+    if (activities.length > 0) {
+      var instructor = cachedInstructors.find(i => i.id === instructorId);
+      selectedRows.push({
+        instructorId: instructorId,
+        instructorName: instructor?.name || instructorId,
+        activities: activities
+      });
+    }
+  }
+  
+  if (selectedRows.length === 0) {
+    showToast('⚠️ الرجاء تعيين مدرب واحد على الأقل', 'error');
+    return;
+  }
+  
+  var saveBtn = document.querySelector('#assignInstructorsModal .btn-primary');
+  var originalText = saveBtn ? saveBtn.textContent : '✅ Assign';
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = '⏳ جاري الحفظ...';
+  }
+  
+  try {
+    var result = await gas('assignInstructorsToInvoice', {
+      voucherNo: currentAssignVoucher,
+      instructorsData: JSON.stringify(selectedRows),
+      centerName: currentUser?.centerName
+    });
+    
+    if (result && result.success) {
+      showToast(`✅ تم حفظ ${selectedRows.length} مدرب`, 'success');
+      closeModal('assignInstructorsModal');
+      await reloadData();
+    } else {
+      showToast('❌ فشل الحفظ: ' + (result.message || 'خطأ غير معروف'), 'error');
+    }
+  } catch(e) {
+    showToast('❌ خطأ: ' + e.message, 'error');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = originalText;
+    }
+  }
+}
 
 async function saveInstructorAssignment() {
   const selectedRows = [];
