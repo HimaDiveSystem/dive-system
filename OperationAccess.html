@@ -620,6 +620,7 @@
   </div>
   <button class="btn-go" onclick="applyFilters()">Apply</button>
   <button class="btn-reset" onclick="resetFilters()">Reset</button>
+  <button class="btn-reset" onclick="forceRefresh()" style="background:var(--orange); color:white;">🔄 Force Refresh</button>
   <button class="export-btn" onclick="exportToExcel()">📊 Export</button>
 </div>
 
@@ -1279,20 +1280,6 @@ function resetFilters() {
   
   showToast('تم إعادة تعيين الفلاتر', 'success');
 }
-function onDateChange() {
-  const currentDate = getCurrentDateISO();
-  if (currentDate) {
-    loadAndPopulateAssignments(currentDate);
-  } else {
-    selectedBeachInstructors = [];
-    selectedBoats = [];
-    boatInstructorsMap = {};
-    selectedVehicles = [];
-    updateSelectionBadges();
-  }
-  applyFilters();
-}
-
 // ============================================================
 // RENDER TABLE (No payment columns, with totals row)
 // ============================================================
@@ -1491,13 +1478,11 @@ function renderSummary() {
   }
   
   filteredInvoices.forEach(inv => {
-    // ✅ فقط الفواتير التي لها كميات فعلية
     const sgl = parseInt(inv.Sgl) || parseInt(inv.sgl) || 0;
     const dbl = parseInt(inv.Dbl) || parseInt(inv.dbl) || 0;
     const trpl = parseInt(inv.Trpl) || parseInt(inv.trpl) || 0;
     const extra = parseInt(inv.Extra) || parseInt(inv.extra) || 0;
     
-    // ✅ تخطي الفواتير التي ليس لها كميات (فواتير تحصيل أو استرداد)
     if (sgl === 0 && dbl === 0 && trpl === 0 && extra === 0) return;
     
     const tripName = (inv.Trip || inv.trip || 'Unknown').trim();
@@ -1506,7 +1491,6 @@ function renderSummary() {
     }
     trips[tripName].bookings++;
     
-    // ✅ جمع الأنشطة من ActivitiesText (إذا وجدت)
     const activitiesText = (inv.ActivitiesText || inv.activitiesText || '').toString().trim();
     if (activitiesText) {
       activitiesText.split('|').forEach(part => {
@@ -1518,7 +1502,6 @@ function renderSummary() {
         }
       });
     } else {
-      // ✅ استخدام البنود مباشرة
       if (sgl > 0) trips[tripName].activities['Adult'] = (trips[tripName].activities['Adult'] || 0) + sgl;
       if (dbl > 0) trips[tripName].activities['Child'] = (trips[tripName].activities['Child'] || 0) + dbl;
       if (trpl > 0) trips[tripName].activities['Infant'] = (trips[tripName].activities['Infant'] || 0) + trpl;
@@ -1543,7 +1526,7 @@ function renderSummary() {
       <td><strong>${escapeHtml(tripName)}</strong></td>
       <td style="text-align:center"><span style="background:var(--navy);color:var(--gold);padding:4px 10px;border-radius:20px;font-size:12px;font-weight:700">${info.bookings}</span></td>
       <td class="acts-cell" style="white-space:normal; word-break:break-word;">${escapeHtml(activitiesStr || '—')}</span></td>
-    <tr>`;
+    </tr>`;
   });
   
   let summaryHtml = `
@@ -1564,7 +1547,8 @@ function renderSummary() {
     </div>
   `;
   
-  const existingSummary = document.getElementById('summarySec');
+  // ✅ تحديث العنصر الموجود بدلاً من حذفه وإعادة إنشائه
+  let existingSummary = document.getElementById('summarySec');
   if (existingSummary) {
     existingSummary.outerHTML = summaryHtml;
   } else {
@@ -2207,57 +2191,7 @@ async function openAssignInstructors(voucherNo) {
   }
 }
 
-async function saveInstructorAssignment() {
-  const selectedRows = [];
-  const checkboxes = document.querySelectorAll('#assignInstructorsModal .assign-select:checked');
-  let totalDiver = 0, totalCourse = 0, totalIntro = 0;
-  
-  for (const cb of checkboxes) {
-    const instId = cb.getAttribute('data-id');
-    const diver = parseInt(document.querySelector(`#assignInstructorsModal .assign-diver[data-id="${instId}"]`).value) || 0;
-    const course = parseInt(document.querySelector(`#assignInstructorsModal .assign-course[data-id="${instId}"]`).value) || 0;
-    const intro = parseInt(document.querySelector(`#assignInstructorsModal .assign-intro[data-id="${instId}"]`).value) || 0;
-    
-    totalDiver += diver;
-    totalCourse += course;
-    totalIntro += intro;
-    
-    if (diver > 0 || course > 0 || intro > 0) {
-      selectedRows.push({ instructorId: instId, diver, course, intro });
-    }
-  }
-  
-  const requiredDiver = parseInt(currentAssignInvoice.sgl) || 0;
-  const requiredCourse = parseInt(currentAssignInvoice.dbl) || 0;
-  const requiredIntro = parseInt(currentAssignInvoice.extra) || 0;
-  
-  if (totalDiver !== requiredDiver || totalCourse !== requiredCourse || totalIntro !== requiredIntro) {
-    document.getElementById('assignWarning').innerHTML = `⚠️ Mismatch: Diver ${totalDiver}/${requiredDiver}, Course ${totalCourse}/${requiredCourse}, Intro ${totalIntro}/${requiredIntro}`;
-    return;
-  }
-  
-  if (selectedRows.length === 0) {
-    document.getElementById('assignWarning').innerHTML = '⚠️ Please assign at least one instructor';
-    return;
-  }
-  
-  try {
-    await gas('updateInvoiceFieldV2', {
-      voucherNo: currentAssignVoucher,
-      field: 'InstructorsExecution',
-      value: JSON.stringify(selectedRows),
-      centerName: currentUser?.centerName
-    });
-    
-    updateLocalInvoice(currentAssignVoucher, 'InstructorsExecution', JSON.stringify(selectedRows));
-    
-    showToast(`Assigned ${selectedRows.length} instructors`, 'success');
-    closeModal('assignInstructorsModal');
-    renderTable();
-  } catch(e) { 
-    showToast('Error: ' + e.message, 'error'); 
-  }
-}
+
 // ============================================================
 // ASSIGN EQUIPMENT VEHICLES
 // ============================================================
@@ -2510,15 +2444,16 @@ function refreshTableData() {
 async function onDateChange() {
   const currentDate = getCurrentDateISO();
   
+  // ✅ إعادة تعيين lastFilterParams لضمان تحديث الفلاتر
+  lastFilterParams = '';
+  
   if (currentDate) {
     showToast('جاري تحميل البيانات...', 'info');
     
     try {
       await loadInvoices();
-      await delay(500);
       await loadAndPopulateAssignments(currentDate);
-      await delay(300);
-      await refreshPreloadedData();  // ✅ تأكد من وجود هذا السطر
+      await refreshPreloadedData();
     } catch(e) {
       console.warn('onDateChange error:', e);
       showToast('تم تحميل البيانات جزئياً', 'warning');
@@ -2544,7 +2479,7 @@ async function onDateChange() {
   applyFilters();
   updateSelectionButtonsState();
 }
-// ============================================================
+  // ============================================================
 // التحقق من توفر المدرب قبل الحفظ
 // ============================================================
 async function checkInstructorAvailabilityBeforeSave(instructorId, assignmentType, boatId, boatName) {
@@ -3679,7 +3614,15 @@ function openTimePicker(voucherNo, currentTime) {
   input.value = currentTime || '09:00';
   openModal('timeModal');
 }
-
+async function forceRefresh() {
+  showToast('جاري التحديث القسري...', 'info');
+  lastFilterParams = '';  // إعادة تعيين الفلاتر
+  invoicesLoaded = false; // إعادة تعيين علامة التحميل
+  dataLoaded = false;     // إعادة تعيين البيانات
+  await loadInvoices();   // إعادة تحميل الفواتير
+  applyFilters();         // إعادة تطبيق الفلاتر
+  showToast('تم التحديث بنجاح', 'success');
+}
 async function saveTimeUpdate() {
   if (!pendingTimeVoucher) return;
   const newTime = document.getElementById('timePickerInput').value;
@@ -4177,40 +4120,56 @@ function exportToExcel() { showToast('Export feature coming soon', 'info'); }
 document.addEventListener('DOMContentLoaded', async () => {
   const ud = sessionStorage.getItem('currentUser');
   if (!ud) { window.location.href = 'index.html'; return; }
+  
   try {
     currentUser = JSON.parse(ud);
     document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
     
-    const [instructors, vehicles, boats] = await Promise.all([
-      gas('getInstructors'),
-      gas('getVehicles'),
-      gas('getBoats')
-    ]);
-    cachedInstructors = instructors;
-    cachedVehicles = vehicles;
-    cachedBoats = boats;
-    // تعيين تاريخ اليوم تلقائياً في حقلي From Date و To Date
-const today = new Date();
-const year = today.getFullYear();
-const month = String(today.getMonth() + 1).padStart(2, '0');
-const day = String(today.getDate()).padStart(2, '0');
-const todayISO = `${year}-${month}-${day}`;
-
-const fromDateInput = document.getElementById('filterFromDate');
-const toDateInput = document.getElementById('filterToDate');
-
-if (fromDateInput && !fromDateInput.value) {
-    fromDateInput.value = todayISO;
-}
-if (toDateInput && !toDateInput.value) {
-    toDateInput.value = todayISO;
-}
-
-// تشغيل حدث التغيير لتحميل البيانات تلقائياً
-if (fromDateInput.value && toDateInput.value) {
-    fromDateInput.dispatchEvent(new Event('change'));
-}
+    // ✅ تعيين تاريخ اليوم تلقائياً
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    const todayISO = `${year}-${month}-${day}`;
+    
+    const fromDateInput = document.getElementById('filterFromDate');
+    const toDateInput = document.getElementById('filterToDate');
+    
+    if (fromDateInput && !fromDateInput.value) fromDateInput.value = todayISO;
+    if (toDateInput && !toDateInput.value) toDateInput.value = todayISO;
+    
+    // ✅ 1. تحميل الفواتير أولاً (الأهم)
+    showToast('جاري تحميل الفواتير...', 'info');
     await loadInvoices();
+    
+    // ✅ 2. عرض الجدول فوراً
+    renderTable();
+    
+    // ✅ 3. تحميل البيانات الثانوية في الخلفية (بدون انتظار)
+    setTimeout(async () => {
+      try {
+        showToast('جاري تحميل البيانات الإضافية...', 'info');
+        const [instructors, vehicles, boats] = await Promise.all([
+          gas('getInstructors'),
+          gas('getVehicles'),
+          gas('getBoats')
+        ]);
+        cachedInstructors = instructors;
+        cachedVehicles = vehicles;
+        cachedBoats = boats;
+        console.log('✅ تم تحميل البيانات الإضافية بنجاح');
+      } catch(e) {
+        console.warn('⚠️ فشل تحميل البيانات الإضافية:', e);
+      }
+    }, 500);
+    
+    // ✅ 4. تحديث التعيينات إذا كان هناك تاريخ محدد
+    if (fromDateInput.value && toDateInput.value && fromDateInput.value === toDateInput.value) {
+      setTimeout(() => {
+        loadAndPopulateAssignments(fromDateInput.value);
+      }, 1000);
+    }
+    
     updateSelectionButtonsState();
   } catch(e) { 
     console.error(e);
