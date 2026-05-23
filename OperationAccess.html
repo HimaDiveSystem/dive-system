@@ -2162,8 +2162,10 @@ async function saveEquipmentAssignment() {
 
 window.loadBeachInstructorsList = async function() {
   try {
+    // ✅ استخدام البيانات المخزنة بدلاً من API جديد
     let instructors = window.cachedInstructors;
     if (!instructors || instructors.length === 0) {
+      // فقط إذا لم تكن محملة مسبقاً
       instructors = await gas('getInstructors');
       window.cachedInstructors = instructors;
     }
@@ -2180,21 +2182,22 @@ window.loadBeachInstructorsList = async function() {
     const availableInstructors = instructors.filter(inst => !busyInstructors.has(inst.id));
     
     console.log('📋 المدربين المتاحين للشاطئ:', availableInstructors.length);
-    console.log('📋 مدربي المراكب (المشغولين):', Array.from(busyInstructors));
-    console.log('📋 مدربي الشاطئ المختارين حالياً:', selectedBeachInstructors);
     
     if (availableInstructors.length === 0 && selectedBeachInstructors.length === 0) {
       document.getElementById('beachInstructorsList').innerHTML = '<div class="selection-item">لا يوجد مدربين متاحين</div>';
       return;
     }
     
-    // ✅ عرض جميع المدربين المتاحين + إظهار المختارين منهم (مع checkbox مفعل)
+    // ✅ عرض جميع المدربين المتاحين + إظهار المختارين منهم
     const listHtml = availableInstructors.map(inst => {
       const isSelected = selectedBeachInstructors.includes(inst.id);
       return `
         <div class="selection-item" onclick="toggleBeachInstructor('${inst.id}')">
           <input type="checkbox" class="beach-instructor-checkbox" data-id="${inst.id}" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation(); toggleBeachInstructor('${inst.id}')">
-          <div class="info"><div class="name">${escapeHtml(inst.name)}</div></div>
+          <div class="info">
+            <div class="name">${escapeHtml(inst.name)}</div>
+            <div style="font-size: 10px; color: gray;">${escapeHtml(inst.qualification || 'Instructor')}</div>
+          </div>
         </div>
       `;
     }).join('');
@@ -2203,7 +2206,8 @@ window.loadBeachInstructorsList = async function() {
     
   } catch(e) { 
     console.error('loadBeachInstructorsList error:', e);
-    showToast('خطأ في تحميل المدربين', 'error'); 
+    document.getElementById('beachInstructorsList').innerHTML = '<div class="selection-item">❌ خطأ في تحميل المدربين</div>';
+    showToast('خطأ في تحميل المدربين', 'error');
   }
 };
   
@@ -2401,10 +2405,33 @@ function openBeachInstructorsModal() {
     showToast('لا يمكن اختيار المدربين إلا عند تحديد تاريخ واحد', 'error');
     return;
   }
-  loadBeachInstructorsList();
+  
+  // ✅ إظهار رسالة التحميل أولاً
+  showToast('جاري تحميل المدربين...', 'info');
+  
+  // ✅ عرض مؤشر تحميل في المحتوى
+  const contentDiv = document.getElementById('beachInstructorsList');
+  if (contentDiv) {
+    contentDiv.innerHTML = '<div class="loader"><div class="spinner"></div>جاري التحميل...</div>';
+  }
+  
+  // ✅ فتح النافذة أولاً
   openModal('beachInstructorsModal');
+  
+  // ✅ ثم تحميل البيانات (مع تأخير بسيط لضمان ظهور النافذة)
+  setTimeout(async () => {
+    try {
+      await loadBeachInstructorsList();
+    } catch(e) {
+      console.error('Error loading instructors:', e);
+      const contentDiv = document.getElementById('beachInstructorsList');
+      if (contentDiv) {
+        contentDiv.innerHTML = '<div class="error">خطأ في تحميل المدربين</div>';
+      }
+      showToast('خطأ في تحميل المدربين', 'error');
+    }
+  }, 50);
 }
-
 // ============================================================
 // BOATS & BOAT INSTRUCTORS MODAL
 // ============================================================
@@ -2702,10 +2729,18 @@ window.openBoatsModal = async function() {
     return;
   }
   
-  // ✅ إظهار مؤشر التحميل
-  showToast('جاري تحميل البيانات...', 'info');
+  // ✅ إظهار رسالة التحميل
+  showToast('جاري تحميل المراكب...', 'info');
   
-  // ✅ استخدام البيانات المخزنة مسبقاً بدلاً من API جديد
+  // ✅ عرض مؤشر تحميل
+  const container = document.getElementById('boatsSelectionContainer');
+  if (container) {
+    container.innerHTML = '<div class="loader"><div class="spinner"></div>جاري تحميل المراكب...</div>';
+  }
+  
+  openModal('boatsModal');
+  
+  // ✅ استخدام البيانات المخزنة مسبقاً
   if (!cachedBoats || cachedBoats.length === 0 || !cachedInstructors || cachedInstructors.length === 0) {
     try {
       const [boats, instructors] = await Promise.all([
@@ -2719,6 +2754,7 @@ window.openBoatsModal = async function() {
       return;
     }
   }
+
   
   const currentDate = getCurrentDateISO();
   if (currentDate) {
@@ -2732,9 +2768,7 @@ window.openBoatsModal = async function() {
   }
   
   await loadBoatsWithInstructors();
-  openModal('boatsModal');
 };
-
 // ============================================================
 // VEHICLES MODAL
 // ============================================================
@@ -2912,7 +2946,7 @@ let tempVehicleRows = [];
 
 async function openVehiclesModal() {
   // ✅ إظهار مؤشر التحميل
-  showToast('جاري تحميل البيانات...', 'info');
+  showToast('جاري تحميل السيارات...', 'info');
   
   if (!isSingleDateRange()) {
     showToast('لا يمكن اختيار السيارات إلا عند تحديد تاريخ واحد', 'error');
@@ -2924,6 +2958,15 @@ async function openVehiclesModal() {
     showToast('الرجاء تحديد تاريخ أولاً', 'error');
     return;
   }
+  
+  // ✅ عرض مؤشر تحميل في المحتوى
+  const vehiclesList = document.getElementById('vehiclesList');
+  if (vehiclesList) {
+    vehiclesList.innerHTML = '<div class="loader"><div class="spinner"></div>جاري تحميل السيارات...</div>';
+  }
+  
+  // فتح النافذة
+  openModal('vehiclesModal');
   
   // جلب الرحلات في هذا التاريخ
   const tripsOnDate = [...new Set(filteredInvoices.map(inv => inv.trip).filter(t => t))];
@@ -3002,8 +3045,8 @@ async function openVehiclesModal() {
   `;
   
   document.getElementById('vehiclesList').innerHTML = html;
-  openModal('vehiclesModal');
   
+  // ربط المستمعين
   for (let i = 0; i < tempVehicleRows.length; i++) {
     attachVehicleRowEvents(i);
   }
