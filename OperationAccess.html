@@ -437,7 +437,33 @@
   flex: 2;
   text-align: left;
 }
+/* زيادة عرض أعمدة السيارات والمراكب والمدربين */
+th:nth-child(24),
+th:nth-child(25),
+th:nth-child(26) {
+  min-width: 180px;
+  max-width: 220px;
+}
 
+td:nth-child(24),
+td:nth-child(25),
+td:nth-child(26) {
+  min-width: 180px;
+  white-space: normal !important;
+  word-break: break-word;
+}
+
+/* تحسين عرض الجدول على الشاشات الصغيرة */
+@media (max-width: 768px) {
+  th:nth-child(24),
+  th:nth-child(25),
+  th:nth-child(26),
+  td:nth-child(24),
+  td:nth-child(25),
+  td:nth-child(26) {
+    min-width: 140px;
+  }
+}
 @media (max-width: 768px) {
   .assign-item, .assign-header {
     min-width: 500px;
@@ -809,7 +835,7 @@ function isSingleDateRange() {
 
 function updateSelectionButtonsState() {
   const isSingle = isSingleDateRange();
-  const btns = ['btnInstructors', 'btnBoats', 'btnVehicles'];
+  const btns = ['btnInstructors', 'btnBoats', 'btnVehicles', 'btnLogisticsVehicles'];
   btns.forEach(id => {
     const btn = document.getElementById(id);
     if (btn) {
@@ -1294,12 +1320,16 @@ function renderTable() {
     return;
   }
 
-  // حساب الإجماليات
+  // حساب الإجماليات للكميات
   let totals = {
     sgl: 0, dbl: 0, trpl: 0, extra: 0,
     camel: 0, dinner: 0, vipDinner: 0, starGazing: 0,
-    privateTrip: 0, privateTransfer: 0,
-    rest: 0
+    privateTrip: 0, privateTransfer: 0
+  };
+  
+  // ✅ حساب الإجماليات لكل عملة على حدة
+  let totalsByCurrency = {
+    USD: 0, EUR: 0, GBP: 0, LE: 0
   };
   
   pageData.forEach(inv => {
@@ -1313,8 +1343,23 @@ function renderTable() {
     totals.starGazing += parseFloat(inv.starGazing) || 0;
     totals.privateTrip += parseFloat(inv.privateTrip) || 0;
     totals.privateTransfer += parseFloat(inv.privateTransfer) || 0;
-    totals.rest += parseFloat(inv.rest) || 0;
+    
+    // ✅ تجميع المتبقي حسب العملة
+    const currency = inv.invoiceCurrency || 'LE';
+    const rest = parseFloat(inv.rest) || 0;
+    if (currency === 'USD') totalsByCurrency.USD += rest;
+    else if (currency === 'EUR') totalsByCurrency.EUR += rest;
+    else if (currency === 'GBP') totalsByCurrency.GBP += rest;
+    else totalsByCurrency.LE += rest;
   });
+
+  // ✅ بناء نص الإجماليات لكل عملة
+  let remainingText = '';
+  if (totalsByCurrency.USD > 0) remainingText += `${totalsByCurrency.USD.toFixed(2)} USD | `;
+  if (totalsByCurrency.EUR > 0) remainingText += `${totalsByCurrency.EUR.toFixed(2)} EUR | `;
+  if (totalsByCurrency.GBP > 0) remainingText += `${totalsByCurrency.GBP.toFixed(2)} GBP | `;
+  if (totalsByCurrency.LE > 0) remainingText += `${totalsByCurrency.LE.toFixed(2)} LE`;
+  if (!remainingText) remainingText = '0';
 
   let html = '<table>';
   html += '<thead><tr>';
@@ -1333,12 +1378,12 @@ function renderTable() {
   html += '<th>Supplier</th>';
   html += '<th>Customer</th>';
   html += '<th>Status</th>';
-  html += '<th>Vehicles</th>';      // ✅ عمود السيارات
-  html += '<th>Boats</th>';         // ✅ عمود المراكب
-  html += '<th>Instructors</th>';   // ✅ عمود المدربين
+  html += '<th>Vehicles</th>';
+  html += '<th>Boats</th>';
+  html += '<th>Instructors</th>';
   html += '<th>Notes</th>';
   html += '<th>Actions</th>';
-  html += '<tr></thead><tbody>';
+  html += '</tr></thead><tbody>';
 
   for (const inv of pageData) {
     const voucherNo = inv.voucherNo || '';
@@ -1351,7 +1396,7 @@ function renderTable() {
     
     const restHtml = formatRest(inv.rest, currency);
     
-    // ✅ عرض السيارات
+    // عرض السيارات
     let vehiclesHtml = '';
     try {
       const vehiclesData = JSON.parse(inv.VehiclesUsed || '[]');
@@ -1367,7 +1412,7 @@ function renderTable() {
       }
     } catch(e) { vehiclesHtml = '—'; }
     
-    // ✅ عرض المراكب
+    // عرض المراكب
     let boatsHtml = '';
     try {
       const boatsData = JSON.parse(inv.BoatsUsed || '[]');
@@ -1383,7 +1428,7 @@ function renderTable() {
       }
     } catch(e) { boatsHtml = '—'; }
     
-    // ✅ عرض المدربين
+    // عرض المدربين
     let instructorsHtml = '';
     try {
       const instructorsData = JSON.parse(inv.InstructorsExecution || '[]');
@@ -1439,13 +1484,20 @@ function renderTable() {
     html += `</tr>`;
   }
   
-  // صف الإجماليات
+  // ✅ صف الإجماليات مع عرض العملات المختلفة
   html += `<tr class="totals-row">`;
-  html += `<td colspan="6" style="text-align:center;">Total (${pageData.length})</td>`;
-  html += `<td>${totals.sgl || ''}</td><td>${totals.dbl || ''}</td><td>${totals.trpl || ''}</td><td>${totals.extra || ''}</td>`;
-  html += `<td>${totals.camel || ''}</td><td>${totals.dinner || ''}</td><td>${totals.vipDinner || ''}</td><td>${totals.starGazing || ''}</td>`;
-  html += `<td>${totals.privateTrip || ''}</td><td>${totals.privateTransfer || ''}</td>`;
-  html += `<td colspan="13" style="text-align:center;">Total Remaining: <strong style="color:#dc2626;">${totals.rest.toFixed(2)}</strong></td>`;
+  html += `<td colspan="6" style="text-align:center;"><span class="totals-label">Total</span><span class="totals-value">${pageData.length}</span></td>`;
+  html += `<td class="amt"><span class="totals-label">Sgl</span><span class="totals-value">${totals.sgl || ''}</span></td>`;
+  html += `<td class="amt"><span class="totals-label">Dbl</span><span class="totals-value">${totals.dbl || ''}</span></td>`;
+  html += `<td class="amt"><span class="totals-label">Trpl</span><span class="totals-value">${totals.trpl || ''}</span></td>`;
+  html += `<td class="amt"><span class="totals-label">Extra</span><span class="totals-value">${totals.extra || ''}</span></td>`;
+  html += `<td class="amt"><span class="totals-label">Camel</span><span class="totals-value">${totals.camel || ''}</span></td>`;
+  html += `<td class="amt"><span class="totals-label">Dinner</span><span class="totals-value">${totals.dinner || ''}</span></td>`;
+  html += `<td class="amt"><span class="totals-label">VIP</span><span class="totals-value">${totals.vipDinner || ''}</span></td>`;
+  html += `<td class="amt"><span class="totals-label">Star</span><span class="totals-value">${totals.starGazing || ''}</span></td>`;
+  html += `<td class="amt"><span class="totals-label">Priv Trip</span><span class="totals-value">${totals.privateTrip || ''}</span></td>`;
+  html += `<td class="amt"><span class="totals-label">Priv Trans</span><span class="totals-value">${totals.privateTransfer || ''}</span></td>`;
+  html += `<td colspan="13" style="text-align:center;"><span class="totals-label">Total Remaining</span><br><strong style="color:#dc2626; font-size:14px;">${remainingText}</strong></span></td>`;
   html += `</tr>`;
   
   html += '</tbody></table>';
@@ -1570,7 +1622,7 @@ async function openAssignVehicles(voucherNo) {
   const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
   if (!invoice) return;
   
-  // جلب السيارات من نوع passengers فقط
+  // ✅ استخدام cachedVehicles مباشرة
   let allVehicles = cachedVehicles;
   if (!allVehicles || allVehicles.length === 0) {
     allVehicles = await gas('getVehicles');
@@ -1603,7 +1655,7 @@ async function openAssignVehicles(voucherNo) {
   const tripName = invoice.trip || '';
   const currentDate = getCurrentDateISO();
   
-  // ✅ جلب البيانات المحفوظة مسبقاً لهذه الفاتورة
+  // جلب البيانات المحفوظة
   let savedVehicles = [];
   try {
     savedVehicles = JSON.parse(invoice.VehiclesUsed || '[]');
@@ -1619,18 +1671,18 @@ async function openAssignVehicles(voucherNo) {
       <table style="width:100%; border-collapse:collapse; font-size:12px; min-width:700px;">
         <thead>
           <tr style="background:var(--navy); color:var(--gold);">
-            <th>Vehicle</th>
-            <th>Capacity</th>
-            <th>Booked Today (Go)</th>
-            <th>Booked Today (Return)</th>
-            <th>Available Go</th>
-            <th>Available Return</th>
-            <th>🔄 Go</th>
-            <th>🔙 Return</th>
-            <th>Adult</th>
-            <th>Child</th>
-            <th>Infant</th>
-            <th>Select</th>
+            <th style="min-width:120px;">Vehicle</th>
+            <th style="min-width:60px;">Capacity</th>
+            <th style="min-width:80px;">Booked (Go)</th>
+            <th style="min-width:80px;">Booked (Return)</th>
+            <th style="min-width:70px;">Avail Go</th>
+            <th style="min-width:70px;">Avail Ret</th>
+            <th style="min-width:55px;">🔄 Go</th>
+            <th style="min-width:55px;">🔙 Return</th>
+            <th style="min-width:55px;">Adult</th>
+            <th style="min-width:55px;">Child</th>
+            <th style="min-width:55px;">Infant</th>
+            <th style="min-width:50px;">Sel</th>
            </tr>
         </thead>
         <tbody>
@@ -1641,7 +1693,6 @@ async function openAssignVehicles(voucherNo) {
     if (!vehicle) continue;
     const capacity = vehicle.capacity || 0;
     
-    // ✅ جلب الأعداد المحفوظة لهذه الفاتورة
     let savedGo = 0, savedReturn = 0, savedAdult = 0, savedChild = 0, savedInfant = 0;
     const saved = savedVehicles.find(v => v.vehicleId === vehId);
     if (saved) {
@@ -1652,7 +1703,6 @@ async function openAssignVehicles(voucherNo) {
       savedInfant = saved.infants || 0;
     }
     
-    // ✅ جلب الحجوزات التراكمية من الفواتير الأخرى
     const bookedResult = await gas('getVehicleBookedSeatsForTrip', {
       date: currentDate,
       tripName: tripName,
@@ -1687,7 +1737,7 @@ async function openAssignVehicles(voucherNo) {
   
   vehiclesHtml += `
         </tbody>
-       </table>
+      </table>
     </div>
     <div class="warning-box" id="assignWarning" style="margin-top:12px;"></div>
     <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:16px;">
@@ -1784,18 +1834,39 @@ async function saveVehicleAssignment() {
     return;
   }
   
-  var result = await gas('assignVehiclesToInvoice', {
-    voucherNo: currentAssignVoucher,
-    vehiclesData: JSON.stringify(selectedVehiclesData),
-    centerName: currentUser?.centerName
-  });
+  var saveBtn = document.querySelector('#assignVehiclesModal .btn-primary');
+  var originalText = saveBtn ? saveBtn.textContent : '✅ Assign';
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = '⏳ جاري الحفظ...';
+  }
   
-  if (result && result.success) {
-    showToast('✅ تم حفظ السيارات', 'success');
-    closeModal('assignVehiclesModal');
-    await reloadData();
-  } else {
-    showToast('❌ فشل الحفظ', 'error');
+  try {
+    var result = await gas('assignVehiclesToInvoice', {
+      voucherNo: currentAssignVoucher,
+      vehiclesData: JSON.stringify(selectedVehiclesData),
+      centerName: currentUser?.centerName
+    });
+    
+    if (result && result.success) {
+      // ✅ تحديث محلي فوري
+      updateLocalInvoice(currentAssignVoucher, 'VehiclesUsed', JSON.stringify(selectedVehiclesData));
+      
+      // ✅ إعادة عرض الجدول
+      renderTable();
+      
+      showToast('✅ تم حفظ السيارات', 'success');
+      closeModal('assignVehiclesModal');
+    } else {
+      showToast('❌ فشل الحفظ: ' + (result.message || 'خطأ غير معروف'), 'error');
+    }
+  } catch(e) {
+    showToast('❌ خطأ: ' + e.message, 'error');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = originalText;
+    }
   }
 }
 
@@ -1976,18 +2047,39 @@ async function saveBoatAssignment() {
     return;
   }
   
-  var result = await gas('assignBoatsToInvoice', {
-    voucherNo: currentAssignVoucher,
-    boatsData: JSON.stringify(selectedBoatsData),
-    centerName: currentUser?.centerName
-  });
+  var saveBtn = document.querySelector('#assignBoatsModal .btn-primary');
+  var originalText = saveBtn ? saveBtn.textContent : '✅ Assign';
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = '⏳ جاري الحفظ...';
+  }
   
-  if (result && result.success) {
-    showToast('✅ تم حفظ المراكب', 'success');
-    closeModal('assignBoatsModal');
-    await reloadData();
-  } else {
-    showToast('❌ فشل الحفظ', 'error');
+  try {
+    var result = await gas('assignBoatsToInvoice', {
+      voucherNo: currentAssignVoucher,
+      boatsData: JSON.stringify(selectedBoatsData),
+      centerName: currentUser?.centerName
+    });
+    
+    if (result && result.success) {
+      // ✅ تحديث محلي فوري
+      updateLocalInvoice(currentAssignVoucher, 'BoatsUsed', JSON.stringify(selectedBoatsData));
+      
+      // ✅ إعادة عرض الجدول
+      renderTable();
+      
+      showToast('✅ تم حفظ المراكب', 'success');
+      closeModal('assignBoatsModal');
+    } else {
+      showToast('❌ فشل الحفظ: ' + (result.message || 'خطأ غير معروف'), 'error');
+    }
+  } catch(e) {
+    showToast('❌ خطأ: ' + e.message, 'error');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = originalText;
+    }
   }
 }
 // ============================================================
@@ -2454,6 +2546,16 @@ async function onDateChange() {
       await loadInvoices();
       await loadAndPopulateAssignments(currentDate);
       await refreshPreloadedData();
+      
+      // ✅ تحديث عداد Logistics
+      const logisticsResult = await gas('getLogisticsRecords', { 
+        date: currentDate,
+        centerName: currentUser?.centerName 
+      });
+      if (logisticsResult?.success && logisticsResult.data) {
+        preloadedData.logisticsRecords = logisticsResult.data;
+        updateLogisticsBadge();
+      }
     } catch(e) {
       console.warn('onDateChange error:', e);
       showToast('تم تحميل البيانات جزئياً', 'warning');
