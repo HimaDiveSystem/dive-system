@@ -817,7 +817,21 @@ function updateSelectionButtonsState() {
     }
   });
 }
-
+function updateLogisticsBadge() {
+  const currentDate = getCurrentDateISO();
+  let count = 0;
+  
+  if (currentDate && preloadedData.logisticsRecords) {
+    if (Array.isArray(preloadedData.logisticsRecords)) {
+      count = preloadedData.logisticsRecords.length;
+    } else if (typeof preloadedData.logisticsRecords === 'object') {
+      count = Object.keys(preloadedData.logisticsRecords).length;
+    }
+  }
+  
+  const badge = document.getElementById('selectedLogisticsBadge');
+  if (badge) badge.textContent = count;
+}
 function getRestColor(restValue) {
   if (restValue === undefined || restValue === null) return 'var(--blue)';
   const num = parseFloat(restValue);
@@ -2308,13 +2322,12 @@ async function onDateChange() {
   if (currentDate) {
     showToast('جاري تحميل البيانات...', 'info');
     
-    // ✅ تحميل البيانات بالتسلسل مع تأخير
     try {
       await loadInvoices();
       await delay(500);
       await loadAndPopulateAssignments(currentDate);
       await delay(300);
-      await refreshPreloadedData();
+      await refreshPreloadedData();  // ✅ تأكد من وجود هذا السطر
     } catch(e) {
       console.warn('onDateChange error:', e);
       showToast('تم تحميل البيانات جزئياً', 'warning');
@@ -2865,7 +2878,6 @@ async function refreshPreloadedData() {
   console.log('🔄 تحديث البيانات للتاريخ:', currentDate);
   
   try {
-    // ✅ تنفيذ طلب واحد فقط (الأهم)
     const assignments = await loadAssignmentsForDate(currentDate);
     if (assignments) {
       selectedBeachInstructors = assignments.beachInstructors || [];
@@ -2875,6 +2887,18 @@ async function refreshPreloadedData() {
       updateSelectionBadges();
       console.log('✅ تم تحديث التعيينات');
     }
+    
+    // ✅ تحميل بيانات Logistics وتحديث العداد
+    const logisticsResult = await gas('getLogisticsRecords', { 
+      date: currentDate,
+      centerName: currentUser?.centerName 
+    });
+    if (logisticsResult?.success && logisticsResult.data) {
+      preloadedData.logisticsRecords = logisticsResult.data;
+      updateLogisticsBadge();
+      console.log('✅ تم تحديث عداد Logistics:', logisticsResult.data.length);
+    }
+    
   } catch(e) {
     console.warn('refreshPreloadedData error:', e.message);
   }
@@ -3280,12 +3304,9 @@ function updateSelectionBadges() {
   document.getElementById('selectedInstructorsBadge').textContent = selectedBeachInstructors.length;
   document.getElementById('selectedBoatsBadge').textContent = selectedBoats.length;
   document.getElementById('selectedVehiclesBadge').textContent = selectedVehicles.length;
-  
-  // ✅ عداد بسيط للوجستيك
-  const logisticsCount = (tempLogisticsRows && tempLogisticsRows.length) ? tempLogisticsRows.filter(r => r.vehicleId && r.tripName && (r.goCount > 0 || r.returnCount > 0)).length : 0;
-  const logisticsBadge = document.getElementById('selectedLogisticsBadge');
-  if (logisticsBadge) logisticsBadge.textContent = logisticsCount;
-}
+   // ✅ تحديث عداد Logistics
+  updateLogisticsBadge();
+ }
 
 function resetAllSelections() {
   const currentDate = getCurrentDateISO();
@@ -3512,7 +3533,7 @@ async function openLogisticsVehicles() {
   } catch(e) {
     console.warn('فشل تحميل logistics:', e.message);
   }
-  
+  updateLogisticsBadge();
   // بناء HTML (نفسه)
   let html = `
     <div class="summary-box" style="background: var(--navy); color: white; margin-bottom: 16px;">
@@ -3844,7 +3865,8 @@ async function saveAllLogisticsRows() {
         goCount: r.goCount,
         returnCount: r.returnCount
       }));
-      preloadedData.logisticsRecords = records;
+    preloadedData.logisticsRecords = records;
+    updateLogisticsBadge();
       closeModal('logisticsVehiclesModal');
       await loadAndPopulateAssignments(currentDate);
     } else {
