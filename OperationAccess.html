@@ -402,6 +402,91 @@
       animation: spin 1s linear infinite;
       margin: 0 auto 12px;
     }
+    /* ============================================================ */
+/* تحسين عرض النوافذ (Modals) - منع التمرير الأفقي المزعج */
+/* ============================================================ */
+
+.modal-content {
+  max-width: 95%;
+  width: 95%;
+  overflow-x: auto;
+  padding: 16px;
+}
+
+/* تحسين الجداول داخل النوافذ */
+.modal-content table {
+  width: 100%;
+  min-width: auto;
+  font-size: 12px;
+  border-collapse: collapse;
+}
+
+.modal-content th,
+.modal-content td {
+  padding: 8px 6px;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-content th {
+  background: var(--navy);
+  color: var(--gold);
+  font-weight: 700;
+  font-size: 11px;
+}
+
+.modal-content input[type="number"],
+.modal-content input[type="text"],
+.modal-content select {
+  width: 60px;
+  padding: 4px;
+  text-align: center;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+/* عرض الأعمدة بشكل مناسب */
+.modal-content td:first-child,
+.modal-content th:first-child {
+  position: sticky;
+  left: 0;
+  background: var(--navy);
+  z-index: 1;
+}
+
+/* تحسين عرض حقول الإدخال */
+.modal-content .assign-go,
+.modal-content .assign-return,
+.modal-content .assign-adult,
+.modal-content .assign-child,
+.modal-content .assign-infant {
+  width: 55px;
+  text-align: center;
+}
+
+/* إخفاء الأصفار - إظهار سلسلة فارغة بدلاً من 0 */
+.modal-content input[value="0"] {
+  color: transparent;
+}
+
+/* للشاشات الصغيرة */
+@media (max-width: 768px) {
+  .modal-content {
+    width: 98%;
+    padding: 10px;
+  }
+  .modal-content input[type="number"] {
+    width: 45px;
+  }
+  .modal-content table {
+    font-size: 10px;
+  }
+  .modal-content th,
+  .modal-content td {
+    padding: 4px 3px;
+  }
+}
     @keyframes spin { to { transform: rotate(360deg); } }
     
     .badge-vehicle, .badge-boat, .badge-instructor {
@@ -530,7 +615,7 @@ function jsonpRequest(action, params = {}) {
 
 function gas(action, params = {}) {
   return new Promise((resolve, reject) => {
-    const timeoutId = setTimeout(() => reject(new Error('Request timeout')), 30000);
+    const timeoutId = setTimeout(() => reject(new Error('Request timeout')), 60000);  // ✅ 60 ثانية
     jsonpRequest(action, params).then(resolve).catch(reject).finally(() => clearTimeout(timeoutId));
   });
 }
@@ -599,7 +684,6 @@ function updateSelectionBadges() {
 // ============================================================
 // LOAD INVOICES
 // ============================================================
-
 async function loadInvoices() {
   if (invoicesLoaded && allInvoices.length > 0) {
     console.log(`📦 استخدام البيانات المخزنة (${allInvoices.length} فاتورة)`);
@@ -614,22 +698,36 @@ async function loadInvoices() {
     const toDate = document.getElementById('filterToDate').value;
     const isSingleDate = fromDate && fromDate === toDate;
     
-    let result;
+    let result = null;
     
-    if (isSingleDate) {
-      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const parts = fromDate.split('-');
-      const formattedDate = `${parts[2]}/${months[parseInt(parts[1]) - 1]}/${parts[0]}`;
-      result = await gas('getInvoicesByDate', { 
-        dateStr: formattedDate,
-        centerName: currentUser?.centerName
-      });
-    } else {
-      result = await gas('getAllInvoices', { 
-        includeCollection: 'true',
-        centerName: currentUser?.centerName
-      });
-    }
+    // ✅ محاولة مع timeout أطول
+    const fetchWithRetry = async (retryCount = 0) => {
+      try {
+        if (isSingleDate) {
+          const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          const parts = fromDate.split('-');
+          const formattedDate = `${parts[2]}/${months[parseInt(parts[1]) - 1]}/${parts[0]}`;
+          return await gas('getInvoicesByDate', { 
+            dateStr: formattedDate,
+            centerName: currentUser?.centerName
+          });
+        } else {
+          return await gas('getAllInvoices', { 
+            includeCollection: 'true',
+            centerName: currentUser?.centerName
+          });
+        }
+      } catch(e) {
+        if (retryCount < 2) {
+          console.log(`⚠️ محاولة إعادة التحميل (${retryCount + 1}/2)...`);
+          await new Promise(r => setTimeout(r, 2000));
+          return fetchWithRetry(retryCount + 1);
+        }
+        throw e;
+      }
+    };
+    
+    result = await fetchWithRetry();
     
     if (Array.isArray(result)) {
       allInvoices = result.filter(inv => {
@@ -652,7 +750,8 @@ async function loadInvoices() {
     }
   } catch(e) {
     console.error('loadInvoices error:', e);
-    showToast('Connection error: ' + e.message, 'error');
+    showToast('خطأ في التحميل: ' + e.message, 'error');
+    allInvoices = [];
   }
 }
 function initTripFilter() {
@@ -1114,38 +1213,79 @@ async function openAssignVehicles(voucherNo) {
   let savedVehicles = [];
   try { savedVehicles = JSON.parse(invoice.VehiclesUsed || '[]'); } catch(e) {}
   
-  let vehiclesHtml = `<div class="summary-box"><strong>📊 Invoice Summary:</strong><br>Trip: ${escapeHtml(tripName)}<br>Total Passengers: ${(parseInt(invoice.sgl)||0)+(parseInt(invoice.dbl)||0)+(parseInt(invoice.trpl)||0)}</div>
-    <div style="overflow-x:auto;"><table style="width:100%;"><thead><tr style="background:var(--navy);color:var(--gold);"><th>Vehicle</th><th>Capacity</th><th>🔄 Go</th><th>🔙 Return</th><th>Adult</th><th>Child</th><th>Infant</th><th>Select</th></tr></thead><tbody>`;
+  // ✅ دالة مساعدة لإخفاء الأصفار
+  const formatVal = (val) => (val > 0) ? val : '';
+  
+  let vehiclesHtml = `
+    <div class="summary-box" style="margin-bottom: 12px;">
+      <strong>📊 Invoice Summary:</strong><br>
+      Trip: ${escapeHtml(tripName)}<br>
+      Total Passengers: ${(parseInt(invoice.sgl)||0)+(parseInt(invoice.dbl)||0)+(parseInt(invoice.trpl)||0)}
+    </div>
+    <div style="overflow-x:auto; max-height: 400px;">
+      <table style="width: 100%; font-size: 12px;">
+        <thead>
+          <tr style="background: var(--navy); color: var(--gold);">
+            <th style="padding: 6px;">Vehicle</th>
+            <th style="padding: 6px;">Cap.</th>
+            <th style="padding: 6px;">🔄 Go</th>
+            <th style="padding: 6px;">🔙 Ret.</th>
+            <th style="padding: 6px;">👤 A</th>
+            <th style="padding: 6px;">👶 C</th>
+            <th style="padding: 6px;">👶 I</th>
+            <th style="padding: 6px;">Sel</th>
+           </tr>
+        </thead>
+        <tbody>
+  `;
   
   for (const vehId of selectedVehicles) {
     const vehicle = cachedVehicles.find(v => v.id === vehId);
     if (!vehicle) continue;
     const capacity = vehicle.capacity || 0;
     const saved = savedVehicles.find(v => v.vehicleId === vehId);
+    
     const savedGo = saved?.goCount || 0;
     const savedReturn = saved?.returnCount || 0;
     const savedAdult = saved?.adults || 0;
     const savedChild = saved?.children || 0;
     const savedInfant = saved?.infants || 0;
     
-    const bookedResult = await gas('getVehicleBookedSeatsForTrip', { date: currentDate, tripName, vehicleId: vehId, excludeVoucher: voucherNo, centerName: currentUser?.centerName });
+    const bookedResult = await gas('getVehicleBookedSeatsForTrip', { 
+      date: currentDate, tripName, vehicleId: vehId, 
+      excludeVoucher: voucherNo, centerName: currentUser?.centerName 
+    });
+    
     const availableGo = Math.max(0, capacity - (bookedResult.goSeats||0) - savedGo);
     const availableReturn = Math.max(0, capacity - (bookedResult.returnSeats||0) - savedReturn);
     
-    vehiclesHtml += `<tr><td><strong>${escapeHtml(vehicle.licensePlate)}</strong><br><span style="font-size:9px;">${escapeHtml(vehicle.driverName)}</span></td>
-      <td style="text-align:center;">${capacity}</td>
-      <td><input type="number" class="assign-go" data-id="${vehId}" value="${savedGo}" min="0" max="${availableGo+savedGo}" style="width:55px;"></td>
-      <td><input type="number" class="assign-return" data-id="${vehId}" value="${savedReturn}" min="0" max="${availableReturn+savedReturn}" style="width:55px;"></td>
-      <td><input type="number" class="assign-adult" data-id="${vehId}" value="${savedAdult}" min="0" style="width:55px;"></td>
-      <td><input type="number" class="assign-child" data-id="${vehId}" value="${savedChild}" min="0" style="width:55px;"></td>
-      <td><input type="number" class="assign-infant" data-id="${vehId}" value="${savedInfant}" min="0" style="width:55px;"></td>
-      <td><input type="checkbox" class="assign-select" data-id="${vehId}" ${(savedGo>0||savedReturn>0)?'checked':''}></td></tr>`;
+    vehiclesHtml += `
+      <tr>
+        <td style="padding: 4px;"><strong>${escapeHtml(vehicle.licensePlate)}</strong><br><span style="font-size: 9px;">${escapeHtml(vehicle.driverName || '')}</span></td>
+        <td style="text-align: center; padding: 4px;">${capacity}</td>
+        <td style="text-align: center; padding: 4px;"><input type="number" class="assign-go" data-id="${vehId}" value="${formatVal(savedGo)}" min="0" max="${availableGo+savedGo}" style="width: 55px; text-align: center; padding: 4px;"></td>
+        <td style="text-align: center; padding: 4px;"><input type="number" class="assign-return" data-id="${vehId}" value="${formatVal(savedReturn)}" min="0" max="${availableReturn+savedReturn}" style="width: 55px; text-align: center; padding: 4px;"></td>
+        <td style="text-align: center; padding: 4px;"><input type="number" class="assign-adult" data-id="${vehId}" value="${formatVal(savedAdult)}" min="0" style="width: 55px; text-align: center; padding: 4px;"></td>
+        <td style="text-align: center; padding: 4px;"><input type="number" class="assign-child" data-id="${vehId}" value="${formatVal(savedChild)}" min="0" style="width: 55px; text-align: center; padding: 4px;"></td>
+        <td style="text-align: center; padding: 4px;"><input type="number" class="assign-infant" data-id="${vehId}" value="${formatVal(savedInfant)}" min="0" style="width: 55px; text-align: center; padding: 4px;"></td>
+        <td style="text-align: center; padding: 4px;"><input type="checkbox" class="assign-select" data-id="${vehId}" ${(savedGo>0||savedReturn>0)?'checked':''}></td>
+      </tr>
+    `;
   }
-  vehiclesHtml += `</tbody></table></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;"><button class="btn btn-secondary" onclick="closeModal('assignVehiclesModal')">Cancel</button><button class="btn btn-primary" onclick="saveVehicleAssignment()">✅ Assign</button></div>`;
+  
+  vehiclesHtml += `
+        </tbody>
+      </table>
+    </div>
+    <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
+      <button class="btn btn-secondary" onclick="closeModal('assignVehiclesModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveVehicleAssignment()">✅ Assign</button>
+    </div>
+  `;
+  
   document.getElementById('assignVehiclesContent').innerHTML = vehiclesHtml;
   openModal('assignVehiclesModal');
 }
-
 async function saveVehicleAssignment() {
   let selectedVehiclesData = [];
   document.querySelectorAll('#assignVehiclesModal .assign-select:checked').forEach(cb => {
@@ -1168,33 +1308,76 @@ async function openAssignBoats(voucherNo) {
   const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
   if (!invoice) return;
   if (selectedBoats.length === 0) { showToast('اختر المراكب أولاً من زر المراكب', 'error'); return; }
+  
   currentAssignVoucher = voucherNo;
   const currentDate = getCurrentDateISO();
   const tripName = invoice.trip || '';
   let savedBoats = [];
   try { savedBoats = JSON.parse(invoice.BoatsUsed || '[]'); } catch(e) {}
-  let boatsHtml = `<div class="summary-box"><strong>📊 Invoice Summary:</strong><br>Total Passengers: ${(parseInt(invoice.sgl)||0)+(parseInt(invoice.dbl)||0)+(parseInt(invoice.trpl)||0)}</div>
-    <div style="overflow-x:auto;"><table style="width:100%;"><thead><tr style="background:var(--navy);color:var(--gold);"><th>Boat</th><th>Capacity</th><th>Adult</th><th>Child</th><th>Infant</th><th>Select</th></tr></thead><tbody>`;
+  
+  const formatVal = (val) => (val > 0) ? val : '';
+  
+  let boatsHtml = `
+    <div class="summary-box" style="margin-bottom: 12px;">
+      <strong>📊 Invoice Summary:</strong><br>
+      Total Passengers: ${(parseInt(invoice.sgl)||0)+(parseInt(invoice.dbl)||0)+(parseInt(invoice.trpl)||0)}
+    </div>
+    <div style="overflow-x:auto; max-height: 400px;">
+      <table style="width: 100%; font-size: 12px;">
+        <thead>
+          <tr style="background: var(--navy); color: var(--gold);">
+            <th style="padding: 6px;">Boat</th>
+            <th style="padding: 6px;">Cap.</th>
+            <th style="padding: 6px;">👤 Adult</th>
+            <th style="padding: 6px;">👶 Child</th>
+            <th style="padding: 6px;">👶 Infant</th>
+            <th style="padding: 6px;">Sel</th>
+           </tr>
+        </thead>
+        <tbody>
+  `;
+  
   for (const boatId of selectedBoats) {
     const boat = cachedBoats.find(b => b.id === boatId);
     if (!boat) continue;
     const saved = savedBoats.find(b => b.boatId === boatId);
+    
     const savedAdult = saved?.adults || 0;
     const savedChild = saved?.children || 0;
     const savedInfant = saved?.infants || 0;
-    const bookedResult = await gas('getBoatBookedSeatsForTrip', { date: currentDate, tripName, boatId, excludeVoucher: voucherNo, centerName: currentUser?.centerName });
+    
+    const bookedResult = await gas('getBoatBookedSeatsForTrip', { 
+      date: currentDate, tripName, boatId, 
+      excludeVoucher: voucherNo, centerName: currentUser?.centerName 
+    });
+    
     const available = Math.max(0, (boat.capacity||0) - (bookedResult.totalSeats||0) - (savedAdult+savedChild+savedInfant));
-    boatsHtml += `<tr><td><strong>${escapeHtml(boat.name)}</strong></td><td>${boat.capacity||0}</td>
-      <td><input type="number" class="assign-adult" data-id="${boatId}" value="${savedAdult}" min="0" max="${(parseInt(invoice.sgl)||0)+savedAdult}" style="width:55px;"></td>
-      <td><input type="number" class="assign-child" data-id="${boatId}" value="${savedChild}" min="0" max="${(parseInt(invoice.dbl)||0)+savedChild}" style="width:55px;"></td>
-      <td><input type="number" class="assign-infant" data-id="${boatId}" value="${savedInfant}" min="0" max="${(parseInt(invoice.trpl)||0)+savedInfant}" style="width:55px;"></td>
-      <td><input type="checkbox" class="assign-select" data-id="${boatId}" ${(savedAdult>0||savedChild>0||savedInfant>0)?'checked':''}></td></tr>`;
+    
+    boatsHtml += `
+      <tr>
+        <td style="padding: 4px;"><strong>${escapeHtml(boat.name)}</strong></td>
+        <td style="text-align: center; padding: 4px;">${boat.capacity||0}</td>
+        <td style="text-align: center; padding: 4px;"><input type="number" class="assign-adult" data-id="${boatId}" value="${formatVal(savedAdult)}" min="0" style="width: 55px; text-align: center; padding: 4px;"></td>
+        <td style="text-align: center; padding: 4px;"><input type="number" class="assign-child" data-id="${boatId}" value="${formatVal(savedChild)}" min="0" style="width: 55px; text-align: center; padding: 4px;"></td>
+        <td style="text-align: center; padding: 4px;"><input type="number" class="assign-infant" data-id="${boatId}" value="${formatVal(savedInfant)}" min="0" style="width: 55px; text-align: center; padding: 4px;"></td>
+        <td style="text-align: center; padding: 4px;"><input type="checkbox" class="assign-select" data-id="${boatId}" ${(savedAdult>0||savedChild>0||savedInfant>0)?'checked':''}></td>
+      </tr>
+    `;
   }
-  boatsHtml += `</tbody></table></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;"><button class="btn btn-secondary" onclick="closeModal('assignBoatsModal')">Cancel</button><button class="btn btn-primary" onclick="saveBoatAssignment()">✅ Assign</button></div>`;
+  
+  boatsHtml += `
+        </tbody>
+      </table>
+    </div>
+    <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
+      <button class="btn btn-secondary" onclick="closeModal('assignBoatsModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveBoatAssignment()">✅ Assign</button>
+    </div>
+  `;
+  
   document.getElementById('assignBoatsContent').innerHTML = boatsHtml;
   openModal('assignBoatsModal');
 }
-
 async function saveBoatAssignment() {
   let selectedBoatsData = [];
   document.querySelectorAll('#assignBoatsModal .assign-select:checked').forEach(cb => {
@@ -1216,24 +1399,59 @@ async function saveBoatAssignment() {
 async function openAssignInstructors(voucherNo) {
   const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
   if (!invoice) return;
+  
   currentAssignVoucher = voucherNo;
   currentAssignInvoice = invoice;
+  
   let instructors = cachedInstructors;
   if (!instructors.length) { instructors = await gas('getInstructors'); cachedInstructors = instructors; }
-  let instructorsHtml = `<div class="summary-box"><strong>📊 Invoice Summary:</strong><br>Trip: ${escapeHtml(invoice.trip)}</div>
-    <div style="overflow-x:auto;"><table style="width:100%;"><thead><tr style="background:var(--navy);color:var(--gold);"><th>Instructor</th><th>Diver</th><th>Course</th><th>Intro</th><th>Select</th></tr></thead><tbody>`;
+  
+  const formatVal = (val) => (val > 0) ? val : '';
+  
+  let instructorsHtml = `
+    <div class="summary-box" style="margin-bottom: 12px;">
+      <strong>📊 Invoice Summary:</strong><br>
+      Trip: ${escapeHtml(invoice.trip)}
+    </div>
+    <div style="overflow-x:auto; max-height: 400px;">
+      <table style="width: 100%; font-size: 12px;">
+        <thead>
+          <tr style="background: var(--navy); color: var(--gold);">
+            <th style="padding: 6px;">Instructor</th>
+            <th style="padding: 6px;">🤿 Diver</th>
+            <th style="padding: 6px;">📚 Course</th>
+            <th style="padding: 6px;">⭐ Intro</th>
+            <th style="padding: 6px;">Sel</th>
+           </tr>
+        </thead>
+        <tbody>
+  `;
+  
   for (const inst of instructors) {
-    instructorsHtml += `<tr><td><strong>${escapeHtml(inst.name)}</strong></td>
-      <td><input type="number" class="assign-diver" data-id="${inst.id}" value="0" min="0" style="width:55px;"></td>
-      <td><input type="number" class="assign-course" data-id="${inst.id}" value="0" min="0" style="width:55px;"></td>
-      <td><input type="number" class="assign-intro" data-id="${inst.id}" value="0" min="0" style="width:55px;"></td>
-      <td><input type="checkbox" class="assign-select" data-id="${inst.id}"></td></tr>`;
+    instructorsHtml += `
+      <tr>
+        <td style="padding: 4px;"><strong>${escapeHtml(inst.name)}</strong></td>
+        <td style="text-align: center; padding: 4px;"><input type="number" class="assign-diver" data-id="${inst.id}" value="0" min="0" style="width: 55px; text-align: center; padding: 4px;"></td>
+        <td style="text-align: center; padding: 4px;"><input type="number" class="assign-course" data-id="${inst.id}" value="0" min="0" style="width: 55px; text-align: center; padding: 4px;"></td>
+        <td style="text-align: center; padding: 4px;"><input type="number" class="assign-intro" data-id="${inst.id}" value="0" min="0" style="width: 55px; text-align: center; padding: 4px;"></td>
+        <td style="text-align: center; padding: 4px;"><input type="checkbox" class="assign-select" data-id="${inst.id}"></td>
+      </tr>
+    `;
   }
-  instructorsHtml += `</tbody></table></div><div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;"><button class="btn btn-secondary" onclick="closeModal('assignInstructorsModal')">Cancel</button><button class="btn btn-primary" onclick="saveInstructorAssignment()">✅ Assign</button></div>`;
+  
+  instructorsHtml += `
+        </tbody>
+      </table>
+    </div>
+    <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
+      <button class="btn btn-secondary" onclick="closeModal('assignInstructorsModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveInstructorAssignment()">✅ Assign</button>
+    </div>
+  `;
+  
   document.getElementById('assignInstructorsContent').innerHTML = instructorsHtml;
   openModal('assignInstructorsModal');
 }
-
 async function saveInstructorAssignment() {
   let selectedRows = [];
   document.querySelectorAll('#assignInstructorsModal .assign-select:checked').forEach(cb => {
@@ -1422,7 +1640,93 @@ function resetFilters() {
     }
   }
 }
-
+function generateVehicleRowHTML(index, selectedVehicleId, selectedTrip, goCount, returnCount, vehicles, trips) {
+  // ✅ إخفاء الأصفار: إذا كانت القيمة 0 أو null أو undefined، اعرض سلسلة فارغة
+  const formatValue = (val) => {
+    if (val === undefined || val === null) return '';
+    const num = parseFloat(val);
+    if (isNaN(num)) return '';
+    if (num === 0) return '';
+    return num;
+  };
+  
+  const goValue = formatValue(goCount);
+  const returnValue = formatValue(returnCount);
+  
+  return `
+    <div class="vehicle-row" data-row-index="${index}" style="display: flex; gap: 8px; align-items: center; margin-bottom: 10px; padding: 8px; background: var(--gray-50); border-radius: 8px; flex-wrap: wrap;">
+      <div style="flex: 2; min-width: 140px;">
+        <label style="font-size: 9px; color: var(--gray-500); display: block; margin-bottom: 2px;">🚗 Vehicle</label>
+        <select class="vehicle-select" data-row="${index}" style="width: 100%; padding: 6px; border-radius: 6px; border: 1px solid var(--border); font-size: 11px;">
+          <option value="">-- Select --</option>
+          ${vehicles.map(v => `<option value="${v.id}" ${selectedVehicleId === v.id ? 'selected' : ''}>${escapeHtml(v.licensePlate)} (${v.capacity} seats)</option>`).join('')}
+        </select>
+      </div>
+      <div style="flex: 2; min-width: 130px;">
+        <label style="font-size: 9px; color: var(--gray-500); display: block; margin-bottom: 2px;">🚌 Trip</label>
+        <select class="trip-select" data-row="${index}" style="width: 100%; padding: 6px; border-radius: 6px; border: 1px solid var(--border); font-size: 11px;">
+          <option value="">-- Select --</option>
+          ${trips.map(t => `<option value="${escapeHtml(t)}" ${selectedTrip === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('')}
+        </select>
+      </div>
+      <div style="flex: 1; min-width: 70px;">
+        <label style="font-size: 9px; color: var(--gray-500); display: block; margin-bottom: 2px;">🔄 Go</label>
+        <input type="number" class="go-count" data-row="${index}" value="${goValue}" min="0" placeholder="" style="width: 100%; padding: 6px; text-align: center; border-radius: 6px; border: 1px solid var(--border); font-size: 11px;">
+      </div>
+      <div style="flex: 1; min-width: 70px;">
+        <label style="font-size: 9px; color: var(--gray-500); display: block; margin-bottom: 2px;">🔙 Return</label>
+        <input type="number" class="return-count" data-row="${index}" value="${returnValue}" min="0" placeholder="" style="width: 100%; padding: 6px; text-align: center; border-radius: 6px; border: 1px solid var(--border); font-size: 11px;">
+      </div>
+      <div style="flex: 0;">
+        <label style="font-size: 9px; visibility: hidden; display: block; margin-bottom: 2px;">Action</label>
+        <button class="btn btn-danger" onclick="removeVehicleRow(${index})" style="padding: 4px 10px; font-size: 11px;">🗑️</button>
+      </div>
+    </div>
+  `;
+}
+  function generateLogisticsRowHTML(index, selectedVehicleId, selectedTrip, goCount, returnCount, vehicles, trips) {
+  const formatValue = (val) => {
+    if (val === undefined || val === null) return '';
+    const num = parseFloat(val);
+    if (isNaN(num)) return '';
+    if (num === 0) return '';
+    return num;
+  };
+  
+  const goValue = formatValue(goCount);
+  const returnValue = formatValue(returnCount);
+  
+  return `
+    <div class="logistics-row" data-row-index="${index}" style="display: flex; gap: 8px; align-items: center; margin-bottom: 10px; padding: 8px; background: var(--gray-50); border-radius: 8px; flex-wrap: wrap;">
+      <div style="flex: 2; min-width: 140px;">
+        <label style="font-size: 9px; color: var(--gray-500); display: block; margin-bottom: 2px;">🚛 Vehicle</label>
+        <select class="logistics-vehicle-select" data-row="${index}" style="width: 100%; padding: 6px; border-radius: 6px; border: 1px solid var(--border); font-size: 11px;">
+          <option value="">-- Select --</option>
+          ${vehicles.map(v => `<option value="${v.id}" ${selectedVehicleId === v.id ? 'selected' : ''}>${escapeHtml(v.licensePlate)}</option>`).join('')}
+        </select>
+      </div>
+      <div style="flex: 2; min-width: 130px;">
+        <label style="font-size: 9px; color: var(--gray-500); display: block; margin-bottom: 2px;">🚌 Trip</label>
+        <select class="logistics-trip-select" data-row="${index}" style="width: 100%; padding: 6px; border-radius: 6px; border: 1px solid var(--border); font-size: 11px;">
+          <option value="">-- Select --</option>
+          ${trips.map(t => `<option value="${escapeHtml(t)}" ${selectedTrip === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('')}
+        </select>
+      </div>
+      <div style="flex: 1; min-width: 70px;">
+        <label style="font-size: 9px; color: var(--gray-500); display: block; margin-bottom: 2px;">🔄 Go</label>
+        <input type="number" class="logistics-go-count" data-row="${index}" value="${goValue}" min="0" placeholder="" style="width: 100%; padding: 6px; text-align: center; border-radius: 6px; border: 1px solid var(--border); font-size: 11px;">
+      </div>
+      <div style="flex: 1; min-width: 70px;">
+        <label style="font-size: 9px; color: var(--gray-500); display: block; margin-bottom: 2px;">🔙 Return</label>
+        <input type="number" class="logistics-return-count" data-row="${index}" value="${returnValue}" min="0" placeholder="" style="width: 100%; padding: 6px; text-align: center; border-radius: 6px; border: 1px solid var(--border); font-size: 11px;">
+      </div>
+      <div style="flex: 0;">
+        <label style="font-size: 9px; visibility: hidden; display: block; margin-bottom: 2px;">Action</label>
+        <button class="btn btn-danger" onclick="removeLogisticsRow(${index})" style="padding: 4px 10px; font-size: 11px;">🗑️</button>
+      </div>
+    </div>
+  `;
+}
 
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
@@ -1439,28 +1743,26 @@ async function saveBoatsAndInstructors() { showToast('قيد التطوير', 'i
 async function resetAllSelections() { showToast('قيد التطوير', 'info'); }
 
 async function onDateChange() {
-  const currentDate = getCurrentDateISO();
-  
-  lastFilterParams = '';
-  invoicesLoaded = false;  // ✅ مهم جداً - يسمح بإعادة التحميل
-  
-  if (currentDate) {
-    showToast('جاري تحميل البيانات...', 'info');
-    await loadInvoices();
-    await loadAndPopulateAssignments(currentDate);
-  } else {
-    await loadInvoices();
-    selectedBeachInstructors = [];
-    selectedBoats = [];
-    boatInstructorsMap = {};
-    selectedVehicles = [];
-    updateSelectionBadges();
-  }
-  
-  applyFilters();
-  updateSelectionButtonsState();
-}
 
+// ✅ تحديث عداد Logistics Vehicles
+async function refreshLogisticsBadge() {
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) return;
+  
+  try {
+    const result = await gas('getLogisticsRecords', { 
+      date: currentDate,
+      centerName: currentUser?.centerName 
+    });
+    if (result?.success && result.data) {
+      preloadedData.logisticsRecords = result.data;
+      const badge = document.getElementById('selectedLogisticsBadge');
+      if (badge) badge.textContent = result.data.length;
+    }
+  } catch(e) {
+    console.warn('refreshLogisticsBadge error:', e);
+  }
+}
 // ============================================================
 // INITIALIZATION
 // ============================================================
