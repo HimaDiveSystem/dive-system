@@ -601,37 +601,72 @@ function updateSelectionBadges() {
 // ============================================================
 async function loadInvoices() {
   if (invoicesLoaded && allInvoices.length > 0) {
+    console.log('📦 استخدام البيانات المخزنة (${allInvoices.length} فاتورة)');
     applyFilters();
     return;
   }
+  
   try {
     showToast('جاري تحميل البيانات...', 'info');
+    
     const fromDate = document.getElementById('filterFromDate').value;
     const toDate = document.getElementById('filterToDate').value;
     const isSingleDate = fromDate && fromDate === toDate;
+    
     let result;
-    if (isSingleDate) {
+    
+    // ✅ إذا كان هناك نطاق تواريخ محدد، استخدم getInvoicesByDate
+    if (fromDate && toDate) {
       const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const parts = fromDate.split('-');
-      const formattedDate = `${parts[2]}/${months[parseInt(parts[1]) - 1]}/${parts[0]}`;
-      result = await gas('getInvoicesByDate', { dateStr: formattedDate, centerName: currentUser?.centerName });
+      const fromParts = fromDate.split('-');
+      const toParts = toDate.split('-');
+      const fromFormatted = `${fromParts[2]}/${months[parseInt(fromParts[1]) - 1]}/${fromParts[0]}`;
+      const toFormatted = `${toParts[2]}/${months[parseInt(toParts[1]) - 1]}/${toParts[0]}`;
+      
+      if (isSingleDate) {
+        // تاريخ واحد
+        result = await gas('getInvoicesByDate', { 
+          dateStr: fromFormatted,
+          centerName: currentUser?.centerName
+        });
+      } else {
+        // نطاق تواريخ - نستخدم getAllInvoices ثم نفلتر محلياً
+        result = await gas('getAllInvoices', { 
+          includeCollection: 'true',
+          centerName: currentUser?.centerName
+        });
+      }
     } else {
-      result = await gas('getAllInvoices', { includeCollection: 'true', centerName: currentUser?.centerName });
+      // لا يوجد تواريخ محددة - جلب كل الفواتير
+      result = await gas('getAllInvoices', { 
+        includeCollection: 'true',
+        centerName: currentUser?.centerName
+      });
     }
+    
     if (Array.isArray(result)) {
       allInvoices = result.filter(inv => {
         const state = (inv.State || inv.state || '').toLowerCase();
         return state === 'confirmed' || state === 'pending';
       });
+      
       invoicesLoaded = true;
+      
       const tripSet = new Set();
-      allInvoices.forEach(inv => { if (inv.Trip || inv.trip) tripSet.add(inv.Trip || inv.trip); });
+      allInvoices.forEach(inv => { 
+        const trip = inv.Trip || inv.trip;
+        if (trip) tripSet.add(trip); 
+      });
       uniqueTrips = Array.from(tripSet).sort();
+      
       initTripFilter();
       applyFilters();
       showToast(`تم تحميل ${allInvoices.length} فاتورة`, 'success');
     }
-  } catch(e) { console.error(e); showToast('خطأ في التحميل', 'error'); }
+  } catch(e) {
+    console.error('loadInvoices error:', e);
+    showToast('Connection error: ' + e.message, 'error');
+  }
 }
 
 function initTripFilter() {
@@ -894,6 +929,7 @@ function renderDesktopTable() {
   html += `<tr>`;
   html += '</tbody></table>';
   document.getElementById('tblCont').innerHTML = html;
+  renderSummary();
 }
 
 function renderMobileCards() {
@@ -1220,6 +1256,97 @@ function resetFilters() {
   updateSelectionButtonsState();
   showToast('تم إعادة تعيين الفلاتر', 'success');
 }
+  function renderSummary() {
+  const trips = {};
+  
+  if (!filteredInvoices || filteredInvoices.length === 0) {
+    const summarySec = document.getElementById('summarySec');
+    if (summarySec) summarySec.style.display = 'none';
+    return;
+  }
+  
+  filteredInvoices.forEach(inv => {
+    const sgl = parseInt(inv.Sgl) || parseInt(inv.sgl) || 0;
+    const dbl = parseInt(inv.Dbl) || parseInt(inv.dbl) || 0;
+    const trpl = parseInt(inv.Trpl) || parseInt(inv.trpl) || 0;
+    const extra = parseInt(inv.Extra) || parseInt(inv.extra) || 0;
+    
+    if (sgl === 0 && dbl === 0 && trpl === 0 && extra === 0) return;
+    
+    const tripName = (inv.Trip || inv.trip || 'Unknown').trim();
+    if (!trips[tripName]) {
+      trips[tripName] = { bookings: 0, activities: {} };
+    }
+    trips[tripName].bookings++;
+    
+    const activitiesText = (inv.ActivitiesText || inv.activitiesText || '').toString().trim();
+    if (activitiesText) {
+      activitiesText.split('|').forEach(part => {
+        const match = part.trim().match(/^(.+?)×(\d+(\.\d+)?)$/);
+        if (match) {
+          const activityName = match[1].trim();
+          const quantity = parseFloat(match[2]) || 0;
+          trips[tripName].activities[activityName] = (trips[tripName].activities[activityName] || 0) + quantity;
+        }
+      });
+    } else {
+      if (sgl > 0) trips[tripName].activities['Adult'] = (trips[tripName].activities['Adult'] || 0) + sgl;
+      if (dbl > 0) trips[tripName].activities['Child'] = (trips[tripName].activities['Child'] || 0) + dbl;
+      if (trpl > 0) trips[tripName].activities['Infant'] = (trips[tripName].activities['Infant'] || 0) + trpl;
+      if (extra > 0) trips[tripName].activities['Intro'] = (trips[tripName].activities['Intro'] || 0) + extra;
+    }
+  });
+  
+  if (Object.keys(trips).length === 0) {
+    const summarySec = document.getElementById('summarySec');
+    if (summarySec) summarySec.style.display = 'none';
+    return;
+  }
+  
+  let rows = '';
+  Object.entries(trips).sort((a, b) => b[1].bookings - a[1].bookings).forEach(([tripName, info]) => {
+    const sortedActivities = Object.entries(info.activities).sort((a, b) => b[1] - a[1]);
+    const activitiesStr = sortedActivities
+      .map(([act, qty]) => `${act}×${Number.isInteger(qty) ? qty : qty.toFixed(1)}`)
+      .join(' | ');
+    
+    rows += `<tr>
+      <td><strong>${escapeHtml(tripName)}</strong></td>
+      <td style="text-align:center"><span style="background:var(--navy);color:var(--gold);padding:4px 10px;border-radius:20px;font-size:12px;font-weight:700">${info.bookings}</span></td>
+      <td class="acts-cell" style="white-space:normal; word-break:break-word;">${escapeHtml(activitiesStr || '—')}</span></td>
+    </tr>`;
+  });
+  
+  let summaryHtml = `
+    <div class="summary-sec" id="summarySec" style="margin-top:16px; padding:14px 20px; background:white; border-top:2px solid var(--border); overflow-x:auto;">
+      <div class="summary-title" style="font-size:13px; font-weight:700; color:var(--navy); margin-bottom:8px; text-align:center;">🗺️ Trips Summary</div>
+      <div style="overflow-x:auto;">
+        <table class="summary-table" style="width:100%; border-collapse:collapse; font-size:12px; margin:0 auto;">
+          <thead>
+            <tr style="background:var(--navy2); color:var(--gold);">
+              <th style="padding:10px 8px; text-align:center; width:28%;">Trip</th>
+              <th style="padding:10px 8px; text-align:center; width:15%;">Bookings</th>
+              <th style="padding:10px 8px; text-align:center; width:57%;">Activities</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  
+  // ✅ تحديث العنصر الموجود بدلاً من حذفه وإعادة إنشائه
+  let existingSummary = document.getElementById('summarySec');
+  if (existingSummary) {
+    existingSummary.outerHTML = summaryHtml;
+  } else {
+    const tblWrap = document.querySelector('.tbl-wrap');
+    if (tblWrap) {
+      tblWrap.insertAdjacentHTML('afterend', summaryHtml);
+    }
+  }
+}
+
 
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
