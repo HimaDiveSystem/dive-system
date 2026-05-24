@@ -501,6 +501,22 @@
     }
     .badge-boat { background: var(--blue); }
     .badge-instructor { background: var(--green); }
+    /* إصلاح عرض النصوص في الجداول */
+th, td {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* التأكد من ظهور النصوص العربية */
+* {
+  font-family: 'Cairo', sans-serif;
+}
+
+/* تحسين عرض الحقول في Assign Vehicles/Boats */
+.assign-go, .assign-return, .assign-adult, .assign-child, .assign-infant {
+  width: 50px !important;
+  text-align: center;
+}
   </style>
 </head>
 <body>
@@ -508,6 +524,12 @@
 <div class="header">
   <h2>🎯 Operations Access</h2>
   <div class="header-right">
+    <!-- قائمة اختيار الفرع (للمالك ومدير الحسابات والمدير المالي فقط) -->
+<div id="branchSelector" style="display: none; margin-left: 10px;">
+  <select id="branchSelect" style="background: var(--gold); color: var(--navy); border: none; border-radius: 20px; padding: 4px 12px; font-weight: bold;">
+    <option value="">🌍 اختر الفرع</option>
+  </select>
+</div>
     <span class="user-chip" id="userNameDisplay"></span>
     <button class="back-btn" onclick="goBack()">← Back</button>
   </div>
@@ -645,9 +667,57 @@ function escapeHtml(str) {
 }
 
 function goBack() {
-  window.location.href = DASH[currentUser?.type || 'Admin'] || 'Dashboard.html';
+  // ✅ العودة للصفحة السابقة في التاريخ
+  if (window.history.length > 1) {
+    window.history.back();
+  } else {
+    // إذا لم توجد صفحة سابقة، اذهب للوحة التحكم حسب نوع المستخدم
+    const defaultPage = DASH[currentUser?.type || 'Admin'] || 'Dashboard.html';
+    window.location.href = defaultPage;
+  }
+}
+// ✅ تصفية الرحلات لعرض Diving فقط (إلا لبعض الصلاحيات)
+function filterTripsByUserType(trips) {
+  if (!currentUser) return trips;
+  
+  // ✅ الصلاحيات التي ترى كل الرحلات
+  const fullAccessTypes = ['Admin', 'Owner', 'Accountant', 'FinancialManager'];
+  
+  if (fullAccessTypes.includes(currentUser.type)) {
+    return trips; // كل الرحلات
+  }
+  
+  // ✅ باقي الصلاحيات (OperationsManager, OperationsSupervisor, Sales) تشوف Diving فقط
+  return trips.filter(trip => 
+    trip.toLowerCase().includes('diving') || 
+    trip.toLowerCase().includes('dive') ||
+    trip === 'Diving Boat' ||
+    trip === 'Diving Trip'
+  );
 }
 
+
+result = await fetchWithRetry();
+
+if (Array.isArray(result)) {
+  let invoices = result.filter(inv => {
+    const state = (inv.State || inv.state || '').toLowerCase();
+    return state === 'confirmed' || state === 'pending';
+  });
+  
+  // ✅ تصفية الرحلات حسب نوع المستخدم
+  if (currentUser && !['Admin', 'Owner', 'Accountant', 'FinancialManager'].includes(currentUser.type)) {
+    invoices = invoices.filter(inv => {
+      const trip = (inv.Trip || inv.trip || '').toLowerCase();
+      return trip.includes('diving') || trip.includes('dive');
+    });
+  }
+  
+  allInvoices = invoices;
+  invoicesLoaded = true;
+  ...
+}
+*/
 function getCurrentDateISO() {
   const fromDate = document.getElementById('filterFromDate').value;
   const toDate = document.getElementById('filterToDate').value;
@@ -730,13 +800,24 @@ async function loadInvoices() {
     result = await fetchWithRetry();
     
     if (Array.isArray(result)) {
-      allInvoices = result.filter(inv => {
+      // ✅ تصفية الحالات (pending / confirmed)
+      let invoices = result.filter(inv => {
         const state = (inv.State || inv.state || '').toLowerCase();
         return state === 'confirmed' || state === 'pending';
       });
       
+      // ✅ تصفية الرحلات حسب نوع المستخدم (Diving فقط لبعض الصلاحيات)
+      if (currentUser && !['Admin', 'Owner', 'Accountant', 'FinancialManager'].includes(currentUser.type)) {
+        invoices = invoices.filter(inv => {
+          const trip = (inv.Trip || inv.trip || '').toLowerCase();
+          return trip.includes('diving') || trip.includes('dive');
+        });
+      }
+      
+      allInvoices = invoices;
       invoicesLoaded = true;
       
+      // ✅ استخراج الرحلات الفريدة
       const tripSet = new Set();
       allInvoices.forEach(inv => { 
         const trip = inv.Trip || inv.trip;
@@ -757,12 +838,17 @@ async function loadInvoices() {
 function initTripFilter() {
   const select = document.getElementById('filterTrip');
   select.innerHTML = '<option value="">All Trips</option>';
-  uniqueTrips.forEach(trip => {
+  
+  // ✅ تطبيق التصفية حسب نوع المستخدم
+  let tripsToShow = filterTripsByUserType(uniqueTrips);
+  
+  tripsToShow.forEach(trip => {
     const option = document.createElement('option');
     option.value = trip;
     option.textContent = trip;
     select.appendChild(option);
   });
+  
   select.addEventListener('change', applyFilters);
 }
 
@@ -1464,7 +1550,7 @@ async function saveInstructorAssignment() {
   });
   if (selectedRows.length === 0) { showToast('⚠️ اختر مدرب', 'error'); return; }
   const result = await gas('assignInstructorsToInvoice', { voucherNo: currentAssignVoucher, instructorsData: JSON.stringify(selectedRows), centerName: currentUser?.centerName });
-  if (result?.success) { updateLocalInvoice(currentAssignVoucher, 'InstructorsExecution', JSON.stringify(selectedRows)); renderTableAndCards(); showToast('✅ تم حفظ المدربين', 'success'); closeModal('assignInstructorsModal'); }
+  if (result?.success) { updateLocalInvoice(currentAssignVoucher, 'InstructorsExecution', JSON.stringify(selectedRows)); renderTable(); if (window.innerWidth <= 768) renderMobileCards(); showToast('✅ تم حفظ المدربين', 'success'); closeModal('assignInstructorsModal'); }
   else showToast('❌ فشل الحفظ', 'error');
 }
 
@@ -1475,52 +1561,134 @@ function updateLocalInvoice(voucherNo, field, value) {
     }
   }
 }
-
 async function showVehicleDetails(voucherNo, vehicleId) {
   const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
   if (!invoice) return;
+  
   let vehiclesData = [];
-  try { vehiclesData = JSON.parse(invoice.VehiclesUsed || '[]'); } catch(e) {}
+  try {
+    vehiclesData = JSON.parse(invoice.VehiclesUsed || '[]');
+  } catch(e) {}
+  
   const vehicle = vehiclesData.find(v => v.vehicleId === vehicleId);
-  if (!vehicle) { showToast('لم يتم العثور على بيانات السيارة', 'error'); return; }
+  if (!vehicle) {
+    showToast('لم يتم العثور على بيانات السيارة', 'error');
+    return;
+  }
+  
   const cachedVehicle = cachedVehicles.find(v => v.id === vehicleId);
-  let html = `<div style="background:var(--navy);color:var(--gold);padding:12px;border-radius:8px;"><strong>🚗 Vehicle Details</strong></div><table style="width:100%;margin-top:12px;">`;
-  html += `<tr><td style="padding:6px;font-weight:bold;">License Plate:</td><td>${escapeHtml(vehicle.licensePlate)}</td></tr>`;
-  html += `<tr><td style="padding:6px;font-weight:bold;">Driver:</td><td>${escapeHtml(vehicle.driverName||cachedVehicle?.driverName||'—')}</td></tr>`;
-  html += `<tr><td style="padding:6px;font-weight:bold;">Go/Return:</td><td>🔄${vehicle.goCount||0} / 🔙${vehicle.returnCount||0}</td></tr>`;
-  html += `<tr><td style="padding:6px;font-weight:bold;">Passengers:</td><td>👥 ${vehicle.adults||0}A / ${vehicle.children||0}C / ${vehicle.infants||0}I</td></tr></table>`;
+  
+  let html = `
+    <div style="background: var(--navy); color: var(--gold); padding: 12px; border-radius: 8px; margin-bottom: 16px;">
+      <strong>🚗 Vehicle Details</strong>
+    </div>
+    <table style="width: 100%; border-collapse: collapse;">
+      <tr style="border-bottom: 1px solid var(--border);">
+        <td style="padding: 8px; font-weight: bold;">License Plate:</td>
+        <td style="padding: 8px;">${escapeHtml(vehicle.licensePlate || cachedVehicle?.licensePlate || '—')}</td>
+      </tr>
+      <tr style="border-bottom: 1px solid var(--border);">
+        <td style="padding: 8px; font-weight: bold;">Driver:</td>
+        <td style="padding: 8px;">${escapeHtml(vehicle.driverName || cachedVehicle?.driverName || '—')}</td>
+      </tr>
+      <tr style="border-bottom: 1px solid var(--border);">
+        <td style="padding: 8px; font-weight: bold;">Go / Return:</td>
+        <td style="padding: 8px;">🔄 ${vehicle.goCount || 0} / 🔙 ${vehicle.returnCount || 0}</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px; font-weight: bold;">Passengers:</td>
+        <td style="padding: 8px;">👤 ${vehicle.adults || 0}A / 👶 ${vehicle.children || 0}C / 🍼 ${vehicle.infants || 0}I</td>
+      </tr>
+    </table>
+  `;
+  
   document.getElementById('detailsModalContent').innerHTML = html;
+  document.getElementById('detailsModalTitle').innerHTML = '🚗 Vehicle Details';
   openModal('detailsModal');
 }
 
 async function showBoatDetails(voucherNo, boatId) {
   const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
   if (!invoice) return;
+  
   let boatsData = [];
-  try { boatsData = JSON.parse(invoice.BoatsUsed || '[]'); } catch(e) {}
+  try {
+    boatsData = JSON.parse(invoice.BoatsUsed || '[]');
+  } catch(e) {}
+  
   const boat = boatsData.find(b => b.boatId === boatId);
-  if (!boat) { showToast('لم يتم العثور على بيانات المركب', 'error'); return; }
-  let html = `<div style="background:var(--navy);color:var(--gold);padding:12px;border-radius:8px;"><strong>⛵ Boat Details</strong></div><table style="width:100%;margin-top:12px;">`;
-  html += `<tr><td style="padding:6px;font-weight:bold;">Boat Name:</td><td>${escapeHtml(boat.boatName)}</td></tr>`;
-  html += `<tr><td style="padding:6px;font-weight:bold;">Passengers:</td><td>👥 ${boat.adults||0}A / ${boat.children||0}C / ${boat.infants||0}I</td></tr></table>`;
+  if (!boat) {
+    showToast('لم يتم العثور على بيانات المركب', 'error');
+    return;
+  }
+  
+  let html = `
+    <div style="background: var(--navy); color: var(--gold); padding: 12px; border-radius: 8px; margin-bottom: 16px;">
+      <strong>⛵ Boat Details</strong>
+    </div>
+    <table style="width: 100%; border-collapse: collapse;">
+      <tr style="border-bottom: 1px solid var(--border);">
+        <td style="padding: 8px; font-weight: bold;">Boat Name:</td>
+        <td style="padding: 8px;">${escapeHtml(boat.boatName || '—')}</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px; font-weight: bold;">Passengers:</td>
+        <td style="padding: 8px;">👤 ${boat.adults || 0}A / 👶 ${boat.children || 0}C / 🍼 ${boat.infants || 0}I</td>
+      </tr>
+    </table>
+  `;
+  
   document.getElementById('detailsModalContent').innerHTML = html;
+  document.getElementById('detailsModalTitle').innerHTML = '⛵ Boat Details';
   openModal('detailsModal');
 }
 
 async function showInstructorDetails(voucherNo, instructorId) {
   const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
   if (!invoice) return;
+  
   let instructorsData = [];
-  try { instructorsData = JSON.parse(invoice.InstructorsExecution || '[]'); } catch(e) {}
+  try {
+    instructorsData = JSON.parse(invoice.InstructorsExecution || '[]');
+  } catch(e) {}
+  
   const instructor = instructorsData.find(i => i.instructorId === instructorId);
-  if (!instructor) { showToast('لم يتم العثور على بيانات المدرب', 'error'); return; }
+  if (!instructor) {
+    showToast('لم يتم العثور على بيانات المدرب', 'error');
+    return;
+  }
+  
   const cachedInstructor = cachedInstructors.find(i => i.id === instructorId);
-  let html = `<div style="background:var(--navy);color:var(--gold);padding:12px;border-radius:8px;"><strong>👨‍🏫 Instructor Details</strong></div><table style="width:100%;margin-top:12px;">`;
-  html += `<tr><td style="padding:6px;font-weight:bold;">Name:</td><td>${escapeHtml(instructor.instructorName)}</td></tr>`;
-  html += `<tr><td style="padding:6px;font-weight:bold;">Diver/Course/Intro:</td><td>${instructor.diver||0} / ${instructor.course||0} / ${instructor.intro||0}</td></tr></table>`;
+  
+  let html = `
+    <div style="background: var(--navy); color: var(--gold); padding: 12px; border-radius: 8px; margin-bottom: 16px;">
+      <strong>👨‍🏫 Instructor Details</strong>
+    </div>
+    <table style="width: 100%; border-collapse: collapse;">
+      <tr style="border-bottom: 1px solid var(--border);">
+        <td style="padding: 8px; font-weight: bold;">Name:</td>
+        <td style="padding: 8px;">${escapeHtml(instructor.instructorName || cachedInstructor?.name || '—')}</td>
+      </tr>
+      <tr style="border-bottom: 1px solid var(--border);">
+        <td style="padding: 8px; font-weight: bold;">Phone:</td>
+        <td style="padding: 8px;">${escapeHtml(cachedInstructor?.phone || '—')}</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px; font-weight: bold;">Activities:</td>
+        <td style="padding: 8px;">🤿 Diver: ${instructor.diver || 0} | 📚 Course: ${instructor.course || 0} | ⭐ Intro: ${instructor.intro || 0}</td>
+      </tr>
+    </table>
+  `;
+  
   document.getElementById('detailsModalContent').innerHTML = html;
+  document.getElementById('detailsModalTitle').innerHTML = '👨‍🏫 Instructor Details';
   openModal('detailsModal');
 }
+
+
+
+
+
 
 // ============================================================
 // OTHER FUNCTIONS
@@ -1727,45 +1895,656 @@ function generateVehicleRowHTML(index, selectedVehicleId, selectedTrip, goCount,
     </div>
   `;
 }
+let currentTimeVoucher = null;
 
+function openTimePicker(voucherNo, currentTime) {
+  currentTimeVoucher = voucherNo;
+  const timeInput = document.getElementById('timePickerInput');
+  if (timeInput) {
+    timeInput.value = currentTime || '09:00';
+  }
+  openModal('timeModal');
+}
+
+async function saveTimeUpdate() {
+  if (!currentTimeVoucher) {
+    showToast('لا يوجد فاتورة محددة', 'error');
+    closeModal('timeModal');
+    return;
+  }
+  
+  const newTime = document.getElementById('timePickerInput').value;
+  if (!newTime) {
+    showToast('الرجاء اختيار وقت', 'error');
+    return;
+  }
+  
+  showToast('جاري حفظ الوقت...', 'info');
+  
+  try {
+    const result = await gas('updateInvoiceTime', {
+      voucherNo: currentTimeVoucher,
+      time: newTime,
+      centerName: currentUser?.centerName
+    });
+    
+    if (result?.success) {
+      // تحديث الوقت في البيانات المحلية
+      for (let inv of allInvoices) {
+        if (inv.voucherNo === currentTimeVoucher) {
+          inv.time = newTime;
+          break;
+        }
+      }
+      
+      renderTable();
+      if (window.innerWidth <= 768) renderMobileCards();
+      showToast('✅ تم تحديث الوقت بنجاح', 'success');
+      closeModal('timeModal');
+    } else {
+      showToast('❌ فشل تحديث الوقت', 'error');
+    }
+  } catch(e) {
+    showToast('خطأ: ' + e.message, 'error');
+  }
+}
+async function openUpsell(voucherNo) {
+  const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
+  if (!invoice) {
+    showToast('لم يتم العثور على الفاتورة', 'error');
+    return;
+  }
+  
+  // ✅ تحضير نموذج UpSell
+  let html = `
+    <div style="padding: 16px;">
+      <div style="background: var(--navy); color: var(--gold); padding: 12px; border-radius: 8px; margin-bottom: 16px;">
+        <strong>📄 Voucher: ${escapeHtml(voucherNo)}</strong><br>
+        <strong>👤 Guest: ${escapeHtml(invoice.guestName || '—')}</strong>
+      </div>
+      
+      <div style="margin-bottom: 16px;">
+        <label style="display: block; font-weight: bold; margin-bottom: 8px;">💰 UpSell Amount:</label>
+        <input type="number" id="upsellAmount" step="0.01" style="width: 100%; padding: 10px; border: 2px solid var(--border); border-radius: 8px;">
+      </div>
+      
+      <div style="margin-bottom: 16px;">
+        <label style="display: block; font-weight: bold; margin-bottom: 8px;">📝 Description:</label>
+        <textarea id="upsellDescription" rows="3" style="width: 100%; padding: 10px; border: 2px solid var(--border); border-radius: 8px;"></textarea>
+      </div>
+      
+      <div style="margin-bottom: 16px;">
+        <label style="display: block; font-weight: bold; margin-bottom: 8px;">💱 Currency:</label>
+        <select id="upsellCurrency" style="width: 100%; padding: 10px; border: 2px solid var(--border); border-radius: 8px;">
+          <option value="LE">LE (Egyptian Pound)</option>
+          <option value="USD">USD ($)</option>
+          <option value="EUR">EUR (€)</option>
+          <option value="GBP">GBP (£)</option>
+        </select>
+      </div>
+      
+      <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+        <button class="btn btn-secondary" onclick="closeModal('upsellModal')">إلغاء</button>
+        <button class="btn btn-primary" onclick="saveUpsell('${voucherNo}')">💾 حفظ UpSell</button>
+      </div>
+    </div>
+  `;
+  
+  document.getElementById('upsellContent').innerHTML = html;
+  openModal('upsellModal');
+}
+
+async function saveUpsell(voucherNo) {
+  const amount = parseFloat(document.getElementById('upsellAmount').value);
+  const description = document.getElementById('upsellDescription').value;
+  const currency = document.getElementById('upsellCurrency').value;
+  
+  if (!amount || amount <= 0) {
+    showToast('الرجاء إدخال مبلغ صحيح', 'error');
+    return;
+  }
+  
+  showToast('جاري حفظ الـ UpSell...', 'info');
+  
+  try {
+    const result = await gas('saveUpsell', {
+      voucherNo: voucherNo,
+      amount: amount,
+      description: description,
+      currency: currency,
+      centerName: currentUser?.centerName
+    });
+    
+    if (result?.success) {
+      showToast('✅ تم إضافة UpSell بنجاح', 'success');
+      closeModal('upsellModal');
+    } else {
+      showToast('❌ فشل إضافة UpSell', 'error');
+    }
+  } catch(e) {
+    showToast('خطأ: ' + e.message, 'error');
+  }
+}
+  
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
-function exportToExcel() { showToast('قيد التطوير', 'info'); }
-async function saveTimeUpdate() { /* similar to previous */ }
-function openTimePicker(voucherNo, currentTime) { /* similar to previous */ }
-async function openUpsell(voucherNo) { showToast('قيد التطوير', 'info'); }
-async function openBeachInstructorsModal() { showToast('قيد التطوير', 'info'); }
-async function openBoatsModal() { showToast('قيد التطوير', 'info'); }
-async function openVehiclesModal() { showToast('قيد التطوير', 'info'); }
-async function openLogisticsVehicles() { showToast('قيد التطوير', 'info'); }
-async function saveBeachInstructors() { showToast('قيد التطوير', 'info'); }
-async function saveBoatsAndInstructors() { showToast('قيد التطوير', 'info'); }
-async function resetAllSelections() { showToast('قيد التطوير', 'info'); }
-
-async function onDateChange() {
-  const currentDate = getCurrentDateISO();
+async function exportToExcel() {
+  if (!filteredInvoices || filteredInvoices.length === 0) {
+    showToast('لا توجد بيانات للتصدير', 'error');
+    return;
+  }
   
+  showToast('جاري تجهيز ملف Excel...', 'info');
+  
+  try {
+    const result = await gas('exportToExcel', {
+      data: JSON.stringify(filteredInvoices),
+      centerName: currentUser?.centerName,
+      centerId: currentUser?.centerId
+    });
+    
+    if (result?.success && result.downloadUrl) {
+      // فتح رابط التحميل
+      window.open(result.downloadUrl, '_blank');
+      showToast('✅ تم تصدير البيانات بنجاح', 'success');
+    } else if (result?.csvData) {
+      // طريقة بديلة: تحميل CSV مباشرة
+      const blob = new Blob([result.csvData], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.href = url;
+      link.setAttribute('download', `invoices_${new Date().toISOString().split('T')[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      showToast('✅ تم التصدير بنجاح', 'success');
+    } else {
+      showToast('❌ فشل التصدير', 'error');
+    }
+  } catch(e) {
+    showToast('خطأ: ' + e.message, 'error');
+  }
+}
+
+async function openBeachInstructorsModal() {
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) {
+    showToast('الرجاء اختيار تاريخ أولاً', 'error');
+    return;
+  }
+  
+  showToast('جاري تحميل المدربين...', 'info');
+  
+  try {
+    const instructors = await gas('getInstructors');
+    cachedInstructors = instructors;
+    
+    let html = `
+      <div style="max-height: 400px; overflow-y: auto;">
+        <table style="width: 100%;">
+          <thead>
+            <tr style="background: var(--navy); color: var(--gold);">
+              <th>✅</th>
+              <th>👨‍🏫 Instructor Name</th>
+              <th>📞 Phone</th>
+            </tr>
+          </thead>
+          <tbody>
+    `;
+    
+    for (const inst of instructors) {
+      const isSelected = selectedBeachInstructors.includes(inst.id);
+      html += `
+        <tr>
+          <td style="text-align: center;">
+            <input type="checkbox" class="instructor-checkbox" value="${inst.id}" ${isSelected ? 'checked' : ''}>
+          </td>
+          <td>${escapeHtml(inst.name)}</td>
+          <td>${escapeHtml(inst.phone || '—')}</td>
+        </tr>
+      `;
+    }
+    
+    html += `
+          </tbody>
+        </table>
+      </div>
+      <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
+        <button class="btn btn-secondary" onclick="closeModal('beachInstructorsModal')">إلغاء</button>
+        <button class="btn btn-primary" onclick="saveBeachInstructors()">✅ حفظ</button>
+      </div>
+    `;
+    
+    document.getElementById('beachInstructorsList').innerHTML = html;
+    openModal('beachInstructorsModal');
+  } catch(e) {
+    showToast('خطأ في تحميل المدربين', 'error');
+  }
+}
+
+async function openBoatsModal() {
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) {
+    showToast('الرجاء اختيار تاريخ أولاً', 'error');
+    return;
+  }
+  
+  showToast('جاري تحميل المراكب...', 'info');
+  
+  try {
+    const boats = await gas('getBoats');
+    cachedBoats = boats;
+    
+    let html = `
+      <div style="max-height: 400px; overflow-y: auto;">
+        <table style="width: 100%;">
+          <thead>
+            <tr style="background: var(--navy); color: var(--gold);">
+              <th>✅</th>
+              <th>⛵ Boat Name</th>
+              <th>👥 Capacity</th>
+              <th>👨‍🏫 Instructor</th>
+             </tr>
+          </thead>
+          <tbody>
+    `;
+    
+    for (const boat of boats) {
+      const isSelected = selectedBoats.includes(boat.id);
+      const currentInstructor = boatInstructorsMap[boat.id] || '';
+      
+      html += `
+        <tr>
+          <td style="text-align: center;">
+            <input type="checkbox" class="boat-checkbox" data-id="${boat.id}" ${isSelected ? 'checked' : ''}>
+          </td>
+          <td>${escapeHtml(boat.name)}</td>
+          <td style="text-align: center;">${boat.capacity || 0}</td>
+          <td>
+            <select class="boat-instructor-select" data-id="${boat.id}" ${!isSelected ? 'disabled' : ''}>
+              <option value="">-- اختر مدرب --</option>
+              ${cachedInstructors.map(inst => `<option value="${inst.id}" ${currentInstructor === inst.id ? 'selected' : ''}>${escapeHtml(inst.name)}</option>`).join('')}
+            </select>
+          </td>
+        </tr>
+      `;
+    }
+    
+    html += `
+          </tbody>
+        </table>
+      </div>
+      <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
+        <button class="btn btn-secondary" onclick="closeModal('boatsModal')">إلغاء</button>
+        <button class="btn btn-primary" onclick="saveBoatsAndInstructors()">✅ حفظ الكل</button>
+      </div>
+    `;
+    
+    document.getElementById('boatsSelectionContainer').innerHTML = html;
+    openModal('boatsModal');
+    
+    // تفعيل/تعطيل قائمة المدربين عند اختيار المركب
+    document.querySelectorAll('.boat-checkbox').forEach(cb => {
+      cb.addEventListener('change', (e) => {
+        const select = document.querySelector(`.boat-instructor-select[data-id="${cb.dataset.id}"]`);
+        if (select) select.disabled = !cb.checked;
+      });
+    });
+  } catch(e) {
+    showToast('خطأ في تحميل المراكب', 'error');
+  }
+}
+// ✅ تحميل قائمة الفروع
+async function loadBranches() {
+  if (!currentUser) return;
+  
+  const branchAccessTypes = ['Owner', 'Accountant', 'FinancialManager'];
+  if (!branchAccessTypes.includes(currentUser.type)) return;
+  
+  const branchSelector = document.getElementById('branchSelector');
+  if (branchSelector) branchSelector.style.display = 'inline-block';
+  
+  try {
+    const branches = await gas('getBranches');
+    const select = document.getElementById('branchSelect');
+    
+    select.innerHTML = '<option value="">🌍 جميع الفروع</option>';
+    branches.forEach(branch => {
+      select.innerHTML += `<option value="${escapeHtml(branch.id)}">${escapeHtml(branch.name)}</option>`;
+    });
+    
+    select.addEventListener('change', async (e) => {
+      const branchId = e.target.value;
+      if (branchId) {
+        const branch = branches.find(b => b.id === branchId);
+        if (branch) currentUser.centerName = branch.name;
+        currentUser.centerId = branchId;
+        sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
+      } else {
+        delete currentUser.centerName;
+        delete currentUser.centerId;
+        sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
+      }
+      
+      // ✅ إعادة تحميل البيانات
+      lastFilterParams = '';
+      invoicesLoaded = false;
+      await loadInvoices();
+      applyFilters();
+      showToast(`تم التبديل إلى ${branch?.name || 'جميع الفروع'}`, 'success');
+    });
+  } catch(e) {
+    console.warn('loadBranches error:', e);
+  }
+}
+
+async function openVehiclesModal() {
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) {
+    showToast('الرجاء اختيار تاريخ أولاً', 'error');
+    return;
+  }
+  
+  showToast('جاري تحميل السيارات...', 'info');
+  
+  try {
+    const vehicles = await gas('getVehicles');
+    cachedVehicles = vehicles;
+    
+    let html = `
+      <div style="max-height: 400px; overflow-y: auto;">
+        <table style="width: 100%;">
+          <thead>
+            <tr style="background: var(--navy); color: var(--gold);">
+              <th>✅</th>
+              <th>🚗 License Plate</th>
+              <th>👨‍✈️ Driver</th>
+              <th>👥 Capacity</th>
+             </tr>
+          </thead>
+          <tbody>
+    `;
+    
+    for (const vehicle of vehicles) {
+      const isSelected = selectedVehicles.includes(vehicle.id);
+      html += `
+        <tr>
+          <td style="text-align: center;">
+            <input type="checkbox" class="vehicle-checkbox" value="${vehicle.id}" ${isSelected ? 'checked' : ''}>
+          </td>
+          <td>${escapeHtml(vehicle.licensePlate)}</td>
+          <td>${escapeHtml(vehicle.driverName || '—')}</td>
+          <td style="text-align: center;">${vehicle.capacity || 0}</td>
+        </tr>
+      `;
+    }
+    
+    html += `
+          </tbody>
+        </table>
+      </div>
+      <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
+        <button class="btn btn-secondary" onclick="closeModal('vehiclesModal')">إلغاء</button>
+        <button class="btn btn-primary" onclick="saveVehiclesSelection()">✅ حفظ</button>
+      </div>
+    `;
+    
+    document.getElementById('vehiclesList').innerHTML = html;
+    openModal('vehiclesModal');
+  } catch(e) {
+    showToast('خطأ في تحميل السيارات', 'error');
+  }
+}
+
+async function openLogisticsVehicles() {
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) {
+    showToast('الرجاء اختيار تاريخ أولاً', 'error');
+    return;
+  }
+  
+  showToast('جاري تحميل سيارات اللوجستيك...', 'info');
+  
+  try {
+    const vehicles = await gas('getLogisticsVehicles');
+    
+    let html = `
+      <div style="max-height: 400px; overflow-y: auto;">
+        <table style="width: 100%;">
+          <thead>
+            <tr style="background: var(--navy); color: var(--gold);">
+              <th>✅</th>
+              <th>🚛 Vehicle</th>
+              <th>🚌 Trip</th>
+              <th>🔄 Go</th>
+              <th>🔙 Return</th>
+             </tr>
+          </thead>
+          <tbody>
+    `;
+    
+    const existingRecords = preloadedData.logisticsRecords || [];
+    
+    for (let i = 0; i < vehicles.length; i++) {
+      const vehicle = vehicles[i];
+      const existing = existingRecords.find(r => r.vehicleId === vehicle.id) || {};
+      
+      html += `
+        <tr>
+          <td style="text-align: center;">
+            <input type="checkbox" class="logistics-checkbox" data-id="${vehicle.id}" data-index="${i}">
+          </td>
+          <td>${escapeHtml(vehicle.licensePlate)} (${escapeHtml(vehicle.driverName || '—')})</td>
+          <td>
+            <select class="logistics-trip" data-id="${vehicle.id}" style="width: 100%;">
+              <option value="">-- اختر رحلة --</option>
+              ${uniqueTrips.map(trip => `<option value="${escapeHtml(trip)}" ${existing.trip === trip ? 'selected' : ''}>${escapeHtml(trip)}</option>`).join('')}
+            </select>
+          </td>
+          <td><input type="number" class="logistics-go" data-id="${vehicle.id}" value="${existing.goCount || ''}" min="0" style="width: 60px;"></td>
+          <td><input type="number" class="logistics-return" data-id="${vehicle.id}" value="${existing.returnCount || ''}" min="0" style="width: 60px;"></td>
+        </tr>
+      `;
+    }
+    
+    html += `
+          </tbody>
+        </table>
+      </div>
+      <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
+        <button class="btn btn-secondary" onclick="closeModal('logisticsVehiclesModal')">إلغاء</button>
+        <button class="btn btn-primary" onclick="saveLogisticsVehicles()">✅ حفظ</button>
+      </div>
+    `;
+    
+    document.getElementById('logisticsVehiclesContent').innerHTML = html;
+    openModal('logisticsVehiclesModal');
+  } catch(e) {
+    showToast('خطأ في تحميل السيارات', 'error');
+  }
+}
+
+// دوال الحفظ المطلوبة
+async function saveBeachInstructors() {
+  const selected = [];
+  document.querySelectorAll('#beachInstructorsList .instructor-checkbox:checked').forEach(cb => {
+    selected.push(cb.value);
+  });
+  
+  selectedBeachInstructors = selected;
+  updateSelectionBadges();
+  closeModal('beachInstructorsModal');
+  showToast(`تم اختيار ${selected.length} مدرب`, 'success');
+}
+
+async function saveVehiclesSelection() {
+  const selected = [];
+  document.querySelectorAll('#vehiclesList .vehicle-checkbox:checked').forEach(cb => {
+    selected.push(cb.value);
+  });
+  
+  selectedVehicles = selected;
+  updateSelectionBadges();
+  closeModal('vehiclesModal');
+  showToast(`تم اختيار ${selected.length} سيارة`, 'success');
+}
+
+async function saveLogisticsVehicles() {
+  const records = [];
+  document.querySelectorAll('#logisticsVehiclesModal .logistics-checkbox:checked').forEach(cb => {
+    const vehicleId = cb.dataset.id;
+    const trip = document.querySelector(`.logistics-trip[data-id="${vehicleId}"]`).value;
+    const goCount = parseInt(document.querySelector(`.logistics-go[data-id="${vehicleId}"]`).value) || 0;
+    const returnCount = parseInt(document.querySelector(`.logistics-return[data-id="${vehicleId}"]`).value) || 0;
+    
+    if (trip && (goCount > 0 || returnCount > 0)) {
+      records.push({ vehicleId, trip, goCount, returnCount });
+    }
+  });
+  
+  const result = await gas('saveLogisticsRecords', { 
+    date: getCurrentDateISO(), 
+    records: JSON.stringify(records),
+    centerName: currentUser?.centerName
+  });
+  
+  if (result?.success) {
+    preloadedData.logisticsRecords = records;
+    updateSelectionBadges();
+    closeModal('logisticsVehiclesModal');
+    showToast('تم حفظ سيارات اللوجستيك', 'success');
+  } else {
+    showToast('فشل الحفظ', 'error');
+  }
+}
+
+async function saveBoatsAndInstructors() {
+  const selectedBoatsList = [];
+  const instructorsMap = {};
+  
+  document.querySelectorAll('#boatsModal .boat-checkbox:checked').forEach(cb => {
+    const boatId = cb.dataset.id;
+    selectedBoatsList.push(boatId);
+    
+    const instructorSelect = document.querySelector(`.boat-instructor-select[data-id="${boatId}"]`);
+    if (instructorSelect && instructorSelect.value) {
+      instructorsMap[boatId] = instructorSelect.value;
+    }
+  });
+  
+  selectedBoats = selectedBoatsList;
+  boatInstructorsMap = instructorsMap;
+  updateSelectionBadges();
+  closeModal('boatsModal');
+  showToast(`تم اختيار ${selectedBoatsList.length} مركب`, 'success');
+}
+  async function resetAllSelections() {
+  if (!confirm('⚠️ هل أنت متأكد من مسح جميع الاختيارات؟')) return;
+  
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) {
+    showToast('الرجاء اختيار تاريخ أولاً', 'error');
+    return;
+  }
+  
+  showToast('جاري مسح الاختيارات...', 'info');
+  
+  try {
+    const result = await gas('resetDailyAssignments', {
+      date: currentDate,
+      centerName: currentUser?.centerName
+    });
+    
+    if (result?.success) {
+      // ✅ إعادة تعيين المتغيرات المحلية
+      selectedBeachInstructors = [];
+      selectedVehicles = [];
+      selectedBoats = [];
+      boatInstructorsMap = {};
+      
+      if (preloadedData) {
+        preloadedData.logisticsRecords = [];
+      }
+      
+      updateSelectionBadges();
+      showToast('✅ تم مسح جميع الاختيارات', 'success');
+    } else {
+      showToast('❌ فشل مسح الاختيارات', 'error');
+    }
+  } catch(e) {
+    showToast('خطأ: ' + e.message, 'error');
+  }
+}
+// دوال إزالة الصفوف
+function removeVehicleRow(index) {
+  const row = document.querySelector(`.vehicle-row[data-row-index="${index}"]`);
+  if (row) {
+    row.remove();
+    // ✅ إعادة ترقيم الصفوف المتبقية
+    const remainingRows = document.querySelectorAll('.vehicle-row');
+    remainingRows.forEach((row, newIndex) => {
+      row.setAttribute('data-row-index', newIndex);
+      // تحديث المعرفات داخل الصف
+      row.querySelectorAll('[data-row]').forEach(el => {
+        el.setAttribute('data-row', newIndex);
+      });
+    });
+  }
+}
+function removeLogisticsRow(index) {
+  const row = document.querySelector(`.logistics-row[data-row-index="${index}"]`);
+  if (row) {
+    row.remove();
+    // ✅ إعادة ترقيم الصفوف المتبقية
+    const remainingRows = document.querySelectorAll('.logistics-row');
+    remainingRows.forEach((row, newIndex) => {
+      row.setAttribute('data-row-index', newIndex);
+      // تحديث المعرفات داخل الصف
+      row.querySelectorAll('[data-row]').forEach(el => {
+        el.setAttribute('data-row', newIndex);
+      });
+    });
+  }
+}
+async function onDateChange() {
+  const fromDate = document.getElementById('filterFromDate').value;
+  const toDate = document.getElementById('filterToDate').value;
+  
+  if (!fromDate && !toDate) return;
+  
+  // ✅ إعادة تعيين التخزين المؤقت
   lastFilterParams = '';
   invoicesLoaded = false;
   
-  if (currentDate) {
-    showToast('جاري تحميل البيانات...', 'info');
-    await loadInvoices();
-    await loadAndPopulateAssignments(currentDate);
-    await refreshLogisticsBadge();  // ✅ تحديث عداد Logistics
+  showToast('جاري تحميل الفواتير...', 'info');
+  
+  // ✅ إعادة تحميل الفواتير بالكامل
+  await loadInvoices();
+  
+  // ✅ تحديث التعيينات لليوم المحدد (إذا كان تاريخ واحد)
+  if (fromDate && toDate && fromDate === toDate) {
+    await loadAndPopulateAssignments(fromDate);
+    await refreshLogisticsBadge();
   } else {
-    await loadInvoices();
     selectedBeachInstructors = [];
     selectedBoats = [];
-    boatInstructorsMap = {};
     selectedVehicles = [];
     updateSelectionBadges();
   }
   
+  // ✅ تحديث العرض
   applyFilters();
+  renderTable();
+  renderPagination();
+  
+  // ✅ تحديث عرض الموبايل
+  if (window.innerWidth <= 768) {
+    renderMobileCards();
+  }
+  
   updateSelectionButtonsState();
 }
-
 // ✅ تحديث عداد Logistics Vehicles
 async function refreshLogisticsBadge() {
   const currentDate = getCurrentDateISO();
@@ -1793,6 +2572,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (!ud) { window.location.href = 'index.html'; return; }
   try {
     currentUser = JSON.parse(ud);
+     await loadBranches();
     document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
     const today = new Date();
     const todayISO = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
@@ -1802,7 +2582,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (toDateInput && !toDateInput.value) toDateInput.value = todayISO;
     showToast('جاري تحميل الفواتير...', 'info');
     await loadInvoices();
-    renderTableAndCards();
+    renderTable(); if (window.innerWidth <= 768) renderMobileCards();
     setTimeout(async () => {
       try {
         const [instructors, vehicles, boats] = await Promise.all([gas('getInstructors'), gas('getVehicles'), gas('getBoats')]);
