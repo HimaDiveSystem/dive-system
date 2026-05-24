@@ -599,9 +599,11 @@ function updateSelectionBadges() {
 // ============================================================
 // LOAD INVOICES
 // ============================================================
+let invoicesLoaded = false;
+
 async function loadInvoices() {
   if (invoicesLoaded && allInvoices.length > 0) {
-    console.log('📦 استخدام البيانات المخزنة (${allInvoices.length} فاتورة)');
+    console.log(`📦 استخدام البيانات المخزنة (${allInvoices.length} فاتورة)`);
     applyFilters();
     return;
   }
@@ -615,29 +617,15 @@ async function loadInvoices() {
     
     let result;
     
-    // ✅ إذا كان هناك نطاق تواريخ محدد، استخدم getInvoicesByDate
-    if (fromDate && toDate) {
+    if (isSingleDate) {
       const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const fromParts = fromDate.split('-');
-      const toParts = toDate.split('-');
-      const fromFormatted = `${fromParts[2]}/${months[parseInt(fromParts[1]) - 1]}/${fromParts[0]}`;
-      const toFormatted = `${toParts[2]}/${months[parseInt(toParts[1]) - 1]}/${toParts[0]}`;
-      
-      if (isSingleDate) {
-        // تاريخ واحد
-        result = await gas('getInvoicesByDate', { 
-          dateStr: fromFormatted,
-          centerName: currentUser?.centerName
-        });
-      } else {
-        // نطاق تواريخ - نستخدم getAllInvoices ثم نفلتر محلياً
-        result = await gas('getAllInvoices', { 
-          includeCollection: 'true',
-          centerName: currentUser?.centerName
-        });
-      }
+      const parts = fromDate.split('-');
+      const formattedDate = `${parts[2]}/${months[parseInt(parts[1]) - 1]}/${parts[0]}`;
+      result = await gas('getInvoicesByDate', { 
+        dateStr: formattedDate,
+        centerName: currentUser?.centerName
+      });
     } else {
-      // لا يوجد تواريخ محددة - جلب كل الفواتير
       result = await gas('getAllInvoices', { 
         includeCollection: 'true',
         centerName: currentUser?.centerName
@@ -668,7 +656,6 @@ async function loadInvoices() {
     showToast('Connection error: ' + e.message, 'error');
   }
 }
-
 function initTripFilter() {
   const select = document.getElementById('filterTrip');
   select.innerHTML = '<option value="">All Trips</option>';
@@ -723,7 +710,7 @@ function applyFilters() {
   }
   doSort();
   currentPage = 1;
-  renderTableAndCards();
+  renderTable();      // ✅ وليس renderTableAndCards
   renderPagination();
   updateSelectionButtonsState();
   const currentDate = getCurrentDateISO();
@@ -747,10 +734,14 @@ function doSort() {
 }
 
 function setSort(col) {
-  if (sortColumn === col) sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
-  else { sortColumn = col; sortDirection = 'asc'; }
+  if (sortColumn === col) {
+    sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortColumn = col;
+    sortDirection = 'asc';
+  }
   doSort();
-  renderTableAndCards();
+  renderTable();           // ✅ تصحيح
   renderPagination();
 }
 
@@ -761,12 +752,15 @@ function changePageSize() {
   pageSize = parseInt(select.value);
   if (pageSize === -1) pageSize = filteredInvoices.length || 9999;
   currentPage = 1;
-  renderTableAndCards();
+  renderTable();           // ✅ تصحيح
   renderPagination();
 }
 
-function gotoPage(page) { currentPage = page; renderTableAndCards(); renderPagination(); }
-
+function gotoPage(page) {
+  currentPage = page;
+  renderTable();           // ✅ تصحيح
+  renderPagination();
+}
 function renderPagination() {
   const totalPages = Math.ceil(filteredInvoices.length / pageSize);
   if (totalPages <= 1) { document.getElementById('pagination').innerHTML = ''; return; }
@@ -806,132 +800,213 @@ function formatValue(val) {
 // ============================================================
 // RENDER TABLE & CARDS
 // ============================================================
-function renderTableAndCards() {
-  renderDesktopTable();
-  renderMobileCards();
-}
-
-function renderDesktopTable() {
+function renderTable() {
   const start = (currentPage - 1) * pageSize;
   const end = Math.min(start + pageSize, filteredInvoices.length);
   const pageData = filteredInvoices.slice(start, end);
-  if (pageData.length === 0) { document.getElementById('tblCont').innerHTML = '<div class="loader">لا توجد فواتير</div>'; return; }
+  const isSingle = isSingleDateRange();
+
+  if (pageData.length === 0) {
+    document.getElementById('tblCont').innerHTML = '<div class="loader">لا توجد فواتير</div>';
+    return;
+  }
+
+  // حساب الإجماليات
+  let totals = {
+    sgl: 0, dbl: 0, trpl: 0, extra: 0,
+    camel: 0, dinner: 0, vipDinner: 0, starGazing: 0,
+    privateTrip: 0, privateTransfer: 0
+  };
   
-  let totals = { sgl:0, dbl:0, trpl:0, extra:0, camel:0, dinner:0, vipDinner:0, starGazing:0, privateTrip:0, privateTransfer:0 };
-  let totalsByCurrency = { USD:0, EUR:0, GBP:0, LE:0 };
+  // حساب الإجماليات لكل عملة على حدة
+  let totalsByCurrency = {
+    USD: 0, EUR: 0, GBP: 0, LE: 0
+  };
+  
   pageData.forEach(inv => {
-    totals.sgl += parseFloat(inv.sgl)||0; totals.dbl += parseFloat(inv.dbl)||0;
-    totals.trpl += parseFloat(inv.trpl)||0; totals.extra += parseFloat(inv.extra)||0;
-    totals.camel += parseFloat(inv.camel)||0; totals.dinner += parseFloat(inv.dinner)||0;
-    totals.vipDinner += parseFloat(inv.vipDinner)||0; totals.starGazing += parseFloat(inv.starGazing)||0;
-    totals.privateTrip += parseFloat(inv.privateTrip)||0; totals.privateTransfer += parseFloat(inv.privateTransfer)||0;
+    totals.sgl += parseFloat(inv.sgl) || 0;
+    totals.dbl += parseFloat(inv.dbl) || 0;
+    totals.trpl += parseFloat(inv.trpl) || 0;
+    totals.extra += parseFloat(inv.extra) || 0;
+    totals.camel += parseFloat(inv.camel) || 0;
+    totals.dinner += parseFloat(inv.dinner) || 0;
+    totals.vipDinner += parseFloat(inv.vipDinner) || 0;
+    totals.starGazing += parseFloat(inv.starGazing) || 0;
+    totals.privateTrip += parseFloat(inv.privateTrip) || 0;
+    totals.privateTransfer += parseFloat(inv.privateTransfer) || 0;
+    
     let currency = inv.invoiceCurrency || 'LE';
     if (currency === '$' || currency === 'USD') currency = 'USD';
     else if (currency === '€' || currency === 'EUR') currency = 'EUR';
     else if (currency === '£' || currency === 'GBP') currency = 'GBP';
     else currency = 'LE';
-    totalsByCurrency[currency] += parseFloat(inv.rest)||0;
+    
+    const rest = parseFloat(inv.rest) || 0;
+    totalsByCurrency[currency] += rest;
   });
-  
+
   let remainingText = '';
   if (totalsByCurrency.USD > 0) remainingText += `${totalsByCurrency.USD.toFixed(2)} USD | `;
   if (totalsByCurrency.EUR > 0) remainingText += `${totalsByCurrency.EUR.toFixed(2)} EUR | `;
   if (totalsByCurrency.GBP > 0) remainingText += `${totalsByCurrency.GBP.toFixed(2)} GBP | `;
   if (totalsByCurrency.LE > 0) remainingText += `${totalsByCurrency.LE.toFixed(2)} LE`;
   if (!remainingText) remainingText = '0';
-  
-  let html = '<table><thead><tr>';
-  html += '<th onclick="setSort(\'rest\')">Balance ' + getSortIcon('rest') + '</th>';
-  html += '<th onclick="setSort(\'voucherNo\')">Voucher # ' + getSortIcon('voucherNo') + '</th>';
-  html += '<th onclick="setSort(\'issueDate\')">Issue Date ' + getSortIcon('issueDate') + '</th>';
-  html += '<th onclick="setSort(\'activeDate\')">Active Date ' + getSortIcon('activeDate') + '</th>';
+
+  let html = '<table>';
+  html += '<thead><tr>';
+  html += '<th onclick="setSort(\'rest\')">Balance</th>';
+  html += '<th onclick="setSort(\'voucherNo\')">Voucher #</th>';
+  html += '<th onclick="setSort(\'issueDate\')">Issue Date</th>';
+  html += '<th onclick="setSort(\'activeDate\')">Active Date</th>';
   html += '<th>Time</th>';
-  html += '<th onclick="setSort(\'trip\')">Trip ' + getSortIcon('trip') + '</th>';
+  html += '<th onclick="setSort(\'trip\')">Trip</th>';
   html += '<th>Sgl</th><th>Dbl</th><th>Trpl</th><th>Extra</th>';
   html += '<th>Camel</th><th>Dinner</th><th>VIP</th><th>Star</th>';
   html += '<th>Priv Trip</th><th>Priv Trans</th>';
   html += '<th>Hotel</th><th>Room</th><th>Nationality</th>';
-  html += '<th>Guest Name</th><th>Contact</th>';
-  html += '<th>Supplier</th><th>Customer</th><th>Status</th>';
-  html += '<th>Vehicles</th><th>Boats</th><th>Instructors</th><th>Notes</th><th>Actions</th>';
+  html += '<th>Guest Name</th>';
+  html += '<th>Contact</th>';
+  html += '<th>Supplier</th>';
+  html += '<th>Customer</th>';
+  html += '<th>Status</th>';
+  html += '<th>Vehicles</th>';
+  html += '<th>Boats</th>';
+  html += '<th>Instructors</th>';
+  html += '<th>Notes</th>';
+  html += '<th>Actions</th>';
   html += '</tr></thead><tbody>';
-  
+
   for (const inv of pageData) {
     const voucherNo = inv.voucherNo || '';
     const activeDate = inv.activeDate || '';
     const tripName = inv.trip || '';
-    const showActions = isSingleDateRange() && BOAT_TRIPS.includes(tripName);
+    const showActions = isSingle && BOAT_TRIPS.includes(tripName);
     const actionClass = showActions ? '' : 'disabled';
     const currentTime = inv.time || '';
-    let currencySymbol = 'LE';
-    let currency = inv.invoiceCurrency || 'LE';
-    if (currency === '$') currencySymbol = '$';
-    else if (currency === '€') currencySymbol = '€';
-    else if (currency === '£') currencySymbol = '£';
     
-    const restHtml = formatRest(inv.rest, currencySymbol);
+    let currencySymbol = 'LE';
+    let restValue = parseFloat(inv.rest) || 0;
+    let currency = inv.invoiceCurrency || 'LE';
+    if (currency === '$' || currency === 'USD') currencySymbol = '$';
+    else if (currency === '€' || currency === 'EUR') currencySymbol = '€';
+    else if (currency === '£' || currency === 'GBP') currencySymbol = '£';
+    else currencySymbol = 'LE';
+    
+    const restHtml = restValue <= 0 
+      ? '<span class="rest-zero">✓ Paid</span>'
+      : `<span class="rest-pos" onclick="event.stopPropagation(); alert('تحصيل المتبقي قيد التطوير')">${restValue.toFixed(2)} ${currencySymbol}</span>`;
     
     let vehiclesHtml = '';
     try {
       const vehiclesData = JSON.parse(inv.VehiclesUsed || '[]');
-      vehiclesHtml = vehiclesData.map(v => `<span class="badge-vehicle" onclick="showVehicleDetails('${voucherNo}','${v.vehicleId}')">🚗 ${v.licensePlate || v.vehicleId}</span>`).join(' ') || '—';
+      if (vehiclesData.length > 0) {
+        vehiclesHtml = vehiclesData.map(v => 
+          `<span style="display:inline-block; background:var(--purple); color:white; padding:2px 6px; border-radius:12px; font-size:9px; margin:1px; cursor:pointer;" onclick="showVehicleDetails('${voucherNo}', '${v.vehicleId}')" title="انقر لعرض التفاصيل">
+            🚗 ${v.licensePlate || v.vehicleId}
+          </span>`
+        ).join(' ');
+      } else {
+        vehiclesHtml = '—';
+      }
     } catch(e) { vehiclesHtml = '—'; }
     
     let boatsHtml = '';
     try {
       const boatsData = JSON.parse(inv.BoatsUsed || '[]');
-      boatsHtml = boatsData.map(b => `<span class="badge-boat" onclick="showBoatDetails('${voucherNo}','${b.boatId}')">⛵ ${b.boatName || b.boatId}</span>`).join(' ') || '—';
+      if (boatsData.length > 0) {
+        boatsHtml = boatsData.map(b => 
+          `<span style="display:inline-block; background:var(--blue); color:white; padding:2px 6px; border-radius:12px; font-size:9px; margin:1px; cursor:pointer;" onclick="showBoatDetails('${voucherNo}', '${b.boatId}')" title="انقر لعرض التفاصيل">
+            ⛵ ${b.boatName || b.boatId}
+          </span>`
+        ).join(' ');
+      } else {
+        boatsHtml = '—';
+      }
     } catch(e) { boatsHtml = '—'; }
     
     let instructorsHtml = '';
     try {
       const instructorsData = JSON.parse(inv.InstructorsExecution || '[]');
-      instructorsHtml = instructorsData.map(i => `<span class="badge-instructor" onclick="showInstructorDetails('${voucherNo}','${i.instructorId}')">👨‍🏫 ${i.instructorName || i.instructorId}</span>`).join(' ') || '—';
+      if (instructorsData.length > 0) {
+        instructorsHtml = instructorsData.map(i => 
+          `<span style="display:inline-block; background:var(--green); color:white; padding:2px 6px; border-radius:12px; font-size:9px; margin:1px; cursor:pointer;" onclick="showInstructorDetails('${voucherNo}', '${i.instructorId}')" title="انقر لعرض التفاصيل">
+            👨‍🏫 ${i.instructorName || i.instructorId}
+          </span>`
+        ).join(' ');
+      } else {
+        instructorsHtml = '—';
+      }
     } catch(e) { instructorsHtml = '—'; }
     
     const stateClass = (inv.state || '').toLowerCase() === 'confirmed' ? 'status-confirmed' : 'status-pending';
     const stateText = (inv.state || '').toLowerCase() === 'confirmed' ? '✅ Confirmed' : '⏳ Pending';
     
     html += `<tr>`;
-    html += `<td style="text-align:center;">${restHtml}</td>`;
-    html += `<td style="text-align:center;"><strong>${escapeHtml(voucherNo)}</strong></td>`;
-    html += `<td style="text-align:center;">${formatDateDDMMMYYYY(inv.issueDate || '')}</td>`;
-    html += `<td style="text-align:center;">${formatDateDDMMMYYYY(activeDate)}</td>`;
-    html += `<td style="text-align:center;"><button class="action-btn time-btn" onclick="openTimePicker('${voucherNo}','${escapeHtml(currentTime)}')">🕐 ${escapeHtml(currentTime) || '--:--'}</button></td>`;
-    html += `<td style="text-align:center;">${escapeHtml(tripName)}</td>`;
-    html += `<td style="text-align:center;">${formatValue(inv.sgl)}</td><td>${formatValue(inv.dbl)}</td><td>${formatValue(inv.trpl)}</td><td>${formatValue(inv.extra)}</td>`;
-    html += `<td>${formatValue(inv.camel)}</td><td>${formatValue(inv.dinner)}</td><td>${formatValue(inv.vipDinner)}</td><td>${formatValue(inv.starGazing)}</td>`;
-    html += `<td>${formatValue(inv.privateTrip)}</td><td>${formatValue(inv.privateTransfer)}</td>`;
-    html += `<td>${escapeHtml(inv.hotel || '')}</td><td>${escapeHtml(inv.roomNo || '')}</td><td>${escapeHtml(inv.nationality || '')}</td>`;
-    html += `<td>${escapeHtml(inv.guestName || '')}</td><td>${escapeHtml(inv.contactNo || '')}</td>`;
-    html += `<td>${escapeHtml(inv.supplier || '—')}</td><td>${escapeHtml(inv.customer || '—')}</td>`;
-    html += `<td><span class="${stateClass}">${stateText}</span></td>`;
-    html += `<td style="max-width:150px; white-space:normal;">${vehiclesHtml}</td>`;
-    html += `<td style="max-width:150px; white-space:normal;">${boatsHtml}</td>`;
-    html += `<td style="max-width:150px; white-space:normal;">${instructorsHtml}</td>`;
-    html += `<td style="max-width:120px; white-space:normal;">${escapeHtml((inv.notes || '').substring(0,40))}</td>`;
-    html += `<td><div class="action-buttons">`;
+    html += `<td style="text-align:center; white-space:nowrap;">${restHtml}</td>`;
+    html += `<td style="text-align:center; white-space:nowrap;"><strong>${escapeHtml(voucherNo)}</strong></td>`;
+    html += `<td style="text-align:center; white-space:nowrap;">${formatDateDDMMMYYYY(inv.issueDate || '')}</td>`;
+    html += `<td style="text-align:center; white-space:nowrap;">${formatDateDDMMMYYYY(activeDate)}</span></td>`;
+    html += `<td style="text-align:center; white-space:nowrap;"><button class="action-btn time-btn" onclick="openTimePicker('${voucherNo}', '${escapeHtml(currentTime)}')">🕐 ${escapeHtml(currentTime) || '--:--'}</button></td>`;
+    html += `<td style="text-align:center; white-space:nowrap;">${escapeHtml(tripName)}</span></td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.sgl)}</span></td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.dbl)}</span></td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.trpl)}</span></td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.extra)}</span></td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.camel)}</span></td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.dinner)}</span></td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.vipDinner)}</span></td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.starGazing)}</span></td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.privateTrip)}</span></td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.privateTransfer)}</span></td>`;
+    html += `<td style="text-align:center; white-space:nowrap;">${escapeHtml(inv.hotel || '')}</span></td>`;
+    html += `<td style="text-align:center;">${escapeHtml(inv.roomNo || '')}</span></td>`;
+    html += `<td style="text-align:center; white-space:nowrap;">${escapeHtml(inv.nationality || '')}</span></td>`;
+    html += `<td style="text-align:center; white-space:nowrap;">${escapeHtml(inv.guestName || '')}</span></td>`;
+    html += `<td style="text-align:center; white-space:nowrap; direction:ltr;">${escapeHtml(inv.contactNo || '')}</span></td>`;
+    html += `<td style="text-align:center; white-space:nowrap;">${escapeHtml(inv.supplier || '—')}</span></td>`;
+    html += `<td style="text-align:center; white-space:nowrap;">${escapeHtml(inv.customer || '—')}</span></td>`;
+    html += `<td style="text-align:center;"><span class="${stateClass}">${stateText}</span></span></td>`;
+    html += `<td style="text-align:center; max-width:120px; white-space:normal; word-break:break-word;">${vehiclesHtml}</span></td>`;
+    html += `<td style="text-align:center; max-width:120px; white-space:normal; word-break:break-word;">${boatsHtml}</span></td>`;
+    html += `<td style="text-align:center; max-width:120px; white-space:normal; word-break:break-word;">${instructorsHtml}</span></td>`;
+    html += `<td style="text-align:center; max-width:120px; white-space:normal; word-break:break-word;">${escapeHtml((inv.notes || '').substring(0, 40))}</span></td>`;
+    html += `<td style="text-align:center;"><div class="action-buttons">`;
     html += `<button class="action-btn vehicle ${actionClass}" onclick="openAssignVehicles('${voucherNo}')" ${!showActions ? 'disabled' : ''}>🚗</button>`;
     html += `<button class="action-btn boat ${actionClass}" onclick="openAssignBoats('${voucherNo}')" ${!showActions ? 'disabled' : ''}>⛵</button>`;
     html += `<button class="action-btn instructor ${actionClass}" onclick="openAssignInstructors('${voucherNo}')" ${!showActions ? 'disabled' : ''}>👨‍🏫</button>`;
     html += `<button class="action-btn upsell" onclick="openUpsell('${voucherNo}')">💰</button>`;
-    html += `</div></td></tr>`;
+    html += `</div></td>`;
+    html += `</tr>`;
   }
   
+  // صف الإجماليات
   html += `<tr class="totals-row">`;
   html += `<td colspan="6" style="text-align:center;"><strong>Total (${pageData.length})</strong></td>`;
-  html += `<td><strong>${totals.sgl || ''}</strong></td><td><strong>${totals.dbl || ''}</strong></td>`;
-  html += `<td><strong>${totals.trpl || ''}</strong></td><td><strong>${totals.extra || ''}</strong></td>`;
-  html += `<td><strong>${totals.camel || ''}</strong></td><td><strong>${totals.dinner || ''}</strong></td>`;
-  html += `<td><strong>${totals.vipDinner || ''}</strong></td><td><strong>${totals.starGazing || ''}</strong></td>`;
-  html += `<td><strong>${totals.privateTrip || ''}</strong></td><td><strong>${totals.privateTransfer || ''}</strong></td>`;
+  html += `<td><strong>${totals.sgl || ''}</strong></td>`;
+  html += `<td><strong>${totals.dbl || ''}</strong></td>`;
+  html += `<td><strong>${totals.trpl || ''}</strong></td>`;
+  html += `<td><strong>${totals.extra || ''}</strong></td>`;
+  html += `<td><strong>${totals.camel || ''}</strong></td>`;
+  html += `<td><strong>${totals.dinner || ''}</strong></td>`;
+  html += `<td><strong>${totals.vipDinner || ''}</strong></td>`;
+  html += `<td><strong>${totals.starGazing || ''}</strong></td>`;
+  html += `<td><strong>${totals.privateTrip || ''}</strong></td>`;
+  html += `<td><strong>${totals.privateTransfer || ''}</strong></td>`;
   html += `<td colspan="13" style="text-align:center;"><strong>Total Remaining: ${remainingText}</strong></td>`;
-  html += `<tr>`;
+  html += `</tr>`;
+  
   html += '</tbody></table>';
   document.getElementById('tblCont').innerHTML = html;
   renderSummary();
 }
 
+function renderTableAndCards() {
+  renderTable();           // للكمبيوتر
+  if (window.innerWidth <= 768) {
+    renderMobileCards();   // للهواتف (إذا كانت موجودة)
+  }
+}
+  
 function renderMobileCards() {
   const start = (currentPage - 1) * pageSize;
   const end = Math.min(start + pageSize, filteredInvoices.length);
@@ -1086,7 +1161,7 @@ async function saveVehicleAssignment() {
   });
   if (selectedVehiclesData.length === 0) { showToast('⚠️ اختر سيارة', 'error'); return; }
   const result = await gas('assignVehiclesToInvoice', { voucherNo: currentAssignVoucher, vehiclesData: JSON.stringify(selectedVehiclesData), centerName: currentUser?.centerName });
-  if (result?.success) { updateLocalInvoice(currentAssignVoucher, 'VehiclesUsed', JSON.stringify(selectedVehiclesData)); renderTableAndCards(); showToast('✅ تم حفظ السيارات', 'success'); closeModal('assignVehiclesModal'); }
+  if (result?.success) { updateLocalInvoice(currentAssignVoucher, 'VehiclesUsed', JSON.stringify(selectedVehiclesData)); renderTable();  showToast('✅ تم حفظ السيارات', 'success'); closeModal('assignVehiclesModal'); }
   else showToast('❌ فشل الحفظ', 'error');
 }
 
@@ -1133,7 +1208,9 @@ async function saveBoatAssignment() {
   });
   if (selectedBoatsData.length === 0) { showToast('⚠️ اختر مركب', 'error'); return; }
   const result = await gas('assignBoatsToInvoice', { voucherNo: currentAssignVoucher, boatsData: JSON.stringify(selectedBoatsData), centerName: currentUser?.centerName });
-  if (result?.success) { updateLocalInvoice(currentAssignVoucher, 'BoatsUsed', JSON.stringify(selectedBoatsData)); renderTableAndCards(); showToast('✅ تم حفظ المراكب', 'success'); closeModal('assignBoatsModal'); }
+  if (result?.success) { updateLocalInvoice(currentAssignVoucher, 'BoatsUsed', JSON.stringify(selectedBoatsData)); 
+                        renderTable();             // ✅ تصحيح
+                        showToast('✅ تم حفظ المراكب', 'success'); closeModal('assignBoatsModal'); }
   else showToast('❌ فشل الحفظ', 'error');
 }
 
@@ -1238,9 +1315,9 @@ async function forceRefresh() {
   dataLoaded = false;
   await loadInvoices();
   applyFilters();
+  renderTable();           // ✅ تصحيح
   showToast('تم التحديث بنجاح', 'success');
 }
-
 function resetFilters() {
   document.getElementById('filterFromDate').value = '';
   document.getElementById('filterToDate').value = '';
@@ -1251,7 +1328,7 @@ function resetFilters() {
   filteredInvoices = [...allInvoices];
   doSort();
   currentPage = 1;
-  renderTableAndCards();
+  renderTable();           // ✅ تصحيح
   renderPagination();
   updateSelectionButtonsState();
   showToast('تم إعادة تعيين الفلاتر', 'success');
@@ -1364,7 +1441,10 @@ async function resetAllSelections() { showToast('قيد التطوير', 'info')
 
 async function onDateChange() {
   const currentDate = getCurrentDateISO();
+  
   lastFilterParams = '';
+  invoicesLoaded = false;  // ✅ مهم جداً - يسمح بإعادة التحميل
+  
   if (currentDate) {
     showToast('جاري تحميل البيانات...', 'info');
     await loadInvoices();
@@ -1377,6 +1457,7 @@ async function onDateChange() {
     selectedVehicles = [];
     updateSelectionBadges();
   }
+  
   applyFilters();
   updateSelectionButtonsState();
 }
