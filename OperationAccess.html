@@ -2158,7 +2158,6 @@ async function openVehiclesModal() {
       cachedVehicles = allVehicles;
     }
     
-    // ✅ فقط سيارات الركاب
     const passengerVehicles = allVehicles.filter(v => 
       v.isActive === true && v.usageType === 'passengers' && v.capacity > 0
     );
@@ -2168,24 +2167,36 @@ async function openVehiclesModal() {
       return;
     }
     
-    // جلب الرحلات في هذا التاريخ
     const tripsOnDate = [...new Set(filteredInvoices.map(inv => inv.trip).filter(t => t))];
     
-    // جلب السجلات المحفوظة
+    // ✅ جلب البيانات المسجلة مباشرة
     let savedRecords = [];
     try {
       const result = await gas('getVehicleTripRecords', { 
         date: currentDate,
         centerName: currentUser?.centerName 
       });
+      console.log('📥 VehicleTripRecords result:', result);
       if (result?.success && result.data) {
-        savedRecords = result.data;
+        // تحويل من { "trip|vehicle": { goCount, returnCount } } إلى مصفوفة
+        for (const [key, record] of Object.entries(result.data)) {
+          const [tripName, vehicleId] = key.split('|');
+          if (tripName && vehicleId) {
+            savedRecords.push({
+              tripName: tripName,
+              vehicleId: vehicleId,
+              goCount: record.goCount || 0,
+              returnCount: record.returnCount || 0
+            });
+          }
+        }
       }
     } catch(e) {
       console.warn('Failed to load vehicle records:', e);
     }
     
-    // بناء HTML
+    console.log('📋 Saved records:', savedRecords);
+    
     let html = `
       <div style="max-height: 450px; overflow-y: auto;">
         <div style="margin-bottom: 12px; padding: 8px; background: var(--gray-100); border-radius: 8px;">
@@ -2195,7 +2206,6 @@ async function openVehiclesModal() {
         <div id="vehicleRowsContainer" style="display: flex; flex-direction: column; gap: 10px;">
     `;
     
-    // عرض السجلات المحفوظة أو صف فارغ
     if (savedRecords.length > 0) {
       for (let i = 0; i < savedRecords.length; i++) {
         const record = savedRecords[i];
@@ -2219,17 +2229,18 @@ async function openVehiclesModal() {
     
     document.getElementById('vehiclesList').innerHTML = html;
     
-    // ربط الأحداث
-    for (let i = 0; i < savedRecords.length; i++) {
+    // تحديث المتغير العام
+    vehicleTripRows = savedRecords;
+    if (vehicleTripRows.length === 0) vehicleTripRows = [{ vehicleId: '', tripName: '', goCount: 0, returnCount: 0 }];
+    
+    for (let i = 0; i < vehicleTripRows.length; i++) {
       attachVehicleTripEvents(i);
     }
-    if (savedRecords.length === 0) attachVehicleTripEvents(0);
     
   } catch(e) {
     showToast('Error loading vehicles: ' + e.message, 'error');
   }
 }
-
 // دالة توليد صف السيارة مع حقول Go/Return
 function generateVehicleTripRow(index, selectedVehicleId, selectedTrip, goCount, returnCount, vehicles, trips) {
   const goVal = (goCount > 0) ? goCount : '';
@@ -3262,110 +3273,247 @@ async function loadBranches() {
 }
 
 async function openLogisticsVehicles() {
+  showToast('Loading logistics data...', 'info');
+  
   const currentDate = getCurrentDateISO();
   if (!currentDate) {
-    showToast('الرجاء اختيار تاريخ أولاً', 'error');
+    showToast('Please select a single date first', 'error');
     return;
   }
   
-  showToast('جاري تحميل سيارات اللوجستيك...', 'info');
+  const tripsOnDate = [...new Set(filteredInvoices.map(inv => inv.trip).filter(t => t))];
+  if (tripsOnDate.length === 0) {
+    showToast('No trips available for this date', 'error');
+    return;
+  }
+  
+  let allVehicles = cachedVehicles;
+  if (!allVehicles || allVehicles.length === 0) {
+    allVehicles = await gas('getVehicles', { centerName: currentUser?.centerName });
+    cachedVehicles = allVehicles;
+  }
+  
+  const luggageVehicles = allVehicles.filter(v => 
+    v.isActive === true && v.usageType === 'luggage'
+  );
+  
+  if (luggageVehicles.length === 0) {
+    showToast('⚠️ No logistics vehicles available', 'error');
+    return;
+  }
+  
+  // ✅ جلب البيانات المسجلة مباشرة
+  let existingRecords = [];
+  try {
+    const result = await gas('getLogisticsRecords', { 
+      date: currentDate,
+      centerName: currentUser?.centerName 
+    });
+    console.log('📥 LogisticsRecords result:', result);
+    if (result?.success && Array.isArray(result.data)) {
+      existingRecords = result.data;
+      preloadedData.logisticsRecords = existingRecords;
+    }
+  } catch(e) {
+    console.warn('Failed to load logistics records:', e);
+  }
+  
+  console.log('📋 Existing logistics records:', existingRecords);
+  
+  let html = `
+    <div style="max-height: 450px; overflow-y: auto;">
+      <div style="margin-bottom: 12px; padding: 8px; background: var(--gray-100); border-radius: 8px;">
+        <strong>📅 Date:</strong> ${currentDate}<br>
+        <strong>🚌 Available Trips:</strong> ${tripsOnDate.join(', ')}
+      </div>
+      <div id="logisticsRowsContainer" style="display: flex; flex-direction: column; gap: 10px;">
+  `;
+  
+  if (existingRecords.length > 0) {
+    for (let i = 0; i < existingRecords.length; i++) {
+      const record = existingRecords[i];
+      html += generateLogisticsRowHTML(i, record.vehicleId, record.tripName, record.goCount, record.returnCount, luggageVehicles, tripsOnDate);
+    }
+  } else {
+    html += generateLogisticsRowHTML(0, '', '', 0, 0, luggageVehicles, tripsOnDate);
+  }
+  
+  html += `
+      </div>
+    </div>
+    <div style="display: flex; gap: 10px; justify-content: space-between; margin-top: 12px;">
+      <button class="btn btn-success" onclick="addLogisticsRow()" style="padding: 6px 12px; font-size: 12px;">➕ Add Row</button>
+      <div style="display: flex; gap: 8px;">
+        <button class="btn btn-secondary" onclick="closeModal('logisticsVehiclesModal')" style="padding: 6px 16px; font-size: 12px;">Cancel</button>
+        <button class="btn btn-primary" onclick="saveAllLogisticsRows()" style="padding: 6px 16px; font-size: 12px;">✅ Save All</button>
+      </div>
+    </div>
+  `;
+  
+  document.getElementById('logisticsVehiclesContent').innerHTML = html;
+  openModal('logisticsVehiclesModal');
+  
+  // تحديث المتغير العام
+  tempLogisticsRows = existingRecords;
+  if (tempLogisticsRows.length === 0) tempLogisticsRows = [{ vehicleId: '', tripName: '', goCount: 0, returnCount: 0 }];
+  
+  for (let i = 0; i < tempLogisticsRows.length; i++) {
+    attachLogisticsRowEvents(i);
+  }
+  if (tempLogisticsRows.length === 0) attachLogisticsRowEvents(0);
+  
+  // ✅ تحديث العداد
+  updateLogisticsBadge();
+}
+  let tempLogisticsRows = [];
+
+async function saveAllLogisticsRows() {
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) {
+    showToast('Please select a date first', 'error');
+    return;
+  }
+  
+  // قراءة جميع الصفوف من DOM
+  const rows = document.querySelectorAll('.logistics-row');
+  const records = [];
+  
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const vehicleSelect = row.querySelector('.logistics-vehicle-select');
+    const tripSelect = row.querySelector('.logistics-trip-select');
+    const goInput = row.querySelector('.logistics-go-count');
+    const returnInput = row.querySelector('.logistics-return-count');
+    
+    const vehicleId = vehicleSelect ? vehicleSelect.value : '';
+    const tripName = tripSelect ? tripSelect.value : '';
+    const goCount = parseInt(goInput ? goInput.value : 0) || 0;
+    const returnCount = parseInt(returnInput ? returnInput.value : 0) || 0;
+    
+    if (vehicleId && tripName && (goCount > 0 || returnCount > 0)) {
+      records.push({ vehicleId, tripName, goCount, returnCount });
+    }
+  }
+  
+  if (records.length === 0) {
+    showToast('⚠️ Please select at least one vehicle and trip', 'error');
+    return;
+  }
+  
+  showToast('Saving logistics records...', 'info');
   
   try {
-    let vehicles = cachedVehicles;
-    if (!vehicles || vehicles.length === 0) {
-      vehicles = await gas('getVehicles');
-      cachedVehicles = vehicles;
+    const result = await gas('saveLogisticsRecords', {
+      date: currentDate,
+      records: JSON.stringify(records),
+      centerName: currentUser?.centerName
+    });
+    
+    if (result && result.success) {
+      tempLogisticsRows = records;
+      preloadedData.logisticsRecords = records;
+      updateSelectionBadges();
+      updateLogisticsBadge();
+      showToast(`✅ Saved ${records.length} logistics records`, 'success');
+      closeModal('logisticsVehiclesModal');
+    } else {
+      showToast('❌ Failed to save: ' + (result.message || 'Unknown error'), 'error');
     }
-    
-    // ✅ فقط سيارات اللوجستيك (usageType = 'luggage')
-    const luggageVehicles = vehicles.filter(v => 
-      v.isActive === true && v.usageType === 'luggage'
-    );
-    
-    if (luggageVehicles.length === 0) {
-      showToast('⚠️ لا توجد سيارات مخصصة لنقل المعدات', 'error');
-      return;
-    }
-    
-    // ✅ جلب السجلات المحفوظة من الخادم
-    let existingRecords = [];
-    try {
-      const result = await gas('getLogisticsRecords', { 
-        date: currentDate,
-        centerName: currentUser?.centerName 
-      });
-      if (result?.success && Array.isArray(result.data)) {
-        existingRecords = result.data;
-        preloadedData.logisticsRecords = existingRecords;
-      }
-    } catch(e) {
-      console.warn('Failed to load logistics records:', e);
-    }
-    
-    let html = `
-      <div style="max-height: 450px; overflow-y: auto;">
-        <div style="margin-bottom: 15px; padding: 10px; background: var(--gray-100); border-radius: 10px;">
-          <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
-            <input type="checkbox" id="selectAllLogistics" style="width: 18px; height: 18px; cursor: pointer;"> 
-            <span style="font-weight: 600;">✅ تحديد الكل</span>
-          </label>
-        </div>
-        <div id="logisticsListContainer" style="display: flex; flex-direction: column; gap: 5px;">
-    `;
-    
-    for (let i = 0; i < luggageVehicles.length; i++) {
-      const vehicle = luggageVehicles[i];
-      const existing = existingRecords.find(r => r.vehicleId === vehicle.id) || {};
-      const isSelected = existing.trip && (existing.goCount > 0 || existing.returnCount > 0);
-      
-      html += `
-        <div style="display: flex; align-items: center; gap: 12px; padding: 12px; background: white; border: 1px solid var(--border); border-radius: 10px; flex-wrap: wrap;">
-          <input type="checkbox" class="logistics-checkbox" data-id="${vehicle.id}" data-index="${i}" ${isSelected ? 'checked' : ''} style="width: 20px; height: 20px; cursor: pointer;">
-          <div style="flex: 1; min-width: 120px;">
-            <div style="font-weight: 600; font-size: 14px;">🚛 ${escapeHtml(vehicle.licensePlate)}</div>
-            <div style="font-size: 11px; color: var(--gray-500);">👨‍✈️ ${escapeHtml(vehicle.driverName || '—')}</div>
-          </div>
-          <div style="flex: 2; min-width: 150px;">
-            <select class="logistics-trip" data-id="${vehicle.id}" style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border); font-size: 12px;">
-              <option value="">-- اختر رحلة --</option>
-              ${uniqueTrips.map(trip => `<option value="${escapeHtml(trip)}" ${existing.trip === trip ? 'selected' : ''}>${escapeHtml(trip)}</option>`).join('')}
-            </select>
-          </div>
-          <div style="width: 75px;">
-            <input type="number" class="logistics-go" data-id="${vehicle.id}" value="${existing.goCount || ''}" min="0" placeholder="Go" style="width: 100%; padding: 8px; text-align: center; border-radius: 8px; border: 1px solid var(--border); font-size: 12px;">
-          </div>
-          <div style="width: 75px;">
-            <input type="number" class="logistics-return" data-id="${vehicle.id}" value="${existing.returnCount || ''}" min="0" placeholder="Ret" style="width: 100%; padding: 8px; text-align: center; border-radius: 8px; border: 1px solid var(--border); font-size: 12px;">
-          </div>
-        </div>
-      `;
-    }
-    
-    html += `
-        </div>
-      </div>
-      <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border);">
-        <button class="btn btn-secondary" onclick="closeModal('logisticsVehiclesModal')" style="padding: 10px 20px;">إلغاء</button>
-        <button class="btn btn-primary" onclick="saveLogisticsVehicles()" style="padding: 10px 20px;">✅ حفظ</button>
-      </div>
-    `;
-    
-    document.getElementById('logisticsVehiclesContent').innerHTML = html;
-    openModal('logisticsVehiclesModal');
-    
-    setTimeout(() => {
-      const selectAll = document.getElementById('selectAllLogistics');
-      if (selectAll) {
-        selectAll.addEventListener('change', (e) => {
-          document.querySelectorAll('#logisticsListContainer .logistics-checkbox').forEach(cb => {
-            cb.checked = e.target.checked;
-          });
-        });
-      }
-    }, 100);
   } catch(e) {
-    showToast('خطأ في تحميل السيارات', 'error');
+    showToast('Error: ' + e.message, 'error');
   }
+}
+
+  function attachLogisticsRowEvents(index) {
+  const vehicleSelect = document.querySelector(`.logistics-vehicle-select[data-row="${index}"]`);
+  const tripSelect = document.querySelector(`.logistics-trip-select[data-row="${index}"]`);
+  const goInput = document.querySelector(`.logistics-go-count[data-row="${index}"]`);
+  const returnInput = document.querySelector(`.logistics-return-count[data-row="${index}"]`);
+  
+  if (vehicleSelect) {
+    vehicleSelect.onchange = () => {
+      if (!tempLogisticsRows[index]) tempLogisticsRows[index] = {};
+      tempLogisticsRows[index].vehicleId = vehicleSelect.value;
+    };
+  }
+  if (tripSelect) {
+    tripSelect.onchange = () => {
+      if (!tempLogisticsRows[index]) tempLogisticsRows[index] = {};
+      tempLogisticsRows[index].tripName = tripSelect.value;
+    };
+  }
+  if (goInput) {
+    goInput.oninput = () => {
+      if (!tempLogisticsRows[index]) tempLogisticsRows[index] = {};
+      tempLogisticsRows[index].goCount = parseInt(goInput.value) || 0;
+    };
+  }
+  if (returnInput) {
+    returnInput.oninput = () => {
+      if (!tempLogisticsRows[index]) tempLogisticsRows[index] = {};
+      tempLogisticsRows[index].returnCount = parseInt(returnInput.value) || 0;
+    };
+  }
+}
+  function rebuildLogisticsRows() {
+  const luggageVehicles = cachedVehicles.filter(v => 
+    v.isActive === true && v.usageType === 'luggage'
+  );
+  const tripsOnDate = [...new Set(filteredInvoices.map(inv => inv.trip).filter(t => t))];
+  
+  let html = '';
+  for (let i = 0; i < tempLogisticsRows.length; i++) {
+    const row = tempLogisticsRows[i];
+    html += generateLogisticsRowHTML(i, row.vehicleId, row.tripName, row.goCount, row.returnCount, luggageVehicles, tripsOnDate);
+  }
+  
+  if (tempLogisticsRows.length === 0) {
+    html += generateLogisticsRowHTML(0, '', '', 0, 0, luggageVehicles, tripsOnDate);
+  }
+  
+  document.getElementById('logisticsRowsContainer').innerHTML = html;
+  
+  for (let i = 0; i < tempLogisticsRows.length; i++) {
+    attachLogisticsRowEvents(i);
+  }
+  if (tempLogisticsRows.length === 0) attachLogisticsRowEvents(0);
+}
+  function removeVehicleTripRow(index) {
+  vehicleTripRows.splice(index, 1);
+  rebuildVehicleTripRows();
+}
+  
+  function addLogisticsRow() {
+  const newIndex = tempLogisticsRows.length;
+  tempLogisticsRows.push({ vehicleId: '', tripName: '', goCount: 0, returnCount: 0 });
+  
+  const luggageVehicles = cachedVehicles.filter(v => 
+    v.isActive === true && v.usageType === 'luggage'
+  );
+  const currentDate = getCurrentDateISO();
+  const tripsOnDate = [...new Set(filteredInvoices.map(inv => inv.trip).filter(t => t))];
+  
+  const container = document.getElementById('logisticsRowsContainer');
+  const newRowHTML = generateLogisticsRowHTML(newIndex, '', '', 0, 0, luggageVehicles, tripsOnDate);
+  container.insertAdjacentHTML('beforeend', newRowHTML);
+  attachLogisticsRowEvents(newIndex);
+}
+ function updateLogisticsBadge() {
+  const currentDate = getCurrentDateISO();
+  let count = 0;
+  
+  if (currentDate && preloadedData.logisticsRecords) {
+    if (Array.isArray(preloadedData.logisticsRecords)) {
+      count = preloadedData.logisticsRecords.length;
+    } else if (typeof preloadedData.logisticsRecords === 'object') {
+      count = Object.keys(preloadedData.logisticsRecords).length;
+    }
+  } else if (currentDate && tempLogisticsRows && tempLogisticsRows.length > 0) {
+    count = tempLogisticsRows.filter(r => r.vehicleId && r.tripName && (r.goCount > 0 || r.returnCount > 0)).length;
+  }
+  
+  const badge = document.getElementById('selectedLogisticsBadge');
+  if (badge) badge.textContent = count;
 }
 // دوال الحفظ المطلوبة
 async function saveBeachInstructors() {
@@ -3500,10 +3648,64 @@ async function saveLogisticsVehicles() {
       centerName: currentUser?.centerName
     });
     
+async function saveLogisticsVehicles() {
+  const records = [];
+  document.querySelectorAll('#logisticsVehiclesModal .logistics-checkbox:checked').forEach(cb => {
+    const vehicleId = cb.dataset.id;
+    const trip = document.querySelector(`.logistics-trip[data-id="${vehicleId}"]`).value;
+    const goCount = parseInt(document.querySelector(`.logistics-go[data-id="${vehicleId}"]`).value) || 0;
+    const returnCount = parseInt(document.querySelector(`.logistics-return[data-id="${vehicleId}"]`).value) || 0;
+    
+    if (trip && (goCount > 0 || returnCount > 0)) {
+      records.push({ vehicleId, tripName: trip, goCount, returnCount });
+    }
+  });
+  
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) {
+    showToast('الرجاء اختيار تاريخ أولاً', 'error');
+    return;
+  }
+  
+  if (records.length === 0) {
+    showToast('⚠️ الرجاء اختيار سيارة ورحلة وإدخال أرقام', 'error');
+    return;
+  }
+   showToast('جاري حفظ البيانات...', 'info');
+  
+  try {
+    const result = await gas('saveLogisticsRecords', { 
+      date: currentDate, 
+      records: JSON.stringify(records),
+      centerName: currentUser?.centerName
+    });
+    
     if (result?.success) {
       preloadedData.logisticsRecords = records;
+      tempLogisticsRows = records;
       updateSelectionBadges();
-      closeModal('logisticsVehiclesModal');
+      updateLogisticsBadge();
+      
+      // ✅ إعادة بناء القائمة لإظهار البيانات
+      const luggageVehicles = cachedVehicles.filter(v => 
+        v.isActive === true && v.usageType === 'luggage'
+      );
+      const tripsOnDate = [...new Set(filteredInvoices.map(inv => inv.trip).filter(t => t))];
+      const container = document.getElementById('logisticsRowsContainer');
+            if (container) {
+        let html = '';
+        for (let i = 0; i < records.length; i++) {
+          const record = records[i];
+          html += generateLogisticsRowHTML(i, record.vehicleId, record.tripName, record.goCount, record.returnCount, luggageVehicles, tripsOnDate);
+        }
+        if (records.length === 0) {
+          html += generateLogisticsRowHTML(0, '', '', 0, 0, luggageVehicles, tripsOnDate);
+        }
+        container.innerHTML = html;
+        for (let i = 0; i < records.length; i++) attachLogisticsRowEvents(i);
+        if (records.length === 0) attachLogisticsRowEvents(0);
+      }
+            closeModal('logisticsVehiclesModal');
       showToast(`✅ تم حفظ ${records.length} تشغيل`, 'success');
     } else {
       showToast('❌ فشل حفظ البيانات: ' + (result?.message || 'خطأ غير معروف'), 'error');
