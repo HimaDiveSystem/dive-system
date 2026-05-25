@@ -748,9 +748,16 @@ async function loadInvoices() {
     const toDate = document.getElementById('filterToDate').value;
     const isSingleDate = fromDate && fromDate === toDate;
     
+    // ✅ الحصول على الفرع المختار
+    const selectedBranchId = document.getElementById('branchSelect')?.value || '';
+    let selectedBranchName = '';
+    if (selectedBranchId && window.branchesList) {
+      const branch = window.branchesList.find(b => b.id === selectedBranchId);
+      if (branch) selectedBranchName = branch.name;
+    }
+    
     let result = null;
     
-    // ✅ محاولة مع timeout أطول
     const fetchWithRetry = async (retryCount = 0) => {
       try {
         if (isSingleDate) {
@@ -780,13 +787,17 @@ async function loadInvoices() {
     result = await fetchWithRetry();
     
     if (Array.isArray(result)) {
-      // ✅ تصفية الحالات (pending / confirmed)
       let invoices = result.filter(inv => {
         const state = (inv.State || inv.state || '').toLowerCase();
         return state === 'confirmed' || state === 'pending';
       });
       
-      // ✅ تصفية الرحلات حسب نوع المستخدم (Diving فقط لبعض الصلاحيات)
+      // ✅ تصفية حسب الفرع أثناء التحميل
+      if (selectedBranchName) {
+        invoices = invoices.filter(inv => inv.branchName === selectedBranchName);
+      }
+      
+      // ✅ تصفية الرحلات حسب نوع المستخدم
       if (currentUser && !['Admin', 'Owner', 'Accountant', 'FinancialManager'].includes(currentUser.type)) {
         invoices = invoices.filter(inv => {
           const trip = (inv.Trip || inv.trip || '').toLowerCase();
@@ -797,7 +808,6 @@ async function loadInvoices() {
       allInvoices = invoices;
       invoicesLoaded = true;
       
-      // ✅ استخراج الرحلات الفريدة
       const tripSet = new Set();
       allInvoices.forEach(inv => { 
         const trip = inv.Trip || inv.trip;
@@ -849,7 +859,16 @@ function applyFilters() {
   const search = document.getElementById('filterSearch').value.toLowerCase();
   const state = document.getElementById('filterState').value;
   const selectedTrips = getSelectedTrips();
-  const currentParams = JSON.stringify({ fromDate, toDate, search, state, selectedTrips });
+  
+  // ✅ الحصول على الفرع المختار
+  const selectedBranchId = document.getElementById('branchSelect')?.value || '';
+  let selectedBranchName = '';
+  if (selectedBranchId && window.branchesList) {
+    const branch = window.branchesList.find(b => b.id === selectedBranchId);
+    if (branch) selectedBranchName = branch.name;
+  }
+  
+  const currentParams = JSON.stringify({ fromDate, toDate, search, state, selectedTrips, selectedBranchId });
   if (currentParams === lastFilterParams && filteredInvoices.length > 0) return;
   lastFilterParams = currentParams;
   
@@ -865,6 +884,10 @@ function applyFilters() {
     if (toDateObj && parsedDate && parsedDate > toDateObj) continue;
     if (state && (inv.state || '').toLowerCase() !== state) continue;
     if (selectedTrips.length > 0 && !selectedTrips.includes(inv.trip)) continue;
+    
+    // ✅ تصفية حسب الفرع
+    if (selectedBranchName && inv.branchName !== selectedBranchName) continue;
+    
     if (search) {
       const voucher = (inv.voucherNo || '').toLowerCase();
       const guest = (inv.guestName || '').toLowerCase();
@@ -874,13 +897,12 @@ function applyFilters() {
   }
   doSort();
   currentPage = 1;
-  renderTable();      // ✅ وليس renderTableAndCards
+  renderTable();
   renderPagination();
   updateSelectionButtonsState();
   const currentDate = getCurrentDateISO();
   if (currentDate) loadAndPopulateAssignments(currentDate);
 }
-
 function doSort() {
   filteredInvoices.sort((a,b) => {
     let aVal = a[sortColumn], bVal = b[sortColumn];
@@ -2954,30 +2976,31 @@ async function loadBranches() {
       branches.forEach(branch => {
         select.innerHTML += `<option value="${escapeHtml(branch.id)}">${escapeHtml(branch.name)}</option>`;
       });
-    } else {
-      console.log('No branches found for this center');
     }
     
-    // ✅ تخزين قائمة الفروع في متغير خارجي لاستخدامها في الحدث
     window.branchesList = branches;
     
-    select.addEventListener('change', async (e) => {
+    // ✅ إزالة المستمع القديم قبل إضافة مستمع جديد
+    const newSelect = select.cloneNode(true);
+    select.parentNode.replaceChild(newSelect, select);
+    
+    newSelect.addEventListener('change', async (e) => {
       const branchId = e.target.value;
-      // ✅ استخدام window.branchesList بدلاً من branches
       const selectedBranch = window.branchesList.find(b => b.id === branchId);
       
       if (branchId && selectedBranch) {
         currentUser.branchName = selectedBranch.name;
         currentUser.branchId = branchId;
         sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
-        showToast(`تم التبديل إلى ${selectedBranch.name}`, 'success');
+        showToast(`✅ تم التبديل إلى ${selectedBranch.name}`, 'success');
       } else {
         delete currentUser.branchName;
         delete currentUser.branchId;
         sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
-        showToast('تم التبديل إلى جميع الفروع', 'success');
+        showToast('🌍 تم التبديل إلى جميع الفروع', 'success');
       }
       
+      // ✅ إعادة تحميل الفواتير مع الفرع الجديد
       lastFilterParams = '';
       invoicesLoaded = false;
       await loadInvoices();
