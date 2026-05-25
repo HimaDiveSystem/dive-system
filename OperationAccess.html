@@ -2137,50 +2137,264 @@ function resetFilters() {
     }
   }
 }
-function generateVehicleRowHTML(index, selectedVehicleId, selectedTrip, goCount, returnCount, vehicles, trips) {
-  // ✅ إخفاء الأصفار: إذا كانت القيمة 0 أو null أو undefined، اعرض سلسلة فارغة
-  const formatValue = (val) => {
-    if (val === undefined || val === null) return '';
-    const num = parseFloat(val);
-    if (isNaN(num)) return '';
-    if (num === 0) return '';
-    return num;
-  };
+async function openVehiclesModal() {
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) {
+    showToast('Please select a single date first', 'error');
+    return;
+  }
   
-  const goValue = formatValue(goCount);
-  const returnValue = formatValue(returnCount);
+  showToast('Loading vehicles...', 'info');
+  
+  const container = document.getElementById('vehiclesList');
+  if (container) container.innerHTML = '<div class="loader"><div class="spinner"></div>Loading...</div>';
+  
+  openModal('vehiclesModal');
+  
+  try {
+    let allVehicles = cachedVehicles;
+    if (!allVehicles || allVehicles.length === 0) {
+      allVehicles = await gas('getVehicles', { centerName: currentUser?.centerName });
+      cachedVehicles = allVehicles;
+    }
+    
+    // ✅ فقط سيارات الركاب
+    const passengerVehicles = allVehicles.filter(v => 
+      v.isActive === true && v.usageType === 'passengers' && v.capacity > 0
+    );
+    
+    if (passengerVehicles.length === 0) {
+      showToast('⚠️ No passenger vehicles available', 'error');
+      return;
+    }
+    
+    // جلب الرحلات في هذا التاريخ
+    const tripsOnDate = [...new Set(filteredInvoices.map(inv => inv.trip).filter(t => t))];
+    
+    // جلب السجلات المحفوظة
+    let savedRecords = [];
+    try {
+      const result = await gas('getVehicleTripRecords', { 
+        date: currentDate,
+        centerName: currentUser?.centerName 
+      });
+      if (result?.success && result.data) {
+        savedRecords = result.data;
+      }
+    } catch(e) {
+      console.warn('Failed to load vehicle records:', e);
+    }
+    
+    // بناء HTML
+    let html = `
+      <div style="max-height: 450px; overflow-y: auto;">
+        <div style="margin-bottom: 12px; padding: 8px; background: var(--gray-100); border-radius: 8px;">
+          <strong>📅 Date:</strong> ${currentDate}<br>
+          <strong>🚌 Available Trips:</strong> ${tripsOnDate.join(', ') || 'No trips'}
+        </div>
+        <div id="vehicleRowsContainer" style="display: flex; flex-direction: column; gap: 10px;">
+    `;
+    
+    // عرض السجلات المحفوظة أو صف فارغ
+    if (savedRecords.length > 0) {
+      for (let i = 0; i < savedRecords.length; i++) {
+        const record = savedRecords[i];
+        html += generateVehicleTripRow(i, record.vehicleId, record.tripName, record.goCount, record.returnCount, passengerVehicles, tripsOnDate);
+      }
+    } else {
+      html += generateVehicleTripRow(0, '', '', 0, 0, passengerVehicles, tripsOnDate);
+    }
+    
+    html += `
+        </div>
+      </div>
+      <div style="display: flex; gap: 10px; justify-content: space-between; margin-top: 12px; flex-wrap: wrap;">
+        <button class="btn btn-success" onclick="addVehicleTripRow()" style="padding: 6px 12px; font-size: 12px;">➕ Add Row</button>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-secondary" onclick="closeModal('vehiclesModal')" style="padding: 6px 16px; font-size: 12px;">Cancel</button>
+          <button class="btn btn-primary" onclick="saveAllVehicleTripRows()" style="padding: 6px 16px; font-size: 12px;">✅ Save All</button>
+        </div>
+      </div>
+    `;
+    
+    document.getElementById('vehiclesList').innerHTML = html;
+    
+    // ربط الأحداث
+    for (let i = 0; i < savedRecords.length; i++) {
+      attachVehicleTripEvents(i);
+    }
+    if (savedRecords.length === 0) attachVehicleTripEvents(0);
+    
+  } catch(e) {
+    showToast('Error loading vehicles: ' + e.message, 'error');
+  }
+}
+
+// دالة توليد صف السيارة مع حقول Go/Return
+function generateVehicleTripRow(index, selectedVehicleId, selectedTrip, goCount, returnCount, vehicles, trips) {
+  const goVal = (goCount > 0) ? goCount : '';
+  const returnVal = (returnCount > 0) ? returnCount : '';
   
   return `
-    <div class="vehicle-row" data-row-index="${index}" style="display: flex; gap: 8px; align-items: center; margin-bottom: 10px; padding: 8px; background: var(--gray-50); border-radius: 8px; flex-wrap: wrap;">
-      <div style="flex: 2; min-width: 140px;">
-        <label style="font-size: 9px; color: var(--gray-500); display: block; margin-bottom: 2px;">🚗 Vehicle</label>
+    <div class="vehicle-trip-row" data-row-index="${index}" style="display: flex; gap: 8px; align-items: center; padding: 8px; background: var(--gray-50); border-radius: 8px; flex-wrap: wrap;">
+      <div style="flex: 2; min-width: 130px;">
         <select class="vehicle-select" data-row="${index}" style="width: 100%; padding: 6px; border-radius: 6px; border: 1px solid var(--border); font-size: 11px;">
-          <option value="">-- Select --</option>
+          <option value="">-- Select Vehicle --</option>
           ${vehicles.map(v => `<option value="${v.id}" ${selectedVehicleId === v.id ? 'selected' : ''}>${escapeHtml(v.licensePlate)} (${v.capacity} seats)</option>`).join('')}
         </select>
       </div>
-      <div style="flex: 2; min-width: 130px;">
-        <label style="font-size: 9px; color: var(--gray-500); display: block; margin-bottom: 2px;">🚌 Trip</label>
+      <div style="flex: 2; min-width: 120px;">
         <select class="trip-select" data-row="${index}" style="width: 100%; padding: 6px; border-radius: 6px; border: 1px solid var(--border); font-size: 11px;">
-          <option value="">-- Select --</option>
+          <option value="">-- Select Trip --</option>
           ${trips.map(t => `<option value="${escapeHtml(t)}" ${selectedTrip === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('')}
         </select>
       </div>
-      <div style="flex: 1; min-width: 70px;">
-        <label style="font-size: 9px; color: var(--gray-500); display: block; margin-bottom: 2px;">🔄 Go</label>
-        <input type="number" class="go-count" data-row="${index}" value="${goValue}" min="0" placeholder="" style="width: 100%; padding: 6px; text-align: center; border-radius: 6px; border: 1px solid var(--border); font-size: 11px;">
+      <div style="flex: 1; min-width: 60px;">
+        <input type="number" class="go-count" data-row="${index}" value="${goVal}" min="0" placeholder="Go" style="width: 100%; padding: 5px; text-align: center; border-radius: 6px; border: 1px solid var(--border); font-size: 11px;">
       </div>
-      <div style="flex: 1; min-width: 70px;">
-        <label style="font-size: 9px; color: var(--gray-500); display: block; margin-bottom: 2px;">🔙 Return</label>
-        <input type="number" class="return-count" data-row="${index}" value="${returnValue}" min="0" placeholder="" style="width: 100%; padding: 6px; text-align: center; border-radius: 6px; border: 1px solid var(--border); font-size: 11px;">
+      <div style="flex: 1; min-width: 60px;">
+        <input type="number" class="return-count" data-row="${index}" value="${returnVal}" min="0" placeholder="Return" style="width: 100%; padding: 5px; text-align: center; border-radius: 6px; border: 1px solid var(--border); font-size: 11px;">
       </div>
       <div style="flex: 0;">
-        <label style="font-size: 9px; visibility: hidden; display: block; margin-bottom: 2px;">Action</label>
-        <button class="btn btn-danger" onclick="removeVehicleRow(${index})" style="padding: 4px 10px; font-size: 11px;">🗑️</button>
+        <button class="btn btn-danger" onclick="removeVehicleTripRow(${index})" style="padding: 4px 8px; font-size: 11px;">🗑️</button>
       </div>
     </div>
   `;
 }
+
+// متغير عام لتخزين صفوف السيارات
+let vehicleTripRows = [];
+
+function addVehicleTripRow() {
+  const newIndex = vehicleTripRows.length;
+  vehicleTripRows.push({ vehicleId: '', tripName: '', goCount: 0, returnCount: 0 });
+  
+  const passengerVehicles = cachedVehicles.filter(v => 
+    v.isActive === true && v.usageType === 'passengers' && v.capacity > 0
+  );
+  const currentDate = getCurrentDateISO();
+  const tripsOnDate = [...new Set(filteredInvoices.map(inv => inv.trip).filter(t => t))];
+  
+  const container = document.getElementById('vehicleRowsContainer');
+  const newRowHTML = generateVehicleTripRow(newIndex, '', '', 0, 0, passengerVehicles, tripsOnDate);
+  container.insertAdjacentHTML('beforeend', newRowHTML);
+  attachVehicleTripEvents(newIndex);
+}
+
+function removeVehicleTripRow(index) {
+  vehicleTripRows.splice(index, 1);
+  rebuildVehicleTripRows();
+}
+
+function rebuildVehicleTripRows() {
+  const passengerVehicles = cachedVehicles.filter(v => 
+    v.isActive === true && v.usageType === 'passengers' && v.capacity > 0
+  );
+  const tripsOnDate = [...new Set(filteredInvoices.map(inv => inv.trip).filter(t => t))];
+  
+  let html = '';
+  for (let i = 0; i < vehicleTripRows.length; i++) {
+    const row = vehicleTripRows[i];
+    html += generateVehicleTripRow(i, row.vehicleId, row.tripName, row.goCount, row.returnCount, passengerVehicles, tripsOnDate);
+  }
+  
+  if (vehicleTripRows.length === 0) {
+    html += generateVehicleTripRow(0, '', '', 0, 0, passengerVehicles, tripsOnDate);
+  }
+  
+  document.getElementById('vehicleRowsContainer').innerHTML = html;
+  
+  for (let i = 0; i < vehicleTripRows.length; i++) {
+    attachVehicleTripEvents(i);
+  }
+  if (vehicleTripRows.length === 0) attachVehicleTripEvents(0);
+}
+
+function attachVehicleTripEvents(index) {
+  const vehicleSelect = document.querySelector(`.vehicle-select[data-row="${index}"]`);
+  const tripSelect = document.querySelector(`.trip-select[data-row="${index}"]`);
+  const goInput = document.querySelector(`.go-count[data-row="${index}"]`);
+  const returnInput = document.querySelector(`.return-count[data-row="${index}"]`);
+  
+  if (vehicleSelect) {
+    vehicleSelect.onchange = () => {
+      if (!vehicleTripRows[index]) vehicleTripRows[index] = {};
+      vehicleTripRows[index].vehicleId = vehicleSelect.value;
+    };
+  }
+  if (tripSelect) {
+    tripSelect.onchange = () => {
+      if (!vehicleTripRows[index]) vehicleTripRows[index] = {};
+      vehicleTripRows[index].tripName = tripSelect.value;
+    };
+  }
+  if (goInput) {
+    goInput.oninput = () => {
+      if (!vehicleTripRows[index]) vehicleTripRows[index] = {};
+      vehicleTripRows[index].goCount = parseInt(goInput.value) || 0;
+    };
+  }
+  if (returnInput) {
+    returnInput.oninput = () => {
+      if (!vehicleTripRows[index]) vehicleTripRows[index] = {};
+      vehicleTripRows[index].returnCount = parseInt(returnInput.value) || 0;
+    };
+  }
+}
+
+async function saveAllVehicleTripRows() {
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) {
+    showToast('Please select a date first', 'error');
+    return;
+  }
+  
+  // قراءة جميع الصفوف من DOM
+  const rows = document.querySelectorAll('.vehicle-trip-row');
+  const records = [];
+  
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const vehicleSelect = row.querySelector('.vehicle-select');
+    const tripSelect = row.querySelector('.trip-select');
+    const goInput = row.querySelector('.go-count');
+    const returnInput = row.querySelector('.return-count');
+    
+    const vehicleId = vehicleSelect ? vehicleSelect.value : '';
+    const tripName = tripSelect ? tripSelect.value : '';
+    const goCount = parseInt(goInput ? goInput.value : 0) || 0;
+    const returnCount = parseInt(returnInput ? returnInput.value : 0) || 0;
+    
+    if (vehicleId && tripName && (goCount > 0 || returnCount > 0)) {
+      records.push({ vehicleId, tripName, goCount, returnCount });
+    }
+  }
+  
+  if (records.length === 0) {
+    showToast('⚠️ Please select at least one vehicle and trip', 'error');
+    return;
+  }
+  
+  showToast('Saving vehicle trips...', 'info');
+  
+  try {
+    const result = await gas('saveVehicleTripRecords', {
+      date: currentDate,
+      records: JSON.stringify(records),
+      centerName: currentUser?.centerName
+    });
+    
+    if (result && result.success) {
+      showToast(`✅ Saved ${records.length} vehicle trips`, 'success');
+      closeModal('vehiclesModal');
+    } else {
+      showToast('❌ Failed to save: ' + (result.message || 'Unknown error'), 'error');
+    }
+  } catch(e) {
+    showToast('Error: ' + e.message, 'error');
+  }
+}
+
   function generateLogisticsRowHTML(index, selectedVehicleId, selectedTrip, goCount, returnCount, vehicles, trips) {
   const formatValue = (val) => {
     if (val === undefined || val === null) return '';
@@ -2639,15 +2853,14 @@ async function exportToExcel() {
 async function openBeachInstructorsModal() {
   const currentDate = getCurrentDateISO();
   if (!currentDate) {
-    showToast('الرجاء اختيار تاريخ أولاً', 'error');
+    showToast('Please select a date first', 'error');
     return;
   }
   
-  showToast('جاري تحميل المدربين...', 'info');
+  showToast('Loading instructors...', 'info');
   
-  // ✅ عرض مؤشر تحميل
   const container = document.getElementById('beachInstructorsList');
-  if (container) container.innerHTML = '<div class="loader"><div class="spinner"></div>جاري التحميل...</div>';
+  if (container) container.innerHTML = '<div class="loader"><div class="spinner"></div>Loading...</div>';
   
   openModal('beachInstructorsModal');
   
@@ -2658,7 +2871,6 @@ async function openBeachInstructorsModal() {
       cachedInstructors = instructors;
     }
     
-    // ✅ جلب التعيينات المحفوظة لهذا اليوم
     const savedAssignments = await gas('getDailyAssignments', { date: currentDate, centerName: currentUser?.centerName });
     if (savedAssignments?.success && savedAssignments.data) {
       selectedBeachInstructors = savedAssignments.data.beachInstructors || [];
@@ -2668,7 +2880,6 @@ async function openBeachInstructorsModal() {
       updateSelectionBadges();
     }
     
-    // ✅ تجميع المدربين المشغولين في المراكب
     const busyInstructors = new Set();
     for (const boatId in boatInstructorsMap) {
       const instructorsList = boatInstructorsMap[boatId];
@@ -2679,49 +2890,44 @@ async function openBeachInstructorsModal() {
       }
     }
     
-    // ✅ استبعاد مدربي المراكب
     const availableInstructors = instructors.filter(inst => !busyInstructors.has(inst.id));
     
     let html = `
-      <div style="max-height: 450px; overflow-y: auto;">
-        <div style="margin-bottom: 15px; padding: 10px; background: var(--gray-100); border-radius: 10px;">
-          <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
-            <input type="checkbox" id="selectAllInstructors" style="width: 18px; height: 18px; cursor: pointer;"> 
-            <span style="font-weight: 600;">✅ Select All</span>
+      <div style="max-height: 350px; overflow-y: auto;">
+        <div style="margin-bottom: 10px; padding: 6px 10px; background: var(--gray-100); border-radius: 8px;">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px;">
+            <input type="checkbox" id="selectAllInstructors" style="width: 16px; height: 16px;"> 
+            <span>✅ Select All</span>
           </label>
         </div>
-        <div id="instructorsListContainer" style="display: flex; flex-direction: column; gap: 5px;">
+        <div id="instructorsListContainer" style="display: flex; flex-direction: column; gap: 6px;">
     `;
     
     for (const inst of availableInstructors) {
       const isSelected = selectedBeachInstructors.includes(inst.id);
       html += `
-        <div style="display: flex; align-items: center; gap: 12px; padding: 12px; background: white; border: 1px solid var(--border); border-radius: 10px;">
-          <input type="checkbox" class="instructor-checkbox" value="${inst.id}" ${isSelected ? 'checked' : ''} style="width: 20px; height: 20px; cursor: pointer;">
-          <div style="flex: 1;">
-            <div style="font-weight: 600; font-size: 14px;">👨‍🏫 ${escapeHtml(inst.name)}</div>
-            <div style="font-size: 11px; color: var(--gray-500);">📞 ${escapeHtml(inst.phone || 'No phone')}</div>
-          </div>
+        <div style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: white; border: 1px solid var(--border); border-radius: 8px;">
+          <input type="checkbox" class="instructor-checkbox" value="${inst.id}" ${isSelected ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer;">
+          <div style="font-size: 13px; font-weight: 500;">👨‍🏫 ${escapeHtml(inst.name)}</div>
         </div>
       `;
     }
     
     if (availableInstructors.length === 0) {
-      html += '<div style="padding: 20px; text-align: center;">⚠️ No instructors available for beach</div>';
+      html += '<div style="padding: 20px; text-align: center; font-size: 12px;">⚠️ No instructors available for beach</div>';
     }
     
     html += `
         </div>
       </div>
-      <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border);">
-        <button class="btn btn-secondary" onclick="closeModal('beachInstructorsModal')" style="padding: 10px 20px;">Cancel</button>
-        <button class="btn btn-primary" onclick="saveBeachInstructorsV2()" style="padding: 10px 20px;">✅ Save</button>
+      <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);">
+        <button class="btn btn-secondary" onclick="closeModal('beachInstructorsModal')" style="padding: 6px 16px; font-size: 12px;">Cancel</button>
+        <button class="btn btn-primary" onclick="saveBeachInstructorsV2()" style="padding: 6px 16px; font-size: 12px;">✅ Save</button>
       </div>
     `;
     
     document.getElementById('beachInstructorsList').innerHTML = html;
     
-    // ✅ حدث تحديد الكل
     setTimeout(() => {
       const selectAll = document.getElementById('selectAllInstructors');
       if (selectAll) {
@@ -2737,7 +2943,7 @@ async function openBeachInstructorsModal() {
     showToast('Error loading instructors: ' + e.message, 'error');
   }
 }
-
+  
 // ✅ دالة حفظ جديدة مع تحديث InstructorDailyAssignments
 async function saveBeachInstructorsV2() {
   const selected = [];
@@ -2832,7 +3038,7 @@ async function openBoatsModal() {
   showToast('Loading boats...', 'info');
   
   const container = document.getElementById('boatsSelectionContainer');
-  if (container) container.innerHTML = '<div class="loader"><div class="spinner"></div>جاري التحميل...</div>';
+  if (container) container.innerHTML = '<div class="loader"><div class="spinner"></div>Loading...</div>';
   
   openModal('boatsModal');
   
@@ -2844,7 +3050,7 @@ async function openBoatsModal() {
     const boats = await gas('getBoats', { centerName: currentUser?.centerName });
     cachedBoats = boats;
     
-    // ✅ جلب التعيينات المحفوظة مسبقاً
+    // جلب التعيينات المحفوظة
     const savedAssignments = await gas('getDailyAssignments', { date: currentDate, centerName: currentUser?.centerName });
     if (savedAssignments?.success && savedAssignments.data) {
       selectedBoats = savedAssignments.data.boats || [];
@@ -2853,107 +3059,136 @@ async function openBoatsModal() {
       updateSelectionBadges();
     }
     
-    // ✅ تجميع المدربين المشغولين (مراكب أخرى + شاطئ)
-    const busyInstructors = new Set();
-    
-    // مدربي المراكب الأخرى
-    for (const [boatId, instructorsList] of Object.entries(boatInstructorsMap)) {
-      if (Array.isArray(instructorsList)) {
-        instructorsList.forEach(id => busyInstructors.add(id));
-      } else if (instructorsList) {
-        busyInstructors.add(instructorsList);
+    // ✅ دالة لإعادة بناء القائمة (لتحديث الديناميكية)
+    function renderBoatsList() {
+      // تجميع المدربين المشغولين
+      const busyInstructors = new Set();
+      
+      // مدربي المراكب المختارة (من boatInstructorsMap)
+      for (const [boatId, instructorsList] of Object.entries(boatInstructorsMap)) {
+        if (Array.isArray(instructorsList)) {
+          instructorsList.forEach(id => busyInstructors.add(id));
+        } else if (instructorsList) {
+          busyInstructors.add(instructorsList);
+        }
       }
-    }
-    
-    // مدربي الشاطئ
-    selectedBeachInstructors.forEach(id => busyInstructors.add(id));
-    
-    let html = `
-      <div style="max-height: 450px; overflow-y: auto;">
-        <div style="margin-bottom: 15px; padding: 10px; background: var(--gray-100); border-radius: 10px;">
-          <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
-            <input type="checkbox" id="selectAllBoats" style="width: 18px; height: 18px; cursor: pointer;"> 
-            <span style="font-weight: 600;">✅ Select All</span>
-          </label>
-        </div>
-        <div id="boatsListContainer" style="display: flex; flex-direction: column; gap: 5px;">
-    `;
-    
-    for (const boat of boats) {
-      const isSelected = selectedBoats.includes(boat.id);
-      const selectedInstructorsForBoat = boatInstructorsMap[boat.id] || [];
       
-      // ✅ المدربين المتاحين لهذا المركب (باستثناء المشغولين)
-      const availableInstructors = cachedInstructors.filter(inst => {
-        if (selectedInstructorsForBoat.includes(inst.id)) return true;
-        if (busyInstructors.has(inst.id)) return false;
-        return true;
-      });
+      // مدربي الشاطئ (لا يظهرون أبداً في قائمة المراكب)
+      selectedBeachInstructors.forEach(id => busyInstructors.add(id));
       
-      html += `
-        <div class="boat-card" style="background: white; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 10px; overflow: hidden;">
-          <div style="display: flex; align-items: center; gap: 12px; padding: 12px; background: var(--gray-50); border-bottom: 1px solid var(--border);">
-            <input type="checkbox" class="boat-checkbox" data-id="${boat.id}" ${isSelected ? 'checked' : ''} style="width: 20px; height: 20px; cursor: pointer;">
-            <div>
-              <div style="font-weight: 600; font-size: 14px;">⛵ ${escapeHtml(boat.name)}</div>
-              <div style="font-size: 11px; color: var(--gray-500);">Capacity: ${boat.capacity || 0}</div>
-            </div>
+      let html = `
+        <div style="max-height: 350px; overflow-y: auto;">
+          <div style="margin-bottom: 10px; padding: 6px 10px; background: var(--gray-100); border-radius: 8px;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px;">
+              <input type="checkbox" id="selectAllBoats" style="width: 16px; height: 16px;"> 
+              <span>✅ Select All</span>
+            </label>
           </div>
-          <div id="boat-instructors-${boat.id}" style="padding: 12px; ${isSelected ? '' : 'display: none;'}">
-            <div style="font-size: 12px; font-weight: 600; margin-bottom: 8px;">👨‍🏫 Select Instructors (Multi-Select):</div>
-            <div style="display: flex; flex-direction: column; gap: 8px; max-height: 150px; overflow-y: auto;">
+          <div id="boatsListContainer" style="display: flex; flex-direction: column; gap: 8px;">
       `;
       
-      for (const inst of availableInstructors) {
-        const isChecked = selectedInstructorsForBoat.includes(inst.id);
+      for (const boat of boats) {
+        const isSelected = selectedBoats.includes(boat.id);
+        const selectedInstructorsForBoat = boatInstructorsMap[boat.id] || [];
+        
+        // المدربين المتاحين (المدربين غير المشغولين + المدربين المختارين لهذا المركب)
+        const availableInstructors = cachedInstructors.filter(inst => {
+          if (selectedInstructorsForBoat.includes(inst.id)) return true;
+          if (busyInstructors.has(inst.id)) return false;
+          return true;
+        });
+        
         html += `
-          <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 6px; border-radius: 6px; background: var(--gray-50);">
-            <input type="checkbox" class="boat-instructor-cb" data-boat="${boat.id}" data-instructor="${inst.id}" ${isChecked ? 'checked' : ''} style="width: 18px; height: 18px; cursor: pointer;">
-            <span>👨‍🏫 ${escapeHtml(inst.name)}</span>
-          </label>
+          <div class="boat-card" style="background: white; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;">
+            <div style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--gray-50); border-bottom: 1px solid var(--border);">
+              <input type="checkbox" class="boat-checkbox" data-id="${boat.id}" ${isSelected ? 'checked' : ''} style="width: 18px; height: 18px; cursor: pointer;">
+              <div style="font-size: 13px; font-weight: 600;">⛵ ${escapeHtml(boat.name)} <span style="font-size: 10px; color: gray;">(Cap: ${boat.capacity || 0})</span></div>
+            </div>
+            <div id="boat-instructors-${boat.id}" style="padding: 8px 10px; ${isSelected ? '' : 'display: none;'}">
+              <div style="font-size: 11px; font-weight: 600; margin-bottom: 6px;">👨‍🏫 Select Instructors:</div>
+              <div style="display: flex; flex-direction: column; gap: 6px; max-height: 120px; overflow-y: auto;">
+        `;
+        
+        for (const inst of availableInstructors) {
+          const isChecked = selectedInstructorsForBoat.includes(inst.id);
+          html += `
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px; padding: 4px; border-radius: 4px; background: var(--gray-50);">
+              <input type="checkbox" class="boat-instructor-cb" data-boat="${boat.id}" data-instructor="${inst.id}" ${isChecked ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer;">
+              <span>👨‍🏫 ${escapeHtml(inst.name)}</span>
+            </label>
+          `;
+        }
+        
+        if (availableInstructors.length === 0) {
+          html += '<div style="font-size: 11px; color: gray; padding: 4px;">No available instructors</div>';
+        }
+        
+        html += `
+              </div>
+            </div>
+          </div>
         `;
       }
       
       html += `
-            </div>
           </div>
         </div>
-      `;
-    }
-    
-    html += `
+        <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);">
+          <button class="btn btn-secondary" onclick="closeModal('boatsModal')" style="padding: 6px 16px; font-size: 12px;">Cancel</button>
+          <button class="btn btn-primary" onclick="saveBoatsAndInstructorsV2()" style="padding: 6px 16px; font-size: 12px;">✅ Save All</button>
         </div>
-      </div>
-      <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border);">
-        <button class="btn btn-secondary" onclick="closeModal('boatsModal')" style="padding: 10px 20px;">Cancel</button>
-        <button class="btn btn-primary" onclick="saveBoatsAndInstructorsV2()" style="padding: 10px 20px;">✅ Save All</button>
-      </div>
-    `;
-    
-    document.getElementById('boatsSelectionContainer').innerHTML = html;
-    
-    // ✅ ربط الأحداث
-    setTimeout(() => {
-      const selectAll = document.getElementById('selectAllBoats');
-      if (selectAll) {
-        selectAll.addEventListener('change', (e) => {
-          document.querySelectorAll('.boat-checkbox').forEach(cb => {
-            cb.checked = e.target.checked;
-            const boatId = cb.dataset.id;
+      `;
+      
+      document.getElementById('boatsSelectionContainer').innerHTML = html;
+      
+      // ربط الأحداث
+      setTimeout(() => {
+        const selectAll = document.getElementById('selectAllBoats');
+        if (selectAll) {
+          selectAll.addEventListener('change', (e) => {
+            document.querySelectorAll('.boat-checkbox').forEach(cb => {
+              cb.checked = e.target.checked;
+              const boatId = cb.dataset.id;
+              const div = document.getElementById(`boat-instructors-${boatId}`);
+              if (div) div.style.display = e.target.checked ? 'block' : 'none';
+            });
+          });
+        }
+        
+        document.querySelectorAll('.boat-checkbox').forEach(cb => {
+          cb.addEventListener('change', (e) => {
+            const boatId = e.target.dataset.id;
             const div = document.getElementById(`boat-instructors-${boatId}`);
             if (div) div.style.display = e.target.checked ? 'block' : 'none';
           });
         });
-      }
-      
-      document.querySelectorAll('.boat-checkbox').forEach(cb => {
-        cb.addEventListener('change', (e) => {
-          const boatId = e.target.dataset.id;
-          const div = document.getElementById(`boat-instructors-${boatId}`);
-          if (div) div.style.display = e.target.checked ? 'block' : 'none';
+        
+        // ✅ عند تغيير اختيار مدرب، إعادة بناء القائمة لتحديث المتاحين
+        document.querySelectorAll('.boat-instructor-cb').forEach(cb => {
+          cb.addEventListener('change', () => {
+            // تحديث boatInstructorsMap مؤقتاً
+            const boatId = cb.dataset.boat;
+            const instructorId = cb.dataset.instructor;
+            
+            if (!boatInstructorsMap[boatId]) boatInstructorsMap[boatId] = [];
+            
+            if (cb.checked) {
+              if (!boatInstructorsMap[boatId].includes(instructorId)) {
+                boatInstructorsMap[boatId].push(instructorId);
+              }
+            } else {
+              const index = boatInstructorsMap[boatId].indexOf(instructorId);
+              if (index !== -1) boatInstructorsMap[boatId].splice(index, 1);
+            }
+            
+            // إعادة بناء القائمة لتحديث المتاحين
+            renderBoatsList();
+          });
         });
-      });
-    }, 100);
+      }, 50);
+    }
+    
+    renderBoatsList();
     
   } catch(e) {
     showToast('Error loading boats: ' + e.message, 'error');
@@ -3025,83 +3260,7 @@ async function loadBranches() {
     console.warn('loadBranches error:', e);
   }
 }
-async function openVehiclesModal() {
-  const currentDate = getCurrentDateISO();
-  if (!currentDate) {
-    showToast('الرجاء اختيار تاريخ أولاً', 'error');
-    return;
-  }
-  
-  showToast('جاري تحميل السيارات...', 'info');
-  
-  try {
-    let vehicles = cachedVehicles;
-    if (!vehicles || vehicles.length === 0) {
-      vehicles = await gas('getVehicles');
-      cachedVehicles = vehicles;
-    }
-    
-    // ✅ فقط سيارات الركاب (usageType = 'passengers')
-    const passengerVehicles = vehicles.filter(v => 
-      v.isActive === true && v.usageType === 'passengers' && v.capacity > 0
-    );
-    
-    if (passengerVehicles.length === 0) {
-      showToast('⚠️ لا توجد سيارات متاحة لنقل الركاب', 'error');
-      return;
-    }
-    
-    let html = `
-      <div style="max-height: 450px; overflow-y: auto;">
-        <div style="margin-bottom: 15px; padding: 10px; background: var(--gray-100); border-radius: 10px;">
-          <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
-            <input type="checkbox" id="selectAllVehicles" style="width: 18px; height: 18px; cursor: pointer;"> 
-            <span style="font-weight: 600;">✅ تحديد الكل</span>
-          </label>
-        </div>
-        <div id="vehiclesListContainer" style="display: flex; flex-direction: column; gap: 5px;">
-    `;
-    
-    for (const vehicle of passengerVehicles) {
-      const isSelected = selectedVehicles.includes(vehicle.id);
-      html += `
-        <div style="display: flex; align-items: center; gap: 12px; padding: 12px; background: white; border: 1px solid var(--border); border-radius: 10px;">
-          <input type="checkbox" class="vehicle-checkbox" value="${vehicle.id}" ${isSelected ? 'checked' : ''} style="width: 20px; height: 20px; cursor: pointer;">
-          <div style="flex: 1;">
-            <div style="font-weight: 600; font-size: 14px;">🚗 ${escapeHtml(vehicle.licensePlate)}</div>
-            <div style="font-size: 11px; color: var(--gray-500);">👨‍✈️ ${escapeHtml(vehicle.driverName || '—')} | 👥 ${vehicle.capacity || 0} seats</div>
-          </div>
-        </div>
-      `;
-    }
-    
-    html += `
-        </div>
-      </div>
-      <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border);">
-        <button class="btn btn-secondary" onclick="closeModal('vehiclesModal')" style="padding: 10px 20px;">إلغاء</button>
-        <button class="btn btn-primary" onclick="saveVehiclesSelection()" style="padding: 10px 20px;">✅ حفظ</button>
-      </div>
-    `;
-    
-    document.getElementById('vehiclesList').innerHTML = html;
-    openModal('vehiclesModal');
-    
-    setTimeout(() => {
-      const selectAll = document.getElementById('selectAllVehicles');
-      if (selectAll) {
-        selectAll.addEventListener('change', (e) => {
-          document.querySelectorAll('#vehiclesListContainer .vehicle-checkbox').forEach(cb => {
-            cb.checked = e.target.checked;
-          });
-        });
-      }
-    }, 100);
-  } catch(e) {
-    showToast('خطأ في تحميل السيارات', 'error');
-  }
-}
-  
+
 async function openLogisticsVehicles() {
   const currentDate = getCurrentDateISO();
   if (!currentDate) {
