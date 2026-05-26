@@ -170,6 +170,7 @@
       position: sticky;
       top: 0;
       z-index: 10;
+      text-shadow: 0 0 2px rgba(0,0,0,0.3);
     }
     .action-buttons {
       display: flex;
@@ -315,14 +316,77 @@
     .card-action-btn.boat { background: var(--blue); }
     
     /* ========== RESPONSIVE BREAKPOINT ========== */
-    @media (max-width: 768px) {
-      .tbl-wrap { display: none; }
-      .cards-container { display: flex; }
-      .selection-bar { flex-direction: column; align-items: stretch; }
-      .filter-bar { flex-direction: column; align-items: stretch; }
-      .filter-group { width: 100%; }
-      .filter-group input, .filter-group select { width: 100%; min-width: auto; }
-    }
+@media (max-width: 768px) {
+  /* إظهار الجدول بدلاً من البطاقات */
+  .tbl-wrap { display: block; overflow-x: auto; }
+  .cards-container { display: none; }
+  
+  /* تحسين أشرطة التمرير */
+  .tbl-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  /* تصغير حجم الخط في الجدول للهاتف */
+  table {
+    font-size: 9px;
+    min-width: 1200px;
+  }
+  
+  th, td {
+    padding: 4px 3px;
+    white-space: nowrap;
+  }
+  
+  /* تحسين أزرار الإجراءات */
+  .action-btn {
+    padding: 2px 4px;
+    font-size: 8px;
+    min-width: 24px;
+  }
+  
+  /* تحسين شريط الاختيار */
+  .selection-bar { 
+    flex-direction: row; 
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+  }
+  
+  .selection-btn {
+    padding: 4px 8px;
+    font-size: 10px;
+  }
+  
+  /* تحسين شريط الفلترة */
+  .filter-bar { 
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+  }
+  
+  .filter-group { 
+    width: auto;
+    flex: 1;
+    min-width: 100px;
+  }
+  
+  .filter-group input, 
+  .filter-group select { 
+    width: 100%; 
+    min-width: auto;
+    font-size: 10px;
+    padding: 4px 6px;
+  }
+  
+  .btn-go, .btn-reset, .export-btn {
+    padding: 4px 10px;
+    font-size: 10px;
+  }
+}
     
     /* ========== MODAL STYLES ========== */
     .modal {
@@ -433,6 +497,7 @@
   color: var(--gold);
   font-weight: 700;
   font-size: 11px;
+  text-shadow: 0 0 1px rgba(0,0,0,0.2);
 }
 
 .modal-content input[type="number"],
@@ -506,7 +571,18 @@ th, td {
   font-size: 11px;
   white-space: nowrap;
 }
+/* إخفاء الأصفار في جميع حقول الإدخال */
+input[type="number"]:placeholder-shown,
+input[type="number"][value="0"],
+input[type="number"][value="0.00"],
+input[type="number"][value="0"]::placeholder {
+  color: transparent;
+}
 
+/* إظهار القيم غير الصفرية بشكل طبيعي */
+input[type="number"][value]:not([value="0"]):not([value="0.00"]) {
+  color: var(--text);
+}
 /* التأكد من ظهور النصوص العربية */
 * {
   font-family: 'Cairo', sans-serif;
@@ -612,7 +688,76 @@ let preloadedData = { logisticsRecords: {}, vehicleTripRecords: {}, dailyAssignm
 let dataLoaded = false;
 let invoicesLoaded = false;
 let lastFilterParams = {};
+// متغير لتخزين أسماء رحلات Diving
+let divingTripNames = [];
 
+// دالة لجلب أسماء رحلات Diving فقط من TripDefinitions
+async function loadDivingTripNames() {
+  try {
+    const tripDefs = await gas('getTripDefinitions', { centerName: currentUser?.centerName });
+    
+    if (tripDefs && Array.isArray(tripDefs)) {
+      // تصفية: فقط الرحلات التي Category === 'Diving'
+      divingTripNames = tripDefs
+        .filter(trip => trip.Category === 'Diving')
+        .map(trip => trip.TripName);
+      
+      console.log(`✅ تم تحميل ${divingTripNames.length} رحلة Diving:`, divingTripNames);
+    } else {
+      divingTripNames = [];
+    }
+  } catch(e) {
+    console.warn('Failed to load trip definitions:', e);
+    divingTripNames = [];
+  }
+  
+  return divingTripNames;
+}
+
+// دالة للتحقق مما إذا كانت الرحلة من نوع Diving
+function isDivingTrip(tripName) {
+  if (!tripName) return false;
+  
+  // إذا كانت القائمة محملة، استخدمها
+  if (divingTripNames.length > 0) {
+    return divingTripNames.includes(tripName);
+  }
+  
+  // إذا لم تكن محملة بعد، نرجع false
+  return false;
+}
+
+// دالة تصفية الرحلات حسب نوع المستخدم (غير متزامنة - للاستخدام مع async/await)
+async function filterTripsByUserType(trips) {
+  if (!currentUser) return trips;
+  
+  // الصلاحيات التي ترى كل الرحلات
+  const fullAccessTypes = ['Admin', 'Owner', 'Accountant', 'FinancialManager'];
+  
+  if (fullAccessTypes.includes(currentUser.type)) {
+    return trips; // كل الرحلات
+  }
+  
+  // تأكد من تحميل أسماء رحلات Diving
+  if (divingTripNames.length === 0) {
+    await loadDivingTripNames();
+  }
+  
+  // تصفية: فقط رحلات Diving
+  return trips.filter(trip => divingTripNames.includes(trip));
+}
+
+// دالة تصفية متزامنة (للاستخدام في الأماكن التي لا تدعم async)
+function isTripAllowed(tripName) {
+  if (!currentUser) return true;
+  
+  const fullAccessTypes = ['Admin', 'Owner', 'Accountant', 'FinancialManager'];
+  if (fullAccessTypes.includes(currentUser.type)) {
+    return true;
+  }
+  
+  return isDivingTrip(tripName);
+}
 // ============================================================
 // JSONP REQUEST
 // ============================================================
@@ -763,6 +908,11 @@ async function loadInvoices() {
     const toDate = document.getElementById('filterToDate').value;
     const isSingleDate = fromDate && fromDate === toDate;
     
+    // ✅ تحميل أسماء رحلات Diving أولاً
+    if (divingTripNames.length === 0) {
+      await loadDivingTripNames();
+    }
+    
     // ✅ الحصول على الفرع المختار
     const selectedBranchId = document.getElementById('branchSelect')?.value || '';
     let selectedBranchName = '';
@@ -812,11 +962,12 @@ async function loadInvoices() {
         invoices = invoices.filter(inv => inv.branchName === selectedBranchName);
       }
       
-      // ✅ تصفية الرحلات حسب نوع المستخدم
-      if (currentUser && !['Admin', 'Owner', 'Accountant', 'FinancialManager'].includes(currentUser.type)) {
+      // ✅ تصفية الرحلات: عرض رحلات Diving فقط (ما عدا الصلاحيات الكاملة)
+      const fullAccessTypes = ['Admin', 'Owner', 'Accountant', 'FinancialManager'];
+      if (currentUser && !fullAccessTypes.includes(currentUser.type)) {
         invoices = invoices.filter(inv => {
-          const trip = (inv.Trip || inv.trip || '').toLowerCase();
-          return trip.includes('diving') || trip.includes('dive');
+          const tripName = inv.Trip || inv.trip || '';
+          return isDivingTrip(tripName);
         });
       }
       
@@ -845,7 +996,13 @@ function initTripFilter() {
   select.innerHTML = '<option value="">All Trips</option>';
   
   // ✅ تطبيق التصفية حسب نوع المستخدم
-  let tripsToShow = filterTripsByUserType(uniqueTrips);
+  let tripsToShow = uniqueTrips;
+  
+  const fullAccessTypes = ['Admin', 'Owner', 'Accountant', 'FinancialManager'];
+  if (currentUser && !fullAccessTypes.includes(currentUser.type)) {
+    // عرض رحلات Diving فقط
+    tripsToShow = uniqueTrips.filter(trip => isDivingTrip(trip));
+  }
   
   tripsToShow.forEach(trip => {
     const option = document.createElement('option');
@@ -856,7 +1013,6 @@ function initTripFilter() {
   
   select.addEventListener('change', applyFilters);
 }
-
 function getSelectedTrips() {
   const select = document.getElementById('filterTrip');
   const selected = [];
@@ -1075,7 +1231,7 @@ function renderTable() {
   html += '<th>Instructors</th>';
   html += '<th>Notes</th>';
   html += '<th>Actions</th>';
-  html += '</tr></thead><tbody>';
+  html += '</table></thead><tbody>';
 
   for (const inv of pageData) {
     const voucherNo = inv.voucherNo || '';
@@ -1156,10 +1312,10 @@ try {
     html += `<td style="text-align:center;">${formatValue(inv.dbl)}</span></td>`;
     html += `<td style="text-align:center;">${formatValue(inv.trpl)}</span></td>`;
     html += `<td style="text-align:center;">${formatValue(inv.extra)}</span></td>`;
-    html += `<td style="text-align:center;">${formatValue(inv.camel)}</span></td>`;
-    html += `<td style="text-align:center;">${formatValue(inv.dinner)}</span></td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.camel)}</span><td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.dinner)}</span><td>`;
     html += `<td style="text-align:center;">${formatValue(inv.vipDinner)}</span></td>`;
-    html += `<td style="text-align:center;">${formatValue(inv.starGazing)}</span></td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.starGazing)}</span><td>`;
     html += `<td style="text-align:center;">${formatValue(inv.privateTrip)}</span></td>`;
     html += `<td style="text-align:center;">${formatValue(inv.privateTransfer)}</span></td>`;
     html += `<td style="text-align:center; white-space:nowrap;">${escapeHtml(inv.hotel || '')}</span></td>`;
@@ -1284,6 +1440,14 @@ function renderMobileCards() {
   }
   document.getElementById('cardsContainer').innerHTML = html;
 }
+  // دالة مساعدة لإخفاء الأصفار
+function formatNonZero(val) {
+  if (val === undefined || val === null) return '';
+  const num = parseFloat(val);
+  if (isNaN(num)) return '';
+  if (num === 0) return '';
+  return num;
+}
 
 // ============================================================
 // ASSIGN VEHICLES, BOATS, INSTRUCTORS (Simplified - similar to previous)
@@ -1370,8 +1534,7 @@ async function openAssignVehicles(voucherNo) {
         <td style="padding: 4px;"><strong>${escapeHtml(vehicle.licensePlate)}</strong><br><span style="font-size: 9px;">${escapeHtml(vehicle.driverName || '')}</span></td>
         <td style="text-align: center; padding: 4px;">${capacity}</td>
         <td style="text-align: center; padding: 4px;"><input type="number" class="assign-go" data-id="${vehId}" value="${formatVal(savedGo)}" min="0" max="${availableGo+savedGo}" style="width: 55px; text-align: center; padding: 4px;"></td>
-        <td style="text-align: center; padding: 4px;"><input type="number" class="assign-return" data-id="${vehId}" value="${formatVal(savedReturn)}" min="0" max="${availableReturn+savedReturn}" style="width: 55px; text-align: center; padding: 4px;"></td>
-        <td style="text-align: center; padding: 4px;"><input type="number" class="assign-adult" data-id="${vehId}" value="${formatVal(savedAdult)}" min="0" style="width: 55px; text-align: center; padding: 4px;"></td>
+       <td style="text-align: center; padding: 4px;"><input type="number" class="assign-return" data-id="${vehId}" value="${formatVal(savedReturn)}" min="0" max="${availableReturn+savedReturn}" style="width: 55px; text-align: center; padding: 4px;"></td>        <td style="text-align: center; padding: 4px;"><input type="number" class="assign-adult" data-id="${vehId}" value="${formatVal(savedAdult)}" min="0" style="width: 55px; text-align: center; padding: 4px;"></td>
         <td style="text-align: center; padding: 4px;"><input type="number" class="assign-child" data-id="${vehId}" value="${formatVal(savedChild)}" min="0" style="width: 55px; text-align: center; padding: 4px;"></td>
         <td style="text-align: center; padding: 4px;"><input type="number" class="assign-infant" data-id="${vehId}" value="${formatVal(savedInfant)}" min="0" style="width: 55px; text-align: center; padding: 4px;"></td>
         <td style="text-align: center; padding: 4px;"><input type="checkbox" class="assign-select" data-id="${vehId}" ${(savedGo>0||savedReturn>0)?'checked':''}></td>
@@ -1447,7 +1610,7 @@ async function openAssignBoats(voucherNo) {
             <th style="padding: 6px;">👶 Child</th>
             <th style="padding: 6px;">🍼 Infant</th>
             <th style="padding: 6px;">☑️ Select</th>
-          </tr>
+           </tr>
         </thead>
         <tbody>
   `;
@@ -1487,7 +1650,7 @@ async function openAssignBoats(voucherNo) {
   
   boatsHtml += `
         </tbody>
-      </table>
+       </table>
     </div>
     <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
       <button class="btn btn-secondary" onclick="closeModal('assignBoatsModal')">Cancel</button>
@@ -1515,6 +1678,43 @@ async function saveBoatAssignment() {
                         renderTable();             // ✅ تصحيح
                         showToast('✅ تم حفظ المراكب', 'success'); closeModal('assignBoatsModal'); }
   else showToast('❌ فشل الحفظ', 'error');
+}
+
+// ✅ دالة تصنيف النشاط إلى نوع المدرب المناسب
+function classifyActivity(activityName) {
+  const lower = activityName.toLowerCase();
+  
+  // 1 Intro (مفرد)
+  if (lower === '1 intro' || lower === 'intro' || lower === 'sgl intro' || lower === '*1 intro' || lower === 'intro diver') {
+    return { type: 'single_intro', column: 'extra', multiplier: 1, display: '1 Intro' };
+  }
+  
+  // 2 Intro (مزدوج)
+  if (lower === '2 intro' || lower === 'dbl intro' || lower === '*2 intro') {
+    return { type: 'double_intro', column: 'extra', multiplier: 2, display: '2 Intro' };
+  }
+  
+  // Diver
+  if (lower === 'diver' || lower === 'fun diver' || lower === '1 diver' || lower === 'diving') {
+    return { type: 'diver', column: 'sgl', multiplier: 1, display: 'Diver' };
+  }
+  
+  // Course
+  if (lower === 'course' || lower === 'owd course' || lower === 'aowd course' || lower === 'course diver') {
+    return { type: 'course', column: 'dbl', multiplier: 1, display: 'Course' };
+  }
+  
+  // Check Dive (C.D.)
+  if (lower === 'check dive' || lower === 'cd' || lower === 'c.d.' || lower === 'c. d.' || lower === 'c d') {
+    return { type: 'check_dive', column: 'sgl', multiplier: 1, display: 'C.D.' };
+  }
+  
+  // Scuba Review (S.R.)
+  if (lower === 'scuba review' || lower === 'sr' || lower === 's.r.' || lower === 's r') {
+    return { type: 'scuba_review', column: 'dbl', multiplier: 1, display: 'S.R.' };
+  }
+  
+  return null;
 }
 
 async function openAssignInstructors(voucherNo) {
@@ -1563,19 +1763,37 @@ async function openAssignInstructors(voucherNo) {
     return;
   }
   
-  // ✅ جلب الأنشطة الديناميكية حسب الرحلة
+  // ✅ جلب الأنشطة الديناميكية حسب الرحلة وتصنيفها
   let activityItems = [];
+  let activityMapping = [];
   try {
-    const result = await gas('getTripItemsForInstructors', { tripName: invoice.trip });
-    if (result && result.success && result.items) {
-      activityItems = result.items;
+    const tripDef = await gas('getTripDefinition', { tripName: invoice.trip });
+    if (tripDef && tripDef.items) {
+      for (const item of tripDef.items) {
+        const classified = classifyActivity(item);
+        if (classified) {
+          // تجنب التكرار (مثلاً نفس النوع يظهر مرة واحدة فقط)
+          if (!activityMapping.find(a => a.display === classified.display)) {
+            activityMapping.push(classified);
+            activityItems.push(classified.display);
+          }
+        }
+      }
     }
   } catch(e) {
     console.warn('Could not load trip items:', e);
   }
-  
+
+  // إذا لم يتم العثور على أنشطة، استخدم القيم الافتراضية
   if (activityItems.length === 0) {
-    activityItems = ['Diver', 'Course', 'Intro'];
+    activityItems = ['1 Intro', '2 Intro', 'Diver', 'C.D.', 'S.R.'];
+    activityMapping = [
+      { type: 'single_intro', column: 'extra', multiplier: 1, display: '1 Intro' },
+      { type: 'double_intro', column: 'extra', multiplier: 2, display: '2 Intro' },
+      { type: 'diver', column: 'sgl', multiplier: 1, display: 'Diver' },
+      { type: 'check_dive', column: 'sgl', multiplier: 1, display: 'C.D.' },
+      { type: 'scuba_review', column: 'dbl', multiplier: 1, display: 'S.R.' }
+    ];
   }
   
   // بناء HTML بدون أشرطة زرقاء
@@ -1587,17 +1805,17 @@ async function openAssignInstructors(voucherNo) {
   
   let rowsHtml = '';
   for (const inst of relevantInstructors) {
-    rowsHtml += `<tr>`;
+    rowsHtml += `</tr>`;
     rowsHtml += `<td style="padding: 8px;"><strong>${escapeHtml(inst.name)}</strong></td>`;
     for (let i = 0; i < activityItems.length; i++) {
       rowsHtml += `<td style="padding: 8px; text-align: center;">
         <input type="number" class="assign-activity" data-instructor="${inst.id}" data-activity-index="${i}" value="0" min="0" style="width: 60px; text-align: center; padding: 4px; border: 1px solid var(--border); border-radius: 6px;">
-       </span>`;
+       </td>`;
     }
     rowsHtml += `<td style="padding: 8px; text-align: center;">
       <input type="checkbox" class="assign-select" data-id="${inst.id}" style="width: 18px; height: 18px; cursor: pointer;">
-     </span>`;
-    rowsHtml += `</table>`;
+     </td>`;
+    rowsHtml += `</tr>`;
   }
   
   let instructorsHtml = `
@@ -1611,23 +1829,23 @@ async function openAssignInstructors(voucherNo) {
         <thead>
           <tr style="background: var(--navy); color: var(--gold);">
             ${headersHtml}
-          </table>
+           </tr>
         </thead>
         <tbody>
           ${rowsHtml}
         </tbody>
-      </table>
+       </table>
     </div>
     <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
       <button class="btn btn-secondary" onclick="closeModal('assignInstructorsModal')">Cancel</button>
-      <button class="btn btn-primary" onclick="saveInstructorAssignmentV3(${JSON.stringify(activityItems).replace(/"/g, '&quot;')})">✅ Assign</button>
+    <button class="btn btn-primary" onclick="saveInstructorAssignmentV3(${JSON.stringify(activityItems).replace(/"/g, '&quot;')}, ${JSON.stringify(activityMapping).replace(/"/g, '&quot;')})">✅ Assign</button>
     </div>
   `;
   
   document.getElementById('assignInstructorsContent').innerHTML = instructorsHtml;
   openModal('assignInstructorsModal');
 }
-async function saveInstructorAssignmentV3(activityItems) {
+async function saveInstructorAssignmentV3(activityItems, activityMapping) {
   let selectedRows = [];
   
   document.querySelectorAll('#assignInstructorsModal .assign-select:checked').forEach(cb => {
@@ -1637,9 +1855,13 @@ async function saveInstructorAssignmentV3(activityItems) {
     for (let i = 0; i < activityItems.length; i++) {
       const qty = parseInt(document.querySelector(`.assign-activity[data-instructor="${instructorId}"][data-activity-index="${i}"]`).value) || 0;
       if (qty > 0) {
+        const mapping = activityMapping[i];
         activities.push({
           activityName: activityItems[i],
-          quantity: qty
+          displayName: mapping?.display || activityItems[i],
+          quantity: qty,
+          multiplier: mapping?.multiplier || 1,
+          column: mapping?.column || 'extra'
         });
       }
     }
@@ -1914,99 +2136,6 @@ function showInstructorDetails(voucherNo, instructorId) {
   document.getElementById('detailsModalTitle').innerHTML = '👨‍🏫 Instructor Details';
   openModal('detailsModal');
 }
-function showBoatDetails(voucherNo, boatId) {
-  const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
-  if (!invoice) return;
-  
-  let boatsData = [];
-  try {
-    boatsData = JSON.parse(invoice.BoatsUsed || '[]');
-  } catch(e) {}
-  
-  const boat = boatsData.find(b => b.boatId === boatId);
-  if (!boat) {
-    showToast('لم يتم العثور على بيانات المركب', 'error');
-    return;
-  }
-  
-  let html = `
-    <div style="padding: 8px;">
-      <div style="background: var(--navy); color: var(--gold); padding: 12px; border-radius: 8px; margin-bottom: 16px; text-align: center;">
-        <strong>⛵ تفاصيل المركب</strong>
-      </div>
-      <div style="padding: 0 8px;">
-        <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border);">
-          <span style="font-weight: bold;">اسم المركب:</span>
-          <span>${escapeHtml(boat.boatName || '—')}</span>
-        </div>
-        <div style="display: flex; justify-content: space-between; padding: 10px 0;">
-          <span style="font-weight: bold;">الركاب:</span>
-          <span>👤 ${boat.adults || 0} بالغ / 👶 ${boat.children || 0} طفل / 🍼 ${boat.infants || 0} رضيع</span>
-        </div>
-      </div>
-    </div>
-  `;
-  
-  document.getElementById('detailsModalContent').innerHTML = html;
-  document.getElementById('detailsModalTitle').innerHTML = '⛵ تفاصيل المركب';
-  openModal('detailsModal');
-}
-
-function showInstructorDetails(voucherNo, instructorId) {
-  const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
-  if (!invoice) return;
-  
-  let instructorsData = [];
-  try {
-    instructorsData = JSON.parse(invoice.InstructorsExecution || '[]');
-  } catch(e) {}
-  
-  const instructor = instructorsData.find(i => i.instructorId === instructorId);
-  if (!instructor) {
-    showToast('لم يتم العثور على بيانات المدرب', 'error');
-    return;
-  }
-  
-  const cachedInstructor = cachedInstructors.find(i => i.id === instructorId);
-  
-  let activitiesHtml = '';
-  if (instructor.activities && instructor.activities.length > 0) {
-    activitiesHtml = '<div style="margin-top: 10px;"><span style="font-weight: bold;">الأنشطة:</span><ul style="margin: 5px 0 0 20px;">';
-    instructor.activities.forEach(act => {
-      activitiesHtml += `<li>${escapeHtml(act.displayName || act.activityName)}: ${act.quantity} × ${act.multiplier || 1}</li>`;
-    });
-    activitiesHtml += '</ul></div>';
-  }
-  
-  let html = `
-    <div style="padding: 8px;">
-      <div style="background: var(--navy); color: var(--gold); padding: 12px; border-radius: 8px; margin-bottom: 16px; text-align: center;">
-        <strong>👨‍🏫 تفاصيل المدرب</strong>
-      </div>
-      <div style="padding: 0 8px;">
-        <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border);">
-          <span style="font-weight: bold;">الاسم:</span>
-          <span>${escapeHtml(instructor.instructorName || cachedInstructor?.name || '—')}</span>
-        </div>
-        <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border);">
-          <span style="font-weight: bold;">الهاتف:</span>
-          <span>${escapeHtml(cachedInstructor?.phone || '—')}</span>
-        </div>
-        <div style="display: flex; justify-content: space-between; padding: 10px 0;">
-          <span style="font-weight: bold;">الأنشطة:</span>
-          <span>🤿 غوص: ${instructor.diver || 0} | 📚 كورس: ${instructor.course || 0} | ⭐ تمهيدي: ${instructor.intro || 0}</span>
-        </div>
-        ${activitiesHtml}
-      </div>
-    </div>
-  `;
-  
-  document.getElementById('detailsModalContent').innerHTML = html;
-  document.getElementById('detailsModalTitle').innerHTML = '👨‍🏫 تفاصيل المدرب';
-  openModal('detailsModal');
-}
-
-
 
 
 // ============================================================
@@ -2408,7 +2537,7 @@ async function saveAllVehicleTripRows() {
     showToast('Error: ' + e.message, 'error');
   }
 }
-
+  
   function generateLogisticsRowHTML(index, selectedVehicleId, selectedTrip, goCount, returnCount, vehicles, trips) {
   const formatValue = (val) => {
     if (val === undefined || val === null) return '';
@@ -2528,20 +2657,25 @@ async function openUpsell(voucherNo) {
   
   try {
     // جلب بيانات الرحلة والأنشطة
-    const tripData = await gas('getTripData', { tripName: tripName, currency: currency });
-    
-    let items = [];
-    if (tripData && tripData.items && tripData.prices) {
-      for (let i = 0; i < tripData.items.length; i++) {
-        items.push({
-          name: tripData.items[i],
-          price: tripData.prices[i] || 0,
-          quantity: 0,
-          total: 0
-        });
-      }
+const tripData = await gas('getTripData', { tripName: tripName, currency: currency });
+
+let items = [];
+if (tripData && tripData.items && tripData.prices) {
+  // ✅ تصفية البنود: إزالة Adult, Child, Inf, Infant
+  const excludeList = ['Adult', 'Child', 'Inf', 'Infant', 'adult', 'child', 'inf', 'infant'];
+  for (let i = 0; i < tripData.items.length; i++) {
+    const itemName = tripData.items[i];
+    if (!excludeList.includes(itemName)) {
+      items.push({
+        name: itemName,
+        price: tripData.prices[i] || 0,
+        quantity: 0,
+        total: 0,
+        originalIndex: i  // حفظ الموقع الأصلي للتسجيل
+      });
     }
-    
+  }
+}    
     currentUpsellItems = items;
     
     // بناء جدول الأنشطة
@@ -2554,7 +2688,7 @@ async function openUpsell(voucherNo) {
               <th style="padding: 8px; width: 100px;">Price (${currency})</th>
               <th style="padding: 8px; width: 80px;">Quantity</th>
               <th style="padding: 8px; width: 120px;">Total (${currency})</th>
-             </tr>
+            </tr>
           </thead>
           <tbody>
     `;
@@ -3481,10 +3615,6 @@ async function saveAllLogisticsRows() {
   }
   if (tempLogisticsRows.length === 0) attachLogisticsRowEvents(0);
 }
-  function removeVehicleTripRow(index) {
-  vehicleTripRows.splice(index, 1);
-  rebuildVehicleTripRows();
-}
   
   function addLogisticsRow() {
   const newIndex = tempLogisticsRows.length;
@@ -3906,25 +4036,30 @@ async function refreshLogisticsBadge() {
 // ============================================================
 // INITIALIZATION
 // ============================================================
-// ============================================================
-// INITIALIZATION
-// ============================================================
 document.addEventListener('DOMContentLoaded', async () => {
   const ud = sessionStorage.getItem('currentUser');
   if (!ud) { window.location.href = 'index.html'; return; }
   try {
     currentUser = JSON.parse(ud);
-     await loadBranches();
+    
+    // ✅ تحميل أسماء رحلات Diving أولاً
+    await loadDivingTripNames();
+    
+    await loadBranches();
     document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
+    
     const today = new Date();
     const todayISO = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
     const fromDateInput = document.getElementById('filterFromDate');
     const toDateInput = document.getElementById('filterToDate');
     if (fromDateInput && !fromDateInput.value) fromDateInput.value = todayISO;
     if (toDateInput && !toDateInput.value) toDateInput.value = todayISO;
+    
     showToast('جاري تحميل الفواتير...', 'info');
     await loadInvoices();
-    renderTable(); if (window.innerWidth <= 768) renderMobileCards();
+    renderTable(); 
+    if (window.innerWidth <= 768) renderMobileCards();
+    
     setTimeout(async () => {
       try {
         const [instructors, vehicles, boats] = await Promise.all([gas('getInstructors'), gas('getVehicles'), gas('getBoats')]);
@@ -3933,14 +4068,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         cachedBoats = boats;
       } catch(e) { console.warn(e); }
     }, 500);
+    
     if (fromDateInput.value && toDateInput.value && fromDateInput.value === toDateInput.value) {
       setTimeout(() => loadAndPopulateAssignments(fromDateInput.value), 1000);
     }
     updateSelectionButtonsState();
-  } catch(e) { console.error(e); window.location.href = 'index.html'; }
-});  // ✅ هذا القوس يغلق document.addEventListener
+  } catch(e) { 
+    console.error(e); 
+    window.location.href = 'index.html'; 
+  }
+});
 
-// ✅ هذا القوس يغلق الكود كله
 </script>
 </body>
 </html>
