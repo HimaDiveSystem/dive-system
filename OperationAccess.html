@@ -317,17 +317,16 @@
     
     /* ========== RESPONSIVE BREAKPOINT ========== */
 @media (max-width: 768px) {
-  /* إظهار الجدول بدلاً من البطاقات */
-  .tbl-wrap { display: block; overflow-x: auto; }
-  .cards-container { display: none; }
-  
-  /* تحسين أشرطة التمرير */
   .tbl-wrap {
+    display: block;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
   
-  /* تصغير حجم الخط في الجدول للهاتف */
+  .cards-container {
+    display: none; /* إخفاء البطاقات */
+  }
+  
   table {
     font-size: 9px;
     min-width: 1200px;
@@ -335,8 +334,8 @@
   
   th, td {
     padding: 4px 3px;
-    white-space: nowrap;
   }
+}
   
   /* تحسين أزرار الإجراءات */
   .action-btn {
@@ -689,15 +688,16 @@ let dataLoaded = false;
 let invoicesLoaded = false;
 let lastFilterParams = {};
 // متغير لتخزين أسماء رحلات Diving
+// متغير لتخزين أسماء رحلات Diving المسترجعة من TripDefinitions
 let divingTripNames = [];
 
-// دالة لجلب أسماء رحلات Diving فقط من TripDefinitions
+// دالة لجلب أسماء رحلات Diving من TripDefinitions (حسب عمود Category)
 async function loadDivingTripNames() {
   try {
     const tripDefs = await gas('getTripDefinitions', { centerName: currentUser?.centerName });
     
     if (tripDefs && Array.isArray(tripDefs)) {
-      // تصفية: فقط الرحلات التي Category === 'Diving'
+      // ✅ تصفية: فقط الرحلات التي Category === 'Diving'
       divingTripNames = tripDefs
         .filter(trip => trip.Category === 'Diving')
         .map(trip => trip.TripName);
@@ -717,15 +717,10 @@ async function loadDivingTripNames() {
 // دالة للتحقق مما إذا كانت الرحلة من نوع Diving
 function isDivingTrip(tripName) {
   if (!tripName) return false;
-  
-  // إذا كانت القائمة محملة، استخدمها
-  if (divingTripNames.length > 0) {
-    return divingTripNames.includes(tripName);
-  }
-  
-  // إذا لم تكن محملة بعد، نرجع false
-  return false;
+  if (divingTripNames.length === 0) return false; // لم يتم تحميل البيانات بعد
+  return divingTripNames.includes(tripName);
 }
+  
 
 // دالة تصفية الرحلات حسب نوع المستخدم (غير متزامنة - للاستخدام مع async/await)
 async function filterTripsByUserType(trips) {
@@ -904,14 +899,14 @@ async function loadInvoices() {
   try {
     showToast('جاري تحميل البيانات...', 'info');
     
-    const fromDate = document.getElementById('filterFromDate').value;
-    const toDate = document.getElementById('filterToDate').value;
-    const isSingleDate = fromDate && fromDate === toDate;
-    
     // ✅ تحميل أسماء رحلات Diving أولاً
     if (divingTripNames.length === 0) {
       await loadDivingTripNames();
     }
+    
+    const fromDate = document.getElementById('filterFromDate').value;
+    const toDate = document.getElementById('filterToDate').value;
+    const isSingleDate = fromDate && fromDate === toDate;
     
     // ✅ الحصول على الفرع المختار
     const selectedBranchId = document.getElementById('branchSelect')?.value || '';
@@ -962,9 +957,10 @@ async function loadInvoices() {
         invoices = invoices.filter(inv => inv.branchName === selectedBranchName);
       }
       
-      // ✅ تصفية الرحلات: عرض رحلات Diving فقط (ما عدا الصلاحيات الكاملة)
+      // ✅ ✅ ✅ تصفية الرحلات: عرض رحلات Diving فقط
+      // (الصلاحيات الكاملة يمكنها رؤية كل شيء أو يمكن إزالة هذا الشرط)
       const fullAccessTypes = ['Admin', 'Owner', 'Accountant', 'FinancialManager'];
-      if (currentUser && !fullAccessTypes.includes(currentUser.type)) {
+      if (!fullAccessTypes.includes(currentUser?.type)) {
         invoices = invoices.filter(inv => {
           const tripName = inv.Trip || inv.trip || '';
           return isDivingTrip(tripName);
@@ -995,12 +991,11 @@ function initTripFilter() {
   const select = document.getElementById('filterTrip');
   select.innerHTML = '<option value="">All Trips</option>';
   
-  // ✅ تطبيق التصفية حسب نوع المستخدم
+  // ✅ عرض رحلات Diving فقط في قائمة الفلتر
   let tripsToShow = uniqueTrips;
   
   const fullAccessTypes = ['Admin', 'Owner', 'Accountant', 'FinancialManager'];
-  if (currentUser && !fullAccessTypes.includes(currentUser.type)) {
-    // عرض رحلات Diving فقط
+  if (!fullAccessTypes.includes(currentUser?.type)) {
     tripsToShow = uniqueTrips.filter(trip => isDivingTrip(trip));
   }
   
@@ -1231,7 +1226,7 @@ function renderTable() {
   html += '<th>Instructors</th>';
   html += '<th>Notes</th>';
   html += '<th>Actions</th>';
-  html += '</table></thead><tbody>';
+  html += '</tr></thead><tbody>';
 
   for (const inv of pageData) {
     const voucherNo = inv.voucherNo || '';
@@ -1254,9 +1249,8 @@ function renderTable() {
       : `<span class="rest-pos" onclick="event.stopPropagation(); alert('تحصيل المتبقي قيد التطوير')">${restValue.toFixed(2)} ${currencySymbol}</span>`;
     
     let vehiclesHtml = '';
-try {
-  // ✅ العمود الصحيح هو 70 (AY) وليس VehiclesUsed
-  const vehiclesData = JSON.parse(inv[70] || inv.VehiclesUsed || '[]');
+    try {
+      const vehiclesData = JSON.parse(inv[70] || inv.VehiclesUsed || '[]');
       if (vehiclesData.length > 0) {
         vehiclesHtml = vehiclesData.map(v => 
           `<span style="display:inline-block; background:var(--purple); color:white; padding:2px 6px; border-radius:12px; font-size:9px; margin:1px; cursor:pointer;" onclick="showVehicleDetails('${voucherNo}', '${v.vehicleId}')" title="انقر لعرض التفاصيل">
@@ -1269,10 +1263,9 @@ try {
     } catch(e) { vehiclesHtml = '—'; }
     
     let boatsHtml = '';
-try {
-  // ✅ العمود الصحيح هو 71 (AZ)
-  const boatsData = JSON.parse(inv[71] || inv.BoatsUsed || '[]');
-  if (boatsData.length > 0) {
+    try {
+      const boatsData = JSON.parse(inv[71] || inv.BoatsUsed || '[]');
+      if (boatsData.length > 0) {
         boatsHtml = boatsData.map(b => 
           `<span style="display:inline-block; background:var(--blue); color:white; padding:2px 6px; border-radius:12px; font-size:9px; margin:1px; cursor:pointer;" onclick="showBoatDetails('${voucherNo}', '${b.boatId}')" title="انقر لعرض التفاصيل">
             ⛵ ${b.boatName || b.boatId}
@@ -1284,9 +1277,8 @@ try {
     } catch(e) { boatsHtml = '—'; }
     
     let instructorsHtml = '';
-try {
-  // ✅ العمود الصحيح هو 76 (BF)
-  const instructorsData = JSON.parse(inv[76] || inv.InstructorsExecution || '[]');
+    try {
+      const instructorsData = JSON.parse(inv[76] || inv.InstructorsExecution || '[]');
       if (instructorsData.length > 0) {
         instructorsHtml = instructorsData.map(i => 
           `<span style="display:inline-block; background:var(--green); color:white; padding:2px 6px; border-radius:12px; font-size:9px; margin:1px; cursor:pointer;" onclick="showInstructorDetails('${voucherNo}', '${i.instructorId}')" title="انقر لعرض التفاصيل">
@@ -1305,31 +1297,31 @@ try {
     html += `<td style="text-align:center; white-space:nowrap;">${restHtml}</td>`;
     html += `<td style="text-align:center; white-space:nowrap;"><strong>${escapeHtml(voucherNo)}</strong></td>`;
     html += `<td style="text-align:center; white-space:nowrap;">${formatDateDDMMMYYYY(inv.issueDate || '')}</td>`;
-    html += `<td style="text-align:center; white-space:nowrap;">${formatDateDDMMMYYYY(activeDate)}</span></td>`;
+    html += `<td style="text-align:center; white-space:nowrap;">${formatDateDDMMMYYYY(activeDate)}</td>`;
     html += `<td style="text-align:center; white-space:nowrap;"><button class="action-btn time-btn" onclick="openTimePicker('${voucherNo}', '${escapeHtml(currentTime)}')">🕐 ${escapeHtml(currentTime) || '--:--'}</button></td>`;
-    html += `<td style="text-align:center; white-space:nowrap;">${escapeHtml(tripName)}</span></td>`;
-    html += `<td style="text-align:center;">${formatValue(inv.sgl)}</span></td>`;
-    html += `<td style="text-align:center;">${formatValue(inv.dbl)}</span></td>`;
-    html += `<td style="text-align:center;">${formatValue(inv.trpl)}</span></td>`;
-    html += `<td style="text-align:center;">${formatValue(inv.extra)}</span></td>`;
-    html += `<td style="text-align:center;">${formatValue(inv.camel)}</span><td>`;
-    html += `<td style="text-align:center;">${formatValue(inv.dinner)}</span><td>`;
-    html += `<td style="text-align:center;">${formatValue(inv.vipDinner)}</span></td>`;
-    html += `<td style="text-align:center;">${formatValue(inv.starGazing)}</span><td>`;
-    html += `<td style="text-align:center;">${formatValue(inv.privateTrip)}</span></td>`;
-    html += `<td style="text-align:center;">${formatValue(inv.privateTransfer)}</span></td>`;
-    html += `<td style="text-align:center; white-space:nowrap;">${escapeHtml(inv.hotel || '')}</span></td>`;
-    html += `<td style="text-align:center;">${escapeHtml(inv.roomNo || '')}</span></td>`;
-    html += `<td style="text-align:center; white-space:nowrap;">${escapeHtml(inv.nationality || '')}</span></td>`;
-    html += `<td style="text-align:center; white-space:nowrap;">${escapeHtml(inv.guestName || '')}</span></td>`;
-    html += `<td style="text-align:center; white-space:nowrap; direction:ltr;">${escapeHtml(inv.contactNo || '')}</span></td>`;
-    html += `<td style="text-align:center; white-space:nowrap;">${escapeHtml(inv.supplier || '—')}</span></td>`;
-    html += `<td style="text-align:center; white-space:nowrap;">${escapeHtml(inv.customer || '—')}</span></td>`;
-    html += `<td style="text-align:center;"><span class="${stateClass}">${stateText}</span></span></td>`;
-    html += `<td style="text-align:center; max-width:120px; white-space:normal; word-break:break-word;">${vehiclesHtml}</span></td>`;
-    html += `<td style="text-align:center; max-width:120px; white-space:normal; word-break:break-word;">${boatsHtml}</span></td>`;
-    html += `<td style="text-align:center; max-width:120px; white-space:normal; word-break:break-word;">${instructorsHtml}</span></td>`;
-    html += `<td style="text-align:center; max-width:120px; white-space:normal; word-break:break-word;">${escapeHtml((inv.notes || '').substring(0, 40))}</span></td>`;
+    html += `<td style="text-align:center; white-space:nowrap;">${escapeHtml(tripName)}</td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.sgl)}</td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.dbl)}</td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.trpl)}</td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.extra)}</td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.camel)}</td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.dinner)}</td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.vipDinner)}</td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.starGazing)}</td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.privateTrip)}</td>`;
+    html += `<td style="text-align:center;">${formatValue(inv.privateTransfer)}</td>`;
+    html += `<td style="text-align:center; white-space:nowrap;">${escapeHtml(inv.hotel || '')}</td>`;
+    html += `<td style="text-align:center;">${escapeHtml(inv.roomNo || '')}</td>`;
+    html += `<td style="text-align:center; white-space:nowrap;">${escapeHtml(inv.nationality || '')}</td>`;
+    html += `<td style="text-align:center; white-space:nowrap;">${escapeHtml(inv.guestName || '')}</td>`;
+    html += `<td style="text-align:center; white-space:nowrap; direction:ltr;">${escapeHtml(inv.contactNo || '')}</td>`;
+    html += `<td style="text-align:center; white-space:nowrap;">${escapeHtml(inv.supplier || '—')}</td>`;
+    html += `<td style="text-align:center; white-space:nowrap;">${escapeHtml(inv.customer || '—')}</td>`;
+    html += `<td style="text-align:center;"><span class="${stateClass}">${stateText}</span></td>`;
+    html += `<td style="text-align:center; max-width:120px; white-space:normal; word-break:break-word;">${vehiclesHtml}</td>`;
+    html += `<td style="text-align:center; max-width:120px; white-space:normal; word-break:break-word;">${boatsHtml}</td>`;
+    html += `<td style="text-align:center; max-width:120px; white-space:normal; word-break:break-word;">${instructorsHtml}</td>`;
+    html += `<td style="text-align:center; max-width:120px; white-space:normal; word-break:break-word;">${escapeHtml((inv.notes || '').substring(0, 40))}</td>`;
     html += `<td style="text-align:center;"><div class="action-buttons">`;
     html += `<button class="action-btn vehicle ${actionClass}" onclick="openAssignVehicles('${voucherNo}')" ${!showActions ? 'disabled' : ''}>🚗</button>`;
     html += `<button class="action-btn boat ${actionClass}" onclick="openAssignBoats('${voucherNo}')" ${!showActions ? 'disabled' : ''}>⛵</button>`;
@@ -1362,84 +1354,10 @@ try {
 
 function renderTableAndCards() {
   renderTable();           // للكمبيوتر
-  if (window.innerWidth <= 768) {
-    renderMobileCards();   // للهواتف (إذا كانت موجودة)
-  }
+  
 }
   
-function renderMobileCards() {
-  const start = (currentPage - 1) * pageSize;
-  const end = Math.min(start + pageSize, filteredInvoices.length);
-  const pageData = filteredInvoices.slice(start, end);
-  if (pageData.length === 0) { document.getElementById('cardsContainer').innerHTML = '<div class="loader">لا توجد فواتير</div>'; return; }
-  
-  let html = '';
-  for (const inv of pageData) {
-    const voucherNo = inv.voucherNo || '';
-    const showActions = isSingleDateRange() && BOAT_TRIPS.includes(inv.trip);
-    let currencySymbol = 'LE';
-    let currency = inv.invoiceCurrency || 'LE';
-    if (currency === '$') currencySymbol = '$';
-    else if (currency === '€') currencySymbol = '€';
-    else if (currency === '£') currencySymbol = '£';
-    
-    const restValue = parseFloat(inv.rest) || 0;
-    const restHtml = restValue <= 0 ? '<span class="rest-zero">✓ Paid</span>' : `<span class="rest-pos">${restValue.toFixed(2)} ${currencySymbol}</span>`;
-    
-    let vehiclesHtml = '';
-    try {
-      const vehiclesData = JSON.parse(inv.VehiclesUsed || '[]');
-      vehiclesHtml = vehiclesData.map(v => `<span class="badge-vehicle">🚗 ${v.licensePlate || v.vehicleId}</span>`).join(' ') || '—';
-    } catch(e) { vehiclesHtml = '—'; }
-    
-    let boatsHtml = '';
-    try {
-      const boatsData = JSON.parse(inv.BoatsUsed || '[]');
-      boatsHtml = boatsData.map(b => `<span class="badge-boat">⛵ ${b.boatName || b.boatId}</span>`).join(' ') || '—';
-    } catch(e) { boatsHtml = '—'; }
-    
-    let instructorsHtml = '';
-    try {
-      const instructorsData = JSON.parse(inv.InstructorsExecution || '[]');
-      instructorsHtml = instructorsData.map(i => `<span class="badge-instructor">👨‍🏫 ${i.instructorName || i.instructorId}</span>`).join(' ') || '—';
-    } catch(e) { instructorsHtml = '—'; }
-    
-    const activitiesText = inv.activitiesText || '';
-    let activitiesHtml = '';
-    if (activitiesText) {
-      const parts = activitiesText.split('|');
-      activitiesHtml = parts.map(p => `<span>${escapeHtml(p.trim())}</span>`).join('');
-    }
-    
-    html += `
-      <div class="invoice-card">
-        <div class="card-header">
-          <span class="card-voucher">📄 ${escapeHtml(voucherNo)}</span>
-          <span class="card-rest">${restHtml}</span>
-        </div>
-        <div class="card-body">
-          <div class="card-row"><span class="card-label">📅 Date:</span><span class="card-value">${formatDateDDMMMYYYY(inv.activeDate)}</span></div>
-          <div class="card-row"><span class="card-label">⏰ Time:</span><span class="card-value">${escapeHtml(inv.time || '—')}</span></div>
-          <div class="card-row"><span class="card-label">🚌 Trip:</span><span class="card-value">${escapeHtml(inv.trip || '—')}</span></div>
-          <div class="card-row"><span class="card-label">👤 Guest:</span><span class="card-value">${escapeHtml(inv.guestName || '—')}</span></div>
-          <div class="card-row"><span class="card-label">📞 Contact:</span><span class="card-value">${escapeHtml(inv.contactNo || '—')}</span></div>
-          <div class="card-row"><span class="card-label">👥 Passengers:</span><span class="card-value">Sgl:${inv.sgl||0} Dbl:${inv.dbl||0} Trpl:${inv.trpl||0} Extra:${inv.extra||0}</span></div>
-          ${activitiesHtml ? `<div class="card-activities">${activitiesHtml}</div>` : ''}
-          <div class="card-row"><span class="card-label">🚗 Vehicles:</span><span class="card-value">${vehiclesHtml}</span></div>
-          <div class="card-row"><span class="card-label">⛵ Boats:</span><span class="card-value">${boatsHtml}</span></div>
-          <div class="card-row"><span class="card-label">👨‍🏫 Instructors:</span><span class="card-value">${instructorsHtml}</span></div>
-        </div>
-        <div class="card-actions">
-          <button class="card-action-btn vehicle" onclick="openAssignVehicles('${voucherNo}')" ${!showActions ? 'disabled' : ''}>🚗 Vehicle</button>
-          <button class="card-action-btn boat" onclick="openAssignBoats('${voucherNo}')" ${!showActions ? 'disabled' : ''}>⛵ Boat</button>
-          <button class="card-action-btn instructor" onclick="openAssignInstructors('${voucherNo}')" ${!showActions ? 'disabled' : ''}>👨‍🏫 Instructor</button>
-          <button class="card-action-btn upsell" onclick="openUpsell('${voucherNo}')">💰 UpSell</button>
-        </div>
-      </div>
-    `;
-  }
-  document.getElementById('cardsContainer').innerHTML = html;
-}
+
   // دالة مساعدة لإخفاء الأصفار
 function formatNonZero(val) {
   if (val === undefined || val === null) return '';
@@ -1898,12 +1816,7 @@ async function saveInstructorAssignmentV3(activityItems, activityMapping) {
     if (result && result.success) {
       updateLocalInvoice(currentAssignVoucher, 'InstructorsExecution', JSON.stringify(selectedRows));
       renderTable();
-      if (window.innerWidth <= 768) renderMobileCards();
-      showToast(`✅ Saved ${selectedRows.length} instructors`, 'success');
-      closeModal('assignInstructorsModal');
-    } else {
-      showToast('❌ Failed to save: ' + (result.message || 'Unknown error'), 'error');
-    }
+     
   } catch(e) {
     showToast('❌ Error: ' + e.message, 'error');
   } finally {
@@ -1925,7 +1838,7 @@ async function saveInstructorAssignmentV3(activityItems, activityMapping) {
   });
   if (selectedRows.length === 0) { showToast('⚠️ اختر مدرب', 'error'); return; }
   const result = await gas('assignInstructorsToInvoice', { voucherNo: currentAssignVoucher, instructorsData: JSON.stringify(selectedRows), centerName: currentUser?.centerName });
-  if (result?.success) { updateLocalInvoice(currentAssignVoucher, 'InstructorsExecution', JSON.stringify(selectedRows)); renderTable(); if (window.innerWidth <= 768) renderMobileCards(); showToast('✅ تم حفظ المدربين', 'success'); closeModal('assignInstructorsModal'); }
+  if (result?.success) { updateLocalInvoice(currentAssignVoucher, 'InstructorsExecution', JSON.stringify(selectedRows)); renderTable(); }
   else showToast('❌ فشل الحفظ', 'error');
 }
 
@@ -2167,8 +2080,7 @@ function resetFilters() {
   doSort();
   currentPage = 1;
   renderTable();
-  if (window.innerWidth <= 768) renderMobileCards();
-  renderPagination();
+   renderPagination();
   updateSelectionButtonsState();
   
   const currentDate = getCurrentDateISO();
@@ -2624,8 +2536,7 @@ async function saveTimeUpdate() {
       }
       
       renderTable();
-      if (window.innerWidth <= 768) renderMobileCards();
-      showToast('✅ تم تحديث الوقت بنجاح', 'success');
+        showToast('✅ تم تحديث الوقت بنجاح', 'success');
       closeModal('timeModal');
     } else {
       showToast('❌ فشل تحديث الوقت', 'error');
@@ -4006,12 +3917,6 @@ async function onDateChange() {
   applyFilters();
   renderTable();
   renderPagination();
-  
-  // ✅ تحديث عرض الموبايل
-  if (window.innerWidth <= 768) {
-    renderMobileCards();
-  }
-  
   updateSelectionButtonsState();
 }
 // ✅ تحديث عداد Logistics Vehicles
@@ -4058,8 +3963,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     showToast('جاري تحميل الفواتير...', 'info');
     await loadInvoices();
     renderTable(); 
-    if (window.innerWidth <= 768) renderMobileCards();
-    
+       
     setTimeout(async () => {
       try {
         const [instructors, vehicles, boats] = await Promise.all([gas('getInstructors'), gas('getVehicles'), gas('getBoats')]);
