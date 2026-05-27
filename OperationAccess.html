@@ -657,7 +657,17 @@ let lastFilterParams = {};
 // متغير لتخزين أسماء رحلات Diving
 // متغير لتخزين أسماء رحلات Diving المسترجعة من TripDefinitions
 let divingTripNames = [];
+// متغيرات التخزين المؤقت لتسريع الأداء
+let cachedBoatsList = null;
+let cachedVehiclesList = null;
+let cachedInstructorsList = null;
+let lastFetchTime = 0;
+const CACHE_DURATION = 60000; // 60 ثانية
 
+let isSavingBeach = false;
+let isSavingBoats = false;
+let isLoadingAssignments = false;
+let lastLoadedDate = null;
 // دالة لجلب أسماء رحلات Diving من TripDefinitions (حسب عمود Category)
 async function loadDivingTripNames() {
   try {
@@ -1376,11 +1386,21 @@ function formatNonZero(val) {
 // ASSIGN VEHICLES, BOATS, INSTRUCTORS (Simplified - similar to previous)
 // ============================================================
 async function loadAndPopulateAssignments(dateISO) {
-  console.log('🔄 loadAndPopulateAssignments called for date:', dateISO);
+  if (isLoadingAssignments) {
+    console.log('⚠️ Already loading assignments, skipping...');
+    return;
+  }
+  
+  if (lastLoadedDate === dateISO && currentAssignments) {
+    console.log('📦 Using cached assignments for date:', dateISO);
+    updateSelectionBadges();
+    return;
+  }
+  
+  isLoadingAssignments = true;
   
   try {
     const assignments = await gas('getDailyAssignments', { date: dateISO, centerName: currentUser?.centerName });
-    console.log('📊 Assignments response:', assignments);
     
     if (assignments?.success && assignments.data) {
       currentAssignments = assignments.data;
@@ -1395,7 +1415,6 @@ async function loadAndPopulateAssignments(dateISO) {
         vehicles: selectedVehicles.length
       });
     } else {
-      console.log('⚠️ No assignments found, using empty arrays');
       currentAssignments = null;
       selectedBeachInstructors = [];
       selectedBoats = [];
@@ -1403,6 +1422,7 @@ async function loadAndPopulateAssignments(dateISO) {
       selectedVehicles = [];
     }
     
+    lastLoadedDate = dateISO;
     updateSelectionBadges();
   } catch(e) {
     console.error('❌ loadAndPopulateAssignments error:', e);
@@ -1411,9 +1431,10 @@ async function loadAndPopulateAssignments(dateISO) {
     boatInstructorsMap = {};
     selectedVehicles = [];
     updateSelectionBadges();
+  } finally {
+    isLoadingAssignments = false;
   }
 }
-
 async function openAssignVehicles(voucherNo) {
   const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
   if (!invoice) return;
@@ -2229,11 +2250,12 @@ async function openVehiclesModal() {
   openModal('vehiclesModal');
   
   try {
-    let allVehicles = cachedVehicles;
-    if (!allVehicles || allVehicles.length === 0) {
-      allVehicles = await gas('getVehicles', { centerName: currentUser?.centerName });
-      cachedVehicles = allVehicles;
-    }
+    // ✅ استخدام التخزين المؤقت
+    let allVehicles = await getCachedData(
+      () => gas('getVehicles', { centerName: currentUser?.centerName }),
+      'vehicles'
+    );
+    cachedVehicles = allVehicles;
     
     const passengerVehicles = allVehicles.filter(v => 
       v.isActive === true && v.usageType === 'passengers' && v.capacity > 0
@@ -2246,16 +2268,13 @@ async function openVehiclesModal() {
     
     const tripsOnDate = [...new Set(filteredInvoices.map(inv => inv.trip).filter(t => t))];
     
-    // ✅ جلب البيانات المسجلة مباشرة
     let savedRecords = [];
     try {
       const result = await gas('getVehicleTripRecords', { 
         date: currentDate,
         centerName: currentUser?.centerName 
       });
-      console.log('📥 VehicleTripRecords result:', result);
       if (result?.success && result.data) {
-        // تحويل من { "trip|vehicle": { goCount, returnCount } } إلى مصفوفة
         for (const [key, record] of Object.entries(result.data)) {
           const [tripName, vehicleId] = key.split('|');
           if (tripName && vehicleId) {
@@ -2271,8 +2290,6 @@ async function openVehiclesModal() {
     } catch(e) {
       console.warn('Failed to load vehicle records:', e);
     }
-    
-    console.log('📋 Saved records:', savedRecords);
     
     let html = `
       <div style="max-height: 450px; overflow-y: auto;">
@@ -2306,7 +2323,6 @@ async function openVehiclesModal() {
     
     document.getElementById('vehiclesList').innerHTML = html;
     
-    // تحديث المتغير العام
     vehicleTripRows = savedRecords;
     if (vehicleTripRows.length === 0) vehicleTripRows = [{ vehicleId: '', tripName: '', goCount: 0, returnCount: 0 }];
     
@@ -3002,11 +3018,12 @@ async function openBeachInstructorsModal() {
   openModal('beachInstructorsModal');
   
   try {
-    let instructors = cachedInstructors;
-    if (!instructors || instructors.length === 0) {
-      instructors = await gas('getInstructors', { centerName: currentUser?.centerName });
-      cachedInstructors = instructors;
-    }
+    // ✅ استخدام التخزين المؤقت
+    let instructors = await getCachedData(
+      () => gas('getInstructors', { centerName: currentUser?.centerName }),
+      'instructors'
+    );
+    cachedInstructors = instructors;
     
     const savedAssignments = await gas('getDailyAssignments', { date: currentDate, centerName: currentUser?.centerName });
     if (savedAssignments?.success && savedAssignments.data) {
@@ -3079,14 +3096,19 @@ async function openBeachInstructorsModal() {
   } catch(e) {
     showToast('Error loading instructors: ' + e.message, 'error');
   }
-}  
+}
   
 // ✅ دالة حفظ جديدة مع تحديث InstructorDailyAssignments
 async function saveBeachInstructorsV2() {
-  // ✅ منع الضغط المتكرر على زر Save
+  // ✅ منع الضغط المتكرر والاستدعاءات المتزامنة
+  if (isSavingBeach) {
+    console.log('⚠️ Save already in progress, ignoring...');
+    return;
+  }
+  
   const saveBtn = document.querySelector('#beachInstructorsModal .btn-primary');
   if (saveBtn && saveBtn.disabled) {
-    console.log('⚠️ Save already in progress, ignoring...');
+    console.log('⚠️ Save button disabled, ignoring...');
     return;
   }
   
@@ -3121,7 +3143,8 @@ async function saveBeachInstructorsV2() {
     return;
   }
   
-  // ✅ تعطيل الزر وتغيير النص
+  isSavingBeach = true;
+  
   if (saveBtn) {
     saveBtn.disabled = true;
     saveBtn.textContent = '⏳ Saving...';
@@ -3129,54 +3152,56 @@ async function saveBeachInstructorsV2() {
   
   showToast('Saving beach instructors...', 'info');
   
-  // ✅ حفظ في DailyAssignments
   const assignments = currentAssignments || {};
   assignments.beachInstructors = selected;
   
   try {
-    const result = await gas('saveDailyAssignments', {
+    // ✅ تنفيذ العمليات بالتوازي
+    const deletePromise = gas('deleteInstructorDailyLogsByType', {
+      date: currentDate,
+      assignmentType: 'Beach',
+      centerName: currentUser?.centerName
+    });
+    
+    const savePromise = gas('saveDailyAssignments', {
       date: currentDate,
       data: JSON.stringify(assignments),
       centerName: currentUser?.centerName
     });
     
-    if (result && result.success !== false) {
-      selectedBeachInstructors = selected;
-      currentAssignments = assignments;
-      updateSelectionBadges();
-      
-      // ✅ حذف جميع سجلات Beach لهذا التاريخ أولاً
-      await gas('deleteInstructorDailyLogsByType', {
-        date: currentDate,
-        assignmentType: 'Beach',
-        centerName: currentUser?.centerName
-      });
-      
-      // ✅ تسجيل كل مدرب في InstructorDailyAssignments
-      for (const instructorId of selected) {
-        const instructor = cachedInstructors.find(i => i.id === instructorId);
-        if (instructor) {
-          await gas('assignInstructorToDailyLog', {
-            date: currentDate,
-            instructorId: instructorId,
-            instructorName: instructor.name,
-            assignmentType: 'Beach',
-            boatId: '',
-            boatName: '',
-            centerName: currentUser?.centerName
-          });
-        }
+    await Promise.all([deletePromise, savePromise]);
+    
+    selectedBeachInstructors = selected;
+    currentAssignments = assignments;
+    updateSelectionBadges();
+    
+    // ✅ تسجيل المدربين بالتوازي
+    const logPromises = selected.map(instructorId => {
+      const instructor = cachedInstructors.find(i => i.id === instructorId);
+      if (instructor) {
+        return gas('assignInstructorToDailyLog', {
+          date: currentDate,
+          instructorId: instructorId,
+          instructorName: instructor.name,
+          assignmentType: 'Beach',
+          boatId: '',
+          boatName: '',
+          centerName: currentUser?.centerName
+        });
       }
-      
-      showToast(`✅ Saved ${selected.length} beach instructors`, 'success');
-      closeModal('beachInstructorsModal');
-    } else {
-      showToast('❌ Failed to save beach instructors', 'error');
+      return null;
+    }).filter(p => p !== null);
+    
+    if (logPromises.length > 0) {
+      await Promise.all(logPromises);
     }
+    
+    showToast(`✅ Saved ${selected.length} beach instructors`, 'success');
+    closeModal('beachInstructorsModal');
   } catch(e) {
     showToast('Error: ' + e.message, 'error');
   } finally {
-    // ✅ إعادة تمكين الزر
+    isSavingBeach = false;
     if (saveBtn) {
       saveBtn.disabled = false;
       saveBtn.textContent = '✅ Save';
@@ -3199,13 +3224,17 @@ async function openBoatsModal() {
   
   try {
     if (cachedInstructors.length === 0) {
-      cachedInstructors = await gas('getInstructors', { centerName: currentUser?.centerName });
+      const instructors = await gas('getInstructors', { centerName: currentUser?.centerName });
+      cachedInstructors = instructors;
     }
     
-    const boats = await gas('getBoats', { centerName: currentUser?.centerName });
+    // ✅ استخدام التخزين المؤقت
+    const boats = await getCachedData(
+      () => gas('getBoats', { centerName: currentUser?.centerName }),
+      'boats'
+    );
     cachedBoats = boats;
     
-    // جلب التعيينات المحفوظة
     const savedAssignments = await gas('getDailyAssignments', { date: currentDate, centerName: currentUser?.centerName });
     if (savedAssignments?.success && savedAssignments.data) {
       selectedBoats = savedAssignments.data.boats || [];
@@ -3214,13 +3243,10 @@ async function openBoatsModal() {
       updateSelectionBadges();
     }
     
-   // ✅ دالة لإعادة بناء القائمة (لتحديث الديناميكية مع الحفاظ على اختيارات المراكب)
-    // ✅ دالة لإعادة بناء القائمة (لتحديث الديناميكية مع الحفاظ على اختيارات المراكب)
+    // ✅ دالة renderBoatsList (مضمنة)
     function renderBoatsList(preserveSelections = false) {
-      // تجميع المدربين المشغولين
       const busyInstructors = new Set();
       
-      // مدربي المراكب المختارة (من boatInstructorsMap)
       for (const [boatId, instructorsList] of Object.entries(boatInstructorsMap)) {
         if (Array.isArray(instructorsList)) {
           instructorsList.forEach(id => busyInstructors.add(id));
@@ -3229,10 +3255,8 @@ async function openBoatsModal() {
         }
       }
       
-      // مدربي الشاطئ (لا يظهرون أبداً في قائمة المراكب)
       selectedBeachInstructors.forEach(id => busyInstructors.add(id));
       
-      // ✅ حفظ حالة المراكب المختارة قبل إعادة البناء (إذا كنا نريد الحفاظ عليها)
       let previousSelectedBoats = [];
       if (preserveSelections) {
         previousSelectedBoats = [...selectedBoats];
@@ -3362,8 +3386,8 @@ async function openBoatsModal() {
   } catch(e) {
     showToast('Error loading boats: ' + e.message, 'error');
   }
-}  // ✅ هذا القوس يغلق async function openBoatsModal()
-// ✅ تحميل قائمة الفروع
+}
+  // ✅ تحميل قائمة الفروع
 async function loadBranches() {
   if (!currentUser) return;
   
@@ -3855,10 +3879,14 @@ async function saveLogisticsVehicles() {
   }
 }
 async function saveBoatsAndInstructorsV2() {
-  // ✅ منع الضغط المتكرر
+  if (isSavingBoats) {
+    console.log('⚠️ Save already in progress, ignoring...');
+    return;
+  }
+  
   const saveBtn = document.querySelector('#boatsModal .btn-primary');
   if (saveBtn && saveBtn.disabled) {
-    console.log('⚠️ Save already in progress, ignoring...');
+    console.log('⚠️ Save button disabled, ignoring...');
     return;
   }
   
@@ -3884,6 +3912,8 @@ async function saveBoatsAndInstructorsV2() {
     return;
   }
   
+  isSavingBoats = true;
+  
   if (saveBtn) {
     saveBtn.disabled = true;
     saveBtn.textContent = '⏳ Saving...';
@@ -3891,70 +3921,85 @@ async function saveBoatsAndInstructorsV2() {
   
   showToast('Saving boats and instructors...', 'info');
   
-  // ✅ ✅ ✅ قراءة مدربي الشاطئ الحاليين من currentAssignments
   const currentBeachInstructors = currentAssignments?.beachInstructors || selectedBeachInstructors || [];
   
-  // ✅ حفظ في DailyAssignments (مع الاحتفاظ بمدربي الشاطئ)
   const assignments = {
-    beachInstructors: currentBeachInstructors,  // ✅ الحفاظ على مدربي الشاطئ
+    beachInstructors: currentBeachInstructors,
     boats: selectedBoatsList,
     boatInstructorsMap: instructorsMap
   };
   
   try {
-    const result = await gas('saveDailyAssignments', {
+    const deletePromise = gas('deleteInstructorDailyLogsByType', {
+      date: currentDate,
+      assignmentType: 'Boat',
+      centerName: currentUser?.centerName
+    });
+    
+    const savePromise = gas('saveDailyAssignments', {
       date: currentDate,
       data: JSON.stringify(assignments),
       centerName: currentUser?.centerName
     });
     
-    if (result && result.success !== false) {
-      selectedBoats = selectedBoatsList;
-      boatInstructorsMap = instructorsMap;
-      // ✅ لا نغير selectedBeachInstructors
-      currentAssignments = assignments;
-      
-      // ✅ حذف جميع سجلات Boat لهذا التاريخ أولاً فقط (وليس Beach)
-      await gas('deleteInstructorDailyLogsByType', {
-        date: currentDate,
-        assignmentType: 'Boat',
-        centerName: currentUser?.centerName
-      });
-      
-      // ✅ تسجيل مدربي المراكب فقط في InstructorDailyAssignments
-      for (const [boatId, instructors] of Object.entries(instructorsMap)) {
-        const boat = cachedBoats.find(b => b.id === boatId);
-        const boatName = boat?.name || boatId;
-        for (const instructorId of instructors) {
-          const instructor = cachedInstructors.find(i => i.id === instructorId);
-          if (instructor) {
-            await gas('assignInstructorToDailyLog', {
-              date: currentDate,
-              instructorId: instructorId,
-              instructorName: instructor.name,
-              assignmentType: 'Boat',
-              boatId: boatId,
-              boatName: boatName,
-              centerName: currentUser?.centerName
-            });
-          }
+    await Promise.all([deletePromise, savePromise]);
+    
+    selectedBoats = selectedBoatsList;
+    boatInstructorsMap = instructorsMap;
+    currentAssignments = assignments;
+    
+    const logPromises = [];
+    for (const [boatId, instructors] of Object.entries(instructorsMap)) {
+      const boat = cachedBoats.find(b => b.id === boatId);
+      const boatName = boat?.name || boatId;
+      for (const instructorId of instructors) {
+        const instructor = cachedInstructors.find(i => i.id === instructorId);
+        if (instructor) {
+          logPromises.push(gas('assignInstructorToDailyLog', {
+            date: currentDate,
+            instructorId: instructorId,
+            instructorName: instructor.name,
+            assignmentType: 'Boat',
+            boatId: boatId,
+            boatName: boatName,
+            centerName: currentUser?.centerName
+          }));
         }
       }
-      
-      updateSelectionBadges();
-      showToast(`✅ Saved ${selectedBoatsList.length} boats with ${Object.values(instructorsMap).flat().length} instructors`, 'success');
-      closeModal('boatsModal');
-    } else {
-      showToast('❌ Failed to save', 'error');
     }
+    
+    if (logPromises.length > 0) {
+      await Promise.all(logPromises);
+    }
+    
+    updateSelectionBadges();
+    showToast(`✅ Saved ${selectedBoatsList.length} boats with ${Object.values(instructorsMap).flat().length} instructors`, 'success');
+    closeModal('boatsModal');
   } catch(e) {
     showToast('Error: ' + e.message, 'error');
   } finally {
+    isSavingBoats = false;
     if (saveBtn) {
       saveBtn.disabled = false;
       saveBtn.textContent = '✅ Save All';
     }
   }
+}
+  async function getCachedData(fetchFunction, key) {
+  const now = Date.now();
+  if (lastFetchTime && (now - lastFetchTime) < CACHE_DURATION) {
+    if (key === 'boats' && cachedBoatsList) return cachedBoatsList;
+    if (key === 'vehicles' && cachedVehiclesList) return cachedVehiclesList;
+    if (key === 'instructors' && cachedInstructorsList) return cachedInstructorsList;
+  }
+  
+  const data = await fetchFunction();
+  if (key === 'boats') cachedBoatsList = data;
+  if (key === 'vehicles') cachedVehiclesList = data;
+  if (key === 'instructors') cachedInstructorsList = data;
+  lastFetchTime = now;
+  
+  return data;
 }
 async function saveBoatsAndInstructors() {
   const selectedBoatsList = [];
