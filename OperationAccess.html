@@ -3214,142 +3214,155 @@ async function openBoatsModal() {
       updateSelectionBadges();
     }
     
-    // ✅ دالة لإعادة بناء القائمة (لتحديث الديناميكية)
-    function renderBoatsList() {
-      // تجميع المدربين المشغولين
-      const busyInstructors = new Set();
-      
-      // مدربي المراكب المختارة (من boatInstructorsMap)
-      for (const [boatId, instructorsList] of Object.entries(boatInstructorsMap)) {
-        if (Array.isArray(instructorsList)) {
-          instructorsList.forEach(id => busyInstructors.add(id));
-        } else if (instructorsList) {
-          busyInstructors.add(instructorsList);
-        }
-      }
-      
-      // مدربي الشاطئ (لا يظهرون أبداً في قائمة المراكب)
-      selectedBeachInstructors.forEach(id => busyInstructors.add(id));
-      
-      let html = `
-        <div style="max-height: 350px; overflow-y: auto;">
-          <div style="margin-bottom: 10px; padding: 6px 10px; background: var(--gray-100); border-radius: 8px;">
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px;">
-              <input type="checkbox" id="selectAllBoats" style="width: 16px; height: 16px;"> 
-              <span>✅ Select All</span>
-            </label>
-          </div>
-          <div id="boatsListContainer" style="display: flex; flex-direction: column; gap: 8px;">
-      `;
-      
-      for (const boat of boats) {
-        const isSelected = selectedBoats.includes(boat.id);
-        const selectedInstructorsForBoat = boatInstructorsMap[boat.id] || [];
-        
-        // المدربين المتاحين (المدربين غير المشغولين + المدربين المختارين لهذا المركب)
-        const availableInstructors = cachedInstructors.filter(inst => {
-          if (selectedInstructorsForBoat.includes(inst.id)) return true;
-          if (busyInstructors.has(inst.id)) return false;
-          return true;
-        });
-        
-        html += `
-          <div class="boat-card" style="background: white; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;">
-            <div style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--gray-50); border-bottom: 1px solid var(--border);">
-              <input type="checkbox" class="boat-checkbox" data-id="${boat.id}" ${isSelected ? 'checked' : ''} style="width: 18px; height: 18px; cursor: pointer;">
-              <div style="font-size: 13px; font-weight: 600;">⛵ ${escapeHtml(boat.name)} <span style="font-size: 10px; color: gray;">(Cap: ${boat.capacity || 0})</span></div>
-            </div>
-            <div id="boat-instructors-${boat.id}" style="padding: 8px 10px; ${isSelected ? '' : 'display: none;'}">
-              <div style="font-size: 11px; font-weight: 600; margin-bottom: 6px;">👨‍🏫 Select Instructors:</div>
-              <div style="display: flex; flex-direction: column; gap: 6px; max-height: 120px; overflow-y: auto;">
-        `;
-        
-        for (const inst of availableInstructors) {
-          const isChecked = selectedInstructorsForBoat.includes(inst.id);
-          html += `
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px; padding: 4px; border-radius: 4px; background: var(--gray-50);">
-              <input type="checkbox" class="boat-instructor-cb" data-boat="${boat.id}" data-instructor="${inst.id}" ${isChecked ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer;">
-              <span>👨‍🏫 ${escapeHtml(inst.name)}</span>
-            </label>
-          `;
-        }
-        
-        if (availableInstructors.length === 0) {
-          html += '<div style="font-size: 11px; color: gray; padding: 4px;">No available instructors</div>';
-        }
-        
-        html += `
-              </div>
-            </div>
-          </div>
-        `;
-      }
-      
+   // ✅ دالة لإعادة بناء القائمة (لتحديث الديناميكية مع الحفاظ على اختيارات المراكب)
+function renderBoatsList(preserveSelections = false) {
+  // تجميع المدربين المشغولين
+  const busyInstructors = new Set();
+  
+  // مدربي المراكب المختارة (من boatInstructorsMap)
+  for (const [boatId, instructorsList] of Object.entries(boatInstructorsMap)) {
+    if (Array.isArray(instructorsList)) {
+      instructorsList.forEach(id => busyInstructors.add(id));
+    } else if (instructorsList) {
+      busyInstructors.add(instructorsList);
+    }
+  }
+  
+  // مدربي الشاطئ (لا يظهرون أبداً في قائمة المراكب)
+  selectedBeachInstructors.forEach(id => busyInstructors.add(id));
+  
+  // ✅ حفظ حالة المراكب المختارة قبل إعادة البناء (إذا كنا نريد الحفاظ عليها)
+  let previousSelectedBoats = [];
+  if (preserveSelections) {
+    previousSelectedBoats = [...selectedBoats];
+  }
+  
+  let html = `
+    <div style="max-height: 350px; overflow-y: auto;">
+      <div style="margin-bottom: 10px; padding: 6px 10px; background: var(--gray-100); border-radius: 8px;">
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px;">
+          <input type="checkbox" id="selectAllBoats" style="width: 16px; height: 16px;"> 
+          <span>✅ Select All</span>
+        </label>
+      </div>
+      <div id="boatsListContainer" style="display: flex; flex-direction: column; gap: 8px;">
+  `;
+  
+  for (const boat of boats) {
+    // ✅ إذا كنا نحافظ على التحديد، استخدم القيمة المحفوظة
+    let isSelected = preserveSelections 
+      ? previousSelectedBoats.includes(boat.id)
+      : selectedBoats.includes(boat.id);
+    
+    const selectedInstructorsForBoat = boatInstructorsMap[boat.id] || [];
+    
+    // المدربين المتاحين (المدربين غير المشغولين + المدربين المختارين لهذا المركب)
+    const availableInstructors = cachedInstructors.filter(inst => {
+      if (selectedInstructorsForBoat.includes(inst.id)) return true;
+      if (busyInstructors.has(inst.id)) return false;
+      return true;
+    });
+    
+    html += `
+      <div class="boat-card" style="background: white; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;">
+        <div style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--gray-50); border-bottom: 1px solid var(--border);">
+          <input type="checkbox" class="boat-checkbox" data-id="${boat.id}" ${isSelected ? 'checked' : ''} style="width: 18px; height: 18px; cursor: pointer;">
+          <div style="font-size: 13px; font-weight: 600;">⛵ ${escapeHtml(boat.name)} <span style="font-size: 10px; color: gray;">(Cap: ${boat.capacity || 0})</span></div>
+        </div>
+        <div id="boat-instructors-${boat.id}" style="padding: 8px 10px; ${isSelected ? '' : 'display: none;'}">
+          <div style="font-size: 11px; font-weight: 600; margin-bottom: 6px;">👨‍🏫 Select Instructors:</div>
+          <div style="display: flex; flex-direction: column; gap: 6px; max-height: 120px; overflow-y: auto;">
+    `;
+    
+    for (const inst of availableInstructors) {
+      const isChecked = selectedInstructorsForBoat.includes(inst.id);
       html += `
-          </div>
-        </div>
-        <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);">
-          <button class="btn btn-secondary" onclick="closeModal('boatsModal')" style="padding: 6px 16px; font-size: 12px;">Cancel</button>
-          <button class="btn btn-primary" onclick="saveBoatsAndInstructorsV2()" style="padding: 6px 16px; font-size: 12px;">✅ Save All</button>
-        </div>
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px; padding: 4px; border-radius: 4px; background: var(--gray-50);">
+          <input type="checkbox" class="boat-instructor-cb" data-boat="${boat.id}" data-instructor="${inst.id}" ${isChecked ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer;">
+          <span>👨‍🏫 ${escapeHtml(inst.name)}</span>
+        </label>
       `;
-      
-      document.getElementById('boatsSelectionContainer').innerHTML = html;
-      
-      // ربط الأحداث
-      setTimeout(() => {
-        const selectAll = document.getElementById('selectAllBoats');
-        if (selectAll) {
-          selectAll.addEventListener('change', (e) => {
-            document.querySelectorAll('.boat-checkbox').forEach(cb => {
-              cb.checked = e.target.checked;
-              const boatId = cb.dataset.id;
-              const div = document.getElementById(`boat-instructors-${boatId}`);
-              if (div) div.style.display = e.target.checked ? 'block' : 'none';
-            });
-          });
-        }
-        
-        document.querySelectorAll('.boat-checkbox').forEach(cb => {
-          cb.addEventListener('change', (e) => {
-            const boatId = e.target.dataset.id;
-            const div = document.getElementById(`boat-instructors-${boatId}`);
-            if (div) div.style.display = e.target.checked ? 'block' : 'none';
-          });
-        });
-        
-        // ✅ عند تغيير اختيار مدرب، إعادة بناء القائمة لتحديث المتاحين
-        document.querySelectorAll('.boat-instructor-cb').forEach(cb => {
-          cb.addEventListener('change', () => {
-            // تحديث boatInstructorsMap مؤقتاً
-            const boatId = cb.dataset.boat;
-            const instructorId = cb.dataset.instructor;
-            
-            if (!boatInstructorsMap[boatId]) boatInstructorsMap[boatId] = [];
-            
-            if (cb.checked) {
-              if (!boatInstructorsMap[boatId].includes(instructorId)) {
-                boatInstructorsMap[boatId].push(instructorId);
-              }
-            } else {
-              const index = boatInstructorsMap[boatId].indexOf(instructorId);
-              if (index !== -1) boatInstructorsMap[boatId].splice(index, 1);
-            }
-            
-            // إعادة بناء القائمة لتحديث المتاحين
-            renderBoatsList();
-          });
-        });
-      }, 50);
     }
     
-    renderBoatsList();
+    if (availableInstructors.length === 0) {
+      html += '<div style="font-size: 11px; color: gray; padding: 4px;">No available instructors</div>';
+    }
     
-  } catch(e) {
-    showToast('Error loading boats: ' + e.message, 'error');
+    html += `
+          </div>
+        </div>
+      </div>
+    `;
   }
-}
   
+  html += `
+      </div>
+    </div>
+    <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);">
+      <button class="btn btn-secondary" onclick="closeModal('boatsModal')" style="padding: 6px 16px; font-size: 12px;">Cancel</button>
+      <button class="btn btn-primary" onclick="saveBoatsAndInstructorsV2()" style="padding: 6px 16px; font-size: 12px;">✅ Save All</button>
+    </div>
+  `;
+  
+  document.getElementById('boatsSelectionContainer').innerHTML = html;
+  
+  // ربط الأحداث
+  setTimeout(() => {
+    const selectAll = document.getElementById('selectAllBoats');
+    if (selectAll) {
+      selectAll.addEventListener('change', (e) => {
+        document.querySelectorAll('.boat-checkbox').forEach(cb => {
+          cb.checked = e.target.checked;
+          const boatId = cb.dataset.id;
+          const div = document.getElementById(`boat-instructors-${boatId}`);
+          if (div) div.style.display = e.target.checked ? 'block' : 'none';
+        });
+      });
+    }
+    
+    document.querySelectorAll('.boat-checkbox').forEach(cb => {
+      cb.addEventListener('change', (e) => {
+        const boatId = e.target.dataset.id;
+        const div = document.getElementById(`boat-instructors-${boatId}`);
+        if (div) div.style.display = e.target.checked ? 'block' : 'none';
+        
+        // ✅ تحديث selectedBoats مباشرة
+        if (e.target.checked) {
+          if (!selectedBoats.includes(boatId)) {
+            selectedBoats.push(boatId);
+          }
+        } else {
+          const index = selectedBoats.indexOf(boatId);
+          if (index !== -1) selectedBoats.splice(index, 1);
+        }
+      });
+    });
+    
+    // ✅ عند تغيير اختيار مدرب، نحدث boatInstructorsMap ونعيد بناء القائمة مع الحفاظ على التحديدات
+    document.querySelectorAll('.boat-instructor-cb').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const boatId = cb.dataset.boat;
+        const instructorId = cb.dataset.instructor;
+        
+        if (!boatInstructorsMap[boatId]) boatInstructorsMap[boatId] = [];
+        
+        if (cb.checked) {
+          if (!boatInstructorsMap[boatId].includes(instructorId)) {
+            boatInstructorsMap[boatId].push(instructorId);
+          }
+        } else {
+          const index = boatInstructorsMap[boatId].indexOf(instructorId);
+          if (index !== -1) boatInstructorsMap[boatId].splice(index, 1);
+        }
+        
+        // ✅ إعادة بناء القائمة مع الحفاظ على اختيارات المراكب الحالية
+        renderBoatsList(true);
+      });
+    });
+  }, 50);
+}
+
+renderBoatsList();
 // ✅ تحميل قائمة الفروع
 async function loadBranches() {
   if (!currentUser) return;
@@ -3842,7 +3855,7 @@ async function saveLogisticsVehicles() {
   }
 }
 async function saveBoatsAndInstructorsV2() {
-  // ✅ منع الضغط المتكرر على زر Save All
+  // ✅ منع الضغط المتكرر
   const saveBtn = document.querySelector('#boatsModal .btn-primary');
   if (saveBtn && saveBtn.disabled) {
     console.log('⚠️ Save already in progress, ignoring...');
@@ -3871,7 +3884,6 @@ async function saveBoatsAndInstructorsV2() {
     return;
   }
   
-  // ✅ تعطيل الزر وتغيير النص
   if (saveBtn) {
     saveBtn.disabled = true;
     saveBtn.textContent = '⏳ Saving...';
@@ -3879,22 +3891,15 @@ async function saveBoatsAndInstructorsV2() {
   
   showToast('Saving boats and instructors...', 'info');
   
-  // ✅ حذف جميع سجلات Boat لهذا التاريخ أولاً
-  try {
-    await gas('deleteInstructorDailyLogsByType', {
-      date: currentDate,
-      assignmentType: 'Boat',
-      centerName: currentUser?.centerName
-    });
-    console.log('🗑️ Deleted all boat instructor logs for date:', currentDate);
-  } catch(e) {
-    console.warn('Error deleting old logs:', e);
-  }
+  // ✅ ✅ ✅ قراءة مدربي الشاطئ الحاليين من currentAssignments
+  const currentBeachInstructors = currentAssignments?.beachInstructors || selectedBeachInstructors || [];
   
-  // ✅ حفظ في DailyAssignments
-  const assignments = currentAssignments || {};
-  assignments.boats = selectedBoatsList;
-  assignments.boatInstructorsMap = instructorsMap;
+  // ✅ حفظ في DailyAssignments (مع الاحتفاظ بمدربي الشاطئ)
+  const assignments = {
+    beachInstructors: currentBeachInstructors,  // ✅ الحفاظ على مدربي الشاطئ
+    boats: selectedBoatsList,
+    boatInstructorsMap: instructorsMap
+  };
   
   try {
     const result = await gas('saveDailyAssignments', {
@@ -3906,9 +3911,17 @@ async function saveBoatsAndInstructorsV2() {
     if (result && result.success !== false) {
       selectedBoats = selectedBoatsList;
       boatInstructorsMap = instructorsMap;
+      // ✅ لا نغير selectedBeachInstructors
       currentAssignments = assignments;
       
-      // ✅ تسجيل المدربين الجدد في InstructorDailyAssignments
+      // ✅ حذف جميع سجلات Boat لهذا التاريخ أولاً فقط (وليس Beach)
+      await gas('deleteInstructorDailyLogsByType', {
+        date: currentDate,
+        assignmentType: 'Boat',
+        centerName: currentUser?.centerName
+      });
+      
+      // ✅ تسجيل مدربي المراكب فقط في InstructorDailyAssignments
       for (const [boatId, instructors] of Object.entries(instructorsMap)) {
         const boat = cachedBoats.find(b => b.id === boatId);
         const boatName = boat?.name || boatId;
@@ -3937,7 +3950,6 @@ async function saveBoatsAndInstructorsV2() {
   } catch(e) {
     showToast('Error: ' + e.message, 'error');
   } finally {
-    // ✅ إعادة تمكين الزر
     if (saveBtn) {
       saveBtn.disabled = false;
       saveBtn.textContent = '✅ Save All';
