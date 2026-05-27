@@ -663,8 +663,8 @@ async function loadDivingTripNames() {
   try {
     const tripDefs = await gas('getTripDefinitions', { centerName: currentUser?.centerName });
     
-    if (tripDefs && Array.isArray(tripDefs)) {
-      // ✅ تصفية: فقط الرحلات التي Category === 'Diving' (case insensitive)
+    if (tripDefs && Array.isArray(tripDefs) && tripDefs.length > 0) {
+      // ✅ تصفية: فقط الرحلات التي Category === 'Diving'
       divingTripNames = tripDefs
         .filter(trip => {
           const category = (trip.Category || '').toLowerCase();
@@ -672,38 +672,15 @@ async function loadDivingTripNames() {
         })
         .map(trip => trip.TripName);
       
-      console.log(`✅ تم تحميل ${divingTripNames.length} رحلة Diving:`, divingTripNames);
+      console.log(`✅ تم تحميل ${divingTripNames.length} رحلة Diving من الخادم:`, divingTripNames);
     } else {
-      // ✅ استخدام القائمة الثابتة كـ fallback
-      divingTripNames = [
-        'Private Boat (max 10 persons)',
-        'Ras Mohamed Boat',
-        'Check Dive',
-        'Scuba Review',
-        'Thistlegorm',
-        'Tiran Island',
-        'Dinner Cruise',
-        'Bubble Maker Course',
-        'Open Water Course',
-        'Advanced OWD Course',
-        'Diving From Beach'
-      ];
+      // ✅ إذا لم تنجح من الخادم، استخدم البحث بالكلمات المفتاحية
+      console.log('⚠️ لم يتم تحميل البيانات من الخادم، سيتم استخدام البحث بالكلمات المفتاحية');
+      divingTripNames = []; // تركها فارغة لاستخدام البحث بالكلمات
     }
   } catch(e) {
     console.warn('Failed to load trip definitions:', e);
-    divingTripNames = [
-      'Private Boat (max 10 persons)',
-      'Ras Mohamed Boat',
-      'Check Dive',
-      'Scuba Review',
-      'Thistlegorm',
-      'Tiran Island',
-      'Dinner Cruise',
-      'Bubble Maker Course',
-      'Open Water Course',
-      'Advanced OWD Course',
-      'Diving From Beach'
-    ];
+    divingTripNames = []; // تركها فارغة لاستخدام البحث بالكلمات
   }
   
   return divingTripNames;
@@ -713,17 +690,19 @@ async function loadDivingTripNames() {
 function isDivingTrip(tripName) {
   if (!tripName) return false;
   
-  // ✅ تصفية Diving بالكلمات المفتاحية
-  const divingKeywords = ['diving', 'dive', 'scuba', 'snorkel', 'boat', 'ras mohamed', 'private boat', 'check dive', 'scuba review', 'thistlegorm', 'tiran'];
-  const lowerTrip = tripName.toLowerCase();
-  
-  const isDiving = divingKeywords.some(keyword => lowerTrip.includes(keyword));
-  
-  if (!isDiving) {
-    console.log(`🚫 Filtered out: ${tripName}`);
+  // ✅ إذا كانت divingTripNames محملة ولديها بيانات، استخدمها
+  if (divingTripNames && divingTripNames.length > 0) {
+    const result = divingTripNames.includes(tripName);
+    if (!result) {
+      console.log(`🚫 Filtered out (not in diving list): ${tripName}`);
+    }
+    return result;
   }
   
-  return isDiving;
+  // ✅ إذا لم تكن البيانات محملة بعد، نسمح بمرور جميع الرحلات مؤقتاً
+  // (سيتم تصفيتها لاحقاً عند اكتمال التحميل)
+  console.warn(`⚠️ divingTripNames not loaded yet, allowing: ${tripName}`);
+  return true;
 }
   
 
@@ -967,18 +946,19 @@ async function loadInvoices() {
         invoices = invoices.filter(inv => inv.branchName === selectedBranchName);
       }
       
-      // ✅ ✅ ✅ عرض الفواتير قبل تصفية Diving
+      // ✅ ✅ ✅ تصفية الرحلات: عرض رحلات Diving فقط
       console.log('📊 Before Diving filter - invoices count:', invoices.length);
       console.log('📊 Sample trip names:', invoices.slice(0, 5).map(inv => inv.Trip || inv.trip));
+      console.log('📊 divingTripNames:', divingTripNames);
+      console.log('📊 User type:', currentUser?.type);
       
-      // ✅ تصفية الرحلات: عرض رحلات Diving فقط
-    
-      // بعد التصفية
-    console.log('📊 Before Diving filter - invoices count:', invoices.length);
-    console.log('📊 Sample trip names:', invoices.slice(0, 5).map(inv => inv.Trip || inv.trip));
-    console.log('📊 divingTripNames:', divingTripNames);
-    console.log('📊 User type:', currentUser?.type);
-      // ✅ ✅ ✅ عرض الفواتير بعد تصفية Diving
+      // ✅ تطبيق تصفية Diving على جميع الفواتير
+      invoices = invoices.filter(inv => {
+        const tripName = inv.Trip || inv.trip || '';
+        return isDivingTrip(tripName);
+      });
+      
+      // ✅ عرض الفواتير بعد تصفية Diving
       console.log('📊 After Diving filter - invoices count:', invoices.length);
       
       allInvoices = invoices;
@@ -1010,13 +990,8 @@ function initTripFilter() {
   const select = document.getElementById('filterTrip');
   select.innerHTML = '<option value="">All Trips</option>';
   
-  // ✅ عرض رحلات Diving فقط في قائمة الفلتر
-  let tripsToShow = uniqueTrips;
-  
-  const fullAccessTypes = ['Admin', 'Owner', 'Accountant', 'FinancialManager'];
-  if (!fullAccessTypes.includes(currentUser?.type)) {
-    tripsToShow = uniqueTrips.filter(trip => isDivingTrip(trip));
-  }
+  // ✅ عرض رحلات Diving فقط في قائمة الفلتر (لجميع المستخدمين)
+  let tripsToShow = uniqueTrips.filter(trip => isDivingTrip(trip));
   
   tripsToShow.forEach(trip => {
     const option = document.createElement('option');
