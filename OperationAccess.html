@@ -857,11 +857,28 @@ function updateSelectionButtonsState() {
 }
 
 function updateSelectionBadges() {
-  document.getElementById('selectedInstructorsBadge').textContent = selectedBeachInstructors.length;
-  document.getElementById('selectedBoatsBadge').textContent = selectedBoats.length;
-  document.getElementById('selectedVehiclesBadge').textContent = selectedVehicles.length;
-  const badge = document.getElementById('selectedLogisticsBadge');
-  if (badge) badge.textContent = preloadedData.logisticsRecords?.length || 0;
+  console.log('🔄 updateSelectionBadges called');
+  console.log('📊 selectedBeachInstructors:', selectedBeachInstructors);
+  console.log('📊 selectedBoats:', selectedBoats);
+  console.log('📊 selectedVehicles:', selectedVehicles);
+  console.log('📊 logisticsRecords:', preloadedData.logisticsRecords);
+  
+  const beachBadge = document.getElementById('selectedInstructorsBadge');
+  const boatsBadge = document.getElementById('selectedBoatsBadge');
+  const vehiclesBadge = document.getElementById('selectedVehiclesBadge');
+  const logisticsBadge = document.getElementById('selectedLogisticsBadge');
+  
+  if (beachBadge) beachBadge.textContent = selectedBeachInstructors.length;
+  if (boatsBadge) boatsBadge.textContent = selectedBoats.length;
+  if (vehiclesBadge) vehiclesBadge.textContent = selectedVehicles.length;
+  if (logisticsBadge) logisticsBadge.textContent = preloadedData.logisticsRecords?.length || 0;
+  
+  console.log('✅ Badges updated:', {
+    beach: selectedBeachInstructors.length,
+    boats: selectedBoats.length,
+    vehicles: selectedVehicles.length,
+    logistics: preloadedData.logisticsRecords?.length || 0
+  });
 }
 
 // ============================================================
@@ -1359,21 +1376,42 @@ function formatNonZero(val) {
 // ASSIGN VEHICLES, BOATS, INSTRUCTORS (Simplified - similar to previous)
 // ============================================================
 async function loadAndPopulateAssignments(dateISO) {
-  const assignments = await gas('getDailyAssignments', { date: dateISO });
-  if (assignments?.success && assignments.data) {
-    currentAssignments = assignments.data;
-    selectedBeachInstructors = assignments.data.beachInstructors || [];
-    selectedBoats = assignments.data.boats || [];
-    boatInstructorsMap = assignments.data.boatInstructorsMap || {};
-    selectedVehicles = assignments.data.vehicles || [];
-  } else {
-    currentAssignments = null;
+  console.log('🔄 loadAndPopulateAssignments called for date:', dateISO);
+  
+  try {
+    const assignments = await gas('getDailyAssignments', { date: dateISO, centerName: currentUser?.centerName });
+    console.log('📊 Assignments response:', assignments);
+    
+    if (assignments?.success && assignments.data) {
+      currentAssignments = assignments.data;
+      selectedBeachInstructors = assignments.data.beachInstructors || [];
+      selectedBoats = assignments.data.boats || [];
+      boatInstructorsMap = assignments.data.boatInstructorsMap || {};
+      selectedVehicles = assignments.data.vehicles || [];
+      
+      console.log('✅ Loaded from server:', {
+        beach: selectedBeachInstructors.length,
+        boats: selectedBoats.length,
+        vehicles: selectedVehicles.length
+      });
+    } else {
+      console.log('⚠️ No assignments found, using empty arrays');
+      currentAssignments = null;
+      selectedBeachInstructors = [];
+      selectedBoats = [];
+      boatInstructorsMap = {};
+      selectedVehicles = [];
+    }
+    
+    updateSelectionBadges();
+  } catch(e) {
+    console.error('❌ loadAndPopulateAssignments error:', e);
     selectedBeachInstructors = [];
     selectedBoats = [];
     boatInstructorsMap = {};
     selectedVehicles = [];
+    updateSelectionBadges();
   }
-  updateSelectionBadges();
 }
 
 async function openAssignVehicles(voucherNo) {
@@ -4000,15 +4038,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadInvoices();
     renderTable(); 
     
+    // ✅ ✅ ✅ تحميل التعيينات لليوم الحالي (مرة واحدة فقط)
+    const currentDate = getCurrentDateISO();
+    if (currentDate) {
+      await loadAndPopulateAssignments(currentDate);
+      console.log('✅ Assignments loaded for date:', currentDate);
+      console.log('📊 Beach Instructors:', selectedBeachInstructors);
+      console.log('📊 Boats:', selectedBoats);
+      console.log('📊 Vehicles:', selectedVehicles);
+      updateSelectionBadges();  // ✅ تحديث الأزرار
+    }
+    
     // ✅ اختبار وجود الـ Modals والأزرار
     setTimeout(() => {
-      // التحقق من وجود الـ Modals
       const modals = ['beachInstructorsModal', 'boatsModal', 'vehiclesModal', 'logisticsVehiclesModal', 'assignVehiclesModal', 'assignBoatsModal', 'assignInstructorsModal', 'timeModal', 'upsellModal', 'detailsModal'];
       modals.forEach(id => {
         const modal = document.getElementById(id);
         if (modal) {
           console.log(`✅ Modal ${id} found`);
-          // التأكد من أن الـ Modal مخفي
           modal.style.display = 'none';
           modal.classList.remove('open');
         } else {
@@ -4016,13 +4063,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       });
       
-      // التحقق من أزرار شريط الاختيار
       const btns = ['btnInstructors', 'btnBoats', 'btnVehicles', 'btnLogisticsVehicles'];
       btns.forEach(id => {
         const btn = document.getElementById(id);
         if (btn) {
           console.log(`✅ Button ${id} found`);
-          // إضافة مستمع للتأكد من أن الزر يعمل
           btn.addEventListener('click', function(e) {
             console.log(`🔘 Button ${id} clicked`);
           });
@@ -4044,9 +4089,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       } catch(e) { console.warn('Failed to load cached data:', e); }
     }, 500);
     
-    if (fromDateInput.value && toDateInput.value && fromDateInput.value === toDateInput.value) {
-      setTimeout(() => loadAndPopulateAssignments(fromDateInput.value), 1000);
-    }
     updateSelectionButtonsState();
     
   } catch(e) { 
