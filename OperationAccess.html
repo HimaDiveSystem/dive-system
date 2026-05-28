@@ -1484,18 +1484,20 @@ async function openAssignVehicles(voucherNo) {
   const currentDate = getCurrentDateISO();
   const tripName = invoice.trip || '';
   
+  // ✅ حساب تفاصيل الركاب من الفاتورة
   const adults = parseInt(invoice.sgl) || 0;
   const children = parseInt(invoice.dbl) || 0;
   const infants = parseInt(invoice.trpl) || 0;
-  const totalPassengers = adults + children;
+  const totalPassengers = adults + children; // الرضع لا يشغلون مقاعد
   
   let savedVehicles = [];
   try { savedVehicles = JSON.parse(invoice.VehiclesUsed || '[]'); } catch(e) {}
   
+  // ✅ عرض شاشة تحميل
   document.getElementById('assignVehiclesContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري تحميل البيانات...</div>';
   openModal('assignVehiclesModal');
   
-  // ✅ استخدام التخزين المؤقت لتجنب استدعاءات متكررة
+  // ✅ جلب جميع البيانات بالتوازي مع التخزين المؤقت
   const fetchPromises = [];
   for (const vehId of selectedVehicles) {
     const vehicle = cachedVehicles.find(v => v.id === vehId);
@@ -1508,9 +1510,8 @@ async function openAssignVehicles(voucherNo) {
     const savedChild = saved?.children || 0;
     const savedInfant = saved?.infants || 0;
     
-    // ✅ مفتاح التخزين المؤقت
+    // ✅ التخزين المؤقت للنتائج
     const cacheKey = `${currentDate}|${tripName}|${vehId}`;
-    
     let bookedResult = cachedVehicleSeats[cacheKey];
     if (!bookedResult) {
       bookedResult = await gas('getVehicleBookedSeatsForTrip', { 
@@ -1533,12 +1534,13 @@ async function openAssignVehicles(voucherNo) {
   
   const results = await Promise.all(fetchPromises);
   
+  // ✅ بناء HTML
   let vehiclesHtml = `
     <div class="summary-box" style="margin-bottom: 12px; padding: 12px; background: var(--navy); color: white; border-radius: 8px;">
       <strong>📊 Invoice Summary:</strong><br>
       Trip: ${escapeHtml(tripName)}<br>
       👤 Adults: ${adults} | 👶 Children: ${children} | 🍼 Infants: ${infants}<br>
-      <span style="font-size: 11px; opacity: 0.8;">💡 Total passengers needing seats: ${totalPassengers} (Infants do not require seats)</span>
+      <span style="font-size: 11px; opacity: 0.8;">💡 Total passengers needing seats: ${totalPassengers}</span>
     </div>
     <div style="overflow-x:auto; max-height: 450px;">
       <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
@@ -1560,14 +1562,23 @@ async function openAssignVehicles(voucherNo) {
   for (const res of results) {
     const { vehicle, capacity, savedGo, savedReturn, savedAdult, savedChild, savedInfant, bookedResult } = res;
     
- // ✅ الصحيح: المقاعد المتاحة = السعة - (المحجوز من فواتير أخرى) - (المدخل حالياً)
-const availableGo = Math.max(0, capacity - (bookedResult.goSeats || 0) - currentGoValue);
-const availableReturn = Math.max(0, capacity - (bookedResult.returnSeats || 0) - currentReturnValue);    
+    // ✅ القيم الافتراضية (من الفاتورة أو من القيم المحفوظة)
     const defaultAdultQty = savedAdult > 0 ? savedAdult : adults;
     const defaultChildQty = savedChild > 0 ? savedChild : children;
     const defaultInfantQty = savedInfant;
     const defaultGoValue = savedGo > 0 ? savedGo : totalPassengers;
     const defaultReturnValue = savedReturn > 0 ? savedReturn : totalPassengers;
+    
+    // ✅ الحد الأقصى لكل حقل (السعة - المحجوز من فواتير أخرى)
+    const maxGoValue = Math.max(0, capacity - (bookedResult.goSeats || 0));
+    const maxReturnValue = Math.max(0, capacity - (bookedResult.returnSeats || 0));
+    
+    // ✅ المقاعد المتاحة بعد إضافة القيم الحالية
+    const availableGo = Math.max(0, maxGoValue - defaultGoValue);
+    const availableReturn = Math.max(0, maxReturnValue - defaultReturnValue);
+    
+    // ✅ تحديد ما إذا كانت السيارة محددة
+    const isChecked = (savedGo > 0 || savedReturn > 0 || savedAdult > 0 || savedChild > 0);
     
     vehiclesHtml += `
       <tr>
@@ -1575,43 +1586,46 @@ const availableReturn = Math.max(0, capacity - (bookedResult.returnSeats || 0) -
           <strong>${escapeHtml(vehicle.licensePlate)}</strong><br>
           <span style="font-size: 9px;">🚗 ${escapeHtml(vehicle.driverName || 'No driver')}</span>
           <div style="font-size: 8px; color: #aaa;">ID: ${vehicle.id}</div>
-        </td>
+         </td>
         <td style="text-align: center; padding: 8px; background: var(--gray-50); font-weight: bold;">${capacity}</td>
         <td style="text-align: center; padding: 8px;">
           <input type="number" class="assign-go" data-id="${vehicle.id}" 
                  value="${defaultGoValue}" 
-                 min="0" max="${availableGo + savedGo}" 
+                 min="0" max="${maxGoValue}" 
                  style="width: 60px; text-align: center; padding: 4px; border-radius: 4px; border: 1px solid var(--border);">
-          <div style="font-size: 9px; color: ${availableGo > 0 ? 'green' : 'red'};">(🟢 ${availableGo} available)</div>
-        </td>
+          <div style="font-size: 9px; color: ${availableGo >= 0 ? 'green' : 'red'};">(🟢 ${availableGo} available)</div>
+         </td>
         <td style="text-align: center; padding: 8px;">
           <input type="number" class="assign-return" data-id="${vehicle.id}" 
                  value="${defaultReturnValue}" 
-                 min="0" max="${availableReturn + savedReturn}" 
+                 min="0" max="${maxReturnValue}" 
                  style="width: 60px; text-align: center; padding: 4px; border-radius: 4px; border: 1px solid var(--border);">
-          <div style="font-size: 9px; color: ${availableReturn > 0 ? 'green' : 'red'};">(🟢 ${availableReturn} available)</div>
-        </td>
+          <div style="font-size: 9px; color: ${availableReturn >= 0 ? 'green' : 'red'};">(🟢 ${availableReturn} available)</div>
+         </td>
         <td style="text-align: center; padding: 8px;">
           <input type="number" class="assign-adult" data-id="${vehicle.id}" 
                  value="${defaultAdultQty || ''}" 
-                 min="0" style="width: 55px; text-align: center; padding: 4px;">
-        </td>
+                 min="0" max="${adults}" 
+                 style="width: 55px; text-align: center; padding: 4px;">
+         </td>
         <td style="text-align: center; padding: 8px;">
           <input type="number" class="assign-child" data-id="${vehicle.id}" 
                  value="${defaultChildQty || ''}" 
-                 min="0" style="width: 55px; text-align: center; padding: 4px;">
-        </td>
+                 min="0" max="${children}" 
+                 style="width: 55px; text-align: center; padding: 4px;">
+         </td>
         <td style="text-align: center; padding: 8px;">
           <input type="number" class="assign-infant" data-id="${vehicle.id}" 
                  value="${defaultInfantQty || ''}" 
-                 min="0" style="width: 55px; text-align: center; padding: 4px;">
-        </td>
+                 min="0" max="${infants}" 
+                 style="width: 55px; text-align: center; padding: 4px;">
+         </td>
         <td style="text-align: center; padding: 8px;">
           <input type="checkbox" class="assign-select" data-id="${vehicle.id}" 
-                 ${(savedGo > 0 || savedReturn > 0 || savedAdult > 0 || savedChild > 0) ? 'checked' : ''} 
+                 ${isChecked ? 'checked' : ''} 
                  style="width: 18px; height: 18px;">
-        </td>
-      </tr>
+         </td>
+       </tr>
     `;
   }
   
@@ -1626,6 +1640,8 @@ const availableReturn = Math.max(0, capacity - (bookedResult.returnSeats || 0) -
   `;
   
   document.getElementById('assignVehiclesContent').innerHTML = vehiclesHtml;
+  
+  // ✅ ربط الأحداث للتحديث الديناميكي
   attachVehicleAssignmentEvents();
 }
   function clearVehicleSeatsCache() {
@@ -1635,30 +1651,96 @@ const availableReturn = Math.max(0, capacity - (bookedResult.returnSeats || 0) -
 }
 // ✅ دالة مساعدة لربط الأحداث في Assign Vehicles
 function attachVehicleAssignmentEvents() {
-  // عند تغيير Go أو Return، نتحقق من عدم تجاوز السعة
-  document.querySelectorAll('#assignVehiclesModal .assign-go, #assignVehiclesModal .assign-return').forEach(input => {
-    input.addEventListener('change', function() {
-      const vehicleId = this.dataset.id;
-      const maxGo = parseInt(this.max) || 0;
-      const currentGo = parseInt(this.value) || 0;
-      if (currentGo > maxGo) {
-        showToast(`⚠️ Maximum Go trips for this vehicle is ${maxGo}`, 'warning');
-        this.value = maxGo;
-      }
+  // ✅ دالة لحساب المقاعد المتاحة ديناميكياً
+  function updateAvailableSeats(vehicleId) {
+    const goInput = document.querySelector(`.assign-go[data-id="${vehicleId}"]`);
+    const returnInput = document.querySelector(`.assign-return[data-id="${vehicleId}"]`);
+    const goValue = parseInt(goInput?.value) || 0;
+    const returnValue = parseInt(returnInput?.value) || 0;
+    
+    // الحصول على السعة القصوى للسيارة
+    const row = goInput?.closest('tr');
+    const capacityCell = row?.querySelector('td:nth-child(2)');
+    const capacity = parseInt(capacityCell?.textContent) || 0;
+    
+    // الحصول على الحد الأقصى لكل حقل
+    const maxGo = parseInt(goInput?.getAttribute('max')) || capacity;
+    const maxReturn = parseInt(returnInput?.getAttribute('max')) || capacity;
+    
+    // المقاعد المحجوزة من فواتير أخرى = السعة - الحد الأقصى
+    const bookedGo = capacity - maxGo;
+    const bookedReturn = capacity - maxReturn;
+    
+    // حساب المقاعد المتاحة الجديدة
+    const availableGo = Math.max(0, capacity - bookedGo - goValue);
+    const availableReturn = Math.max(0, capacity - bookedReturn - returnValue);
+    
+    // تحديث النص المعروض للمقاعد المتاحة
+    const goAvailableDiv = goInput?.closest('td')?.querySelector('div');
+    const returnAvailableDiv = returnInput?.closest('td')?.querySelector('div');
+    
+    if (goAvailableDiv) {
+      goAvailableDiv.innerHTML = `(🟢 ${availableGo} available)`;
+      goAvailableDiv.style.color = availableGo >= 0 ? 'green' : 'red';
+    }
+    if (returnAvailableDiv) {
+      returnAvailableDiv.innerHTML = `(🟢 ${availableReturn} available)`;
+      returnAvailableDiv.style.color = availableReturn >= 0 ? 'green' : 'red';
+    }
+  }
+  
+  // ✅ مستمع لتغيير حقل Go
+  document.querySelectorAll('#assignVehiclesModal .assign-go').forEach(input => {
+    input.removeEventListener('input', (e) => updateAvailableSeats(e.target.dataset.id));
+    input.addEventListener('input', (e) => {
+      updateAvailableSeats(e.target.dataset.id);
     });
   });
   
-  // عند تغيير عدد الركاب، نتحقق من عدم تجاوز سعة السيارة في كل اتجاه
-  document.querySelectorAll('#assignVehiclesModal .assign-adult, #assignVehiclesModal .assign-child, #assignVehiclesModal .assign-infant').forEach(input => {
-    input.addEventListener('change', function() {
-      const vehicleId = this.dataset.id;
-      const goValue = parseInt(document.querySelector(`.assign-go[data-id="${vehicleId}"]`).value) || 0;
-      const returnValue = parseInt(document.querySelector(`.assign-return[data-id="${vehicleId}"]`).value) || 0;
-      const adults = parseInt(document.querySelector(`.assign-adult[data-id="${vehicleId}"]`).value) || 0;
-      const children = parseInt(document.querySelector(`.assign-child[data-id="${vehicleId}"]`).value) || 0;
-      const totalSeatsNeeded = (adults + children) * (goValue + returnValue);
+  // ✅ مستمع لتغيير حقل Return
+  document.querySelectorAll('#assignVehiclesModal .assign-return').forEach(input => {
+    input.removeEventListener('input', (e) => updateAvailableSeats(e.target.dataset.id));
+    input.addEventListener('input', (e) => {
+      updateAvailableSeats(e.target.dataset.id);
+    });
+  });
+  
+  // ✅ مستمع لتغيير Checkbox (تحديد/إلغاء تحديد السيارة)
+  document.querySelectorAll('#assignVehiclesModal .assign-select').forEach(cb => {
+    cb.removeEventListener('change', (e) => {
+      const vehicleId = e.target.dataset.id;
+      const goInput = document.querySelector(`.assign-go[data-id="${vehicleId}"]`);
+      const returnInput = document.querySelector(`.assign-return[data-id="${vehicleId}"]`);
+      const adultInput = document.querySelector(`.assign-adult[data-id="${vehicleId}"]`);
+      const childInput = document.querySelector(`.assign-child[data-id="${vehicleId}"]`);
+      const infantInput = document.querySelector(`.assign-infant[data-id="${vehicleId}"]`);
       
-      // ✅ يمكن إضافة تحذير إذا تجاوزت المقاعد المطلوبة السعة الإجمالية
+      const disabled = !e.target.checked;
+      if (goInput) goInput.disabled = disabled;
+      if (returnInput) returnInput.disabled = disabled;
+      if (adultInput) adultInput.disabled = disabled;
+      if (childInput) childInput.disabled = disabled;
+      if (infantInput) infantInput.disabled = disabled;
+    });
+    cb.addEventListener('change', (e) => {
+      const vehicleId = e.target.dataset.id;
+      const goInput = document.querySelector(`.assign-go[data-id="${vehicleId}"]`);
+      const returnInput = document.querySelector(`.assign-return[data-id="${vehicleId}"]`);
+      const adultInput = document.querySelector(`.assign-adult[data-id="${vehicleId}"]`);
+      const childInput = document.querySelector(`.assign-child[data-id="${vehicleId}"]`);
+      const infantInput = document.querySelector(`.assign-infant[data-id="${vehicleId}"]`);
+      
+      const disabled = !e.target.checked;
+      if (goInput) goInput.disabled = disabled;
+      if (returnInput) returnInput.disabled = disabled;
+      if (adultInput) adultInput.disabled = disabled;
+      if (childInput) childInput.disabled = disabled;
+      if (infantInput) infantInput.disabled = disabled;
+      
+      // إعادة حساب المقاعد المتاحة عند تغيير التحديد
+      if (e.target.checked) {
+        updateAvailableSeats(vehicleId);
+      }
     });
   });
 }
