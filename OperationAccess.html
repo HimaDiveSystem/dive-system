@@ -478,7 +478,13 @@
         padding: 4px 3px;
       }
     }
-    
+    .modal {
+  transition: none !important;
+}
+
+.modal-content {
+  animation: none !important;
+}
     /* الأزرار العامة */
     .btn {
       padding: 10px 20px;
@@ -654,8 +660,16 @@ let preloadedData = { logisticsRecords: {}, vehicleTripRecords: {}, dailyAssignm
 let dataLoaded = false;
 let invoicesLoaded = false;
 let lastFilterParams = {};
+
+// ✅ متغيرات منع التكرار والتخزين المؤقت
+let isLoadingInvoices = false;
+let cachedVehicleSeats = {};
+let cachedBoatSeats = {};
+let isLoadingAssignments = false;
+let lastLoadedDate = null;
+
 // متغير لتخزين أسماء رحلات Diving
-// متغير لتخزين أسماء رحلات Diving المسترجعة من TripDefinitions
+let divingTripNames = [];
 let divingTripNames = [];
 // متغيرات التخزين المؤقت لتسريع الأداء
 let cachedBoatsList = null;
@@ -663,11 +677,8 @@ let cachedVehiclesList = null;
 let cachedInstructorsList = null;
 let lastFetchTime = 0;
 const CACHE_DURATION = 60000; // 60 ثانية
-
 let isSavingBeach = false;
 let isSavingBoats = false;
-let isLoadingAssignments = false;
-let lastLoadedDate = null;
 // دالة لجلب أسماء رحلات Diving من TripDefinitions (حسب عمود Category)
 async function loadDivingTripNames() {
   try {
@@ -895,6 +906,12 @@ function updateSelectionBadges() {
 // LOAD INVOICES
 // ============================================================
 async function loadInvoices() {
+  // ✅ منع التكرار
+  if (isLoadingInvoices) {
+    console.log('⚠️ loadInvoices already in progress, skipping...');
+    return;
+  }
+  
   console.log('🟢 loadInvoices started');
   console.log('📊 divingTripNames length:', divingTripNames.length);
   
@@ -904,10 +921,11 @@ async function loadInvoices() {
     return;
   }
   
+  isLoadingInvoices = true;
+  
   try {
     showToast('جاري تحميل البيانات...', 'info');
     
-    // ✅ تحميل أسماء رحلات Diving أولاً
     if (divingTripNames.length === 0) {
       console.log('🟡 Loading diving trip names...');
       await loadDivingTripNames();
@@ -918,7 +936,6 @@ async function loadInvoices() {
     const toDate = document.getElementById('filterToDate').value;
     const isSingleDate = fromDate && fromDate === toDate;
     
-    // ✅ الحصول على الفرع المختار
     const selectedBranchId = document.getElementById('branchSelect')?.value || '';
     let selectedBranchName = '';
     if (selectedBranchId && window.branchesList) {
@@ -962,24 +979,20 @@ async function loadInvoices() {
         return state === 'confirmed' || state === 'pending';
       });
       
-      // ✅ تصفية حسب الفرع أثناء التحميل
       if (selectedBranchName) {
         invoices = invoices.filter(inv => inv.branchName === selectedBranchName);
       }
       
-      // ✅ ✅ ✅ تصفية الرحلات: عرض رحلات Diving فقط
       console.log('📊 Before Diving filter - invoices count:', invoices.length);
       console.log('📊 Sample trip names:', invoices.slice(0, 5).map(inv => inv.Trip || inv.trip));
       console.log('📊 divingTripNames:', divingTripNames);
       console.log('📊 User type:', currentUser?.type);
       
-      // ✅ تطبيق تصفية Diving على جميع الفواتير
       invoices = invoices.filter(inv => {
         const tripName = inv.Trip || inv.trip || '';
         return isDivingTrip(tripName);
       });
       
-      // ✅ عرض الفواتير بعد تصفية Diving
       console.log('📊 After Diving filter - invoices count:', invoices.length);
       
       allInvoices = invoices;
@@ -1005,6 +1018,8 @@ async function loadInvoices() {
     console.error('loadInvoices error:', e);
     showToast('خطأ في التحميل: ' + e.message, 'error');
     allInvoices = [];
+  } finally {
+    isLoadingInvoices = false;
   }
 }
 function initTripFilter() {
@@ -1470,20 +1485,18 @@ async function openAssignVehicles(voucherNo) {
   const currentDate = getCurrentDateISO();
   const tripName = invoice.trip || '';
   
-  // ✅ حساب تفاصيل الركاب من الفاتورة
   const adults = parseInt(invoice.sgl) || 0;
   const children = parseInt(invoice.dbl) || 0;
   const infants = parseInt(invoice.trpl) || 0;
-  const totalPassengers = adults + children; // ✅ الرضع لا يشغلون مقاعد
+  const totalPassengers = adults + children;
   
   let savedVehicles = [];
   try { savedVehicles = JSON.parse(invoice.VehiclesUsed || '[]'); } catch(e) {}
   
-  // ✅ عرض شاشة تحميل مؤقتة
   document.getElementById('assignVehiclesContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري تحميل البيانات...</div>';
   openModal('assignVehiclesModal');
   
-  // ✅ جلب جميع البيانات بالتوازي لتسريع الأداء
+  // ✅ استخدام التخزين المؤقت لتجنب استدعاءات متكررة
   const fetchPromises = [];
   for (const vehId of selectedVehicles) {
     const vehicle = cachedVehicles.find(v => v.id === vehId);
@@ -1496,25 +1509,31 @@ async function openAssignVehicles(voucherNo) {
     const savedChild = saved?.children || 0;
     const savedInfant = saved?.infants || 0;
     
-    fetchPromises.push(
-      gas('getVehicleBookedSeatsForTrip', { 
+    // ✅ مفتاح التخزين المؤقت
+    const cacheKey = `${currentDate}|${tripName}|${vehId}`;
+    
+    let bookedResult = cachedVehicleSeats[cacheKey];
+    if (!bookedResult) {
+      bookedResult = await gas('getVehicleBookedSeatsForTrip', { 
         date: currentDate, 
         tripName, 
         vehicleId: vehId, 
         excludeVoucher: voucherNo, 
         centerName: currentUser?.centerName 
-      }).then(bookedResult => ({
-        vehicle,
-        capacity: vehicle.capacity || 0,
-        savedGo, savedReturn, savedAdult, savedChild, savedInfant,
-        bookedResult
-      }))
-    );
+      });
+      cachedVehicleSeats[cacheKey] = bookedResult;
+    }
+    
+    fetchPromises.push(Promise.resolve({
+      vehicle,
+      capacity: vehicle.capacity || 0,
+      savedGo, savedReturn, savedAdult, savedChild, savedInfant,
+      bookedResult
+    }));
   }
   
   const results = await Promise.all(fetchPromises);
   
-  // ✅ بناء HTML
   let vehiclesHtml = `
     <div class="summary-box" style="margin-bottom: 12px; padding: 12px; background: var(--navy); color: white; border-radius: 8px;">
       <strong>📊 Invoice Summary:</strong><br>
@@ -1542,17 +1561,12 @@ async function openAssignVehicles(voucherNo) {
   for (const res of results) {
     const { vehicle, capacity, savedGo, savedReturn, savedAdult, savedChild, savedInfant, bookedResult } = res;
     
-    // ✅ حساب المقاعد الشاغرة بشكل صحيح (منفصل لكل اتجاه)
     const availableGo = Math.max(0, capacity - (bookedResult.goSeats || 0));
     const availableReturn = Math.max(0, capacity - (bookedResult.returnSeats || 0));
     
-    // ✅ ✅ ✅ القيم الافتراضية للركاب (جميع الركاب الذين يحتاجون مقاعد)
-    // يتم تعبئة الحقول تلقائياً بقيم الفاتورة إذا لم تكن هناك قيمة محفوظة
     const defaultAdultQty = savedAdult > 0 ? savedAdult : adults;
     const defaultChildQty = savedChild > 0 ? savedChild : children;
     const defaultInfantQty = savedInfant;
-    
-    // ✅ ✅ ✅ القيم الافتراضية للذهاب والعودة (جميع الركاب)
     const defaultGoValue = savedGo > 0 ? savedGo : totalPassengers;
     const defaultReturnValue = savedReturn > 0 ? savedReturn : totalPassengers;
     
@@ -1570,34 +1584,34 @@ async function openAssignVehicles(voucherNo) {
                  min="0" max="${availableGo + savedGo}" 
                  style="width: 60px; text-align: center; padding: 4px; border-radius: 4px; border: 1px solid var(--border);">
           <div style="font-size: 9px; color: ${availableGo > 0 ? 'green' : 'red'};">(🟢 ${availableGo} available)</div>
-         </td>
+        </td>
         <td style="text-align: center; padding: 8px;">
           <input type="number" class="assign-return" data-id="${vehicle.id}" 
                  value="${defaultReturnValue}" 
                  min="0" max="${availableReturn + savedReturn}" 
                  style="width: 60px; text-align: center; padding: 4px; border-radius: 4px; border: 1px solid var(--border);">
           <div style="font-size: 9px; color: ${availableReturn > 0 ? 'green' : 'red'};">(🟢 ${availableReturn} available)</div>
-         </td>
+        </td>
         <td style="text-align: center; padding: 8px;">
           <input type="number" class="assign-adult" data-id="${vehicle.id}" 
                  value="${defaultAdultQty || ''}" 
                  min="0" style="width: 55px; text-align: center; padding: 4px;">
-         </td>
+        </td>
         <td style="text-align: center; padding: 8px;">
           <input type="number" class="assign-child" data-id="${vehicle.id}" 
                  value="${defaultChildQty || ''}" 
                  min="0" style="width: 55px; text-align: center; padding: 4px;">
-         </td>
+        </td>
         <td style="text-align: center; padding: 8px;">
           <input type="number" class="assign-infant" data-id="${vehicle.id}" 
                  value="${defaultInfantQty || ''}" 
                  min="0" style="width: 55px; text-align: center; padding: 4px;">
-         </td>
+        </td>
         <td style="text-align: center; padding: 8px;">
           <input type="checkbox" class="assign-select" data-id="${vehicle.id}" 
                  ${(savedGo > 0 || savedReturn > 0 || savedAdult > 0 || savedChild > 0) ? 'checked' : ''} 
                  style="width: 18px; height: 18px;">
-         </td>
+        </td>
       </tr>
     `;
   }
@@ -1613,11 +1627,13 @@ async function openAssignVehicles(voucherNo) {
   `;
   
   document.getElementById('assignVehiclesContent').innerHTML = vehiclesHtml;
-  
-  // ✅ إضافة مستمعات الأحداث لتحديث المقاعد الشاغرة ديناميكياً
   attachVehicleAssignmentEvents();
 }
-
+  function clearVehicleSeatsCache() {
+  cachedVehicleSeats = {};
+  cachedBoatSeats = {};
+  console.log('🗑️ Vehicle/boat seats cache cleared');
+}
 // ✅ دالة مساعدة لربط الأحداث في Assign Vehicles
 function attachVehicleAssignmentEvents() {
   // عند تغيير Go أو Return، نتحقق من عدم تجاوز السعة
@@ -1715,7 +1731,6 @@ async function openAssignBoats(voucherNo) {
   const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
   if (!invoice) return;
   
-  // ✅ استخدام selectedBoats بدلاً من مركب واحد
   if (selectedBoats.length === 0) { 
     showToast('Please select boats first from the Boats button', 'error'); 
     return; 
@@ -1724,71 +1739,127 @@ async function openAssignBoats(voucherNo) {
   currentAssignVoucher = voucherNo;
   const currentDate = getCurrentDateISO();
   const tripName = invoice.trip || '';
+  
+  // ✅ حساب تفاصيل الركاب من الفاتورة
+  const adults = parseInt(invoice.sgl) || 0;
+  const children = parseInt(invoice.dbl) || 0;
+  const infants = parseInt(invoice.trpl) || 0;
+  const totalPassengers = adults + children + infants;
+  
   let savedBoats = [];
   try { savedBoats = JSON.parse(invoice.BoatsUsed || '[]'); } catch(e) {}
   
-  const totalAdults = parseInt(invoice.sgl) || 0;
-  const totalChildren = parseInt(invoice.dbl) || 0;
-  const totalInfants = parseInt(invoice.trpl) || 0;
+  // ✅ عرض شاشة تحميل
+  document.getElementById('assignBoatsContent').innerHTML = '<div class="loader"><div class="spinner"></div>Loading boats data...</div>';
+  openModal('assignBoatsModal');
   
+  // ✅ جلب جميع البيانات بالتوازي
+  const fetchPromises = [];
+  for (const boatId of selectedBoats) {
+    const boat = cachedBoats.find(b => b.id === boatId);
+    if (!boat) continue;
+    
+    const saved = savedBoats.find(b => b.boatId === boatId);
+    const savedAdult = saved?.adults || 0;
+    const savedChild = saved?.children || 0;
+    const savedInfant = saved?.infants || 0;
+    
+    fetchPromises.push(
+      gas('getBoatBookedSeatsForTrip', { 
+        date: currentDate, 
+        tripName, 
+        boatId, 
+        excludeVoucher: voucherNo, 
+        centerName: currentUser?.centerName 
+      }).then(bookedResult => ({
+        boat,
+        capacity: boat.capacity || 0,
+        savedAdult, savedChild, savedInfant,
+        bookedToday: bookedResult.totalSeats || 0
+      }))
+    );
+  }
+  
+  const results = await Promise.all(fetchPromises);
+  
+  // ✅ بناء HTML
   let boatsHtml = `
     <div class="summary-box" style="margin-bottom: 12px; background: var(--navy); color: white; padding: 12px; border-radius: 8px;">
       <strong>📊 Invoice Summary:</strong><br>
-      Total Passengers: ${totalAdults + totalChildren + totalInfants} (Adult: ${totalAdults}, Child: ${totalChildren}, Infant: ${totalInfants})
+      Trip: ${escapeHtml(tripName)}<br>
+      👤 Adults: ${adults} | 👶 Children: ${children} | 🍼 Infants: ${infants}<br>
+      <span style="font-size: 11px; opacity: 0.8;">💡 Total Passengers: ${totalPassengers}</span>
     </div>
     <div style="overflow-x: auto; max-height: 400px;">
       <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
         <thead>
           <tr style="background: var(--navy); color: var(--gold);">
-            <th style="padding: 6px;">⛵ Boat</th>
-            <th style="padding: 6px;">🎫 Capacity</th>
-            <th style="padding: 6px;">📊 Booked Today</th>
-            <th style="padding: 6px;">✅ Available</th>
-            <th style="padding: 6px;">👤 Adult</th>
-            <th style="padding: 6px;">👶 Child</th>
-            <th style="padding: 6px;">🍼 Infant</th>
-            <th style="padding: 6px;">☑️ Select</th>
+            <th style="padding: 8px;">⛵ Boat</th>
+            <th style="padding: 8px;">🎫 Capacity</th>
+            <th style="padding: 8px;">📊 Booked Today</th>
+            <th style="padding: 8px;">✅ Available</th>
+            <th style="padding: 8px;">👤 Adult</th>
+            <th style="padding: 8px;">👶 Child</th>
+            <th style="padding: 8px;">🍼 Infant</th>
+            <th style="padding: 8px;">☑️ Select</th>
            </tr>
         </thead>
         <tbody>
   `;
   
-  for (const boatId of selectedBoats) {
-    const boat = cachedBoats.find(b => b.id === boatId);
-    if (!boat) continue;
-    const capacity = boat.capacity || 0;
-    const saved = savedBoats.find(b => b.boatId === boatId);
+  for (const res of results) {
+    const { boat, capacity, savedAdult, savedChild, savedInfant, bookedToday } = res;
     
-    const savedAdult = saved?.adults || 0;
-    const savedChild = saved?.children || 0;
-    const savedInfant = saved?.infants || 0;
+    // ✅ حساب المقاعد المتاحة
+    const available = Math.max(0, capacity - bookedToday);
     
-    const bookedResult = await gas('getBoatBookedSeatsForTrip', { 
-      date: currentDate, tripName, boatId, 
-      excludeVoucher: voucherNo, centerName: currentUser?.centerName 
-    });
-    
-    const bookedToday = bookedResult.totalSeats || 0;
-    const savedTotal = savedAdult + savedChild + savedInfant;
-    const available = Math.max(0, capacity - bookedToday - savedTotal);
+    // ✅ القيم الافتراضية (تعبئة تلقائية من الفاتورة)
+    const defaultAdultQty = savedAdult > 0 ? savedAdult : adults;
+    const defaultChildQty = savedChild > 0 ? savedChild : children;
+    const defaultInfantQty = savedInfant > 0 ? savedInfant : infants;
     
     boatsHtml += `
       <tr>
-        <td style="padding: 6px;"><strong>${escapeHtml(boat.name)}</strong></td>
-        <td style="text-align: center; padding: 6px;">${capacity}</span></td>
-        <td style="text-align: center; padding: 6px; ${bookedToday > 0 ? 'color: var(--orange); font-weight: bold;' : ''}">${bookedToday}</span></td>
-        <td style="text-align: center; padding: 6px; ${available > 0 ? 'color: green; font-weight: bold;' : 'color: red;'}">${available}</span></td>
-        <td style="text-align: center; padding: 6px;"><input type="number" class="assign-adult" data-id="${boatId}" value="${savedAdult || ''}" min="0" max="${totalAdults}" style="width: 55px; text-align: center; padding: 4px; border: 1px solid var(--border); border-radius: 6px;"></td>
-        <td style="text-align: center; padding: 6px;"><input type="number" class="assign-child" data-id="${boatId}" value="${savedChild || ''}" min="0" max="${totalChildren}" style="width: 55px; text-align: center; padding: 4px; border: 1px solid var(--border); border-radius: 6px;"></span></td>
-        <td style="text-align: center; padding: 6px;"><input type="number" class="assign-infant" data-id="${boatId}" value="${savedInfant || ''}" min="0" max="${totalInfants}" style="width: 55px; text-align: center; padding: 4px; border: 1px solid var(--border); border-radius: 6px;"></span></td>
-        <td style="text-align: center; padding: 6px;"><input type="checkbox" class="assign-select" data-id="${boatId}" ${(savedAdult > 0 || savedChild > 0 || savedInfant > 0) ? 'checked' : ''} style="width: 18px; height: 18px;"></span></td>
-      </tr>
+        <td style="padding: 8px; background: var(--navy); color: var(--gold); font-weight: bold;">
+          <strong>${escapeHtml(boat.name)}</strong><br>
+          <span style="font-size: 9px;">ID: ${boat.id}</span>
+        </td>
+        <td style="text-align: center; padding: 8px; background: var(--gray-50); font-weight: bold;">${capacity}</td>
+        <td style="text-align: center; padding: 8px; ${bookedToday > 0 ? 'color: var(--orange); font-weight: bold;' : ''}">${bookedToday}</td>
+        <td style="text-align: center; padding: 8px; ${available > 0 ? 'color: green; font-weight: bold;' : 'color: red;'}">
+          ${available}
+          ${available < 10 ? '⚠️ Low availability' : ''}
+        </td>
+        <td style="text-align: center; padding: 6px;">
+          <input type="number" class="assign-adult" data-id="${boat.id}" 
+                 value="${defaultAdultQty || ''}" 
+                 min="0" max="${adults}" 
+                 style="width: 55px; text-align: center; padding: 4px; border: 1px solid var(--border); border-radius: 6px;">
+        </td>
+        <td style="text-align: center; padding: 6px;">
+          <input type="number" class="assign-child" data-id="${boat.id}" 
+                 value="${defaultChildQty || ''}" 
+                 min="0" max="${children}" 
+                 style="width: 55px; text-align: center; padding: 4px; border: 1px solid var(--border); border-radius: 6px;">
+        </td>
+        <td style="text-align: center; padding: 6px;">
+          <input type="number" class="assign-infant" data-id="${boat.id}" 
+                 value="${defaultInfantQty || ''}" 
+                 min="0" max="${infants}" 
+                 style="width: 55px; text-align: center; padding: 4px; border: 1px solid var(--border); border-radius: 6px;">
+        </td>
+        <td style="text-align: center; padding: 6px;">
+          <input type="checkbox" class="assign-select" data-id="${boat.id}" 
+                 ${(savedAdult > 0 || savedChild > 0 || savedInfant > 0) ? 'checked' : ''} 
+                 style="width: 18px; height: 18px;">
+        </td>
+       </tr>
     `;
   }
   
   boatsHtml += `
         </tbody>
-       </table>
+      </table>
     </div>
     <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
       <button class="btn btn-secondary" onclick="closeModal('assignBoatsModal')">Cancel</button>
@@ -1797,7 +1868,6 @@ async function openAssignBoats(voucherNo) {
   `;
   
   document.getElementById('assignBoatsContent').innerHTML = boatsHtml;
-  openModal('assignBoatsModal');
 }
   
 async function saveBoatAssignment() {
@@ -2281,14 +2351,19 @@ function showInstructorDetails(voucherNo, instructorId) {
 // ============================================================
 async function forceRefresh() {
   showToast('جاري التحديث القسري...', 'info');
+  
+  // ✅ مسح التخزين المؤقت
+  clearVehicleSeatsCache();
+  
   lastFilterParams = '';
   invoicesLoaded = false;
   dataLoaded = false;
   await loadInvoices();
   applyFilters();
-  renderTable();           // ✅ تصحيح
+  renderTable();
   showToast('تم التحديث بنجاح', 'success');
 }
+  
 function resetFilters() {
   document.getElementById('filterFromDate').value = '';
   document.getElementById('filterToDate').value = '';
@@ -4264,6 +4339,9 @@ async function onDateChange() {
   const toDate = document.getElementById('filterToDate').value;
   
   if (!fromDate && !toDate) return;
+   
+  // ✅ مسح التخزين المؤقت عند تغيير التاريخ
+  clearVehicleSeatsCache();
   
   lastFilterParams = '';
   invoicesLoaded = false;
@@ -4334,7 +4412,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     await loadBranches();
     document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
-    
+      clearVehicleSeatsCache();
+
     const today = new Date();
     const todayISO = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
     const fromDateInput = document.getElementById('filterFromDate');
