@@ -2048,32 +2048,48 @@ async function openAssignInstructors(voucherNo) {
   currentAssignVoucher = voucherNo;
   currentAssignInvoice = invoice;
   
-  // ✅ تحديد المركب المرتبط بهذه الفاتورة
+  // ✅ تحديد ما إذا كانت الفاتورة لها مراكب أم لا
   let assignedBoats = [];
   try {
     assignedBoats = JSON.parse(invoice.BoatsUsed || '[]');
   } catch(e) {}
   
   const boatIds = assignedBoats.map(b => b.boatId);
+  const hasBoat = boatIds.length > 0;
   
-  // ✅ جمع المدربين المرتبطين بهذه المراكب
-  const relevantInstructorIds = new Set();
-  for (const boatId of boatIds) {
-    const instructors = boatInstructorsMap[boatId];
-    if (instructors) {
-      if (Array.isArray(instructors)) {
-        instructors.forEach(id => relevantInstructorIds.add(id));
-      } else {
-        relevantInstructorIds.add(instructors);
+  // ✅ جمع المدربين المرتبطين (حسب الحالة)
+  let relevantInstructorIds = new Set();
+  
+  if (hasBoat) {
+    // ✅ إذا كان هناك مراكب، خذ مدربي تلك المراكب فقط
+    for (const boatId of boatIds) {
+      const instructors = boatInstructorsMap[boatId];
+      if (instructors) {
+        if (Array.isArray(instructors)) {
+          instructors.forEach(id => relevantInstructorIds.add(id));
+        } else {
+          relevantInstructorIds.add(instructors);
+        }
       }
     }
+  } else {
+    // ✅ إذا لم يكن هناك مراكب، استخدم مدربي الشاطئ
+    relevantInstructorIds = new Set(selectedBeachInstructors);
   }
   
   if (relevantInstructorIds.size === 0) {
-    showToast('⚠️ No instructors assigned to this invoice. Please assign a boat and instructors first.', 'error');
+    const msg = hasBoat 
+      ? '⚠️ No instructors assigned to this invoice. Please assign a boat and instructors first.'
+      : '⚠️ No beach instructors available for today. Please assign beach instructors first.';
+    showToast(msg, 'error');
     return;
   }
   
+  // ✅ عرض شاشة تحميل
+  document.getElementById('assignInstructorsContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري تحميل البيانات...</div>';
+  openModal('assignInstructorsModal');
+  
+  // ✅ جلب المدربين
   let instructors = cachedInstructors;
   if (!instructors.length) {
     instructors = await gas('getInstructors', { centerName: currentUser?.centerName });
@@ -2087,7 +2103,7 @@ async function openAssignInstructors(voucherNo) {
     return;
   }
   
-  // ✅ جلب الأنشطة الديناميكية حسب الرحلة وتصنيفها
+  // ✅ جلب الأنشطة الديناميكية حسب الرحلة
   let activityItems = [];
   let activityMapping = [];
   try {
@@ -2096,7 +2112,6 @@ async function openAssignInstructors(voucherNo) {
       for (const item of tripDef.items) {
         const classified = classifyActivity(item);
         if (classified) {
-          // تجنب التكرار (مثلاً نفس النوع يظهر مرة واحدة فقط)
           if (!activityMapping.find(a => a.display === classified.display)) {
             activityMapping.push(classified);
             activityItems.push(classified.display);
@@ -2107,8 +2122,7 @@ async function openAssignInstructors(voucherNo) {
   } catch(e) {
     console.warn('Could not load trip items:', e);
   }
-
-  // إذا لم يتم العثور على أنشطة، استخدم القيم الافتراضية
+  
   if (activityItems.length === 0) {
     activityItems = ['1 Intro', '2 Intro', 'Diver', 'C.D.', 'S.R.'];
     activityMapping = [
@@ -2120,24 +2134,30 @@ async function openAssignInstructors(voucherNo) {
     ];
   }
   
-  // بناء HTML بدون أشرطة زرقاء
-  let headersHtml = '<th style="padding: 8px;">Instructor</th>';
+  // ✅ بناء HTML
+  let headersHtml = '<th style="padding: 8px; background: var(--navy); color: var(--gold);">Instructor</th>';
   for (const item of activityItems) {
-    headersHtml += `<th style="padding: 8px;">${escapeHtml(item)}</th>`;
+    headersHtml += `<th style="padding: 8px; background: var(--navy); color: var(--gold);">${escapeHtml(item)}</th>`;
   }
-  headersHtml += '<th style="padding: 8px;">Select</th>';
+  headersHtml += '<th style="padding: 8px; background: var(--navy); color: var(--gold);">Select</th>';
   
   let rowsHtml = '';
   for (const inst of relevantInstructors) {
-    rowsHtml += `</tr>`;
-    rowsHtml += `<td style="padding: 8px;"><strong>${escapeHtml(inst.name)}</strong></td>`;
+    rowsHtml += `<tr>`;
+    rowsHtml += `<td style="padding: 8px; background: var(--navy); color: var(--gold); font-weight: bold;">
+                   <strong>${escapeHtml(inst.name)}</strong>
+                   <div style="font-size: 9px; color: #aaa;">ID: ${inst.id}</div>
+                 </td>`;
     for (let i = 0; i < activityItems.length; i++) {
       rowsHtml += `<td style="padding: 8px; text-align: center;">
-        <input type="number" class="assign-activity" data-instructor="${inst.id}" data-activity-index="${i}" value="0" min="0" style="width: 60px; text-align: center; padding: 4px; border: 1px solid var(--border); border-radius: 6px;">
+        <input type="number" class="assign-activity" data-instructor="${inst.id}" data-activity-index="${i}" 
+               value="0" min="0" 
+               style="width: 60px; text-align: center; padding: 4px; border: 1px solid var(--border); border-radius: 6px;">
        </td>`;
     }
     rowsHtml += `<td style="padding: 8px; text-align: center;">
-      <input type="checkbox" class="assign-select" data-id="${inst.id}" style="width: 18px; height: 18px; cursor: pointer;">
+      <input type="checkbox" class="assign-select" data-id="${inst.id}" 
+             style="width: 18px; height: 18px; cursor: pointer;">
      </td>`;
     rowsHtml += `</tr>`;
   }
@@ -2146,7 +2166,7 @@ async function openAssignInstructors(voucherNo) {
     <div class="summary-box" style="margin-bottom: 12px; background: var(--navy); color: white; padding: 12px; border-radius: 8px;">
       <strong>📊 Invoice Summary:</strong><br>
       Trip: ${escapeHtml(invoice.trip)}<br>
-      Boats: ${boatIds.length} | Available Instructors: ${relevantInstructors.length}
+      ${hasBoat ? `🚤 Boats: ${boatIds.length} | 👨‍🏫 Available Instructors: ${relevantInstructors.length}` : `🏖️ Beach Instructors: ${relevantInstructors.length}`}
     </div>
     <div style="overflow-x: auto; max-height: 400px;">
       <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
@@ -2158,16 +2178,15 @@ async function openAssignInstructors(voucherNo) {
         <tbody>
           ${rowsHtml}
         </tbody>
-       </table>
+      </table>
     </div>
     <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
       <button class="btn btn-secondary" onclick="closeModal('assignInstructorsModal')">Cancel</button>
-    <button class="btn btn-primary" onclick="saveInstructorAssignmentV3(${JSON.stringify(activityItems).replace(/"/g, '&quot;')}, ${JSON.stringify(activityMapping).replace(/"/g, '&quot;')})">✅ Assign</button>
+      <button class="btn btn-primary" onclick="saveInstructorAssignmentV3(${JSON.stringify(activityItems).replace(/"/g, '&quot;')}, ${JSON.stringify(activityMapping).replace(/"/g, '&quot;')})">✅ Assign</button>
     </div>
   `;
   
   document.getElementById('assignInstructorsContent').innerHTML = instructorsHtml;
-  openModal('assignInstructorsModal');
 }
 async function saveInstructorAssignmentV3(activityItems, activityMapping) {
   let selectedRows = [];
@@ -2994,33 +3013,68 @@ async function openUpsell(voucherNo) {
   currentUpsellInvoice = invoice;
   
   const tripName = invoice.trip || '';
-  const currency = invoice.invoiceCurrency || 'LE';
-  currentUpsellCurrency = currency;
+  const invoiceCurrency = invoice.invoiceCurrency || 'LE';
+  currentUpsellCurrency = invoiceCurrency;
+  
+  // ✅ تحديد المدرب المرتبط بالفاتورة (من المركب أو الشاطئ)
+  let assignedInstructorIds = [];
+  
+  // 1. البحث عن مدربين مرتبطين بالمراكب
+  let assignedBoats = [];
+  try { assignedBoats = JSON.parse(invoice.BoatsUsed || '[]'); } catch(e) {}
+  
+  for (const boat of assignedBoats) {
+    const instructors = boatInstructorsMap[boat.boatId];
+    if (instructors) {
+      if (Array.isArray(instructors)) {
+        assignedInstructorIds.push(...instructors);
+      } else {
+        assignedInstructorIds.push(instructors);
+      }
+    }
+  }
+  
+  // 2. إذا لم يكن هناك مراكب، استخدم مدربي الشاطئ
+  if (assignedInstructorIds.length === 0) {
+    assignedInstructorIds = [...selectedBeachInstructors];
+  }
   
   showToast('Loading trip data...', 'info');
   
+  // عرض شاشة تحميل
+  document.getElementById('upsellContent').innerHTML = '<div class="loader"><div class="spinner"></div>Loading...</div>';
+  openModal('upsellModal');
+  
   try {
     // جلب بيانات الرحلة والأنشطة
-const tripData = await gas('getTripData', { tripName: tripName, currency: currency });
-
-let items = [];
-if (tripData && tripData.items && tripData.prices) {
-  // ✅ تصفية البنود: إزالة Adult, Child, Inf, Infant
-  const excludeList = ['Adult', 'Child', 'Inf', 'Infant', 'adult', 'child', 'inf', 'infant'];
-  for (let i = 0; i < tripData.items.length; i++) {
-    const itemName = tripData.items[i];
-    if (!excludeList.includes(itemName)) {
-      items.push({
-        name: itemName,
-        price: tripData.prices[i] || 0,
-        quantity: 0,
-        total: 0,
-        originalIndex: i  // حفظ الموقع الأصلي للتسجيل
-      });
+    const tripData = await gas('getTripData', { tripName: tripName, currency: invoiceCurrency });
+    
+    let items = [];
+    if (tripData && tripData.items && tripData.prices) {
+      const excludeList = ['Adult', 'Child', 'Inf', 'Infant', 'adult', 'child', 'inf', 'infant'];
+      for (let i = 0; i < tripData.items.length; i++) {
+        const itemName = tripData.items[i];
+        if (!excludeList.includes(itemName)) {
+          items.push({
+            name: itemName,
+            price: 0,  // ✅ سعر افتراضي (المستخدم سيحدده)
+            quantity: 0,
+            total: 0,
+            originalIndex: i
+          });
+        }
+      }
     }
-  }
-}    
     currentUpsellItems = items;
+    
+    // جلب المدربين (فقط المرتبطين بالفاتورة)
+    const allInstructors = await gas('getInstructors', { centerName: currentUser?.centerName });
+    const relevantInstructors = allInstructors.filter(inst => assignedInstructorIds.includes(inst.id));
+    
+    let instructorsHtml = '<option value="">-- Select Instructor --</option>';
+    for (const inst of relevantInstructors) {
+      instructorsHtml += `<option value="${inst.id}">${escapeHtml(inst.name)}</option>`;
+    }
     
     // بناء جدول الأنشطة
     let itemsHtml = `
@@ -3028,10 +3082,10 @@ if (tripData && tripData.items && tripData.prices) {
         <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
           <thead>
             <tr style="background: var(--navy); color: var(--gold);">
-              <th style="padding: 8px;">Activity</th>
-              <th style="padding: 8px; width: 100px;">Price (${currency})</th>
-              <th style="padding: 8px; width: 80px;">Quantity</th>
-              <th style="padding: 8px; width: 120px;">Total (${currency})</th>
+              <th style="padding: 10px;">Activity</th>
+              <th style="padding: 10px; width: 100px;">Price (${invoiceCurrency})</th>
+              <th style="padding: 10px; width: 80px;">Quantity</th>
+              <th style="padding: 10px; width: 120px;">Total (${invoiceCurrency})</th>
             </tr>
           </thead>
           <tbody>
@@ -3041,34 +3095,28 @@ if (tripData && tripData.items && tripData.prices) {
       const item = currentUpsellItems[i];
       itemsHtml += `
         <tr style="border-bottom: 1px solid var(--border);">
-          <td style="padding: 8px;">${escapeHtml(item.name)}</td>
-          <td style="padding: 8px; text-align: center;">
-            <input type="number" id="upsell_price_${i}" value="${item.price}" step="0.01" min="0" style="width: 100px; padding: 6px; border: 1px solid var(--border); border-radius: 6px; text-align: center;">
-          </td>
-          <td style="padding: 8px; text-align: center;">
-            <input type="number" id="upsell_qty_${i}" value="${item.quantity}" min="0" step="1" style="width: 70px; padding: 6px; border: 1px solid var(--border); border-radius: 6px; text-align: center;" onchange="updateUpsellTotal(${i})">
-          </td>
-          <td style="padding: 8px; text-align: center;">
-            <span id="upsell_total_${i}">${(item.price * item.quantity).toFixed(2)}</span>
-          </td>
-        </tr>
+          <td style="padding: 10px; background: var(--navy); color: var(--gold);">${escapeHtml(item.name)}</td>
+          <td style="padding: 10px; text-align: center;">
+            <input type="number" id="upsell_price_${i}" value="0" step="0.01" min="0" 
+                   style="width: 100px; padding: 6px; text-align: center; border: 1px solid var(--border); border-radius: 6px;">
+           </td>
+          <td style="padding: 10px; text-align: center;">
+            <input type="number" id="upsell_qty_${i}" value="0" min="0" step="1" 
+                   style="width: 70px; padding: 6px; text-align: center; border: 1px solid var(--border); border-radius: 6px;" 
+                   onchange="updateUpsellTotal(${i})">
+           </td>
+          <td style="padding: 10px; text-align: center;">
+            <span id="upsell_total_${i}">0.00</span>
+           </td>
+         </tr>
       `;
     }
     
     itemsHtml += `
           </tbody>
-        </table>
+         </table>
       </div>
     `;
-    
-    // جلب المدربين
-    const instructors = await gas('getInstructors', { centerName: currentUser?.centerName });
-    let instructorsHtml = '<option value="">-- Select Instructor --</option>';
-    if (Array.isArray(instructors)) {
-      instructors.forEach(inst => {
-        instructorsHtml += `<option value="${inst.id}">${escapeHtml(inst.name)}</option>`;
-      });
-    }
     
     let html = `
       <div style="padding: 8px;">
@@ -3082,11 +3130,11 @@ if (tripData && tripData.items && tripData.prices) {
         <!-- Currency Selection -->
         <div style="margin-bottom: 16px; display: flex; gap: 16px; align-items: center;">
           <label style="font-weight: bold;">💱 Sale Currency:</label>
-          <select id="upsellCurrency" style="padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px;" onchange="updateUpsellPrices()">
-            <option value="LE" ${currency === 'LE' ? 'selected' : ''}>🇪🇬 Egyptian Pound (LE)</option>
-            <option value="USD" ${currency === 'USD' ? 'selected' : ''}>🇺🇸 US Dollar ($)</option>
-            <option value="EUR" ${currency === 'EUR' ? 'selected' : ''}>🇪🇺 Euro (€)</option>
-            <option value="GBP" ${currency === 'GBP' ? 'selected' : ''}>🇬🇧 British Pound (£)</option>
+          <select id="upsellCurrency" style="padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px;" onchange="updateUpsellCurrency()">
+            <option value="LE" ${invoiceCurrency === 'LE' ? 'selected' : ''}>🇪🇬 Egyptian Pound (LE)</option>
+            <option value="USD" ${invoiceCurrency === 'USD' ? 'selected' : ''}>🇺🇸 US Dollar ($)</option>
+            <option value="EUR" ${invoiceCurrency === 'EUR' ? 'selected' : ''}>🇪🇺 Euro (€)</option>
+            <option value="GBP" ${invoiceCurrency === 'GBP' ? 'selected' : ''}>🇬🇧 British Pound (£)</option>
           </select>
         </div>
         
@@ -3100,14 +3148,14 @@ if (tripData && tripData.items && tripData.prices) {
         <div style="margin-bottom: 16px;">
           <div style="font-weight: bold; margin-bottom: 8px;">💳 Payment Details</div>
           <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
-            <div><input type="number" id="cashUSD" placeholder="Cash USD" value="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px;"></div>
-            <div><input type="number" id="cashEUR" placeholder="Cash EUR" value="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px;"></div>
-            <div><input type="number" id="cashGBP" placeholder="Cash GBP" value="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px;"></div>
-            <div><input type="number" id="cashLE" placeholder="Cash LE" value="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px;"></div>
-            <div><input type="number" id="visaUSD" placeholder="Visa USD" value="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px;"></div>
-            <div><input type="number" id="visaEUR" placeholder="Visa EUR" value="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px;"></div>
-            <div><input type="number" id="visaGBP" placeholder="Visa GBP" value="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px;"></div>
-            <div><input type="number" id="visaLE" placeholder="Visa LE" value="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px;"></div>
+            <div><input type="number" id="cashUSD" placeholder="Cash USD" value="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px;" oninput="updateRemaining()"></div>
+            <div><input type="number" id="cashEUR" placeholder="Cash EUR" value="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px;" oninput="updateRemaining()"></div>
+            <div><input type="number" id="cashGBP" placeholder="Cash GBP" value="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px;" oninput="updateRemaining()"></div>
+            <div><input type="number" id="cashLE" placeholder="Cash LE" value="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px;" oninput="updateRemaining()"></div>
+            <div><input type="number" id="visaUSD" placeholder="Visa USD" value="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px;" oninput="updateRemaining()"></div>
+            <div><input type="number" id="visaEUR" placeholder="Visa EUR" value="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px;" oninput="updateRemaining()"></div>
+            <div><input type="number" id="visaGBP" placeholder="Visa GBP" value="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px;" oninput="updateRemaining()"></div>
+            <div><input type="number" id="visaLE" placeholder="Visa LE" value="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px;" oninput="updateRemaining()"></div>
           </div>
         </div>
         
@@ -3120,8 +3168,8 @@ if (tripData && tripData.items && tripData.prices) {
         </div>
         
         <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 20px; background: var(--gray-50); padding: 12px; border-radius: 8px;">
-          <div><span style="font-weight: bold;">💰 Total Amount:</span> <span id="totalAmount">0.00</span> <span id="totalCurrency">${currency}</span></div>
-          <div><span style="font-weight: bold;">📊 Remaining:</span> <span id="remainingAmount">0.00</span> <span id="remainingCurrency">${currency}</span></div>
+          <div><span style="font-weight: bold;">💰 Total Amount:</span> <span id="totalAmount">0.00</span> <span id="totalCurrency">${invoiceCurrency}</span></div>
+          <div><span style="font-weight: bold;">📊 Remaining:</span> <span id="remainingAmount">0.00</span> <span id="remainingCurrency">${invoiceCurrency}</span></div>
         </div>
         
         <div style="display: flex; gap: 10px; justify-content: flex-end;">
@@ -3132,22 +3180,212 @@ if (tripData && tripData.items && tripData.prices) {
     `;
     
     document.getElementById('upsellContent').innerHTML = html;
-    openModal('upsellModal');
     
     // إضافة مستمعات الأحداث
     for (let i = 0; i < currentUpsellItems.length; i++) {
-      document.getElementById(`upsell_qty_${i}`)?.addEventListener('input', () => updateUpsellTotal(i));
-      document.getElementById(`upsell_price_${i}`)?.addEventListener('input', () => updateUpsellTotal(i));
+      const qtyInput = document.getElementById(`upsell_qty_${i}`);
+      const priceInput = document.getElementById(`upsell_price_${i}`);
+      if (qtyInput) qtyInput.addEventListener('input', () => updateUpsellTotal(i));
+      if (priceInput) priceInput.addEventListener('input', () => updateUpsellTotal(i));
     }
-    
-    ['cashUSD', 'cashEUR', 'cashGBP', 'cashLE', 'visaUSD', 'visaEUR', 'visaGBP', 'visaLE'].forEach(id => {
-      document.getElementById(id)?.addEventListener('input', updateRemaining);
-    });
     
     updateRemaining();
     
   } catch(e) {
     showToast('Error loading trip data: ' + e.message, 'error');
+  }
+}
+
+// ✅ دالة تحديث العملة
+function updateUpsellCurrency() {
+  const newCurrency = document.getElementById('upsellCurrency')?.value;
+  if (!newCurrency) return;
+  currentUpsellCurrency = newCurrency;
+  document.getElementById('totalCurrency').textContent = newCurrency;
+  document.getElementById('remainingCurrency').textContent = newCurrency;
+  
+  // تحديث جميع الأسعار المعروضة
+  for (let i = 0; i < currentUpsellItems.length; i++) {
+    const priceCell = document.querySelector(`#upsell_price_${i}`);
+    if (priceCell) {
+      // يمكن تحويل السعر حسب العملة الجديدة إذا لزم الأمر
+    }
+  }
+  updateRemaining();
+}
+
+// ✅ دالة تحديث الإجمالي والمتبقي (مع أسعار الصرف)
+async function updateRemaining() {
+  let totalAmount = 0;
+  for (let i = 0; i < currentUpsellItems.length; i++) {
+    const price = parseFloat(document.getElementById(`upsell_price_${i}`)?.value) || 0;
+    const qty = parseInt(document.getElementById(`upsell_qty_${i}`)?.value) || 0;
+    totalAmount += price * qty;
+  }
+  
+  // ✅ جلب أسعار الصرف الحالية
+  let exchangeRates = { USD: 1, EUR: 1, GBP: 1, LE: 1 };
+  try {
+    const rates = await gas('getLatestExchangeRates');
+    if (rates) {
+      exchangeRates = {
+        USD: rates.cashUSD || rates.bUSD || 1,
+        EUR: rates.cashEUR || rates.bEUR || 1,
+        GBP: rates.cashGBP || rates.bGBP || 1,
+        LE: 1
+      };
+    }
+  } catch(e) {
+    console.warn('Could not fetch exchange rates:', e);
+  }
+  
+  // قراءة المدفوعات
+  const payments = {
+    cashUSD: parseFloat(document.getElementById('cashUSD')?.value) || 0,
+    cashEUR: parseFloat(document.getElementById('cashEUR')?.value) || 0,
+    cashGBP: parseFloat(document.getElementById('cashGBP')?.value) || 0,
+    cashLE: parseFloat(document.getElementById('cashLE')?.value) || 0,
+    visaUSD: parseFloat(document.getElementById('visaUSD')?.value) || 0,
+    visaEUR: parseFloat(document.getElementById('visaEUR')?.value) || 0,
+    visaGBP: parseFloat(document.getElementById('visaGBP')?.value) || 0,
+    visaLE: parseFloat(document.getElementById('visaLE')?.value) || 0
+  };
+  
+  // ✅ تحويل جميع المدفوعات إلى العملة المختارة
+  let totalPaidInTarget = 0;
+  const targetCurrency = currentUpsellCurrency;
+  
+  for (const [currency, amount] of Object.entries(payments)) {
+    if (amount === 0) continue;
+    let currencyCode = 'LE';
+    if (currency.includes('USD')) currencyCode = 'USD';
+    else if (currency.includes('EUR')) currencyCode = 'EUR';
+    else if (currency.includes('GBP')) currencyCode = 'GBP';
+    else currencyCode = 'LE';
+    
+    if (currencyCode === targetCurrency) {
+      totalPaidInTarget += amount;
+    } else {
+      // تحويل إلى LE ثم إلى العملة المستهدفة
+      const amountInLE = amount * exchangeRates[currencyCode];
+      totalPaidInTarget += amountInLE / exchangeRates[targetCurrency];
+    }
+  }
+  
+  const remaining = totalAmount - totalPaidInTarget;
+  
+  document.getElementById('totalAmount').textContent = totalAmount.toFixed(2);
+  document.getElementById('remainingAmount').textContent = remaining > 0 ? remaining.toFixed(2) : '0.00';
+}
+
+// ✅ دالة تحديث إجمالي عنصر فردي
+function updateUpsellTotal(index) {
+  const price = parseFloat(document.getElementById(`upsell_price_${index}`)?.value) || 0;
+  const qty = parseInt(document.getElementById(`upsell_qty_${index}`)?.value) || 0;
+  const total = price * qty;
+  const totalSpan = document.getElementById(`upsell_total_${index}`);
+  if (totalSpan) totalSpan.textContent = total.toFixed(2);
+  updateRemaining();
+}
+
+// ✅ دالة حفظ UpSell (معدلة)
+async function saveUpsellV2() {
+  // جمع الأنشطة
+  const items = [];
+  for (let i = 0; i < currentUpsellItems.length; i++) {
+    const qty = parseInt(document.getElementById(`upsell_qty_${i}`)?.value) || 0;
+    const price = parseFloat(document.getElementById(`upsell_price_${i}`)?.value) || 0;
+    if (qty > 0 && price > 0) {
+      items.push({
+        name: currentUpsellItems[i].name,
+        quantity: qty,
+        price: price,
+        position: i + 1
+      });
+    }
+  }
+  
+  if (items.length === 0) {
+    showToast('Please select at least one activity', 'error');
+    return;
+  }
+  
+  const instructorId = document.getElementById('upsellInstructor')?.value;
+  if (!instructorId) {
+    showToast('Please select selling instructor', 'error');
+    return;
+  }
+  
+  // جمع المدفوعات
+  const amounts = {
+    cashUSD: parseFloat(document.getElementById('cashUSD')?.value) || 0,
+    cashEUR: parseFloat(document.getElementById('cashEUR')?.value) || 0,
+    cashGBP: parseFloat(document.getElementById('cashGBP')?.value) || 0,
+    cashLE: parseFloat(document.getElementById('cashLE')?.value) || 0,
+    visaUSD: parseFloat(document.getElementById('visaUSD')?.value) || 0,
+    visaEUR: parseFloat(document.getElementById('visaEUR')?.value) || 0,
+    visaGBP: parseFloat(document.getElementById('visaGBP')?.value) || 0,
+    visaLE: parseFloat(document.getElementById('visaLE')?.value) || 0
+  };
+  
+  const totalAmount = Object.values(amounts).reduce((a, b) => a + b, 0);
+  if (totalAmount === 0) {
+    showToast('Please enter payment amounts', 'error');
+    return;
+  }
+  
+  // ✅ حساب إجمالي الأنشطة
+  let activitiesTotal = 0;
+  for (const item of items) {
+    activitiesTotal += item.price * item.quantity;
+  }
+  
+  // ✅ تعيين العملة الصحيحة للفاتورة
+  const saleCurrency = currentUpsellCurrency;
+  
+  const upsellData = [{
+    instructorId: instructorId,
+    items: items,
+    totalAmount: activitiesTotal,
+    payments: amounts,
+    currency: saleCurrency
+  }];
+  
+  showToast('Creating Upsell invoice...', 'info');
+  
+  // تعطيل زر الحفظ لمنع التكرار
+  const saveBtn = document.querySelector('#upsellModal .btn-primary');
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = '⏳ Saving...';
+  }
+  
+  try {
+    const result = await gas('createUpSellInvoice', {
+      originalVoucherNo: currentUpsellVoucher,
+      upSellItems: JSON.stringify(items),
+      upSellAmounts: JSON.stringify(amounts),
+      instructorId: instructorId,
+      upsellData: JSON.stringify(upsellData),
+      centerName: currentUser?.centerName,
+      currency: saleCurrency  // ✅ إرسال العملة المختارة
+    });
+    
+    if (result?.success) {
+      showToast(`✅ Upsell invoice created: ${result.voucherNo}`, 'success');
+      closeModal('upsellModal');
+      await loadInvoices();
+      renderTable();
+    } else {
+      showToast('❌ Failed to create Upsell: ' + (result?.message || 'Unknown error'), 'error');
+    }
+  } catch(e) {
+    showToast('Error: ' + e.message, 'error');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = '💰 Create UpSell';
+    }
   }
 }
 
