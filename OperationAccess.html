@@ -1493,9 +1493,39 @@ async function openAssignVehicles(voucherNo) {
   let savedVehicles = [];
   try { savedVehicles = JSON.parse(invoice.VehiclesUsed || '[]'); } catch(e) {}
   
+  // ✅ دالة لحساب المقاعد المحجوزة من فواتير أخرى
+  async function getTotalBookedSeatsForVehicle(vehicleId, currentDate, tripName, excludeVoucher) {
+    let totalGo = 0;
+    let totalReturn = 0;
+    
+    for (const inv of allInvoices) {
+      const invDate = formatDateDDMMMYYYY(inv.activeDate);
+      const invTrip = inv.trip;
+      const invVoucher = inv.voucherNo;
+      
+      if (invDate === currentDate && invTrip === tripName && invVoucher !== excludeVoucher) {
+        let vehiclesData = [];
+        try {
+          vehiclesData = JSON.parse(inv.VehiclesUsed || '[]');
+        } catch(e) {}
+        
+        for (const v of vehiclesData) {
+          if (v.vehicleId === vehicleId) {
+            totalGo += v.goCount || 0;
+            totalReturn += v.returnCount || 0;
+          }
+        }
+      }
+    }
+    
+    return { goSeats: totalGo, returnSeats: totalReturn };
+  }
+  
+  // ✅ عرض شاشة تحميل
   document.getElementById('assignVehiclesContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري تحميل البيانات...</div>';
   openModal('assignVehiclesModal');
   
+  // ✅ جلب جميع البيانات بالتوازي مع التخزين المؤقت
   const fetchPromises = [];
   for (const vehId of selectedVehicles) {
     const vehicle = cachedVehicles.find(v => v.id === vehId);
@@ -1508,6 +1538,7 @@ async function openAssignVehicles(voucherNo) {
     const savedChild = saved?.children || 0;
     const savedInfant = saved?.infants || 0;
     
+    // ✅ التخزين المؤقت للنتائج من API
     const cacheKey = `${currentDate}|${tripName}|${vehId}`;
     let bookedResult = cachedVehicleSeats[cacheKey];
     if (!bookedResult) {
@@ -1521,16 +1552,25 @@ async function openAssignVehicles(voucherNo) {
       cachedVehicleSeats[cacheKey] = bookedResult;
     }
     
+    // ✅ الحصول على الحجوزات من الفواتير الأخرى (بما فيها الفواتير المحفوظة)
+    const otherBookings = await getTotalBookedSeatsForVehicle(vehId, currentDate, tripName, voucherNo);
+    
+    // ✅ إجمالي المقاعد المحجوزة = من API + من الفواتير الأخرى
+    const totalBookedGo = (bookedResult.goSeats || 0) + otherBookings.goSeats;
+    const totalBookedReturn = (bookedResult.returnSeats || 0) + otherBookings.returnSeats;
+    
     fetchPromises.push(Promise.resolve({
       vehicle,
       capacity: vehicle.capacity || 0,
       savedGo, savedReturn, savedAdult, savedChild, savedInfant,
-      bookedResult
+      totalBookedGo,
+      totalBookedReturn
     }));
   }
   
   const results = await Promise.all(fetchPromises);
   
+  // ✅ بناء HTML
   let vehiclesHtml = `
     <div class="summary-box" style="margin-bottom: 12px; padding: 12px; background: var(--navy); color: white; border-radius: 8px;">
       <strong>📊 Invoice Summary:</strong><br>
@@ -1556,7 +1596,7 @@ async function openAssignVehicles(voucherNo) {
   `;
   
   for (const res of results) {
-    const { vehicle, capacity, savedGo, savedReturn, savedAdult, savedChild, savedInfant, bookedResult } = res;
+    const { vehicle, capacity, savedGo, savedReturn, savedAdult, savedChild, savedInfant, totalBookedGo, totalBookedReturn } = res;
     
     const defaultAdultQty = savedAdult > 0 ? savedAdult : adults;
     const defaultChildQty = savedChild > 0 ? savedChild : children;
@@ -1564,13 +1604,9 @@ async function openAssignVehicles(voucherNo) {
     const defaultGoValue = savedGo > 0 ? savedGo : totalPassengers;
     const defaultReturnValue = savedReturn > 0 ? savedReturn : totalPassengers;
     
-    // ✅ الحصول على الحجوزات من الفواتير الأخرى (بما فيها الفواتير المحفوظة)
-const otherBookings = await getTotalBookedSeatsForVehicle(vehId, currentDate, tripName, voucherNo);
-const totalBookedGo = (bookedResult.goSeats || 0) + otherBookings.goSeats;
-const totalBookedReturn = (bookedResult.returnSeats || 0) + otherBookings.returnSeats;
-
-const maxGoValue = Math.max(0, capacity - totalBookedGo);
-const maxReturnValue = Math.max(0, capacity - totalBookedReturn);
+    // ✅ الحد الأقصى لكل حقل (السعة - إجمالي المحجوز)
+    const maxGoValue = Math.max(0, capacity - totalBookedGo);
+    const maxReturnValue = Math.max(0, capacity - totalBookedReturn);
     
     // ✅ المقاعد المتاحة بعد إضافة القيم الحالية
     const availableGo = Math.max(0, maxGoValue - defaultGoValue);
@@ -1631,7 +1667,7 @@ const maxReturnValue = Math.max(0, capacity - totalBookedReturn);
   
   vehiclesHtml += `
         </tbody>
-      </table>
+      追赶
     </div>
     <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);">
       <button class="btn btn-secondary" onclick="closeModal('assignVehiclesModal')">Cancel</button>
