@@ -1564,9 +1564,13 @@ async function openAssignVehicles(voucherNo) {
     const defaultGoValue = savedGo > 0 ? savedGo : totalPassengers;
     const defaultReturnValue = savedReturn > 0 ? savedReturn : totalPassengers;
     
-    // ✅ الحد الأقصى لكل حقل
-    const maxGoValue = Math.max(0, capacity - (bookedResult.goSeats || 0));
-    const maxReturnValue = Math.max(0, capacity - (bookedResult.returnSeats || 0));
+    // ✅ الحصول على الحجوزات من الفواتير الأخرى (بما فيها الفواتير المحفوظة)
+const otherBookings = await getTotalBookedSeatsForVehicle(vehId, currentDate, tripName, voucherNo);
+const totalBookedGo = (bookedResult.goSeats || 0) + otherBookings.goSeats;
+const totalBookedReturn = (bookedResult.returnSeats || 0) + otherBookings.returnSeats;
+
+const maxGoValue = Math.max(0, capacity - totalBookedGo);
+const maxReturnValue = Math.max(0, capacity - totalBookedReturn);
     
     // ✅ المقاعد المتاحة بعد إضافة القيم الحالية
     const availableGo = Math.max(0, maxGoValue - defaultGoValue);
@@ -4305,6 +4309,34 @@ async function saveBoatsAndInstructorsV2() {
       saveBtn.textContent = '✅ Save All';
     }
   }
+}
+  // ✅ حساب المقاعد المحجوزة من السيارات المختارة في فواتير أخرى (نفس التاريخ ونفس الرحلة)
+async function getTotalBookedSeatsForVehicle(vehicleId, currentDate, tripName, excludeVoucher) {
+  let totalGo = 0;
+  let totalReturn = 0;
+  
+  // البحث في جميع الفواتير (allInvoices) عن نفس التاريخ ونفس الرحلة
+  for (const inv of allInvoices) {
+    const invDate = formatDateDDMMMYYYY(inv.activeDate);
+    const invTrip = inv.trip;
+    const invVoucher = inv.voucherNo;
+    
+    if (invDate === currentDate && invTrip === tripName && invVoucher !== excludeVoucher) {
+      let vehiclesData = [];
+      try {
+        vehiclesData = JSON.parse(inv.VehiclesUsed || '[]');
+      } catch(e) {}
+      
+      for (const v of vehiclesData) {
+        if (v.vehicleId === vehicleId) {
+          totalGo += v.goCount || 0;
+          totalReturn += v.returnCount || 0;
+        }
+      }
+    }
+  }
+  
+  return { goSeats: totalGo, returnSeats: totalReturn };
 }
   async function getCachedData(fetchFunction, key) {
   const now = Date.now();
