@@ -1228,82 +1228,51 @@ function formatRest(restValue, currencySymbol) {
   return `<span class="rest-pos">${num.toFixed(2)} ${escapeHtml(currencySymbol)}</span>`;
 }
 
-function getActivitiesFromInvoice(invoice) {
+function getActivitiesFromInvoice(invoice, tripName) {
   const activities = [];
   
-  // ✅ الكلمات المفتاحية لأنشطة الغوص (يتم تضمينها فقط)
-  const divingKeywords = [
-    'intro', 'diver', 'dive', 'course', 'check dive', 'scuba review',
-    'c.d.', 's.r.', 'cd', 'sr', '1 intro', '2 intro', 'single intro', 'dbl intro'
+  // ✅ خريطة الأعمدة لأنشطة الغوص فقط (مع استبعاد Adult, Child, Inf)
+  const divingColumnsMap = [
+    { colInTripDef: 'G', colInInvoice: 'K', name: '1 Intro', column: 'sgl' },
+    { colInTripDef: 'H', colInvoice: 'L', name: '2 Intro', column: 'dbl' },
+    { colInTripDef: 'I', colInvoice: 'M', name: 'Diver', column: 'trpl' },
+    { colInTripDef: 'J', colInvoice: 'N', name: 'C.D.', column: 'extra' },
+    { colInTripDef: 'K', colInvoice: 'O', name: 'S.R.', column: 'camel' }
   ];
   
-  // ✅ الأعمدة التي تحتوي على أنشطة الغوص في الفاتورة
-  const divingColumns = {
-    'sgl': { name: '1 Intro', keywords: ['1 intro', 'single intro', 'intro 1'] },
-    'dbl': { name: '2 Intro', keywords: ['2 intro', 'dbl intro', 'intro 2'] },
-    'trpl': { name: 'Diver', keywords: ['diver', 'dive', 'fun diver'] },
-    'extra': { name: 'C.D.', keywords: ['c.d.', 'cd', 'check dive'] },
-    'camel': { name: 'S.R.', keywords: ['s.r.', 'sr', 'scuba review'] }
-  };
-  
-  // 1️⃣ محاولة قراءة ActivitiesText
-  let activitiesText = invoice.ActivitiesText || invoice.activitiesText || '';
-  
-  if (activitiesText) {
-    // تحليل النص
-    const parts = activitiesText.split('|');
-    for (const part of parts) {
-      const trimmed = part.trim();
-      const match = trimmed.match(/^(.+?)×(\d+(\.\d+)?)$/);
-      if (match) {
-        const activityName = match[1].trim().toLowerCase();
-        const quantity = parseFloat(match[2]) || 0;
-        
-        // ✅ التحقق: هل هذا النشاط من نوع الغوص؟ (ليس Adult/Child/Inf)
-        const isDiving = divingKeywords.some(keyword => activityName.includes(keyword));
-        const isBasic = ['adult', 'child', 'inf', 'infant'].includes(activityName);
-        
-        if (isDiving && !isBasic && quantity > 0) {
-          // محاولة تحديد العمود المناسب
-          let column = 'extra'; // افتراضي
-          let displayName = match[1].trim();
-          
-          for (const [col, config] of Object.entries(divingColumns)) {
-            if (config.keywords.some(kw => activityName.includes(kw))) {
-              column = col;
-              displayName = config.name;
-              break;
-            }
-          }
-          
-          activities.push({
-            id: displayName.replace(/ /g, '_'),
-            name: displayName,
-            originalName: match[1].trim(),
-            quantity: quantity,
-            price: 0,
-            column: column
-          });
-        }
+  // ✅ جلب أسماء الأنشطة للرحلة من TripDefinitions
+  async function fetchTripActivities(tripName) {
+    try {
+      const result = await gas('getTripDefinition', { tripName: tripName, centerName: currentUser?.centerName });
+      if (result && result.items && Array.isArray(result.items)) {
+        return result.items;
       }
+    } catch(e) {
+      console.warn('Failed to fetch trip activities:', e);
     }
+    return [];
   }
   
-  // 2️⃣ إذا لم يتم العثور على ActivitiesText، استخدم الأعمدة مباشرة
-  if (activities.length === 0) {
-    for (const [column, config] of Object.entries(divingColumns)) {
-      const qty = parseInt(invoice[column]) || 0;
-      if (qty > 0) {
-        activities.push({
-          id: config.name.replace(/ /g, '_'),
-          name: config.name,
-          originalName: config.name,
-          quantity: qty,
-          price: 0,
-          column: column
-        });
-      }
-    }
+  // ✅ استخدام البيانات المتوفرة من الفاتورة مباشرة
+  // لأن الأعمدة من H:O في Invoices تتوافق مع D:M في TripDefinitions
+  
+  for (const item of divingColumnsMap) {
+    // قراءة العدد من الفاتورة حسب العمود الصحيح
+    let qty = 0;
+    if (item.colInInvoice === 'K') qty = parseInt(invoice.sgl) || 0;
+    else if (item.colInInvoice === 'L') qty = parseInt(invoice.dbl) || 0;
+    else if (item.colInInvoice === 'M') qty = parseInt(invoice.trpl) || 0;
+    else if (item.colInInvoice === 'N') qty = parseInt(invoice.extra) || 0;
+    else if (item.colInInvoice === 'O') qty = parseInt(invoice.camel) || 0;
+    
+    activities.push({
+      id: item.name.replace(/ /g, '_'),
+      name: item.name,
+      quantity: qty,  // ✅ يمكن أن تكون 0 أو أكثر
+      price: 0,  // المستخدم يدخل السعر
+      column: item.column,
+      invoiceColumn: item.colInInvoice  // ✅ العمود في Invoices للحفظ
+    });
   }
   
   return activities;
@@ -3132,16 +3101,15 @@ let currentUpsellItems = [];
 let currentUpsellCurrency = 'LE';
 async function openUpsell(voucherNo) {
   try {
-    // البحث عن الفاتورة
     const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
     if (!invoice) {
       showToast('Invoice not found', 'error');
       return;
     }
     
-    // ✅ استخدام getActivitiesFromInvoice لبناء الأنشطة
-    const activities = getActivitiesFromInvoice(invoice);
-    
+    // ✅ تمرير اسم الرحلة للدالة
+    const activities = getActivitiesFromInvoice(invoice, invoice.trip);
+
     if (activities.length === 0) {
       showToast('No activities found for upsell', 'error');
       return;
@@ -3329,16 +3297,8 @@ async function createUpsell() {
   const saveBtn = document.getElementById('createUpsellBtn');
   if (saveBtn && saveBtn.disabled) return;
   
-  // جمع الأنشطة المختارة
+  // ✅ خريطة الحفظ لكل نشاط
   const items = [];
-  const columnMapping = {
-    '1 Intro': 'sgl',
-    '2 Intro': 'dbl',
-    'Diver': 'trpl',
-    'C.D.': 'extra',
-    'S.R.': 'camel'
-  };
-  
   const rows = document.querySelectorAll('#upsellModal tbody tr');
   
   for (const row of rows) {
@@ -3350,14 +3310,22 @@ async function createUpsell() {
     const qty = parseInt(qtyInput?.value) || 0;
     
     if (qty > 0 && price > 0) {
-      // ✅ تحديد العمود المناسب للنشاط
-      const column = columnMapping[activityName] || 'extra';
+      // ✅ تحديد العمود المناسب في Invoices
+      let invoiceColumn = '';
+      switch(activityName) {
+        case '1 Intro': invoiceColumn = 'K'; break;  // sgl في الكود
+        case '2 Intro': invoiceColumn = 'L'; break;  // dbl
+        case 'Diver': invoiceColumn = 'M'; break;    // trpl
+        case 'C.D.': invoiceColumn = 'N'; break;     // extra
+        case 'S.R.': invoiceColumn = 'O'; break;     // camel
+        default: invoiceColumn = 'K';
+      }
       
       items.push({
         name: activityName,
         quantity: qty,
         price: price,
-        column: column  // ✅ إضافة العمود للحفظ
+        invoiceColumn: invoiceColumn  // ✅ العمود المطلوب للحفظ
       });
     }
   }
@@ -3384,12 +3352,6 @@ async function createUpsell() {
     visaGBP: parseFloat(document.getElementById('visaGBP')?.value) || 0,
     visaLE: parseFloat(document.getElementById('visaLE')?.value) || 0
   };
-  
-  const totalPaid = Object.values(payments).reduce((a, b) => a + b, 0);
-  if (totalPaid === 0) {
-    showToast('Please enter payment amounts', 'error');
-    return;
-  }
   
   if (saveBtn) {
     saveBtn.disabled = true;
@@ -3425,8 +3387,6 @@ async function createUpsell() {
     }
   }
 }
-// ✅ دالة للحصول على رمز العملة
-
 // ✅ دالة تحديث المبلغ المتبقي مع أسعار الصرف (مثل SalesInvoice.html)
 function formatPrice(value) {
   if (value === null || value === undefined) return '0';
