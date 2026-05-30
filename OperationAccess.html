@@ -3497,7 +3497,7 @@ async function updateUpsellCurrencyWithRates() {
   await updateRemainingWithRates();
 }
 async function updateRemainingWithRates() {
-  // 1️⃣ حساب إجمالي الأنشطة بالعملة المختارة حالياً
+  // 1️⃣ حساب إجمالي الأنشطة بالعملة المختارة
   let totalInSaleCurrency = 0;
   const rows = document.querySelectorAll('#upsellModal tbody tr');
   
@@ -3510,10 +3510,13 @@ async function updateRemainingWithRates() {
     totalInSaleCurrency += price * qty;
   }
   
-  // 2️⃣ جلب أسعار الصرف من الخادم (بالنسبة للجنيه)
+  console.log('📊 Total in sale currency:', totalInSaleCurrency);
+  
+  // 2️⃣ جلب أسعار الصرف من الخادم
   let rates = { USD: 1, EUR: 1, GBP: 1, LE: 1 };
   try {
     const result = await gas('getLatestExchangeRates');
+    console.log('💰 Exchange rates from server:', result);
     if (result && result.success) {
       rates = {
         USD: result.USD || result.usd_rate || 1,
@@ -3523,45 +3526,51 @@ async function updateRemainingWithRates() {
       };
     }
   } catch(e) {
-    console.warn('Using default rates:', e);
+    console.warn('Failed to fetch rates, using defaults:', e);
   }
   
   const saleCurrency = currentUpsellCurrency || 'USD';
-  const saleRateToLE = rates[saleCurrency];  // سعر صرف العملة مقابل الجنيه
+  
+  // ✅ سعر صرف العملة المختارة مقابل الجنيه (مثال: 1 USD = 50 LE)
+  const saleRateToLE = rates[saleCurrency] || 1;
   
   // 3️⃣ تحويل إجمالي الأنشطة إلى جنيه
   const totalInLE = totalInSaleCurrency * saleRateToLE;
+  console.log(`💰 Total in LE: ${totalInLE} (${totalInSaleCurrency} ${saleCurrency} × ${saleRateToLE})`);
   
   // 4️⃣ جمع المدفوعات وتحويلها إلى جنيه
   let paidInLE = 0;
   
-  const getPayment = (id, currency) => {
+  const getValue = (id) => {
     const el = document.getElementById(id);
     if (!el) return 0;
     let val = parseFloat(el.value);
-    if (isNaN(val) || val === 0) return 0;
-    const rateToLE = rates[currency];
-    return val * rateToLE;
+    return isNaN(val) ? 0 : val;
   };
   
-  paidInLE += getPayment('cashUSD', 'USD');
-  paidInLE += getPayment('cashEUR', 'EUR');
-  paidInLE += getPayment('cashGBP', 'GBP');
-  paidInLE += getPayment('cashLE', 'LE');
-  paidInLE += getPayment('visaUSD', 'USD');
-  paidInLE += getPayment('visaEUR', 'EUR');
-  paidInLE += getPayment('visaGBP', 'GBP');
-  paidInLE += getPayment('visaLE', 'LE');
+  // كل دفعة × سعر صرف العملة = قيمتها بالجنيه
+  paidInLE += getValue('cashUSD') * (rates.USD || 1);
+  paidInLE += getValue('cashEUR') * (rates.EUR || 1);
+  paidInLE += getValue('cashGBP') * (rates.GBP || 1);
+  paidInLE += getValue('cashLE') * 1;  // LE × 1 = LE
+  paidInLE += getValue('visaUSD') * (rates.USD || 1);
+  paidInLE += getValue('visaEUR') * (rates.EUR || 1);
+  paidInLE += getValue('visaGBP') * (rates.GBP || 1);
+  paidInLE += getValue('visaLE') * 1;
+  
+  console.log('💰 Paid in LE:', paidInLE);
   
   // 5️⃣ حساب المتبقي بالجنيه
   const remainingInLE = totalInLE - paidInLE;
+  console.log('💰 Remaining in LE:', remainingInLE);
   
   // 6️⃣ تحويل المتبقي إلى عملة الفاتورة
   const remainingInSaleCurrency = remainingInLE / saleRateToLE;
-  const totalInSaleCurrencyDisplay = totalInSaleCurrency;
+  
+  console.log(`💰 Remaining in ${saleCurrency}: ${remainingInSaleCurrency}`);
   
   // 7️⃣ تحديث الواجهة
-  document.getElementById('totalAmount').textContent = totalInSaleCurrencyDisplay.toFixed(2);
+  document.getElementById('totalAmount').textContent = totalInSaleCurrency.toFixed(2);
   document.getElementById('remainingAmount').textContent = remainingInSaleCurrency > 0 ? remainingInSaleCurrency.toFixed(2) : '0.00';
   document.getElementById('totalCurrency').textContent = getCurrencySymbol(saleCurrency);
   document.getElementById('remainingCurrency').textContent = getCurrencySymbol(saleCurrency);
