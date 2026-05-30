@@ -1231,39 +1231,76 @@ function formatRest(restValue, currencySymbol) {
 function getActivitiesFromInvoice(invoice) {
   const activities = [];
   
-  // محاولة قراءة ActivitiesText
+  // ✅ الكلمات المفتاحية لأنشطة الغوص (يتم تضمينها فقط)
+  const divingKeywords = [
+    'intro', 'diver', 'dive', 'course', 'check dive', 'scuba review',
+    'c.d.', 's.r.', 'cd', 'sr', '1 intro', '2 intro', 'single intro', 'dbl intro'
+  ];
+  
+  // ✅ الأعمدة التي تحتوي على أنشطة الغوص في الفاتورة
+  const divingColumns = {
+    'sgl': { name: '1 Intro', keywords: ['1 intro', 'single intro', 'intro 1'] },
+    'dbl': { name: '2 Intro', keywords: ['2 intro', 'dbl intro', 'intro 2'] },
+    'trpl': { name: 'Diver', keywords: ['diver', 'dive', 'fun diver'] },
+    'extra': { name: 'C.D.', keywords: ['c.d.', 'cd', 'check dive'] },
+    'camel': { name: 'S.R.', keywords: ['s.r.', 'sr', 'scuba review'] }
+  };
+  
+  // 1️⃣ محاولة قراءة ActivitiesText
   let activitiesText = invoice.ActivitiesText || invoice.activitiesText || '';
   
-  // إذا كان ActivitiesText فارغاً، حاول بناءه من الأعمدة
-  if (!activitiesText) {
-    const parts = [];
-    const sgl = parseInt(invoice.sgl) || 0;
-    const dbl = parseInt(invoice.dbl) || 0;
-    const trpl = parseInt(invoice.trpl) || 0;
-    const extra = parseInt(invoice.extra) || 0;
-    const camel = parseInt(invoice.camel) || 0;
-    
-    if (sgl > 0) parts.push(`1 Intro×${sgl}`);
-    if (dbl > 0) parts.push(`2 Intro×${dbl}`);
-    if (trpl > 0) parts.push(`Diver×${trpl}`);
-    if (extra > 0) parts.push(`C.D.×${extra}`);
-    if (camel > 0) parts.push(`S.R.×${camel}`);
-    
-    activitiesText = parts.join(' | ');
-  }
-  
-  // تحليل النص
   if (activitiesText) {
+    // تحليل النص
     const parts = activitiesText.split('|');
     for (const part of parts) {
       const trimmed = part.trim();
       const match = trimmed.match(/^(.+?)×(\d+(\.\d+)?)$/);
       if (match) {
+        const activityName = match[1].trim().toLowerCase();
+        const quantity = parseFloat(match[2]) || 0;
+        
+        // ✅ التحقق: هل هذا النشاط من نوع الغوص؟ (ليس Adult/Child/Inf)
+        const isDiving = divingKeywords.some(keyword => activityName.includes(keyword));
+        const isBasic = ['adult', 'child', 'inf', 'infant'].includes(activityName);
+        
+        if (isDiving && !isBasic && quantity > 0) {
+          // محاولة تحديد العمود المناسب
+          let column = 'extra'; // افتراضي
+          let displayName = match[1].trim();
+          
+          for (const [col, config] of Object.entries(divingColumns)) {
+            if (config.keywords.some(kw => activityName.includes(kw))) {
+              column = col;
+              displayName = config.name;
+              break;
+            }
+          }
+          
+          activities.push({
+            id: displayName.replace(/ /g, '_'),
+            name: displayName,
+            originalName: match[1].trim(),
+            quantity: quantity,
+            price: 0,
+            column: column
+          });
+        }
+      }
+    }
+  }
+  
+  // 2️⃣ إذا لم يتم العثور على ActivitiesText، استخدم الأعمدة مباشرة
+  if (activities.length === 0) {
+    for (const [column, config] of Object.entries(divingColumns)) {
+      const qty = parseInt(invoice[column]) || 0;
+      if (qty > 0) {
         activities.push({
-          id: match[1].trim().replace(/ /g, '_'),
-          name: match[1].trim(),
-          quantity: parseFloat(match[2]) || 0,
-          price: 0  // المستخدم يدخل السعر
+          id: config.name.replace(/ /g, '_'),
+          name: config.name,
+          originalName: config.name,
+          quantity: qty,
+          price: 0,
+          column: column
         });
       }
     }
@@ -3292,8 +3329,16 @@ async function createUpsell() {
   const saveBtn = document.getElementById('createUpsellBtn');
   if (saveBtn && saveBtn.disabled) return;
   
-  // جمع الأنشطة...
+  // جمع الأنشطة المختارة
   const items = [];
+  const columnMapping = {
+    '1 Intro': 'sgl',
+    '2 Intro': 'dbl',
+    'Diver': 'trpl',
+    'C.D.': 'extra',
+    'S.R.': 'camel'
+  };
+  
   const rows = document.querySelectorAll('#upsellModal tbody tr');
   
   for (const row of rows) {
@@ -3304,11 +3349,15 @@ async function createUpsell() {
     const price = parseFloat(priceInput?.value) || 0;
     const qty = parseInt(qtyInput?.value) || 0;
     
-    if (qty > 0) {
+    if (qty > 0 && price > 0) {
+      // ✅ تحديد العمود المناسب للنشاط
+      const column = columnMapping[activityName] || 'extra';
+      
       items.push({
         name: activityName,
         quantity: qty,
-        price: price
+        price: price,
+        column: column  // ✅ إضافة العمود للحفظ
       });
     }
   }
