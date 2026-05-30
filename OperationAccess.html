@@ -543,7 +543,21 @@
     }
     .badge-boat { background: var(--blue); }
     .badge-instructor { background: var(--green); }
-    
+    /* إصلاح رؤية أرقام المدفوعات */
+.pay-cell input {
+  background: white !important;
+  color: #1e293b !important;
+  border: 1px solid #cbd5e1 !important;
+  border-radius: 6px !important;
+  padding: 6px !important;
+  font-size: 12px !important;
+}
+
+.pay-cell input:focus {
+  outline: none;
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.2) !important;
+}
     /* إصلاحات عامة */
     th, td {
       font-size: 11px;
@@ -2985,225 +2999,252 @@ let currentUpsellItems = [];
 let currentUpsellCurrency = 'LE';
 
 async function openUpsell(voucherNo) {
-  const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
-  if (!invoice) { showToast('Invoice not found', 'error'); return; }
-  
-  currentUpsellVoucher = voucherNo;
-  currentUpsellInvoice = invoice;
-  
-  const tripName = invoice.trip || '';
-  const invoiceCurrency = invoice.invoiceCurrency || 'LE';
-  currentUpsellCurrency = invoiceCurrency;
-  
-  // ✅ تحويل اسم العملة إلى رمز
-  const currencySymbol = getCurrencySymbol(invoiceCurrency);
-  
-  // تحديد المدرب المرتبط
-  let assignedInstructorIds = [];
-  let assignedBoats = [];
-  try { assignedBoats = JSON.parse(invoice.BoatsUsed || '[]'); } catch(e) {}
-  
-  for (const boat of assignedBoats) {
-    const instructors = boatInstructorsMap[boat.boatId];
-    if (instructors) {
-      const instArray = Array.isArray(instructors) ? instructors : [instructors];
-      assignedInstructorIds.push(...instArray);
+  try {
+    // البحث عن الفاتورة
+    const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
+    if (!invoice) {
+      showToast('Invoice not found', 'error');
+      return;
     }
-  }
-  
-  if (assignedInstructorIds.length === 0) {
-    assignedInstructorIds = [...selectedBeachInstructors];
-  }
-  
-  const allInstructors = await gas('getInstructors', { centerName: currentUser?.centerName });
-  const relevantInstructors = allInstructors.filter(inst => assignedInstructorIds.includes(inst.id));
-  
-  // جلب أسعار الصرف
-  let exchangeRates = null;
-  try {
-    exchangeRates = await gas('getLatestExchangeRates');
-  } catch(e) { console.warn(e); }
-  
-  showToast('Loading trip data...', 'info');
-  document.getElementById('upsellContent').innerHTML = '<div class="loader"><div class="spinner"></div>Loading...</div>';
-  openModal('upsellModal');
-  
-  try {
-    const tripData = await gas('getTripData', { tripName: tripName, currency: invoiceCurrency });
     
-    let items = [];
-    if (tripData && tripData.items && tripData.prices) {
-      const excludeList = ['Adult', 'Child', 'Inf', 'Infant', 'adult', 'child', 'inf', 'infant'];
-      for (let i = 0; i < tripData.items.length; i++) {
-        const itemName = tripData.items[i];
-        if (!excludeList.includes(itemName)) {
-          items.push({ name: itemName, price: 0, quantity: 0, total: 0, originalIndex: i });
-        }
+    // بناء الأنشطة من بيانات الفاتورة
+    const activities = [];
+    
+    // إضافة الأنشطة من الفاتورة (حسب الأعمدة الموجودة)
+    const activityItems = [
+      { name: '1 Intro', qty: parseInt(invoice.sgl) || 0, price: 50 },
+      { name: '2 Intro', qty: parseInt(invoice.dbl) || 0, price: 80 },
+      { name: 'Diver', qty: parseInt(invoice.trpl) || 0, price: 40 },
+      { name: 'C.D.', qty: parseInt(invoice.extra) || 0, price: 35 },
+      { name: 'S.R.', qty: parseInt(invoice.camel) || 0, price: 35 }
+    ];
+    
+    for (const item of activityItems) {
+      if (item.qty > 0) {
+        activities.push({
+          id: item.name.replace(/ /g, '_'),
+          name: item.name,
+          price: item.price,
+          quantity: item.qty
+        });
       }
     }
-    currentUpsellItems = items;
     
-    let instructorsHtml = '<option value="">-- Select Instructor --</option>';
-    for (const inst of relevantInstructors) {
-      instructorsHtml += `<option value="${inst.id}">${escapeHtml(inst.name)}</option>`;
+    if (activities.length === 0) {
+      showToast('No activities available for upsell', 'error');
+      return;
     }
     
-    // ✅ بناء جدول الأنشطة بتصميم محسن
-    let itemsHtml = `<div style="overflow-x: auto; margin-bottom: 20px;">
-      <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
-        <thead>
-          <tr style="background: var(--navy); color: var(--gold);">
-            <th style="padding: 8px; width: 40%;">Activity</th>
-            <th style="padding: 8px; width: 20%;">Price (${currencySymbol})</th>
-            <th style="padding: 8px; width: 20%;">Quantity</th>
-            <th style="padding: 8px; width: 20%;">Total (${currencySymbol})</th>
-          </tr>
-        </thead>
-        <tbody>`;
+    const leadName = invoice.guestName || 'Customer';
+    const instructors = cachedInstructors || [];
     
-    for (let i = 0; i < currentUpsellItems.length; i++) {
-      const item = currentUpsellItems[i];
-      itemsHtml += `<tr style="border-bottom: 1px solid var(--border);">
-        <td style="padding: 6px; background: var(--navy); color: var(--gold); font-size: 12px;">${escapeHtml(item.name)}</td>
-        <td style="padding: 6px; text-align: center;">
-          <input type="number" id="upsell_price_${i}" value="0" step="0.01" min="0" 
-                 style="width: 80px; padding: 4px; text-align: center; border: 1px solid var(--border); border-radius: 4px; color: var(--text); background: white;">
-        </td>
-        <td style="padding: 6px; text-align: center;">
-          <input type="number" id="upsell_qty_${i}" value="0" min="0" step="1" 
-                 style="width: 60px; padding: 4px; text-align: center; border: 1px solid var(--border); border-radius: 4px; color: var(--text); background: white;" 
-                 onchange="updateUpsellTotal(${i})">
-        </td>
-        <td style="padding: 6px; text-align: center;"><span id="upsell_total_${i}" style="font-weight: 600;">0.00</span></td>
-      </tr>`;
-    }
-    
-    itemsHtml += `</tbody></table></div>`;
-    
-    // ✅ بناء جدول المدفوعات مع عناوين واضحة
-    const html = `
-      <div style="padding: 8px;">
-        <div style="background: var(--navy); color: var(--gold); padding: 10px; border-radius: 8px; margin-bottom: 12px; font-size: 13px;">
-          <strong>📄 Voucher: ${escapeHtml(voucherNo)}</strong> | 
-          <strong>👤 ${escapeHtml(invoice.guestName || '—')}</strong> | 
-          <strong>🚌 ${escapeHtml(invoice.trip || '—')}</strong>
-        </div>
-        
-        <div style="margin-bottom: 12px; display: flex; align-items: center; gap: 12px;">
-          <label style="font-weight: bold; font-size: 12px;">💱 Currency:</label>
-          <select id="upsellCurrency" style="padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 12px;" onchange="updateUpsellCurrencyWithRates()">
-            <option value="LE" ${invoiceCurrency === 'LE' ? 'selected' : ''}>🇪🇬 LE</option>
-            <option value="USD" ${invoiceCurrency === 'USD' ? 'selected' : ''}>🇺🇸 $</option>
-            <option value="EUR" ${invoiceCurrency === 'EUR' ? 'selected' : ''}>🇪🇺 €</option>
-            <option value="GBP" ${invoiceCurrency === 'GBP' ? 'selected' : ''}>🇬🇧 £</option>
-          </select>
-        </div>
-        
-        <div style="margin-bottom: 12px;">
-          <div style="font-weight: bold; margin-bottom: 6px; font-size: 12px;">🎯 Activities</div>
-          ${itemsHtml}
-        </div>
-        
-      <div style="margin-bottom: 12px;">
-  <div style="font-weight: bold; margin-bottom: 6px; font-size: 12px;">💳 Payment Details</div>
-  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;">
-    <div class="pay-cell" style="background: var(--gray-50); border: 1px solid var(--border); border-radius: 6px; padding: 6px; text-align: center;">
-      <div class="cash-label" style="font-size: 9px; font-weight: bold;">Cash $</div>
-      <input type="number" id="cashUSD" value="0" step="0.01" style="width: 100%; padding: 4px; text-align: center; border: none; background: transparent; font-size: 12px;" oninput="updateRemainingWithRates()">
-    </div>
-    <div class="pay-cell" style="background: var(--gray-50); border: 1px solid var(--border); border-radius: 6px; padding: 6px; text-align: center;">
-      <div class="cash-label" style="font-size: 9px; font-weight: bold;">Cash €</div>
-      <input type="number" id="cashEUR" value="0" step="0.01" style="width: 100%; padding: 4px; text-align: center; border: none; background: transparent; font-size: 12px;" oninput="updateRemainingWithRates()">
-    </div>
-    <div class="pay-cell" style="background: var(--gray-50); border: 1px solid var(--border); border-radius: 6px; padding: 6px; text-align: center;">
-      <div class="cash-label" style="font-size: 9px; font-weight: bold;">Cash £</div>
-      <input type="number" id="cashGBP" value="0" step="0.01" style="width: 100%; padding: 4px; text-align: center; border: none; background: transparent; font-size: 12px;" oninput="updateRemainingWithRates()">
-    </div>
-    <div class="pay-cell" style="background: var(--gray-50); border: 1px solid var(--border); border-radius: 6px; padding: 6px; text-align: center;">
-      <div class="cash-label" style="font-size: 9px; font-weight: bold;">Cash LE</div>
-      <input type="number" id="cashLE" value="0" step="0.01" style="width: 100%; padding: 4px; text-align: center; border: none; background: transparent; font-size: 12px;" oninput="updateRemainingWithRates()">
-    </div>
-    <div class="pay-cell" style="background: var(--gray-50); border: 1px solid var(--border); border-radius: 6px; padding: 6px; text-align: center;">
-      <div class="visa-label" style="font-size: 9px; font-weight: bold;">Visa $</div>
-      <input type="number" id="visaUSD" value="0" step="0.01" style="width: 100%; padding: 4px; text-align: center; border: none; background: transparent; font-size: 12px;" oninput="updateRemainingWithRates()">
-    </div>
-    <div class="pay-cell" style="background: var(--gray-50); border: 1px solid var(--border); border-radius: 6px; padding: 6px; text-align: center;">
-      <div class="visa-label" style="font-size: 9px; font-weight: bold;">Visa €</div>
-      <input type="number" id="visaEUR" value="0" step="0.01" style="width: 100%; padding: 4px; text-align: center; border: none; background: transparent; font-size: 12px;" oninput="updateRemainingWithRates()">
-    </div>
-    <div class="pay-cell" style="background: var(--gray-50); border: 1px solid var(--border); border-radius: 6px; padding: 6px; text-align: center;">
-      <div class="visa-label" style="font-size: 9px; font-weight: bold;">Visa £</div>
-      <input type="number" id="visaGBP" value="0" step="0.01" style="width: 100%; padding: 4px; text-align: center; border: none; background: transparent; font-size: 12px;" oninput="updateRemainingWithRates()">
-    </div>
-    <div class="pay-cell" style="background: var(--gray-50); border: 1px solid var(--border); border-radius: 6px; padding: 6px; text-align: center;">
-      <div class="visa-label" style="font-size: 9px; font-weight: bold;">Visa LE</div>
-      <input type="number" id="visaLE" value="0" step="0.01" style="width: 100%; padding: 4px; text-align: center; border: none; background: transparent; font-size: 12px;" oninput="updateRemainingWithRates()">
-    </div>
-  </div>
-</div>
-        
-        <div style="margin-bottom: 12px;">
-          <div style="font-weight: bold; margin-bottom: 6px; font-size: 12px;">👨‍🏫 Selling Instructor</div>
-          <select id="upsellInstructor" style="width: 100%; padding: 6px; border: 1px solid var(--border); border-radius: 4px; font-size: 12px;">
-            ${instructorsHtml}
-          </select>
-        </div>
-        
-        <div style="display: flex; justify-content: space-between; gap: 12px; margin-bottom: 16px; background: var(--gray-50); padding: 10px; border-radius: 8px;">
-          <div><span style="font-weight: bold;">💰 Total:</span> <span id="totalAmount" style="font-size: 18px; font-weight: bold;">0.00</span> <span id="totalCurrency">${currencySymbol}</span></div>
-          <div><span style="font-weight: bold;">📊 Remaining:</span> <span id="remainingAmount" style="font-size: 18px; font-weight: bold; color: var(--red);">0.00</span> <span id="remainingCurrency">${currencySymbol}</span></div>
-        </div>
-        
-        <div style="display: flex; gap: 8px; justify-content: flex-end;">
-          <button class="btn btn-secondary" onclick="closeModal('upsellModal')" style="padding: 6px 12px; font-size: 12px;">Cancel</button>
-          <button class="btn btn-primary" onclick="saveUpsellV2()" style="padding: 6px 12px; font-size: 12px;">💰 Create UpSell</button>
+    // بناء HTML المودال
+    const modalHtml = `
+      <div id="upsellModal" class="modal-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 10000;" onclick="if(event.target===this) closeUpsellModal()">
+        <div style="background: white; border-radius: 16px; max-width: 900px; width: 90%; max-height: 85vh; overflow-y: auto;">
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 2px solid var(--gold);">
+            <h3 style="margin: 0;">💰 Create UpSell - ${escapeHtml(leadName)}</h3>
+            <button onclick="closeUpsellModal()" style="background: none; border: none; font-size: 24px; cursor: pointer;">✕</button>
+          </div>
+          
+          <div style="padding: 20px;">
+            <!-- Currency Selection -->
+            <div style="margin-bottom: 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-weight: 600; font-size: 13px;">💱 Sale Currency:</span>
+                <select id="upsellCurrency" onchange="updateUpsellCurrencyWithRates()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid #cbd5e1; background: white;">
+                  <option value="USD">USD ($)</option>
+                  <option value="EUR">EUR (€)</option>
+                  <option value="GBP">GBP (£)</option>
+                  <option value="LE">EGP (LE)</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Activities Table -->
+            <div style="margin-bottom: 20px; overflow-x: auto;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                <thead>
+                  <tr style="background: #f1f5f9; border-bottom: 2px solid #e2e8f0;">
+                    <th style="padding: 10px; text-align: left;">Activity</th>
+                    <th style="padding: 10px; text-align: right;">Price ($)</th>
+                    <th style="padding: 10px; text-align: center;">Quantity</th>
+                    <th style="padding: 10px; text-align: right;">Total ($)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${activities.map(activity => `
+                    <tr style="border-bottom: 1px solid #e2e8f0;" data-activity-id="${activity.id}" data-price-usd="${activity.price}">
+                      <td style="padding: 8px;">${escapeHtml(activity.name)}</td>
+                      <td style="padding: 8px; text-align: right;">
+                        <input type="number" 
+                               class="upsell-price" 
+                               value="${formatPrice(activity.price)}" 
+                               step="0.01" 
+                               style="width: 80px; text-align: right; padding: 4px 6px; border-radius: 4px; border: 1px solid #cbd5e1;"
+                               onchange="updateUpsellRowTotal(this)">
+                      </td>
+                      <td style="padding: 8px; text-align: center;">
+                        <input type="number" 
+                               class="upsell-quantity" 
+                               value="${formatPrice(activity.quantity)}" 
+                               step="1" 
+                               min="0"
+                               style="width: 60px; text-align: center; padding: 4px 6px; border-radius: 4px; border: 1px solid #cbd5e1;"
+                               onchange="updateUpsellRowTotal(this)">
+                      </td>
+                      <td style="padding: 8px; text-align: right;" class="upsell-row-total">
+                        ${(activity.price * activity.quantity).toFixed(2)}
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Payment Details Section -->
+            <div style="margin-bottom: 16px;">
+              <div style="font-weight: bold; margin-bottom: 10px; font-size: 13px;">💳 Payment Details</div>
+              <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;">
+                <!-- Cash Payments -->
+                <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
+                  <div class="cash-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Cash $</div>
+                  <input type="number" id="cashUSD" value="0" step="0.01" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
+                </div>
+                <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
+                  <div class="cash-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Cash €</div>
+                  <input type="number" id="cashEUR" value="0" step="0.01" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
+                </div>
+                <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
+                  <div class="cash-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Cash £</div>
+                  <input type="number" id="cashGBP" value="0" step="0.01" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
+                </div>
+                <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
+                  <div class="cash-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Cash LE</div>
+                  <input type="number" id="cashLE" value="0" step="0.01" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
+                </div>
+                <!-- Visa Payments -->
+                <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
+                  <div class="visa-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Visa $</div>
+                  <input type="number" id="visaUSD" value="0" step="0.01" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
+                </div>
+                <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
+                  <div class="visa-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Visa €</div>
+                  <input type="number" id="visaEUR" value="0" step="0.01" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
+                </div>
+                <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
+                  <div class="visa-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Visa £</div>
+                  <input type="number" id="visaGBP" value="0" step="0.01" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
+                </div>
+                <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
+                  <div class="visa-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Visa LE</div>
+                  <input type="number" id="visaLE" value="0" step="0.01" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
+                </div>
+              </div>
+            </div>
+
+            <!-- Selling Instructor -->
+            <div style="margin-bottom: 16px;">
+              <label style="font-weight: bold; font-size: 13px; display: block; margin-bottom: 6px;">👨‍🏫 Selling Instructor</label>
+              <select id="sellingInstructor" style="width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #cbd5e1;">
+                <option value="">-- Select Instructor --</option>
+                ${instructors.map(inst => `<option value="${inst.id}">${escapeHtml(inst.name)}</option>`).join('')}
+              </select>
+            </div>
+
+            <!-- Total & Remaining -->
+            <div style="background: #f8fafc; padding: 12px; border-radius: 8px; margin-bottom: 16px;">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                <span style="font-weight: bold;">💰 Total:</span>
+                <span><span id="totalAmount">0.00</span> <span id="totalCurrency">$</span></span>
+              </div>
+              <div style="display: flex; justify-content: space-between;">
+                <span style="font-weight: bold;">⚡ Remaining:</span>
+                <span><span id="remainingAmount">0.00</span> <span id="remainingCurrency">$</span></span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 10px; justify-content: flex-end; padding: 16px 20px; border-top: 1px solid #e2e8f0;">
+            <button onclick="closeUpsellModal()" style="padding: 8px 16px; background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 8px; cursor: pointer;">Cancel</button>
+            <button id="createUpsellBtn" onclick="createUpsell()" style="padding: 8px 16px; background: #0f1f3d; color: #f5c842; border: none; border-radius: 8px; cursor: pointer;">Create UpSell</button>
+          </div>
         </div>
       </div>
     `;
+
+    // إضافة المودال للصفحة
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
     
-    document.getElementById('upsellContent').innerHTML = html;
+    // تخزين البيانات الحالية
+    currentUpsellVoucher = voucherNo;
+    currentUpsellInvoice = invoice;
+    currentUpsellItems = activities;
     
-    for (let i = 0; i < currentUpsellItems.length; i++) {
-      document.getElementById(`upsell_qty_${i}`)?.addEventListener('input', () => updateUpsellTotal(i));
-      document.getElementById(`upsell_price_${i}`)?.addEventListener('input', () => updateUpsellTotal(i));
+    // تعيين العملة الافتراضية إلى USD
+    const currencySelect = document.getElementById('upsellCurrency');
+    if (currencySelect) {
+      currencySelect.value = 'USD';
+      currentUpsellCurrency = 'USD';
     }
     
-    await updateRemainingWithRates();
+    // تحديث الأسعار والمتبقي
+    setTimeout(() => {
+      updateUpsellCurrencyWithRates();
+    }, 100);
     
-  } catch(e) {
-    showToast('Error loading trip data: ' + e.message, 'error');
+  } catch (error) {
+    console.error('Error opening upsell modal:', error);
+    showToast('Failed to load upsell data: ' + error.message, 'error');
   }
 }
 
-// ✅ دالة للحصول على رمز العملة
-function getCurrencySymbol(currency) {
-  const symbols = { 
-    'USD': '$', 
-    'EUR': '€', 
-    'GBP': '£', 
-    'LE': 'LE' 
-  };
-  return symbols[currency] || currency;
+// دالة إغلاق المودال
+function closeUpsellModal() {
+  const modal = document.getElementById('upsellModal');
+  if (modal) {
+    modal.remove();
+  }
 }
-// ✅ دالة تحديث المبلغ المتبقي مع أسعار الصرف (مثل SalesInvoice.html)
-async function updateRemainingWithRates() {
-  let totalAmount = 0;
-  for (let i = 0; i < currentUpsellItems.length; i++) {
-    const price = parseFloat(document.getElementById(`upsell_price_${i}`)?.value) || 0;
-    const qty = parseInt(document.getElementById(`upsell_qty_${i}`)?.value) || 0;
-    totalAmount += price * qty;
+
+// دالة إنشاء UpSell
+async function createUpsell() {
+  const saveBtn = document.getElementById('createUpsellBtn');
+  if (saveBtn && saveBtn.disabled) return;
+  
+  // جمع الأنشطة المختارة
+  const items = [];
+  const rows = document.querySelectorAll('#upsellModal tbody tr');
+  
+  for (const row of rows) {
+    const activityName = row.cells[0].textContent;
+    const priceInput = row.querySelector('.upsell-price');
+    const qtyInput = row.querySelector('.upsell-quantity');
+    
+    const price = parseFloat(priceInput?.value) || 0;
+    const qty = parseInt(qtyInput?.value) || 0;
+    
+    if (qty > 0 && price > 0) {
+      items.push({
+        name: activityName,
+        quantity: qty,
+        price: price
+      });
+    }
   }
   
-  // جلب أسعار الصرف
-  let rates = await gas('getLatestExchangeRates');
-  if (!rates || !rates.cash) {
-    rates = { cash: { USD: 1, EUR: 1, GBP: 1, LE: 1 }, visa: { USD: 1, EUR: 1, GBP: 1, LE: 1 } };
+  if (items.length === 0) {
+    showToast('Please select at least one activity', 'error');
+    return;
   }
   
-  const cashRates = rates.cash;
-  const visaRates = rates.visa || rates.cash;
+  const instructorId = document.getElementById('sellingInstructor')?.value;
+  if (!instructorId) {
+    showToast('Please select selling instructor', 'error');
+    return;
+  }
   
-  // قراءة المدفوعات
+  // جمع المدفوعات
   const payments = {
     cashUSD: parseFloat(document.getElementById('cashUSD')?.value) || 0,
     cashEUR: parseFloat(document.getElementById('cashEUR')?.value) || 0,
@@ -3215,52 +3256,180 @@ async function updateRemainingWithRates() {
     visaLE: parseFloat(document.getElementById('visaLE')?.value) || 0
   };
   
-  // تحويل جميع المدفوعات إلى LE
-  const totalLE = 
-    payments.cashUSD * (cashRates.USD || 1) +
-    payments.cashEUR * (cashRates.EUR || 1) +
-    payments.cashGBP * (cashRates.GBP || 1) +
-    payments.cashLE * 1 +
-    payments.visaUSD * (visaRates.USD || cashRates.USD || 1) +
-    payments.visaEUR * (visaRates.EUR || cashRates.EUR || 1) +
-    payments.visaGBP * (visaRates.GBP || cashRates.GBP || 1) +
-    payments.visaLE * (visaRates.LE || 0.975);
+  const totalPaid = Object.values(payments).reduce((a, b) => a + b, 0);
+  if (totalPaid === 0) {
+    showToast('Please enter payment amounts', 'error');
+    return;
+  }
   
-  // تحويل المبلغ الإجمالي إلى العملة المختارة
-  const targetCurrency = currentUpsellCurrency;
-  let totalPaid = 0;
-  if (targetCurrency === 'USD') totalPaid = totalLE / (cashRates.USD || 1);
-  else if (targetCurrency === 'EUR') totalPaid = totalLE / (cashRates.EUR || 1);
-  else if (targetCurrency === 'GBP') totalPaid = totalLE / (cashRates.GBP || 1);
-  else totalPaid = totalLE;
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = '⏳ Creating...';
+  }
   
-  const remaining = Math.max(0, totalAmount - totalPaid);
+  showToast('Creating Upsell invoice...', 'info');
   
-  // تحديث واجهة المستخدم
-  document.getElementById('totalAmount').textContent = totalAmount.toFixed(2);
-  document.getElementById('remainingAmount').textContent = remaining.toFixed(2);
-  
-  // تحديث رمز العملة في العناوين
-  const currencySymbol = getCurrencySymbol(targetCurrency);
-  document.getElementById('totalCurrency').textContent = currencySymbol;
-  document.getElementById('remainingCurrency').textContent = currencySymbol;
+  try {
+    const result = await gas('createUpSellInvoice', {
+      originalVoucherNo: currentUpsellVoucher,
+      upSellItems: JSON.stringify(items),
+      upSellAmounts: JSON.stringify(payments),
+      instructorId: instructorId,
+      centerName: currentUser?.centerName,
+      currency: currentUpsellCurrency
+    });
+    
+    if (result?.success) {
+      showToast(`✅ Upsell invoice created: ${result.voucherNo}`, 'success');
+      closeUpsellModal();
+      await loadInvoices();
+      renderTable();
+    } else {
+      showToast('❌ Failed to create Upsell: ' + (result?.message || 'Unknown error'), 'error');
+    }
+  } catch(e) {
+    showToast('Error: ' + e.message, 'error');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Create UpSell';
+    }
+  }
 }
-// ✅ دالة تحديث العملة
-function updateUpsellCurrency() {
+// ✅ دالة للحصول على رمز العملة
+
+// ✅ دالة تحديث المبلغ المتبقي مع أسعار الصرف (مثل SalesInvoice.html)
+function formatPrice(value) {
+  if (value === null || value === undefined) return '0';
+  let num = parseFloat(value);
+  if (isNaN(num)) num = 0;
+  return num.toString();
+}
+
+function getCurrencySymbol(currency) {
+  const symbols = { 'USD': '$', 'EUR': '€', 'GBP': '£', 'LE': 'LE' };
+  return symbols[currency] || currency;
+}
+
+function getRate(currency) {
+  const rates = { USD: 1, EUR: 1.05, GBP: 1.25, LE: 0.05 };
+  return rates[currency] || 1;
+}
+
+function updateUpsellRowTotal(element) {
+  const row = element.closest('tr');
+  const priceInput = row.querySelector('.upsell-price');
+  const qtyInput = row.querySelector('.upsell-quantity');
+  const totalCell = row.querySelector('.upsell-row-total');
+  
+  const price = parseFloat(priceInput.value) || 0;
+  const qty = parseFloat(qtyInput.value) || 0;
+  const total = price * qty;
+  
+  totalCell.textContent = total.toFixed(2);
+  updateRemainingWithRates();
+}
+
+async function updateUpsellCurrencyWithRates() {
   const newCurrency = document.getElementById('upsellCurrency')?.value;
   if (!newCurrency) return;
   currentUpsellCurrency = newCurrency;
-  document.getElementById('totalCurrency').textContent = newCurrency;
-  document.getElementById('remainingCurrency').textContent = newCurrency;
   
-  // تحديث جميع الأسعار المعروضة
-  for (let i = 0; i < currentUpsellItems.length; i++) {
-    const priceCell = document.querySelector(`#upsell_price_${i}`);
-    if (priceCell) {
-      // يمكن تحويل السعر حسب العملة الجديدة إذا لزم الأمر
+  const rate = getRate(newCurrency);
+  const symbol = getCurrencySymbol(newCurrency);
+  
+  // تحديث رؤوس الأعمدة
+  const priceHeader = document.querySelector('#upsellModal table thead tr th:nth-child(2)');
+  const totalHeader = document.querySelector('#upsellModal table thead tr th:nth-child(4)');
+  if (priceHeader) priceHeader.innerHTML = `Price (${symbol})`;
+  if (totalHeader) totalHeader.innerHTML = `Total (${symbol})`;
+  
+  // تحديث الأسعار
+  const rows = document.querySelectorAll('#upsellModal tbody tr');
+  for (const row of rows) {
+    const priceCell = row.cells[1];
+    const totalCell = row.cells[3];
+    const qtyCell = row.cells[2];
+    const priceInput = row.querySelector('.upsell-price');
+    
+    const originalPriceUSD = parseFloat(priceInput?.getAttribute('data-usd') || priceInput?.value) || 0;
+    const qty = parseFloat(qtyCell.textContent) || 0;
+    
+    const newPrice = originalPriceUSD * rate;
+    if (priceInput) {
+      priceInput.value = newPrice.toFixed(2);
+      priceInput.setAttribute('data-usd', originalPriceUSD);
+    }
+    totalCell.textContent = (newPrice * qty).toFixed(2);
+  }
+  
+  await updateRemainingWithRates();
+}
+
+async function updateRemainingWithRates() {
+  let total = 0;
+  const rows = document.querySelectorAll('#upsellModal tbody tr');
+  rows.forEach(row => {
+    const totalCell = row.querySelector('.upsell-row-total');
+    const rowTotal = parseFloat(totalCell?.textContent) || 0;
+    total += rowTotal;
+  });
+  
+  // جمع المدفوعات وتحويلها للدولار
+  let paidInBase = 0;
+  const payments = [
+    { id: 'cashUSD', rate: 1 },
+    { id: 'cashEUR', rate: getRate('EUR') },
+    { id: 'cashGBP', rate: getRate('GBP') },
+    { id: 'cashLE', rate: getRate('LE') },
+    { id: 'visaUSD', rate: 1 },
+    { id: 'visaEUR', rate: getRate('EUR') },
+    { id: 'visaGBP', rate: getRate('GBP') },
+    { id: 'visaLE', rate: getRate('LE') }
+  ];
+  
+  for (const p of payments) {
+    const element = document.getElementById(p.id);
+    if (element && element.value) {
+      let val = parseFloat(element.value);
+      if (!isNaN(val) && val > 0) {
+        paidInBase += val / p.rate;
+      }
     }
   }
-  updateRemaining();
+  
+  const remainingInBase = total - paidInBase;
+  const displayCurrency = currentUpsellCurrency;
+  const displayRate = getRate(displayCurrency);
+  const remainingInDisplay = remainingInBase * displayRate;
+  const totalInDisplay = total * displayRate;
+  
+  const totalAmountSpan = document.getElementById('totalAmount');
+  const remainingAmountSpan = document.getElementById('remainingAmount');
+  const totalCurrencySpan = document.getElementById('totalCurrency');
+  const remainingCurrencySpan = document.getElementById('remainingCurrency');
+  
+  if (totalAmountSpan) totalAmountSpan.textContent = totalInDisplay.toFixed(2);
+  if (remainingAmountSpan) remainingAmountSpan.textContent = remainingInDisplay > 0 ? remainingInDisplay.toFixed(2) : '0.00';
+  if (totalCurrencySpan) totalCurrencySpan.textContent = getCurrencySymbol(displayCurrency);
+  if (remainingCurrencySpan) remainingCurrencySpan.textContent = getCurrencySymbol(displayCurrency);
+  
+  const createBtn = document.getElementById('createUpsellBtn');
+  if (createBtn) createBtn.disabled = remainingInDisplay > 0.01;
+}
+function calculateTotalInBaseCurrency() {
+  let total = 0;
+  const rows = document.querySelectorAll('#upsellModal tbody tr');
+  rows.forEach(row => {
+    const priceCell = row.cells[1];
+    const qtyCell = row.cells[2];
+    if (priceCell && qtyCell) {
+      const price = parseFloat(priceCell.textContent) || 0;
+      const qty = parseFloat(qtyCell.textContent) || 0;
+      total += price * qty;
+    }
+  });
+  return total;
 }
 
 // ✅ دالة تحديث الإجمالي والمتبقي (مع أسعار الصرف)
@@ -3427,23 +3596,7 @@ async function saveUpsellV2() {
     }
   }
 }
-
-function updateUpsellTotal(index) {
-  const price = parseFloat(document.getElementById(`upsell_price_${index}`)?.value) || 0;
-  const qty = parseInt(document.getElementById(`upsell_qty_${index}`)?.value) || 0;
-  const total = price * qty;
-  document.getElementById(`upsell_total_${index}`).textContent = total.toFixed(2);
-  updateRemaining();
-}
-
-function updateUpsellPrices() {
-  const newCurrency = document.getElementById('upsellCurrency')?.value;
-  if (!newCurrency) return;
-  currentUpsellCurrency = newCurrency;
-  document.getElementById('totalCurrency').textContent = newCurrency;
-  document.getElementById('remainingCurrency').textContent = newCurrency;
-  // يمكن إضافة تحديث الأسعار حسب العملة هنا
-}
+ 
 
 function updateRemaining() {
   let totalAmount = 0;
@@ -3470,55 +3623,9 @@ function updateRemaining() {
 }
 
 
-async function updateUpsellCurrencyWithRates() {
-  const newCurrency = document.getElementById('upsellCurrency')?.value;
-  if (!newCurrency) return;
-  currentUpsellCurrency = newCurrency;
-  
-  const currencySymbol = getCurrencySymbol(newCurrency);
-  
-  // ✅ تحديث رؤوس أعمدة الجدول
-  const priceHeader = document.querySelector('#upsellModal table thead tr th:nth-child(2)');
-  const totalHeader = document.querySelector('#upsellModal table thead tr th:nth-child(4)');
-  
-  if (priceHeader) {
-    priceHeader.innerHTML = `Price (${currencySymbol})`;
-  }
-  if (totalHeader) {
-    totalHeader.innerHTML = `Total (${currencySymbol})`;
-  }
-  
-  // ✅ تحديث عناوين المدفوعات
-  const cashLabels = document.querySelectorAll('#upsellModal .pay-cell .cash-label');
-  const visaLabels = document.querySelectorAll('#upsellModal .pay-cell .visa-label');
-  
-  if (cashLabels.length === 4) {
-    cashLabels[0].innerHTML = `Cash $`;
-    cashLabels[1].innerHTML = `Cash €`;
-    cashLabels[2].innerHTML = `Cash £`;
-    cashLabels[3].innerHTML = `Cash LE`;
-  }
-  if (visaLabels.length === 4) {
-    visaLabels[0].innerHTML = `Visa $`;
-    visaLabels[1].innerHTML = `Visa €`;
-    visaLabels[2].innerHTML = `Visa £`;
-    visaLabels[3].innerHTML = `Visa LE`;
-  }
-  
-  document.getElementById('totalCurrency').textContent = currencySymbol;
-  document.getElementById('remainingCurrency').textContent = currencySymbol;
-  
-  await updateRemainingWithRates();
-}
-function updateUpsellTotal(index) {
-  const price = parseFloat(document.getElementById(`upsell_price_${index}`)?.value) || 0;
-  const qty = parseInt(document.getElementById(`upsell_qty_${index}`)?.value) || 0;
-  const total = price * qty;
-  document.getElementById(`upsell_total_${index}`).textContent = total.toFixed(2);
-  updateRemainingWithRates();
-}
 
-async function saveUpsellV2() {
+
+  async function saveUpsellV2() {
   const items = [];
   for (let i = 0; i < currentUpsellItems.length; i++) {
     const qty = parseInt(document.getElementById(`upsell_qty_${i}`)?.value) || 0;
