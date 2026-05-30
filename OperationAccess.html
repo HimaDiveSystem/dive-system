@@ -3512,38 +3512,45 @@ async function updateRemainingWithRates() {
     totalInSaleCurrency += price * qty;
   }
   
-  console.log('📊 Total in sale currency:', totalInSaleCurrency);
-  
-  // 2️⃣ جلب أسعار الصرف من الخادم
-  let rates = { USD: 1, EUR: 1, GBP: 1, LE: 1 };
+  // 2️⃣ جلب أسعار الصرف من الخادم (بدون قيم افتراضية)
+  let rates = null;
   try {
     const result = await gas('getLatestExchangeRates');
     console.log('💰 Exchange rates from server:', result);
-    if (result && result.success) {
-      // ✅ تصحيح: الخادم يرسل bUSD, bEUR, bGBP
+    
+    if (result && result.bUSD) {
       rates = {
-        USD: result.bUSD || result.USD || 1,
-        EUR: result.bEUR || result.EUR || 1,
-        GBP: result.bGBP || result.GBP || 1,
-        LE: 1
+        USD: result.bUSD,
+        EUR: result.bEUR,
+        GBP: result.bGBP,
+        LE: result.bLE || 1
       };
     }
   } catch(e) {
-    console.warn('Failed to fetch rates, using defaults:', e);
+    console.error('Failed to fetch exchange rates:', e);
   }
   
-  console.log('✅ Parsed rates:', rates);
+  // ❌ إذا لم تنجح في جلب الأسعار، لا تحسب المتبقي
+  if (!rates) {
+    console.warn('⚠️ No exchange rates available, skipping calculation');
+    document.getElementById('remainingAmount').textContent = '?';
+    return;
+  }
+  
+  console.log('✅ Using rates from server:', rates);
   
   const saleCurrency = currentUpsellCurrency || 'USD';
+  const saleRateToLE = rates[saleCurrency];
   
-  // ✅ سعر صرف العملة المختارة مقابل الجنيه
-  const saleRateToLE = rates[saleCurrency] || 1;
+  // ❌ إذا كانت العملة غير موجودة في الأسعار
+  if (!saleRateToLE) {
+    console.warn(`⚠️ Exchange rate for ${saleCurrency} not found`);
+    document.getElementById('remainingAmount').textContent = '?';
+    return;
+  }
   
-  console.log(`💰 Sale rate for ${saleCurrency} to LE: ${saleRateToLE}`);
-  
-  // 3️⃣ تحويل إجمالي الأنشطة إلى جنيه
+  // 3️⃣ تحويل الإجمالي إلى جنيه
   const totalInLE = totalInSaleCurrency * saleRateToLE;
-  console.log(`💰 Total in LE: ${totalInLE} (${totalInSaleCurrency} ${saleCurrency} × ${saleRateToLE})`);
   
   // 4️⃣ جمع المدفوعات وتحويلها إلى جنيه
   let paidInLE = 0;
@@ -3555,34 +3562,25 @@ async function updateRemainingWithRates() {
     return isNaN(val) ? 0 : val;
   };
   
-  // كل دفعة × سعر صرف العملة = قيمتها بالجنيه
   paidInLE += getValue('cashUSD') * rates.USD;
   paidInLE += getValue('cashEUR') * rates.EUR;
   paidInLE += getValue('cashGBP') * rates.GBP;
-  paidInLE += getValue('cashLE') * 1;
+  paidInLE += getValue('cashLE') * rates.LE;
   paidInLE += getValue('visaUSD') * rates.USD;
   paidInLE += getValue('visaEUR') * rates.EUR;
   paidInLE += getValue('visaGBP') * rates.GBP;
-  paidInLE += getValue('visaLE') * 1;
+  paidInLE += getValue('visaLE') * rates.LE;
   
-  console.log('💰 Paid in LE:', paidInLE);
-  
-  // 5️⃣ حساب المتبقي بالجنيه
+  // 5️⃣ حساب المتبقي
   const remainingInLE = totalInLE - paidInLE;
-  console.log('💰 Remaining in LE:', remainingInLE);
-  
-  // 6️⃣ تحويل المتبقي إلى عملة الفاتورة
   const remainingInSaleCurrency = remainingInLE / saleRateToLE;
   
-  console.log(`💰 Remaining in ${saleCurrency}: ${remainingInSaleCurrency}`);
-  
-  // 7️⃣ تحديث الواجهة
+  // 6️⃣ تحديث الواجهة
   document.getElementById('totalAmount').textContent = totalInSaleCurrency.toFixed(2);
   document.getElementById('remainingAmount').textContent = remainingInSaleCurrency > 0 ? remainingInSaleCurrency.toFixed(2) : '0.00';
   document.getElementById('totalCurrency').textContent = getCurrencySymbol(saleCurrency);
   document.getElementById('remainingCurrency').textContent = getCurrencySymbol(saleCurrency);
   
-  // 8️⃣ تمكين/تعطيل زر Create
   const createBtn = document.getElementById('createUpsellBtn');
   if (createBtn) createBtn.disabled = remainingInSaleCurrency > 0.01;
 }
