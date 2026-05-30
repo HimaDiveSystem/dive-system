@@ -1237,10 +1237,18 @@ function getActivitiesFromInvoice(invoice) {
   // إذا كان ActivitiesText فارغاً، حاول بناءه من الأعمدة
   if (!activitiesText) {
     const parts = [];
-    if (invoice.sgl > 0) parts.push(`Adult×${invoice.sgl}`);
-    if (invoice.dbl > 0) parts.push(`Child×${invoice.dbl}`);
-    if (invoice.trpl > 0) parts.push(`Infant×${invoice.trpl}`);
-    if (invoice.extra > 0) parts.push(`Intro×${invoice.extra}`);
+    const sgl = parseInt(invoice.sgl) || 0;
+    const dbl = parseInt(invoice.dbl) || 0;
+    const trpl = parseInt(invoice.trpl) || 0;
+    const extra = parseInt(invoice.extra) || 0;
+    const camel = parseInt(invoice.camel) || 0;
+    
+    if (sgl > 0) parts.push(`1 Intro×${sgl}`);
+    if (dbl > 0) parts.push(`2 Intro×${dbl}`);
+    if (trpl > 0) parts.push(`Diver×${trpl}`);
+    if (extra > 0) parts.push(`C.D.×${extra}`);
+    if (camel > 0) parts.push(`S.R.×${camel}`);
+    
     activitiesText = parts.join(' | ');
   }
   
@@ -1248,12 +1256,14 @@ function getActivitiesFromInvoice(invoice) {
   if (activitiesText) {
     const parts = activitiesText.split('|');
     for (const part of parts) {
-      const match = part.trim().match(/^(.+?)×(\d+(\.\d+)?)$/);
+      const trimmed = part.trim();
+      const match = trimmed.match(/^(.+?)×(\d+(\.\d+)?)$/);
       if (match) {
         activities.push({
+          id: match[1].trim().replace(/ /g, '_'),
           name: match[1].trim(),
           quantity: parseFloat(match[2]) || 0,
-          price: 0
+          price: 0  // المستخدم يدخل السعر
         });
       }
     }
@@ -1782,11 +1792,7 @@ async function openAssignVehicles(voucherNo) {
   document.getElementById('assignVehiclesContent').innerHTML = vehiclesHtml;
   attachVehicleAssignmentEvents();
 }
-  function clearVehicleSeatsCache() {
-  cachedVehicleSeats = {};
-  cachedBoatSeats = {};
-  console.log('🗑️ Vehicle/boat seats cache cleared');
-}
+
 // ✅ دالة مساعدة لربط الأحداث في Assign Vehicles
 function attachVehicleAssignmentEvents() {
   // ✅ دالة لحساب المقاعد المتاحة ديناميكياً
@@ -2278,13 +2284,13 @@ async function saveInstructorAssignmentV3(activityItems, activityMapping) {
   
   document.querySelectorAll('#assignInstructorsModal .assign-select:checked').forEach(cb => {
     const instructorId = cb.getAttribute('data-id');
-    const activities = [];
-    
+    const instructorActivities = [];  // ✅ غير الاسم من 'activities' إلى 'instructorActivities'
+
     for (let i = 0; i < activityItems.length; i++) {
       const qty = parseInt(document.querySelector(`.assign-activity[data-instructor="${instructorId}"][data-activity-index="${i}"]`).value) || 0;
       if (qty > 0) {
         const mapping = activityMapping[i];
-        activities.push({
+        instructorActivities.push({
           activityName: activityItems[i],
           displayName: mapping?.display || activityItems[i],
           quantity: qty,
@@ -2294,12 +2300,12 @@ async function saveInstructorAssignmentV3(activityItems, activityMapping) {
       }
     }
     
-    if (activities.length > 0) {
+    if (instructorActivities.length > 0) {
       const instructor = cachedInstructors.find(i => i.id === instructorId);
       selectedRows.push({
         instructorId: instructorId,
         instructorName: instructor?.name || instructorId,
-        activities: activities
+        activities: instructorActivities
       });
     }
   });
@@ -3087,7 +3093,6 @@ let currentUpsellVoucher = null;
 let currentUpsellInvoice = null;
 let currentUpsellItems = [];
 let currentUpsellCurrency = 'LE';
-
 async function openUpsell(voucherNo) {
   try {
     // البحث عن الفاتورة
@@ -3097,25 +3102,11 @@ async function openUpsell(voucherNo) {
       return;
     }
     
-    // بناء الأنشطة من بيانات الفاتورة
-    const activities = [];
-    
-    // إضافة الأنشطة من الفاتورة (حسب الأعمدة الموجودة)
-   // بناء الأنشطة من بيانات الفاتورة مع Price = 0 (يقوم المستخدم بإدخالها)
-const activities = getActivitiesFromInvoice(invoice);
-for (const item of activityItems) {
-  if (item.qty > 0) {
-    activities.push({
-      id: item.name.replace(/ /g, '_'),
-      name: item.name,
-      price: 0,  // ✅ المستخدم يدخل السعر
-      quantity: item.qty
-    });
-  }
-}
+    // ✅ استخدام getActivitiesFromInvoice لبناء الأنشطة
+    const activities = getActivitiesFromInvoice(invoice);
     
     if (activities.length === 0) {
-      showToast('No activities available for upsell', 'error');
+      showToast('No activities found for upsell', 'error');
       return;
     }
     
@@ -3125,15 +3116,18 @@ for (const item of activityItems) {
     // بناء HTML المودال
     const modalHtml = `
       <div id="upsellModal" class="modal-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 10000;" onclick="if(event.target===this) closeUpsellModal()">
-        <div style="background: white; border-radius: 16px; max-width: 900px; width: 90%; max-height: 85vh; overflow-y: auto;">
-          <div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 2px solid var(--gold);">
+        <div style="background: white; border-radius: 16px; max-width: 700px; width: 95%; max-height: 85vh; overflow-y: auto;">
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 2px solid #f5c842;">
             <h3 style="margin: 0;">💰 Create UpSell - ${escapeHtml(leadName)}</h3>
             <button onclick="closeUpsellModal()" style="background: none; border: none; font-size: 24px; cursor: pointer;">✕</button>
           </div>
-          <div style="background: var(--gray-100); padding: 8px 12px; border-radius: 8px; margin-bottom: 16px;">
-            <span style="font-weight: bold;">🚌 Trip:</span> ${escapeHtml(invoice.trip || '—')}
-          </div>
+          
           <div style="padding: 20px;">
+            <!-- Trip Name -->
+            <div style="background: #f1f5f9; padding: 10px 12px; border-radius: 8px; margin-bottom: 16px;">
+              <span style="font-weight: bold;">🚌 Trip:</span> ${escapeHtml(invoice.trip || '—')}
+            </div>
+            
             <!-- Currency Selection -->
             <div style="margin-bottom: 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
               <div style="display: flex; align-items: center; gap: 8px;">
@@ -3149,42 +3143,41 @@ for (const item of activityItems) {
 
             <!-- Activities Table -->
             <div style="margin-bottom: 20px; overflow-x: auto;">
-              <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed;">
                 <thead>
                   <tr style="background: #f1f5f9; border-bottom: 2px solid #e2e8f0;">
-                    <th style="padding: 10px; text-align: left;">Activity</th>
-                    <th style="padding: 10px; text-align: right;">Price ($)</th>
-                    <th style="padding: 10px; text-align: center;">Quantity</th>
-                    <th style="padding: 10px; text-align: right;">Total ($)</th>
+                    <th style="padding: 10px; text-align: left; width: 35%;">Activity</th>
+                    <th style="padding: 10px; text-align: right; width: 25%;">Price ($)</th>
+                    <th style="padding: 10px; text-align: center; width: 20%;">Quantity</th>
+                    <th style="padding: 10px; text-align: right; width: 20%;">Total ($)</th>
                   </tr>
                 </thead>
                 <tbody>
                   ${activities.map(activity => `
-                    <tr style="border-bottom: 1px solid #e2e8f0;" data-activity-id="${activity.id}" data-price-usd="${activity.price}">
+                    <tr style="border-bottom: 1px solid #e2e8f0;" data-activity-id="${activity.id}" data-price-usd="0">
                       <td style="padding: 8px;">${escapeHtml(activity.name)}</td>
                       <td style="padding: 8px; text-align: right;">
                         <input type="number" 
-                              <input type="number" 
-                                 class="upsell-price" 
-                                 value="0" 
-                                 placeholder="0.00"
-                                 step="0.01" 
-                                 style="width: 85px; text-align: right; padding: 6px; border-radius: 4px; border: 1px solid #cbd5e1;"
-                                 onchange="updateUpsellRowTotal(this)">
-                                                </td>
+                               class="upsell-price" 
+                               value="0" 
+                               step="0.01" 
+                               placeholder="0.00"
+                               style="width: 85px; text-align: right; padding: 6px; border-radius: 4px; border: 1px solid #cbd5e1; color: #1e293b; background: white;"
+                               onchange="updateUpsellRowTotal(this)">
+                      </td>
                       <td style="padding: 8px; text-align: center;">
                         <input type="number" 
                                class="upsell-quantity" 
-                               value="${formatPrice(activity.quantity)}" 
+                               value="${activity.quantity}" 
                                step="1" 
                                min="0"
-                               style="width: 60px; text-align: center; padding: 4px 6px; border-radius: 4px; border: 1px solid #cbd5e1;"
+                               style="width: 65px; text-align: center; padding: 6px; border-radius: 4px; border: 1px solid #cbd5e1; color: #1e293b; background: white;"
                                onchange="updateUpsellRowTotal(this)">
-                      </td>
+                       </td>
                       <td style="padding: 8px; text-align: right;" class="upsell-row-total">
-                        ${(activity.price * activity.quantity).toFixed(2)}
-                      </td>
-                    </tr>
+                        0.00
+                       </td>
+                     </tr>
                   `).join('')}
                 </tbody>
               </table>
@@ -3195,40 +3188,39 @@ for (const item of activityItems) {
               <div style="font-weight: bold; margin-bottom: 10px; font-size: 13px;">💳 Payment Details</div>
               <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;">
                 <!-- Cash Payments -->
-                            <!-- Cash Payments -->
-            <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
-              <div class="cash-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Cash $</div>
-              <input type="number" id="cashUSD" value="" step="0.01" placeholder="0.00" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
-            </div>
-            <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
-              <div class="cash-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Cash €</div>
-              <input type="number" id="cashEUR" value="" step="0.01" placeholder="0.00" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
-            </div>
-            <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
-              <div class="cash-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Cash £</div>
-              <input type="number" id="cashGBP" value="" step="0.01" placeholder="0.00" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
-            </div>
-            <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
-              <div class="cash-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Cash LE</div>
-              <input type="number" id="cashLE" value="" step="0.01" placeholder="0.00" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
-            </div>
-            <!-- Visa Payments -->
-            <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
-              <div class="visa-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Visa $</div>
-              <input type="number" id="visaUSD" value="" step="0.01" placeholder="0.00" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
-            </div>
-            <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
-              <div class="visa-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Visa €</div>
-              <input type="number" id="visaEUR" value="" step="0.01" placeholder="0.00" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
-            </div>
-            <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
-              <div class="visa-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Visa £</div>
-              <input type="number" id="visaGBP" value="" step="0.01" placeholder="0.00" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
-            </div>
-            <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
-              <div class="visa-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Visa LE</div>
-              <input type="number" id="visaLE" value="" step="0.01" placeholder="0.00" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
-            </div>
+                <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
+                  <div class="cash-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Cash $</div>
+                  <input type="number" id="cashUSD" value="" step="0.01" placeholder="0.00" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
+                </div>
+                <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
+                  <div class="cash-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Cash €</div>
+                  <input type="number" id="cashEUR" value="" step="0.01" placeholder="0.00" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
+                </div>
+                <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
+                  <div class="cash-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Cash £</div>
+                  <input type="number" id="cashGBP" value="" step="0.01" placeholder="0.00" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
+                </div>
+                <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
+                  <div class="cash-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Cash LE</div>
+                  <input type="number" id="cashLE" value="" step="0.01" placeholder="0.00" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
+                </div>
+                <!-- Visa Payments -->
+                <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
+                  <div class="visa-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Visa $</div>
+                  <input type="number" id="visaUSD" value="" step="0.01" placeholder="0.00" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
+                </div>
+                <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
+                  <div class="visa-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Visa €</div>
+                  <input type="number" id="visaEUR" value="" step="0.01" placeholder="0.00" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
+                </div>
+                <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
+                  <div class="visa-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Visa £</div>
+                  <input type="number" id="visaGBP" value="" step="0.01" placeholder="0.00" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
+                </div>
+                <div class="pay-cell" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; text-align: center;">
+                  <div class="visa-label" style="font-size: 10px; font-weight: bold; color: #475569; margin-bottom: 6px;">Visa LE</div>
+                  <input type="number" id="visaLE" value="" step="0.01" placeholder="0.00" style="width: 100%; background: white; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; text-align: center; font-size: 12px;" oninput="updateRemainingWithRates()">
+                </div>
               </div>
             </div>
 
@@ -3287,7 +3279,6 @@ for (const item of activityItems) {
     showToast('Failed to load upsell data: ' + error.message, 'error');
   }
 }
-
 // دالة إغلاق المودال
 function closeUpsellModal() {
   const modal = document.getElementById('upsellModal');
@@ -5008,8 +4999,8 @@ async function onDateChange() {
   const toDate = document.getElementById('filterToDate').value;
   
   if (!fromDate && !toDate) return;
-   
-  // ✅ مسح التخزين المؤقت عند تغيير التاريخ
+  
+  // مسح التخزين المؤقت
   clearVehicleSeatsCache();
   
   lastFilterParams = '';
@@ -5021,7 +5012,7 @@ async function onDateChange() {
   
   if (fromDate && toDate && fromDate === toDate) {
     await loadAndPopulateAssignments(fromDate);
-    await loadLogisticsData(fromDate);  // ✅ أضف هذا السطر
+    await loadLogisticsData(fromDate);
     await refreshLogisticsBadge();
   } else {
     selectedBeachInstructors = [];
@@ -5037,6 +5028,12 @@ async function onDateChange() {
   updateSelectionButtonsState();
 }
   // ✅ تحديث عداد Logistics Vehicles
+function clearVehicleSeatsCache() {
+  cachedVehicleSeats = {};
+  cachedBoatSeats = {};
+  console.log('🗑️ Vehicle/boat seats cache cleared');
+}
+
 async function refreshLogisticsBadge() {
   const currentDate = getCurrentDateISO();
   if (!currentDate) return;
@@ -5051,7 +5048,6 @@ async function refreshLogisticsBadge() {
       preloadedData.logisticsRecords = result.data;
       const badge = document.getElementById('selectedLogisticsBadge');
       if (badge) badge.textContent = result.data.length;
-      console.log('✅ Logistics badge refreshed:', result.data.length);
     } else {
       preloadedData.logisticsRecords = [];
       const badge = document.getElementById('selectedLogisticsBadge');
@@ -5059,9 +5055,6 @@ async function refreshLogisticsBadge() {
     }
   } catch(e) {
     console.warn('refreshLogisticsBadge error:', e);
-    preloadedData.logisticsRecords = [];
-    const badge = document.getElementById('selectedLogisticsBadge');
-    if (badge) badge.textContent = '0';
   }
 }
 // ============================================================
