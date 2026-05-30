@@ -604,11 +604,21 @@
 
 #upsellModal .upsell-price,
 #upsellModal .upsell-quantity {
-  width: 85px !important;
-  padding: 6px !important;
-  font-size: 13px !important;
-  text-align: center;
-  box-sizing: border-box;
+  color: #1e293b !important;
+  background-color: white !important;
+  border: 1px solid #cbd5e1 !important;
+}
+
+#upsellModal .upsell-price::placeholder,
+#upsellModal .upsell-quantity::placeholder {
+  color: #94a3b8 !important;
+}
+
+#upsellModal .upsell-price:focus,
+#upsellModal .upsell-quantity:focus {
+  outline: none;
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.2) !important;
 }
     input[type="number"]:placeholder-shown,
     input[type="number"][value="0"],
@@ -1218,7 +1228,40 @@ function formatRest(restValue, currencySymbol) {
   return `<span class="rest-pos">${num.toFixed(2)} ${escapeHtml(currencySymbol)}</span>`;
 }
 
-function parseDateFromString(dateStr) {
+function getActivitiesFromInvoice(invoice) {
+  const activities = [];
+  
+  // محاولة قراءة ActivitiesText
+  let activitiesText = invoice.ActivitiesText || invoice.activitiesText || '';
+  
+  // إذا كان ActivitiesText فارغاً، حاول بناءه من الأعمدة
+  if (!activitiesText) {
+    const parts = [];
+    if (invoice.sgl > 0) parts.push(`Adult×${invoice.sgl}`);
+    if (invoice.dbl > 0) parts.push(`Child×${invoice.dbl}`);
+    if (invoice.trpl > 0) parts.push(`Infant×${invoice.trpl}`);
+    if (invoice.extra > 0) parts.push(`Intro×${invoice.extra}`);
+    activitiesText = parts.join(' | ');
+  }
+  
+  // تحليل النص
+  if (activitiesText) {
+    const parts = activitiesText.split('|');
+    for (const part of parts) {
+      const match = part.trim().match(/^(.+?)×(\d+(\.\d+)?)$/);
+      if (match) {
+        activities.push({
+          name: match[1].trim(),
+          quantity: parseFloat(match[2]) || 0,
+          price: 0
+        });
+      }
+    }
+  }
+  
+  return activities;
+}
+  function parseDateFromString(dateStr) {
   if (!dateStr) return null;
   if (dateStr instanceof Date && !isNaN(dateStr)) return dateStr;
   const s = dateStr.toString().trim();
@@ -3059,14 +3102,7 @@ async function openUpsell(voucherNo) {
     
     // إضافة الأنشطة من الفاتورة (حسب الأعمدة الموجودة)
    // بناء الأنشطة من بيانات الفاتورة مع Price = 0 (يقوم المستخدم بإدخالها)
-const activityItems = [
-  { name: '1 Intro', qty: parseInt(invoice.sgl) || 0, price: 0 },
-  { name: '2 Intro', qty: parseInt(invoice.dbl) || 0, price: 0 },
-  { name: 'Diver', qty: parseInt(invoice.trpl) || 0, price: 0 },
-  { name: 'C.D.', qty: parseInt(invoice.extra) || 0, price: 0 },
-  { name: 'S.R.', qty: parseInt(invoice.camel) || 0, price: 0 }
-];
-
+const activities = getActivitiesFromInvoice(invoice);
 for (const item of activityItems) {
   if (item.qty > 0) {
     activities.push({
@@ -3094,7 +3130,9 @@ for (const item of activityItems) {
             <h3 style="margin: 0;">💰 Create UpSell - ${escapeHtml(leadName)}</h3>
             <button onclick="closeUpsellModal()" style="background: none; border: none; font-size: 24px; cursor: pointer;">✕</button>
           </div>
-          
+          <div style="background: var(--gray-100); padding: 8px 12px; border-radius: 8px; margin-bottom: 16px;">
+            <span style="font-weight: bold;">🚌 Trip:</span> ${escapeHtml(invoice.trip || '—')}
+          </div>
           <div style="padding: 20px;">
             <!-- Currency Selection -->
             <div style="margin-bottom: 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
@@ -3447,52 +3485,53 @@ async function updateUpsellCurrencyWithRates() {
   await updateRemainingWithRates();
 }
 async function updateRemainingWithRates() {
-  let total = 0;
+  // حساب إجمالي الأنشطة
+  let totalUSD = 0;
   const rows = document.querySelectorAll('#upsellModal tbody tr');
-  rows.forEach(row => {
-    const totalCell = row.querySelector('.upsell-row-total');
-    const rowTotal = parseFloat(totalCell?.textContent) || 0;
-    total += rowTotal;
-  });
+  for (const row of rows) {
+    const price = parseFloat(row.querySelector('.upsell-price')?.value) || 0;
+    const qty = parseFloat(row.querySelector('.upsell-quantity')?.value) || 0;
+    totalUSD += price * qty;
+  }
   
-  // جلب أسعار الصرف الحقيقية
-  const rates = await getExchangeRates();
+  // جلب أسعار الصرف
+  let rates = { USD: 1, EUR: 1.05, GBP: 1.25, LE: 0.02 }; // 1 LE = 0.02 USD (50 LE = 1 USD)
+  try {
+    const result = await gas('getLatestExchangeRates');
+    if (result?.success) {
+      rates = {
+        USD: 1,
+        EUR: result.EUR || result.eur_rate || 1.05,
+        GBP: result.GBP || result.gbp_rate || 1.25,
+        LE: result.LE || result.le_rate || 0.02
+      };
+    }
+  } catch(e) { console.warn(e); }
   
-  // جمع المدفوعات وتحويلها إلى الدولار
-  let paidInUSD = 0;
+  // جمع المدفوعات
+  let paidUSD = 0;
+  const getVal = (id) => parseFloat(document.getElementById(id)?.value) || 0;
   
-  const getAmount = (id) => {
-    const el = document.getElementById(id);
-    if (!el || !el.value) return 0;
-    let val = parseFloat(el.value);
-    return isNaN(val) ? 0 : val;
-  };
+  paidUSD += getVal('cashUSD') / rates.USD;
+  paidUSD += getVal('cashEUR') / rates.EUR;
+  paidUSD += getVal('cashGBP') / rates.GBP;
+  paidUSD += getVal('cashLE') / rates.LE;
+  paidUSD += getVal('visaUSD') / rates.USD;
+  paidUSD += getVal('visaEUR') / rates.EUR;
+  paidUSD += getVal('visaGBP') / rates.GBP;
+  paidUSD += getVal('visaLE') / rates.LE;
   
-  // تحويل كل دفعة إلى USD
-  paidInUSD += getAmount('cashUSD') / rates.USD;  // USD / 1 = USD
-  paidInUSD += getAmount('cashEUR') / rates.EUR;
-  paidInUSD += getAmount('cashGBP') / rates.GBP;
-  paidInUSD += getAmount('cashLE') / rates.LE;
-  paidInUSD += getAmount('visaUSD') / rates.USD;
-  paidInUSD += getAmount('visaEUR') / rates.EUR;
-  paidInUSD += getAmount('visaGBP') / rates.GBP;
-  paidInUSD += getAmount('visaLE') / rates.LE;
-  
-  const remainingInUSD = total - paidInUSD;
-  
-  // تحويل المتبقي إلى العملة المختارة
-  const displayCurrency = currentUpsellCurrency;
+  const remainingUSD = totalUSD - paidUSD;
+  const displayCurrency = currentUpsellCurrency || 'USD';
   const displayRate = rates[displayCurrency] || 1;
-  const remainingInDisplay = remainingInUSD * displayRate;
-  const totalInDisplay = total * displayRate;
   
-  document.getElementById('totalAmount').textContent = totalInDisplay.toFixed(2);
-  document.getElementById('remainingAmount').textContent = remainingInDisplay > 0 ? remainingInDisplay.toFixed(2) : '0.00';
+  document.getElementById('totalAmount').textContent = (totalUSD * displayRate).toFixed(2);
+  document.getElementById('remainingAmount').textContent = remainingUSD > 0 ? (remainingUSD * displayRate).toFixed(2) : '0.00';
   document.getElementById('totalCurrency').textContent = getCurrencySymbol(displayCurrency);
   document.getElementById('remainingCurrency').textContent = getCurrencySymbol(displayCurrency);
   
   const createBtn = document.getElementById('createUpsellBtn');
-  if (createBtn) createBtn.disabled = remainingInDisplay > 0.01;
+  if (createBtn) createBtn.disabled = remainingUSD > 0.01;
 }
   function calculateTotalInBaseCurrency() {
   let total = 0;
