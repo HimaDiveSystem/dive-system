@@ -2186,23 +2186,30 @@ async function openAssignInstructors(voucherNo) {
     return;
   }
   
-  // بناء نص بنود الرحلة
+  // ✅ بناء نص بنود الرحلة (تجاهل Adult, Child, Inf)
   const tripItemsList = [];
- // ✅ تصفية أنشطة الغوص فقط
-const divingActivities = [
-  { field: 'sgl', name: '1 Intro', qty: invoice.sgl },
-  { field: 'dbl', name: '2 Intro', qty: invoice.dbl },
-  { field: 'trpl', name: 'Diver', qty: invoice.trpl },
-  { field: 'extra', name: 'C.D.', qty: invoice.extra },
-  { field: 'camel', name: 'S.R.', qty: invoice.camel }
-];
-
-for (const act of divingActivities) {
-  const qty = parseInt(act.qty) || 0;
-  if (qty > 0) {
-    tripItemsList.push(`${qty} × ${act.name}`);
+  
+  // ✅ الكلمات الممنوعة (يتم تجاهلها تماماً)
+  const excludedKeywords = ['adult', 'child', 'inf', 'infant'];
+  
+  // ✅ الأنشطة من الأعمدة الصحيحة
+  const divingColumns = [
+    { col: 'extra', name: '1 Intro' },
+    { col: 'camel', name: '2 Intro' },
+    { col: 'dinner', name: 'Diver' },
+    { col: 'vipDinner', name: 'C.D.' },
+    { col: 'starGazing', name: 'S.R.' },
+    { col: 'privateTrip', name: 'Private Trip' },
+    { col: 'privateTransfer', name: 'Private Transfer' }
+  ];
+  
+  for (const act of divingColumns) {
+    const qty = parseInt(invoice[act.col]) || 0;
+    if (qty > 0) {
+      tripItemsList.push(`${qty} × ${act.name}`);
+    }
   }
-}
+  
   const tripItemsText = tripItemsList.join(' | ');
   
   document.getElementById('assignInstructorsContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري تحميل البيانات...</div>';
@@ -2210,19 +2217,41 @@ for (const act of divingActivities) {
   
   let activityItems = [];
   let activityMapping = [];
+  
   try {
     const tripDef = await gas('getTripDefinition', { tripName: invoice.trip });
-    if (tripDef && tripDef.items) {
+    if (tripDef && tripDef.items && Array.isArray(tripDef.items)) {
       for (const item of tripDef.items) {
+        const itemLower = (item || '').toLowerCase();
+        
+        // ✅ ✅ ✅ تجاهل Adult, Child, Inf تماماً
+        const isExcluded = excludedKeywords.some(keyword => itemLower === keyword);
+        if (isExcluded) {
+          console.log(`⏭️ تم تجاهل البند: ${item}`);
+          continue;
+        }
+        
         const classified = classifyActivity(item);
         if (classified && !activityMapping.find(a => a.display === classified.display)) {
           activityMapping.push(classified);
           activityItems.push(classified.display);
+        } else if (!classified && item && item.trim() !== '') {
+          // إضافة البند كما هو إذا لم يتم تصنيفه
+          activityItems.push(item);
+          activityMapping.push({
+            type: item.toLowerCase().replace(/ /g, '_'),
+            column: 'extra',
+            multiplier: 1,
+            display: item
+          });
         }
       }
     }
-  } catch(e) { console.warn(e); }
+  } catch(e) { 
+    console.warn('Failed to load trip definition:', e); 
+  }
   
+  // ✅ القيم الافتراضية إذا لم يتم العثور على بنود
   if (activityItems.length === 0) {
     activityItems = ['1 Intro', '2 Intro', 'Diver', 'C.D.', 'S.R.'];
     activityMapping = [
@@ -2246,16 +2275,17 @@ for (const act of divingActivities) {
     rowsHtml += `<td style="padding: 8px; background: var(--navy); color: var(--gold); font-weight: bold;">
                    <strong>${escapeHtml(inst.name)}</strong>
                    <div style="font-size: 9px; color: #aaa;">ID: ${inst.id}</div>
-                   </td>`;
+                    </td>`;
     for (let i = 0; i < activityItems.length; i++) {
       rowsHtml += `<td style="padding: 8px; text-align: center;">
         <input type="number" class="assign-activity" data-instructor="${inst.id}" data-activity-index="${i}" 
                value="0" min="0" style="width: 60px; text-align: center; padding: 4px; border: 1px solid var(--border); border-radius: 6px;">
-        </td>`;
+         </td>`;
     }
     rowsHtml += `<td style="padding: 8px; text-align: center;">
       <input type="checkbox" class="assign-select" data-id="${inst.id}" style="width: 18px; height: 18px; cursor: pointer;">
-      </td></tr>`;
+       </td>
+     </tr>`;
   }
   
   const instructorsHtml = `
@@ -2270,7 +2300,7 @@ for (const act of divingActivities) {
       <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
         <thead><tr style="background: var(--navy); color: var(--gold);">${headersHtml}</tr></thead>
         <tbody>${rowsHtml}</tbody>
-      </table>
+       </table>
     </div>
     <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
       <button class="btn btn-secondary" onclick="closeModal('assignInstructorsModal')">Cancel</button>
