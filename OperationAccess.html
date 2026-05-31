@@ -3077,7 +3077,7 @@ async function openUpsell(voucherNo) {
       return;
     }
     
- // ✅ معامل واحد فقط
+    // ✅ معامل واحد فقط
     const activities = getActivitiesFromInvoice(invoice);
     
     if (activities.length === 0) {
@@ -3086,7 +3086,66 @@ async function openUpsell(voucherNo) {
     }
     
     const leadName = invoice.guestName || 'Customer';
-    const instructors = cachedInstructors || [];
+    
+    // ✅ جلب المدربين من الخادم مباشرة
+    let allInstructors = [];
+    try {
+      allInstructors = await gas('getInstructors', { centerName: currentUser?.centerName });
+      console.log('✅ Instructors loaded:', allInstructors.length);
+    } catch(e) {
+      console.warn('Failed to load instructors:', e);
+    }
+    
+    // ✅ جلب تعيينات اليوم لتصفية المدربين
+    const currentDate = getCurrentDateISO();
+    let beachInstructors = [];
+    let boatInstructorsMap = {};
+    
+    if (currentDate) {
+      try {
+        const assignments = await gas('getDailyAssignments', { 
+          date: currentDate, 
+          centerName: currentUser?.centerName 
+        });
+        if (assignments?.success && assignments.data) {
+          beachInstructors = assignments.data.beachInstructors || [];
+          boatInstructorsMap = assignments.data.boatInstructorsMap || {};
+          console.log('✅ Assignments loaded:', { beachInstructors, boatInstructorsMap });
+        }
+      } catch(e) {
+        console.warn('Failed to load assignments:', e);
+      }
+    }
+    
+    // ✅ جلب المراكب المستخدمة في الفاتورة
+    let assignedBoats = [];
+    try {
+      assignedBoats = JSON.parse(invoice.BoatsUsed || '[]');
+    } catch(e) {}
+    
+    const boatIds = assignedBoats.map(b => b.boatId);
+    const hasBoat = boatIds.length > 0;
+    
+    // ✅ تصفية المدربين المناسبين
+    let relevantInstructors = [];
+    
+    if (hasBoat) {
+      // إذا كان هناك مراكب، اعرض مدربي هذه المراكب فقط
+      const relevantIds = new Set();
+      for (const boatId of boatIds) {
+        const instructorsForBoat = boatInstructorsMap[boatId];
+        if (instructorsForBoat) {
+          const instArray = Array.isArray(instructorsForBoat) ? instructorsForBoat : [instructorsForBoat];
+          instArray.forEach(id => relevantIds.add(id));
+        }
+      }
+      relevantInstructors = allInstructors.filter(inst => relevantIds.has(inst.id));
+      console.log('✅ Boat instructors:', relevantInstructors.length);
+    } else {
+      // إذا لم يكن هناك مراكب، اعرض مدربي الشاطئ فقط
+      relevantInstructors = allInstructors.filter(inst => beachInstructors.includes(inst.id));
+      console.log('✅ Beach instructors:', relevantInstructors.length);
+    }
     
     // بناء HTML المودال
     const modalHtml = `
@@ -3116,47 +3175,48 @@ async function openUpsell(voucherNo) {
               </div>
             </div>
 
-        <!-- Activities Table -->
-<div style="margin-bottom: 20px; overflow-x: auto;">
-  <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-    <thead>
-      <tr style="background: #f1f5f9; border-bottom: 2px solid #e2e8f0;">
-        <th style="padding: 10px; text-align: left;">Activity</th>
-        <th style="padding: 10px; text-align: right;">Price ($)</th>
-        <th style="padding: 10px; text-align: center;">Quantity</th>
-        <th style="padding: 10px; text-align: right;">Total ($)</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${activities.map(activity => `
-        <tr style="border-bottom: 1px solid #e2e8f0;">
-          <td style="padding: 8px;">${escapeHtml(activity.name)}</td>
-          <td style="padding: 8px; text-align: right;">
-            <input type="text" 
-       class="upsell-price" 
-       value="" 
-       inputmode="decimal"
-       style="width: 85px; text-align: right; padding: 6px;"
-       oninput="updateUpsellRowTotal(this)">
-          </td>
-          <td style="padding: 8px; text-align: center;">
-            <input type="number" 
-                   class="upsell-quantity" 
-                   value="" 
-                   step="1" 
-                   min="0"
-                   placeholder=""
-                   style="width: 65px; text-align: center; padding: 6px;"
-                   onchange="updateUpsellRowTotal(this)"
-                   oninput="updateUpsellRowTotal(this)">
-          </td>
-          <td style="padding: 8px; text-align: right;" class="upsell-row-total"></td>
-         </tr>
-      `).join('')}
-    </tbody>
-   </table>
-</div>
-                <!-- Payment Details Section -->
+            <!-- Activities Table -->
+            <div style="margin-bottom: 20px; overflow-x: auto;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                <thead>
+                  <tr style="background: #f1f5f9; border-bottom: 2px solid #e2e8f0;">
+                    <th style="padding: 10px; text-align: left;">Activity</th>
+                    <th style="padding: 10px; text-align: right;">Price ($)</th>
+                    <th style="padding: 10px; text-align: center;">Quantity</th>
+                    <th style="padding: 10px; text-align: right;">Total ($)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${activities.map(activity => `
+                    <tr style="border-bottom: 1px solid #e2e8f0;">
+                      <td style="padding: 8px;">${escapeHtml(activity.name)}</td>
+                      <td style="padding: 8px; text-align: right;">
+                        <input type="text" 
+                               class="upsell-price" 
+                               value="" 
+                               inputmode="decimal"
+                               style="width: 85px; text-align: right; padding: 6px;"
+                               oninput="updateUpsellRowTotal(this)">
+                      </td>
+                      <td style="padding: 8px; text-align: center;">
+                        <input type="number" 
+                               class="upsell-quantity" 
+                               value="" 
+                               step="1" 
+                               min="0"
+                               placeholder=""
+                               style="width: 65px; text-align: center; padding: 6px;"
+                               onchange="updateUpsellRowTotal(this)"
+                               oninput="updateUpsellRowTotal(this)">
+                      </td>
+                      <td style="padding: 8px; text-align: right;" class="upsell-row-total"></td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+            
+            <!-- Payment Details Section -->
             <div style="margin-bottom: 16px;">
               <div style="font-weight: bold; margin-bottom: 10px; font-size: 13px;">💳 Payment Details</div>
               <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;">
@@ -3202,7 +3262,7 @@ async function openUpsell(voucherNo) {
               <label style="font-weight: bold; font-size: 13px; display: block; margin-bottom: 6px;">👨‍🏫 Selling Instructor</label>
               <select id="sellingInstructor" style="width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #cbd5e1;">
                 <option value="">-- Select Instructor --</option>
-                ${instructors.map(inst => `<option value="${inst.id}">${escapeHtml(inst.name)}</option>`).join('')}
+                ${relevantInstructors.map(inst => `<option value="${inst.id}">${escapeHtml(inst.name)}</option>`).join('')}
               </select>
             </div>
 
