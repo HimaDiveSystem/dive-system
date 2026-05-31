@@ -1130,25 +1130,74 @@ async function exportToExcel() {
 }
 
 // ============================================================
-// INITIALIZATION
+// GET USER FROM URL PARAMETER OR SESSIONSTORAGE
 // ============================================================
+function getUserFromUrl() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const userData = urlParams.get('user');
+  if (userData) {
+    try {
+      return JSON.parse(decodeURIComponent(userData));
+    } catch(e) {
+      console.error('Failed to parse user from URL:', e);
+    }
+  }
+  return null;
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
-  const ud = sessionStorage.getItem('currentUser');
-  if (!ud) { window.location.href = 'index.html'; return; }
+  // محاولة جلب المستخدم من sessionStorage أولاً
+  let ud = sessionStorage.getItem('currentUser');
+  
+  // إذا لم يوجد، حاول من رابط URL
+  if (!ud) {
+    const urlUser = getUserFromUrl();
+    if (urlUser) {
+      ud = JSON.stringify(urlUser);
+      sessionStorage.setItem('currentUser', ud);
+    }
+  }
+  
+  // إذا لا يزال لا يوجد، حاول جلب المستخدم من localStorage
+  if (!ud) {
+    ud = localStorage.getItem('currentUser');
+  }
+  
+  // إذا لا يزال لا يوجد، اذهب لصفحة تسجيل الدخول
+  if (!ud) {
+    showToast('⚠️ Please login first', 'error');
+    setTimeout(() => {
+      // محاولة آمنة للتنقل
+      try {
+        window.location.href = 'https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec?page=Login';
+      } catch(e) {
+        console.error('Navigation error:', e);
+        document.body.innerHTML = '<div class="loader" style="text-align:center; padding:50px;"><div class="spinner"></div>Please <a href="https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec?page=Login" target="_top">click here to login</a></div>';
+      }
+    }, 1500);
+    return;
+  }
   
   try {
     currentUser = JSON.parse(ud);
-    document.querySelector('.header h2').innerHTML = `📊 Operations Reports - ${escapeHtml(currentUser.centerName || '')}`;
+    console.log('✅ Current user loaded:', currentUser.name, 'Type:', currentUser.type);
     
-    // Set default dates (last 7 days)
+    // تحديث عنوان الصفحة
+    document.querySelector('.header h2').innerHTML = `📊 Operations Reports - ${escapeHtml(currentUser.centerName || currentUser.name || '')}`;
+    
+    // تعيين التواريخ الافتراضية (آخر 7 أيام)
     const today = new Date();
     const weekAgo = new Date();
     weekAgo.setDate(today.getDate() - 7);
     
     const fromInput = document.getElementById('filterFromDate');
     const toInput = document.getElementById('filterToDate');
-    fromInput.value = `${weekAgo.getFullYear()}-${String(weekAgo.getMonth()+1).padStart(2,'0')}-${String(weekAgo.getDate()).padStart(2,'0')}`;
-    toInput.value = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+    if (fromInput && !fromInput.value) {
+      fromInput.value = `${weekAgo.getFullYear()}-${String(weekAgo.getMonth()+1).padStart(2,'0')}-${String(weekAgo.getDate()).padStart(2,'0')}`;
+    }
+    if (toInput && !toInput.value) {
+      toInput.value = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+    }
     
     await loadInvoices();
     await loadReport();
@@ -1163,9 +1212,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
     });
     
-  } catch(e) {
-    console.error('Init error:', e);
-    window.location.href = 'index.html';
+  } catch(e) { 
+    console.error('❌ Initialization error:', e); 
+    showToast('Error loading page: ' + e.message, 'error');
   }
 });
 </script>
