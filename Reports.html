@@ -35,7 +35,7 @@
       color: white;
       padding: 12px 20px;
       display: flex;
-    justify-content: space-between;
+      justify-content: space-between;
       align-items: center;
       flex-wrap: wrap;
       gap: 10px;
@@ -43,7 +43,7 @@
       top: 0;
       z-index: 100;
     }
-    .header h2 { color: var(--gold); font-size: 20px; font-weight: 900; }
+    .header h2 { color: var(--gold); font-size: 18px; font-weight: 900; }
     .back-btn {
       background: transparent;
       border: 2px solid rgba(255,255,255,.3);
@@ -52,6 +52,7 @@
       border-radius: 40px;
       cursor: pointer;
       font-weight: 700;
+      font-size: 12px;
     }
     .back-btn:hover { border-color: var(--gold); color: var(--gold); }
     
@@ -113,10 +114,6 @@
       min-width: 130px;
       background: white;
     }
-    .filter-group input:focus, .filter-group select:focus {
-      outline: none;
-      border-color: var(--blue);
-    }
     .btn-go, .btn-reset, .export-btn {
       padding: 6px 16px;
       border-radius: 20px;
@@ -132,7 +129,7 @@
     .tbl-wrap {
       overflow-x: auto;
       padding: 16px;
-      max-height: calc(100vh - 280px);
+      max-height: calc(100vh - 320px);
     }
     table {
       width: 100%;
@@ -227,16 +224,10 @@
     .toast-info { background: var(--blue); }
     
     @media (max-width: 768px) {
-      th, td { padding: 6px 4px; font-size: 10px; }
+      th, td { padding: 6px 4px; font-size: 9px; }
       .filter-group input, .filter-group select { min-width: 100px; font-size: 10px; }
       .summary-item .value { font-size: 16px; }
-    }
-    
-    /* تنسيق البحث التلقائي */
-    .search-highlight {
-      background-color: var(--gold);
-      color: var(--navy);
-      font-weight: bold;
+      .summary-item { min-width: 90px; padding: 6px 10px; }
     }
   </style>
 </head>
@@ -257,27 +248,23 @@
 <div class="filter-bar">
   <div class="filter-group">
     <label>📅 From Date</label>
-    <input type="date" id="filterFromDate" onchange="onFilterChange()">
+    <input type="date" id="filterFromDate">
   </div>
   <div class="filter-group">
     <label>📅 To Date</label>
-    <input type="date" id="filterToDate" onchange="onFilterChange()">
+    <input type="date" id="filterToDate">
   </div>
   <div class="filter-group">
     <label>🚌 Trip</label>
-    <select id="filterTrip" onchange="onFilterChange()">
-      <option value="">All Trips</option>
-    </select>
+    <select id="filterTrip"><option value="">All Trips</option></select>
   </div>
   <div class="filter-group" id="vehicleFilterGroup" style="display: none;">
     <label>🚗 Vehicle</label>
-    <select id="filterVehicle" onchange="onFilterChange()">
-      <option value="">All Vehicles</option>
-    </select>
+    <select id="filterVehicle"><option value="">All Vehicles</option></select>
   </div>
   <div class="filter-group">
     <label>🔍 Search</label>
-    <input type="text" id="filterSearch" placeholder="Voucher / Guest / Vehicle" oninput="onSearchInput()">
+    <input type="text" id="filterSearch" placeholder="Voucher / Guest">
   </div>
   <button class="btn-go" onclick="loadReport()">📊 Show Report</button>
   <button class="btn-reset" onclick="resetFilters()">Reset</button>
@@ -299,8 +286,6 @@ let currentUser = null;
 let currentTab = 'vehicles';
 let allInvoices = [];
 let filteredInvoices = [];
-let uniqueTrips = [];
-let uniqueVehicles = [];
 let cachedVehicles = [];
 
 // ============================================================
@@ -326,7 +311,7 @@ function jsonpRequest(action, params = {}) {
     const qs = Object.entries(params).map(([k, v]) => k + '=' + encodeURIComponent(String(v ?? ''))).join('&');
     const url = GAS_URL + '?' + qs;
     const script = document.createElement('script');
-    const timeout = setTimeout(() => { cleanup(); reject(new Error('Request timeout')); }, 45000);
+    const timeout = setTimeout(() => { cleanup(); reject(new Error('Request timeout')); }, 60000);
     const cleanup = () => { clearTimeout(timeout); delete window[cbName]; script.remove(); };
     window[cbName] = (data) => { cleanup(); resolve(data); };
     script.onerror = () => { cleanup(); reject(new Error('Network error')); };
@@ -366,53 +351,82 @@ function escapeHtml(str) {
 }
 
 function goBack() {
-  if (window.history.length > 1) window.history.back();
-  else window.location.href = 'Dashboard.html';
+  window.history.back();
 }
 
 // ============================================================
-// PASSENGER COUNT CALCULATION (CORRECTED)
+// PASSENGER COUNT CALCULATION
 // ============================================================
 function calculatePassengerCount(invoice) {
   const activitiesText = invoice.activitiesText || '';
   const hasAdultChildInfant = /adult|child|infant/i.test(activitiesText);
   
   if (hasAdultChildInfant) {
-    // استخراج الأعداد من النص
     const adultMatch = activitiesText.match(/adult[×x](\d+)/i);
     const childMatch = activitiesText.match(/child[×x](\d+)/i);
     const infantMatch = activitiesText.match(/infant[×x](\d+)/i);
-    
     const adults = adultMatch ? parseInt(adultMatch[1]) : 0;
     const children = childMatch ? parseInt(childMatch[1]) : 0;
     const infants = infantMatch ? parseInt(infantMatch[1]) : 0;
-    
     return { adults, children, infants, total: adults + children + infants };
   } else {
-    // نشاط غوص عادي: كل عمود يمثل عدد أفراد حقيقي (ليس فيه ضرب)
     const adults = parseInt(invoice.sgl) || 0;
     const children = parseInt(invoice.dbl) || 0;
     const infants = parseInt(invoice.trpl) || 0;
-    
     return { adults, children, infants, total: adults + children + infants };
   }
 }
 
 // ============================================================
-// LOAD INVOICES AND VEHICLES
+// GET USER FROM URL
 // ============================================================
+function getUserFromUrl() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const userData = urlParams.get('user');
+  if (userData) {
+    try {
+      return JSON.parse(decodeURIComponent(userData));
+    } catch(e) {}
+  }
+  return null;
+}
+
+// ============================================================
+// LOAD DATA
+// ============================================================
+async function loadVehicles() {
+  try {
+    const result = await gas('getVehicles', { centerName: currentUser?.centerName });
+    if (Array.isArray(result)) {
+      cachedVehicles = result;
+      const vehicleSelect = document.getElementById('filterVehicle');
+      if (vehicleSelect) {
+        vehicleSelect.innerHTML = '<option value="">All Vehicles</option>';
+        cachedVehicles.filter(v => v.isActive).forEach(v => {
+          const option = document.createElement('option');
+          option.value = v.id;
+          option.textContent = `${v.licensePlate || v.id} (${v.id})`;
+          vehicleSelect.appendChild(option);
+        });
+      }
+    }
+  } catch(e) { console.warn('loadVehicles error:', e); }
+}
+
+function getVehicleLicensePlate(vehicleId) {
+  const vehicle = cachedVehicles.find(v => v.id === vehicleId);
+  return vehicle?.licensePlate || vehicleId;
+}
+
 async function loadInvoices() {
   try {
     showToast('جاري تحميل الفواتير...', 'info');
-    
     const result = await gas('getAllInvoices', { includeCollection: 'true', centerName: currentUser?.centerName });
-    
     if (Array.isArray(result)) {
       allInvoices = result.filter(inv => {
         const state = (inv.State || inv.state || '').toLowerCase();
         return state === 'confirmed' || state === 'pending';
       });
-      
       console.log(`✅ Loaded ${allInvoices.length} invoices`);
       return true;
     }
@@ -422,40 +436,6 @@ async function loadInvoices() {
     showToast('Error loading invoices: ' + e.message, 'error');
     return false;
   }
-}
-
-async function loadVehicles() {
-  try {
-    const result = await gas('getVehicles', { centerName: currentUser?.centerName });
-    if (Array.isArray(result)) {
-      cachedVehicles = result;
-      console.log(`✅ Loaded ${cachedVehicles.length} vehicles`);
-      
-      // تحديث قائمة السيارات في الفلتر
-      uniqueVehicles = cachedVehicles.filter(v => v.isActive).map(v => ({
-        id: v.id,
-        licensePlate: v.licensePlate || v.id
-      }));
-      
-      const vehicleSelect = document.getElementById('filterVehicle');
-      if (vehicleSelect) {
-        vehicleSelect.innerHTML = '<option value="">All Vehicles</option>';
-        uniqueVehicles.forEach(v => {
-          const option = document.createElement('option');
-          option.value = v.id;
-          option.textContent = `${v.licensePlate} (${v.id})`;
-          vehicleSelect.appendChild(option);
-        });
-      }
-    }
-  } catch(e) {
-    console.warn('loadVehicles error:', e);
-  }
-}
-
-function getVehicleLicensePlate(vehicleId) {
-  const vehicle = cachedVehicles.find(v => v.id === vehicleId);
-  return vehicle?.licensePlate || vehicleId;
 }
 
 // ============================================================
@@ -474,7 +454,6 @@ function applyDateFilters() {
   
   let filtered = [...allInvoices];
   
-  // فلترة حسب التاريخ
   filtered = filtered.filter(inv => {
     const activeDate = inv.activeDate || inv.ActiveDate || '';
     const parsedDate = parseDateFromString(activeDate);
@@ -483,12 +462,10 @@ function applyDateFilters() {
     return true;
   });
   
-  // فلترة حسب الرحلة
   if (selectedTrip) {
     filtered = filtered.filter(inv => (inv.trip || inv.Trip) === selectedTrip);
   }
   
-  // فلترة حسب البحث
   if (searchText) {
     filtered = filtered.filter(inv => {
       const voucher = (inv.voucherNo || '').toLowerCase();
@@ -497,10 +474,20 @@ function applyDateFilters() {
     });
   }
   
-  // تحديث قائمة الرحلات المتاحة (للفلتر)
-  updateTripFilter(filtered);
+  // تحديث قائمة الرحلات
+  const tripsSet = new Set();
+  filtered.forEach(inv => { const trip = inv.trip || inv.Trip; if (trip) tripsSet.add(trip); });
+  const tripSelect = document.getElementById('filterTrip');
+  const currentTripValue = tripSelect.value;
+  tripSelect.innerHTML = '<option value="">All Trips</option>';
+  Array.from(tripsSet).sort().forEach(trip => {
+    const option = document.createElement('option');
+    option.value = trip;
+    option.textContent = trip;
+    if (currentTripValue === trip) option.selected = true;
+    tripSelect.appendChild(option);
+  });
   
-  // فلترة حسب السيارة (لتقرير السيارات فقط)
   if (currentTab === 'vehicles' && selectedVehicle) {
     filtered = filtered.filter(inv => {
       let vehiclesData = [];
@@ -512,84 +499,8 @@ function applyDateFilters() {
   return filtered;
 }
 
-function updateTripFilter(invoices) {
-  const tripsSet = new Set();
-  invoices.forEach(inv => {
-    const trip = inv.trip || inv.Trip;
-    if (trip) tripsSet.add(trip);
-  });
-  
-  const sortedTrips = Array.from(tripsSet).sort();
-  const tripSelect = document.getElementById('filterTrip');
-  const currentValue = tripSelect.value;
-  
-  tripSelect.innerHTML = '<option value="">All Trips</option>';
-  sortedTrips.forEach(trip => {
-    const option = document.createElement('option');
-    option.value = trip;
-    option.textContent = trip;
-    if (currentValue === trip) option.selected = true;
-    tripSelect.appendChild(option);
-  });
-}
-
-function onFilterChange() {
-  // سيتم تحديث البيانات عند الضغط على Show Report
-}
-
-function onSearchInput() {
-  // بحث تلقائي أثناء الكتابة
-  clearTimeout(window.searchTimeout);
-  window.searchTimeout = setTimeout(() => {
-    loadReport();
-  }, 500);
-}
-
-async function loadReport() {
-  const container = document.getElementById('reportContainer');
-  container.innerHTML = '<div class="loader"><div class="spinner"></div>Loading report data...</div>';
-  
-  filteredInvoices = applyDateFilters();
-  
-  if (filteredInvoices.length === 0) {
-    container.innerHTML = '<div class="loader">⚠️ No invoices found for selected period</div>';
-    document.getElementById('summaryContainer').style.display = 'none';
-    return;
-  }
-  
-  let reportData = [];
-  let html = '';
-  
-  try {
-    if (currentTab === 'vehicles') {
-      reportData = await generateVehiclesReport(filteredInvoices);
-      html = renderVehiclesTable(reportData);
-      document.getElementById('vehicleFilterGroup').style.display = 'flex';
-    } else if (currentTab === 'boats') {
-      reportData = await generateBoatsReport(filteredInvoices);
-      html = renderBoatsTable(reportData);
-      document.getElementById('vehicleFilterGroup').style.display = 'none';
-    } else if (currentTab === 'instructors') {
-      reportData = await generateInstructorsReport(filteredInvoices);
-      html = renderInstructorsTable(reportData);
-      document.getElementById('vehicleFilterGroup').style.display = 'none';
-    } else if (currentTab === 'customers') {
-      reportData = await generateCustomersReport(filteredInvoices);
-      html = renderCustomersTable(reportData);
-      document.getElementById('vehicleFilterGroup').style.display = 'none';
-    }
-    
-    updateSummary(reportData, currentTab);
-    container.innerHTML = html;
-    
-  } catch(e) {
-    console.error('loadReport error:', e);
-    container.innerHTML = `<div class="loader">❌ Error: ${e.message}</div>`;
-  }
-}
-
 // ============================================================
-// VEHICLES REPORT (CORRECTED)
+// VEHICLES REPORT
 // ============================================================
 async function generateVehiclesReport(invoices) {
   const vehiclesMap = new Map();
@@ -598,33 +509,20 @@ async function generateVehiclesReport(invoices) {
     const date = inv.activeDate || inv.ActiveDate || '';
     const tripName = inv.trip || inv.Trip || '';
     let vehiclesData = [];
-    try {
-      vehiclesData = JSON.parse(inv.VehiclesUsed || '[]');
-    } catch(e) {}
+    try { vehiclesData = JSON.parse(inv.VehiclesUsed || '[]'); } catch(e) {}
     
     for (const v of vehiclesData) {
       if (!v.vehicleId) continue;
-      
       const licensePlate = getVehicleLicensePlate(v.vehicleId);
       const passengers = calculatePassengerCount(inv);
-      
       const key = `${v.vehicleId}|${date}|${tripName}`;
+      
       if (!vehiclesMap.has(key)) {
         vehiclesMap.set(key, {
-          vehicleId: v.vehicleId,
-          licensePlate: licensePlate,
-          date: date,
-          tripName: tripName,
-          goCount: 0,
-          returnCount: 0,
-          adults: 0,
-          children: 0,
-          infants: 0,
-          totalPassengers: 0,
-          invoices: []
+          vehicleId: v.vehicleId, licensePlate, date, tripName,
+          goCount: 0, returnCount: 0, adults: 0, children: 0, infants: 0, totalPassengers: 0, invoices: []
         });
       }
-      
       const record = vehiclesMap.get(key);
       record.goCount += v.goCount || 0;
       record.returnCount += v.returnCount || 0;
@@ -632,45 +530,33 @@ async function generateVehiclesReport(invoices) {
       record.children += passengers.children;
       record.infants += passengers.infants;
       record.totalPassengers += passengers.total;
-      if (!record.invoices.includes(inv.voucherNo)) {
-        record.invoices.push(inv.voucherNo);
-      }
+      if (!record.invoices.includes(inv.voucherNo)) record.invoices.push(inv.voucherNo);
     }
   }
   
   const reportData = Array.from(vehiclesMap.values());
-  reportData.sort((a, b) => {
-    const dateA = parseDateFromString(a.date)?.getTime() || 0;
-    const dateB = parseDateFromString(b.date)?.getTime() || 0;
-    return dateA - dateB;
-  });
-  
+  reportData.sort((a,b) => (parseDateFromString(a.date)?.getTime()||0) - (parseDateFromString(b.date)?.getTime()||0));
   return reportData;
 }
 
 function renderVehiclesTable(data) {
-  if (!data.length) {
-    return '<div class="loader">🚫 No vehicle data found for selected period</div>';
-  }
+  if (!data.length) return '<div class="loader">🚫 No vehicle data found</div>';
   
-  let html = `</table>
-    <thead>
-      <tr>
-        <th>Date</th><th>Vehicle ID</th><th>License Plate</th><th>Trip</th>
-        <th>🔄 Go</th><th>🔙 Return</th><th>Total Trips</th>
-        <th>👤 Adults</th><th>👶 Children</th><th>🍼 Infants</th><th>Total Pax</th>
-        <th>Invoices</th>
-      </tr>
-    </thead>
-    <tbody>
+  let html = `<table>
+    <thead><tr>
+      <th>Date</th><th>Vehicle ID</th><th>License Plate</th><th>Trip</th>
+      <th>🔄 Go</th><th>🔙 Return</th><th>Total Trips</th>
+      <th>👤 A</th><th>👶 C</th><th>🍼 I</th><th>Total Pax</th>
+      <th>Invoices</th>
+    </tr></thead><tbody>
   `;
   
-  let totalGo = 0, totalReturn = 0, totalTrips = 0, totalAdults = 0, totalChildren = 0, totalInfants = 0, totalPassengers = 0;
+  let totalGo=0, totalReturn=0, totalTrips=0, totalAdults=0, totalChildren=0, totalInfants=0, totalPassengers=0;
   
   for (const row of data) {
     totalGo += row.goCount;
     totalReturn += row.returnCount;
-    totalTrips += (row.goCount + row.returnCount);
+    totalTrips += row.goCount + row.returnCount;
     totalAdults += row.adults;
     totalChildren += row.children;
     totalInfants += row.infants;
@@ -697,425 +583,192 @@ function renderVehiclesTable(data) {
     <td>${totalGo}</td><td>${totalReturn}</td><td>${totalTrips}</td>
     <td>${totalAdults}</td><td>${totalChildren}</td><td>${totalInfants}</td>
     <td>${totalPassengers}</td><td></td>
-  </tr>`;
+  </tr></tbody>~[~DONE~]~`;
   
-  html += '</tbody>}</div>';
   return html;
 }
 
 // ============================================================
-// BOATS REPORT
+// BOATS REPORT (مختصر)
 // ============================================================
 async function generateBoatsReport(invoices) {
   const boatsMap = new Map();
-  
   for (const inv of invoices) {
     const date = inv.activeDate || inv.ActiveDate || '';
     const tripName = inv.trip || inv.Trip || '';
     let boatsData = [];
-    try {
-      boatsData = JSON.parse(inv.BoatsUsed || '[]');
-    } catch(e) {}
-    
+    try { boatsData = JSON.parse(inv.BoatsUsed || '[]'); } catch(e) {}
     for (const b of boatsData) {
       if (!b.boatId) continue;
-      
       const passengers = calculatePassengerCount(inv);
-      
       const key = `${b.boatId}|${date}|${tripName}`;
-      if (!boatsMap.has(key)) {
-        boatsMap.set(key, {
-          boatId: b.boatId,
-          boatName: b.boatName || b.boatId,
-          date: date,
-          tripName: tripName,
-          adults: 0,
-          children: 0,
-          infants: 0,
-          totalPassengers: 0,
-          invoices: []
-        });
-      }
-      
+      if (!boatsMap.has(key)) boatsMap.set(key, { boatId: b.boatId, boatName: b.boatName || b.boatId, date, tripName, adults:0, children:0, infants:0, totalPassengers:0, invoices: [] });
       const record = boatsMap.get(key);
       record.adults += passengers.adults;
       record.children += passengers.children;
       record.infants += passengers.infants;
       record.totalPassengers += passengers.total;
-      if (!record.invoices.includes(inv.voucherNo)) {
-        record.invoices.push(inv.voucherNo);
-      }
+      if (!record.invoices.includes(inv.voucherNo)) record.invoices.push(inv.voucherNo);
     }
   }
-  
-  const reportData = Array.from(boatsMap.values());
-  reportData.sort((a, b) => {
-    const dateA = parseDateFromString(a.date)?.getTime() || 0;
-    const dateB = parseDateFromString(b.date)?.getTime() || 0;
-    return dateA - dateB;
-  });
-  
-  return reportData;
+  return Array.from(boatsMap.values()).sort((a,b) => (parseDateFromString(a.date)?.getTime()||0) - (parseDateFromString(b.date)?.getTime()||0));
 }
 
 function renderBoatsTable(data) {
-  if (!data.length) {
-    return '<div class="loader">🚫 No boat data found for selected period</div>';
-  }
-  
-  let html = `<table>
-    <thead><tr>
-      <th>Date</th><th>Boat ID</th><th>Boat Name</th><th>Trip</th>
-      <th>👤 Adults</th><th>👶 Children</th><th>🍼 Infants</th><th>Total Pax</th>
-      <th>Invoices</th>
-    </tr></thead><tbody>
-  `;
-  
-  let totalAdults = 0, totalChildren = 0, totalInfants = 0, totalPassengers = 0;
-  
+  if (!data.length) return '<div class="loader">🚫 No boat data found</div>';
+  let html = `<table><thead><tr><th>Date</th><th>Boat ID</th><th>Boat Name</th><th>Trip</th><th>👤 A</th><th>👶 C</th><th>🍼 I</th><th>Total Pax</th><th>Invoices</th></tr></thead><tbody>`;
+  let totalAdults=0, totalChildren=0, totalInfants=0, totalPassengers=0;
   for (const row of data) {
-    totalAdults += row.adults;
-    totalChildren += row.children;
-    totalInfants += row.infants;
-    totalPassengers += row.totalPassengers;
-    
-    html += `<tr>
-      <td>${escapeHtml(row.date)}</td>
-      <td>${escapeHtml(row.boatId)}</td>
-      <td><strong>${escapeHtml(row.boatName)}</strong></td>
-      <td>${escapeHtml(row.tripName)}</td>
-      <td>${row.adults || '—'}</td>
-      <td>${row.children || '—'}</td>
-      <td>${row.infants || '—'}</td>
-      <td><strong>${row.totalPassengers}</strong></td>
-      <td style="font-size:9px;">${escapeHtml(row.invoices.join(', '))}</td>
-    </tr>`;
+    totalAdults += row.adults; totalChildren += row.children; totalInfants += row.infants; totalPassengers += row.totalPassengers;
+    html += `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.boatId)}</td><td><strong>${escapeHtml(row.boatName)}</strong></td><td>${escapeHtml(row.tripName)}</td><td>${row.adults||'—'}</td><td>${row.children||'—'}</td><td>${row.infants||'—'}</td><td><strong>${row.totalPassengers}</strong></td><td style="font-size:9px;">${escapeHtml(row.invoices.join(', '))}</td></tr>`;
   }
-  
-  html += `<tr style="background: var(--gray-100); font-weight: bold;">
-    <td colspan="4">TOTAL</td>
-    <td>${totalAdults}</td><td>${totalChildren}</td><td>${totalInfants}</td>
-    <td>${totalPassengers}</td><td></td>
-  </tr></tbody></table>`;
-  
+  html += `<tr style="background:var(--gray-100);font-weight:bold;"><td colspan="4">TOTAL</td><td>${totalAdults}</td><td>${totalChildren}</td><td>${totalInfants}</td><td>${totalPassengers}</td><td></td></tr></tbody>~[~DONE~]~`;
   return html;
 }
 
 // ============================================================
-// INSTRUCTORS REPORT
+// INSTRUCTORS REPORT (مختصر)
 // ============================================================
 async function generateInstructorsReport(invoices) {
   const instructorsMap = new Map();
-  
   for (const inv of invoices) {
     const date = inv.activeDate || inv.ActiveDate || '';
     const tripName = inv.trip || inv.Trip || '';
-    
-    // قراءة المدربين المنفذين
     let execInstructors = [];
-    try {
-      execInstructors = JSON.parse(inv.InstructorsExecution || '[]');
-    } catch(e) {}
-    
+    try { execInstructors = JSON.parse(inv.InstructorsExecution || '[]'); } catch(e) {}
     for (const inst of execInstructors) {
       if (!inst.instructorId) continue;
-      
-      if (!instructorsMap.has(inst.instructorId)) {
-        instructorsMap.set(inst.instructorId, {
-          instructorId: inst.instructorId,
-          name: inst.instructorName || inst.instructorId,
-          activities: [],
-          upSellTotal: 0,
-          upSellCount: 0
-        });
-      }
-      
+      if (!instructorsMap.has(inst.instructorId)) instructorsMap.set(inst.instructorId, { instructorId: inst.instructorId, name: inst.instructorName || inst.instructorId, activities: [], upSellTotal: 0, upSellCount: 0 });
       const instructor = instructorsMap.get(inst.instructorId);
-      
-      if (inst.activities && inst.activities.length > 0) {
-        for (const act of inst.activities) {
-          instructor.activities.push({
-            date: date,
-            tripName: tripName,
-            activityName: act.displayName || act.activityName,
-            quantity: act.quantity || 0,
-            voucherNo: inv.voucherNo
-          });
-        }
+      if (inst.activities && inst.activities.length) {
+        for (const act of inst.activities) instructor.activities.push({ date, tripName, activityName: act.displayName || act.activityName, quantity: act.quantity || 0, voucherNo: inv.voucherNo });
       } else {
-        // صيغة قديمة
-        const activities = [
-          { name: 'Diver', qty: inst.diver || 0 },
-          { name: 'Course', qty: inst.course || 0 },
-          { name: 'Intro', qty: inst.intro || 0 }
-        ];
-        for (const act of activities) {
-          if (act.qty > 0) {
-            instructor.activities.push({
-              date: date,
-              tripName: tripName,
-              activityName: act.name,
-              quantity: act.qty,
-              voucherNo: inv.voucherNo
-            });
-          }
-        }
+        if (inst.diver) instructor.activities.push({ date, tripName, activityName: 'Diver', quantity: inst.diver, voucherNo: inv.voucherNo });
+        if (inst.course) instructor.activities.push({ date, tripName, activityName: 'Course', quantity: inst.course, voucherNo: inv.voucherNo });
+        if (inst.intro) instructor.activities.push({ date, tripName, activityName: 'Intro', quantity: inst.intro, voucherNo: inv.voucherNo });
       }
     }
-    
-    // قراءة UpSell
     let upSellData = [];
-    try {
-      upSellData = JSON.parse(inv.InstructorsUpSell || '[]');
-    } catch(e) {}
-    
+    try { upSellData = JSON.parse(inv.InstructorsUpSell || '[]'); } catch(e) {}
     for (const upsell of upSellData) {
       if (upsell.instructorId) {
-        if (!instructorsMap.has(upsell.instructorId)) {
-          instructorsMap.set(upsell.instructorId, {
-            instructorId: upsell.instructorId,
-            name: upsell.instructorName || upsell.instructorId,
-            activities: [],
-            upSellTotal: 0,
-            upSellCount: 0
-          });
-        }
+        if (!instructorsMap.has(upsell.instructorId)) instructorsMap.set(upsell.instructorId, { instructorId: upsell.instructorId, name: upsell.instructorName || upsell.instructorId, activities: [], upSellTotal: 0, upSellCount: 0 });
         const instructor = instructorsMap.get(upsell.instructorId);
         instructor.upSellTotal += upsell.totalAmount || 0;
         instructor.upSellCount++;
       }
     }
   }
-  
   const reportData = [];
   for (const instructor of instructorsMap.values()) {
-    for (const activity of instructor.activities) {
-      reportData.push({
-        instructorId: instructor.instructorId,
-        instructorName: instructor.name,
-        date: activity.date,
-        tripName: activity.tripName,
-        activityName: activity.activityName,
-        quantity: activity.quantity,
-        voucherNo: activity.voucherNo,
-        upSellTotal: instructor.upSellTotal,
-        upSellCount: instructor.upSellCount
-      });
-    }
-    if (instructor.activities.length === 0 && instructor.upSellTotal > 0) {
-      reportData.push({
-        instructorId: instructor.instructorId,
-        instructorName: instructor.name,
-        date: '—',
-        tripName: '—',
-        activityName: '💰 UpSell Only',
-        quantity: 0,
-        voucherNo: '',
-        upSellTotal: instructor.upSellTotal,
-        upSellCount: instructor.upSellCount
-      });
-    }
+    for (const activity of instructor.activities) reportData.push({ instructorId: instructor.instructorId, instructorName: instructor.name, date: activity.date, tripName: activity.tripName, activityName: activity.activityName, quantity: activity.quantity, voucherNo: activity.voucherNo, upSellTotal: instructor.upSellTotal, upSellCount: instructor.upSellCount });
+    if (instructor.activities.length === 0 && instructor.upSellTotal > 0) reportData.push({ instructorId: instructor.instructorId, instructorName: instructor.name, date: '—', tripName: '—', activityName: '💰 UpSell Only', quantity: 0, voucherNo: '', upSellTotal: instructor.upSellTotal, upSellCount: instructor.upSellCount });
   }
-  
-  reportData.sort((a, b) => {
-    const dateA = parseDateFromString(a.date)?.getTime() || 0;
-    const dateB = parseDateFromString(b.date)?.getTime() || 0;
-    return dateB - dateA;
-  });
-  
-  return reportData;
+  return reportData.sort((a,b) => (parseDateFromString(b.date)?.getTime()||0) - (parseDateFromString(a.date)?.getTime()||0));
 }
 
 function renderInstructorsTable(data) {
-  if (!data.length) {
-    return '<div class="loader">🚫 No instructor data found for selected period</div>';
-  }
-  
-  let html = `<table>
-    <thead><tr>
-      <th>Date</th><th>Instructor</th><th>Trip</th>
-      <th>Activity</th><th>Quantity</th>
-      <th>💰 UpSell Total</th><th>UpSell Count</th>
-      <th>Voucher</th>
-    </tr></thead><tbody>
-  `;
-  
+  if (!data.length) return '<div class="loader">🚫 No instructor data found</div>';
+  let html = `<table><thead><tr><th>Date</th><th>Instructor</th><th>Trip</th><th>Activity</th><th>Qty</th><th>💰 UpSell Total</th><th>UpSell Count</th><th>Voucher</th></tr></thead><tbody>`;
   let totalUpSell = 0;
-  
   for (const row of data) {
     totalUpSell += row.upSellTotal;
-    
-    html += `<tr>
-      <td>${escapeHtml(row.date)}</td>
-      <td><strong>${escapeHtml(row.instructorName)}</strong><br><span style="font-size:9px;">${escapeHtml(row.instructorId)}</span></td>
-      <td>${escapeHtml(row.tripName)}</td>
-      <td>${escapeHtml(row.activityName)}</td>
-      <td>${row.quantity || '—'}</td>
-      <td style="color: var(--green); font-weight: bold;">${row.upSellTotal > 0 ? row.upSellTotal.toFixed(2) : '—'}</td>
-      <td>${row.upSellCount || '—'}</td>
-      <td style="font-size:9px;">${escapeHtml(row.voucherNo)}</td>
-    </tr>`;
+    html += `<tr><td>${escapeHtml(row.date)}</td><td><strong>${escapeHtml(row.instructorName)}</strong><br><span style="font-size:9px;">${escapeHtml(row.instructorId)}</span></td><td>${escapeHtml(row.tripName)}</td><td>${escapeHtml(row.activityName)}</td><td>${row.quantity||'—'}</td><td style="color:var(--green);font-weight:bold;">${row.upSellTotal>0?row.upSellTotal.toFixed(2):'—'}</td><td>${row.upSellCount||'—'}</td><td style="font-size:9px;">${escapeHtml(row.voucherNo)}</td></tr>`;
   }
-  
-  html += `<tr style="background: var(--gray-100); font-weight: bold;">
-    <td colspan="5">TOTAL UpSell</td>
-    <td>${totalUpSell.toFixed(2)}</td><td colspan="2"></td>
-  </tr></tbody></table>`;
-  
+  html += `<tr style="background:var(--gray-100);font-weight:bold;"><td colspan="5">TOTAL UpSell</td><td>${totalUpSell.toFixed(2)}</td><td colspan="2"></td></tr></tbody>~[~DONE~]~`;
   return html;
 }
 
 // ============================================================
-// CUSTOMERS REPORT
+// CUSTOMERS REPORT (مختصر)
 // ============================================================
 async function generateCustomersReport(invoices) {
   const reportData = [];
-  
   for (const inv of invoices) {
     const date = inv.activeDate || inv.ActiveDate || '';
     const tripName = inv.trip || inv.Trip || '';
     const passengers = calculatePassengerCount(inv);
-    
-    // جمع الأنشطة الإضافية
     const extras = [];
     if (parseInt(inv.extra) > 0) extras.push(`Extra:${inv.extra}`);
     if (parseInt(inv.camel) > 0) extras.push(`Camel:${inv.camel}`);
     if (parseInt(inv.dinner) > 0) extras.push(`Dinner:${inv.dinner}`);
     if (parseInt(inv.vipDinner) > 0) extras.push(`VIP:${inv.vipDinner}`);
     if (parseInt(inv.starGazing) > 0) extras.push(`Star:${inv.starGazing}`);
-    if (parseInt(inv.privateTrip) > 0) extras.push(`Private Trip:${inv.privateTrip}`);
-    if (parseInt(inv.privateTransfer) > 0) extras.push(`Private Transfer:${inv.privateTransfer}`);
-    
-    reportData.push({
-      date: date,
-      tripName: tripName,
-      voucherNo: inv.voucherNo || '',
-      guestName: inv.guestName || '',
-      nationality: inv.nationality || '',
-      hotel: inv.hotel || '',
-      roomNo: inv.roomNo || '',
-      contactNo: inv.contactNo || '',
-      adults: passengers.adults,
-      children: passengers.children,
-      infants: passengers.infants,
-      totalPassengers: passengers.total,
-      extras: extras.join(', ')
-    });
+    reportData.push({ date, tripName, voucherNo: inv.voucherNo || '', guestName: inv.guestName || '', nationality: inv.nationality || '', hotel: inv.hotel || '', roomNo: inv.roomNo || '', adults: passengers.adults, children: passengers.children, infants: passengers.infants, totalPassengers: passengers.total, extras: extras.join(', ') });
   }
-  
-  reportData.sort((a, b) => {
-    const dateA = parseDateFromString(a.date)?.getTime() || 0;
-    const dateB = parseDateFromString(b.date)?.getTime() || 0;
-    return dateA - dateB;
-  });
-  
-  return reportData;
+  return reportData.sort((a,b) => (parseDateFromString(a.date)?.getTime()||0) - (parseDateFromString(b.date)?.getTime()||0));
 }
 
 function renderCustomersTable(data) {
-  if (!data.length) {
-    return '<div class="loader">🚫 No customer data found for selected period</div>';
-  }
-  
-  let html = `<table>
-    <thead><tr>
-      <th>Date</th><th>Trip</th><th>Voucher</th><th>Guest Name</th>
-      <th>Nationality</th><th>Hotel</th><th>Room</th>
-      <th>👤 A</th><th>👶 C</th><th>🍼 I</th><th>Total</th>
-      <th>Extras</th>
-    </tr></thead><tbody>
-  `;
-  
-  let totalAdults = 0, totalChildren = 0, totalInfants = 0, totalPassengers = 0;
-  
+  if (!data.length) return '<div class="loader">🚫 No customer data found</div>';
+  let html = `<td><thead><tr><th>Date</th><th>Trip</th><th>Voucher</th><th>Guest Name</th><th>Nationality</th><th>Hotel</th><th>Room</th><th>👤 A</th><th>👶 C</th><th>🍼 I</th><th>Total</th><th>Extras</th></tr></thead><tbody>`;
+  let totalAdults=0, totalChildren=0, totalInfants=0, totalPassengers=0;
   for (const row of data) {
-    totalAdults += row.adults;
-    totalChildren += row.children;
-    totalInfants += row.infants;
-    totalPassengers += row.totalPassengers;
-    
-    html += `<tr>
-      <td>${escapeHtml(row.date)}</td>
-      <td>${escapeHtml(row.tripName)}</td>
-      <td><strong>${escapeHtml(row.voucherNo)}</strong></td>
-      <td>${escapeHtml(row.guestName || '—')}</td>
-      <td>${escapeHtml(row.nationality || '—')}</td>
-      <td>${escapeHtml(row.hotel || '—')}</td>
-      <td>${escapeHtml(row.roomNo || '—')}</td>
-      <td>${row.adults || '—'}</td>
-      <td>${row.children || '—'}</td>
-      <td>${row.infants || '—'}</td>
-      <td><strong>${row.totalPassengers}</strong></td>
-      <td style="font-size:10px;">${escapeHtml(row.extras || '—')}</td>
-    </tr>`;
+    totalAdults += row.adults; totalChildren += row.children; totalInfants += row.infants; totalPassengers += row.totalPassengers;
+    html += `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.tripName)}</td><td><strong>${escapeHtml(row.voucherNo)}</strong></td><td>${escapeHtml(row.guestName||'—')}</td><td>${escapeHtml(row.nationality||'—')}</td><td>${escapeHtml(row.hotel||'—')}</td><td>${escapeHtml(row.roomNo||'—')}</td><td>${row.adults||'—'}</td><td>${row.children||'—'}</td><td>${row.infants||'—'}</td><td><strong>${row.totalPassengers}</strong></td><td style="font-size:10px;">${escapeHtml(row.extras||'—')}</td></tr>`;
   }
-  
-  html += `<tr style="background: var(--gray-100); font-weight: bold;">
-    <td colspan="7">TOTAL</td>
-    <td>${totalAdults}</td><td>${totalChildren}</td><td>${totalInfants}</td>
-    <td>${totalPassengers}</td><td></td>
-  </tr></tbody></table>`;
-  
+  html += `<tr style="background:var(--gray-100);font-weight:bold;"><td colspan="7">TOTAL</td><td>${totalAdults}</td><td>${totalChildren}</td><td>${totalInfants}</td><td>${totalPassengers}</td><td></td></tr></tbody>~[~DONE~]~`;
   return html;
 }
 
 // ============================================================
-// SUMMARY & UTILITIES
+// UPDATE SUMMARY & LOAD REPORT
 // ============================================================
 function updateSummary(data, tab) {
   const summaryDiv = document.getElementById('summaryContainer');
-  if (!data.length) {
-    summaryDiv.style.display = 'none';
+  if (!data.length) { summaryDiv.style.display = 'none'; return; }
+  summaryDiv.style.display = 'block';
+  let totalRecords = data.length;
+  let totalPassengers = 0, totalTrips = 0, totalUpSell = 0;
+  if (tab === 'vehicles') {
+    totalPassengers = data.reduce((s,r) => s + (r.totalPassengers||0), 0);
+    totalTrips = data.reduce((s,r) => s + (r.goCount + r.returnCount), 0);
+    summaryDiv.innerHTML = `<div class="summary-title">📊 Summary</div><div class="summary-grid"><div class="summary-item"><div class="label">Total Records</div><div class="value">${totalRecords}</div></div><div class="summary-item"><div class="label">Total Vehicle Trips</div><div class="value">${totalTrips}</div></div><div class="summary-item"><div class="label">Total Passengers</div><div class="value">${totalPassengers}</div></div></div>`;
+  } else if (tab === 'boats') {
+    totalPassengers = data.reduce((s,r) => s + (r.totalPassengers||0), 0);
+    summaryDiv.innerHTML = `<div class="summary-title">📊 Summary</div><div class="summary-grid"><div class="summary-item"><div class="label">Total Boat Trips</div><div class="value">${totalRecords}</div></div><div class="summary-item"><div class="label">Total Passengers</div><div class="value">${totalPassengers}</div></div></div>`;
+  } else if (tab === 'instructors') {
+    totalUpSell = data.reduce((s,r) => s + (r.upSellTotal||0), 0);
+    const uniqueInstructors = new Set(data.map(r => r.instructorId)).size;
+    summaryDiv.innerHTML = `<div class="summary-title">📊 Summary</div><div class="summary-grid"><div class="summary-item"><div class="label">Unique Instructors</div><div class="value">${uniqueInstructors}</div></div><div class="summary-item"><div class="label">Total Activities</div><div class="value">${totalRecords}</div></div><div class="summary-item"><div class="label">Total UpSell</div><div class="value">${totalUpSell.toFixed(2)}</div></div></div>`;
+  } else {
+    totalPassengers = data.reduce((s,r) => s + (r.totalPassengers||0), 0);
+    summaryDiv.innerHTML = `<div class="summary-title">📊 Summary</div><div class="summary-grid"><div class="summary-item"><div class="label">Total Bookings</div><div class="value">${totalRecords}</div></div><div class="summary-item"><div class="label">Total Passengers</div><div class="value">${totalPassengers}</div></div></div>`;
+  }
+}
+
+async function loadReport() {
+  const container = document.getElementById('reportContainer');
+  container.innerHTML = '<div class="loader"><div class="spinner"></div>Loading report data...</div>';
+  filteredInvoices = applyDateFilters();
+  if (filteredInvoices.length === 0) {
+    container.innerHTML = '<div class="loader">⚠️ No invoices found for selected period</div>';
+    document.getElementById('summaryContainer').style.display = 'none';
     return;
   }
-  
-  summaryDiv.style.display = 'block';
-  
-  let totalRecords = data.length;
-  let totalPassengers = 0;
-  let totalTrips = 0;
-  let totalUpSell = 0;
-  
-  if (tab === 'vehicles') {
-    totalPassengers = data.reduce((sum, r) => sum + (r.totalPassengers || 0), 0);
-    totalTrips = data.reduce((sum, r) => sum + (r.goCount + r.returnCount), 0);
-    summaryDiv.innerHTML = `
-      <div class="summary-title">📊 Summary</div>
-      <div class="summary-grid">
-        <div class="summary-item"><div class="label">Total Records</div><div class="value">${totalRecords}</div></div>
-        <div class="summary-item"><div class="label">Total Vehicle Trips</div><div class="value">${totalTrips}</div></div>
-        <div class="summary-item"><div class="label">Total Passengers</div><div class="value">${totalPassengers}</div></div>
-      </div>
-    `;
-  } else if (tab === 'boats') {
-    totalPassengers = data.reduce((sum, r) => sum + (r.totalPassengers || 0), 0);
-    summaryDiv.innerHTML = `
-      <div class="summary-title">📊 Summary</div>
-      <div class="summary-grid">
-        <div class="summary-item"><div class="label">Total Boat Trips</div><div class="value">${totalRecords}</div></div>
-        <div class="summary-item"><div class="label">Total Passengers</div><div class="value">${totalPassengers}</div></div>
-      </div>
-    `;
-  } else if (tab === 'instructors') {
-    totalUpSell = data.reduce((sum, r) => sum + (r.upSellTotal || 0), 0);
-    const uniqueInstructors = new Set(data.map(r => r.instructorId)).size;
-    summaryDiv.innerHTML = `
-      <div class="summary-title">📊 Summary</div>
-      <div class="summary-grid">
-        <div class="summary-item"><div class="label">Unique Instructors</div><div class="value">${uniqueInstructors}</div></div>
-        <div class="summary-item"><div class="label">Total Activities</div><div class="value">${totalRecords}</div></div>
-        <div class="summary-item"><div class="label">Total UpSell</div><div class="value">${totalUpSell.toFixed(2)}</div></div>
-      </div>
-    `;
-  } else if (tab === 'customers') {
-    totalPassengers = data.reduce((sum, r) => sum + (r.totalPassengers || 0), 0);
-    summaryDiv.innerHTML = `
-      <div class="summary-title">📊 Summary</div>
-      <div class="summary-grid">
-        <div class="summary-item"><div class="label">Total Bookings</div><div class="value">${totalRecords}</div></div>
-        <div class="summary-item"><div class="label">Total Passengers</div><div class="value">${totalPassengers}</div></div>
-      </div>
-    `;
+  let reportData = [], html = '';
+  try {
+    if (currentTab === 'vehicles') {
+      reportData = await generateVehiclesReport(filteredInvoices);
+      html = renderVehiclesTable(reportData);
+      document.getElementById('vehicleFilterGroup').style.display = 'flex';
+    } else if (currentTab === 'boats') {
+      reportData = await generateBoatsReport(filteredInvoices);
+      html = renderBoatsTable(reportData);
+      document.getElementById('vehicleFilterGroup').style.display = 'none';
+    } else if (currentTab === 'instructors') {
+      reportData = await generateInstructorsReport(filteredInvoices);
+      html = renderInstructorsTable(reportData);
+      document.getElementById('vehicleFilterGroup').style.display = 'none';
+    } else {
+      reportData = await generateCustomersReport(filteredInvoices);
+      html = renderCustomersTable(reportData);
+      document.getElementById('vehicleFilterGroup').style.display = 'none';
+    }
+    updateSummary(reportData, currentTab);
+    container.innerHTML = html;
+  } catch(e) {
+    container.innerHTML = `<div class="loader">❌ Error: ${e.message}</div>`;
   }
 }
 
@@ -1123,127 +776,58 @@ function resetFilters() {
   const today = new Date();
   const weekAgo = new Date();
   weekAgo.setDate(today.getDate() - 7);
-  
   document.getElementById('filterFromDate').value = `${weekAgo.getFullYear()}-${String(weekAgo.getMonth()+1).padStart(2,'0')}-${String(weekAgo.getDate()).padStart(2,'0')}`;
   document.getElementById('filterToDate').value = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
   document.getElementById('filterTrip').value = '';
   if (document.getElementById('filterVehicle')) document.getElementById('filterVehicle').value = '';
   document.getElementById('filterSearch').value = '';
-  
   loadReport();
 }
 
 async function exportToExcel() {
   showToast('Preparing Excel export...', 'info');
-  
   try {
-    const result = await gas('exportReportToExcel', {
-      reportType: currentTab,
-      data: JSON.stringify(currentTab === 'vehicles' ? await generateVehiclesReport(filteredInvoices) : 
-                           currentTab === 'boats' ? await generateBoatsReport(filteredInvoices) :
-                           currentTab === 'instructors' ? await generateInstructorsReport(filteredInvoices) :
-                           await generateCustomersReport(filteredInvoices)),
-      fromDate: document.getElementById('filterFromDate').value,
-      toDate: document.getElementById('filterToDate').value,
-      centerName: currentUser?.centerName
-    });
-    
-    if (result?.success && result.downloadUrl) {
-      window.open(result.downloadUrl, '_blank');
-      showToast('✅ Export completed', 'success');
-    } else if (result?.csvData) {
-      const blob = new Blob([result.csvData], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.href = url;
-      link.setAttribute('download', `${currentTab}_report_${new Date().toISOString().split('T')[0]}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      showToast('✅ Export completed', 'success');
-    } else {
-      showToast('❌ Export failed', 'error');
-    }
-  } catch(e) {
-    showToast('Error: ' + e.message, 'error');
-  }
-}
-
-// ============================================================
-// GET USER FROM URL OR STORAGE
-// ============================================================
-function getUserFromUrl() {
-  const urlParams = new URLSearchParams(window.location.search);
-  const userData = urlParams.get('user');
-  if (userData) {
-    try {
-      const user = JSON.parse(decodeURIComponent(userData));
-      console.log('✅ User loaded from URL:', user.name);
-      return user;
-    } catch(e) {
-      console.error('Failed to parse user from URL:', e);
-    }
-  }
-  return null;
+    let reportData = [];
+    if (currentTab === 'vehicles') reportData = await generateVehiclesReport(filteredInvoices);
+    else if (currentTab === 'boats') reportData = await generateBoatsReport(filteredInvoices);
+    else if (currentTab === 'instructors') reportData = await generateInstructorsReport(filteredInvoices);
+    else reportData = await generateCustomersReport(filteredInvoices);
+    const result = await gas('exportReportToExcel', { reportType: currentTab, data: JSON.stringify(reportData), fromDate: document.getElementById('filterFromDate').value, toDate: document.getElementById('filterToDate').value, centerName: currentUser?.centerName });
+    if (result?.success && result.downloadUrl) { window.open(result.downloadUrl, '_blank'); showToast('✅ Export completed', 'success'); }
+    else if (result?.csvData) { const blob = new Blob([result.csvData], { type: 'text/csv;charset=utf-8;' }); const link = document.createElement('a'); const url = URL.createObjectURL(blob); link.href = url; link.setAttribute('download', `${currentTab}_report_${new Date().toISOString().split('T')[0]}.csv`); document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(url); showToast('✅ Export completed', 'success'); }
+    else showToast('❌ Export failed', 'error');
+  } catch(e) { showToast('Error: ' + e.message, 'error'); }
 }
 
 // ============================================================
 // INITIALIZATION
 // ============================================================
 document.addEventListener('DOMContentLoaded', async () => {
-  // 1. محاولة جلب المستخدم من رابط URL (الأولوية القصوى)
   let user = getUserFromUrl();
-  
-  // 2. إذا لم يتم العثور عليه، حاول من localStorage
   if (!user) {
     const storedUser = localStorage.getItem('currentUser');
-    if (storedUser) {
-      try {
-        user = JSON.parse(storedUser);
-        console.log('✅ User loaded from localStorage:', user.name);
-      } catch(e) {}
-    }
+    if (storedUser) try { user = JSON.parse(storedUser); } catch(e) {}
   }
-  
-  // 3. إذا لم يتم العثور عليه، حاول من sessionStorage
   if (!user) {
     const sessionUser = sessionStorage.getItem('currentUser');
-    if (sessionUser) {
-      try {
-        user = JSON.parse(sessionUser);
-        console.log('✅ User loaded from sessionStorage:', user.name);
-      } catch(e) {}
-    }
+    if (sessionUser) try { user = JSON.parse(sessionUser); } catch(e) {}
   }
-  
-  // 4. إذا لم يتم العثور على مستخدم نهائياً، اعرض رسالة خطأ
   if (!user) {
     showToast('⚠️ Please login first', 'error');
-    document.getElementById('reportContainer').innerHTML = '<div class="loader">❌ Please login from the main application first.<br><a href="https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec?page=Login" target="_blank">Click here to login</a></div>';
+    document.getElementById('reportContainer').innerHTML = '<div class="loader">❌ Please login from the main application first.</div>';
     document.getElementById('centerName').textContent = 'Not logged in';
     return;
   }
-  
-  // تعيين المستخدم الحالي
   currentUser = user;
-  
-  // تحديث عنوان الصفحة باسم المركز
   document.getElementById('centerName').textContent = currentUser.centerName || currentUser.name || '';
-  
-  // تعيين التواريخ الافتراضية (آخر 7 أيام)
   const today = new Date();
   const weekAgo = new Date();
   weekAgo.setDate(today.getDate() - 7);
-  
   document.getElementById('filterFromDate').value = `${weekAgo.getFullYear()}-${String(weekAgo.getMonth()+1).padStart(2,'0')}-${String(weekAgo.getDate()).padStart(2,'0')}`;
   document.getElementById('filterToDate').value = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
-  
   await loadVehicles();
   await loadInvoices();
   await loadReport();
-  
-  // Tab switching
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
