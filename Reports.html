@@ -358,7 +358,20 @@ async function getLogisticsRecords(fromDate, toDate) {
 async function getVehicles() {
   try {
     const result = await gas('getVehicles');
-    return Array.isArray(result) ? result : [];
+    console.log('📊 getVehicles result:', result);
+    if (Array.isArray(result)) {
+      console.log('📊 Vehicles count:', result.length);
+      if (result.length > 0) {
+        console.log('📊 First vehicle sample:', {
+          id: result[0].id,
+          Type: result[0].Type,
+          LicensePlate: result[0].LicensePlate,
+          MonthlyFixedCost: result[0].MonthlyFixedCost
+        });
+      }
+      return result;
+    }
+    return [];
   } catch(e) {
     console.error('getVehicles error:', e);
     return [];
@@ -556,20 +569,24 @@ async function generateDailyCostReport(fromDate, toDate) {
     return [];
   }
   
+  console.log('📊 Vehicles loaded:', vehicles.length);
+  console.log('📊 First vehicle:', vehicles[0]);
+  
   // 2. جلب بيانات التشغيلات
   const tripRecords = await getVehicleTripRecords(fromDate, toDate);
-  console.log(`📊 Trip records: ${tripRecords.length}`);
+  console.log('📊 Trip records:', tripRecords.length);
   
   // 3. جلب بيانات سيارات العدّة (Logistics)
   const logisticsRecords = await getLogisticsRecords(fromDate, toDate);
-  console.log(`📊 Logistics records: ${logisticsRecords.length}`);
+  console.log('📊 Logistics records:', logisticsRecords.length);
   
-  // 4. دمج جميع التشغيلات (ركاب + عدّة)
+  // 4. دمج جميع التشغيلات
   const allOperations = [...tripRecords, ...logisticsRecords];
+  console.log('📊 Total operations:', allOperations.length);
   
   // 5. معالجة البيانات
   const costData = [];
-  const vehicleMap = new Map(); // لتخزين بيانات السيارة
+  const vehicleMap = new Map();
   
   for (const vehicle of vehicles) {
     vehicleMap.set(vehicle.id, vehicle);
@@ -590,33 +607,39 @@ async function generateDailyCostReport(fromDate, toDate) {
       continue;
     }
     
-    // تحديد نوع السيارة ونظام التكلفة
-    const type = vehicle.Type || 'owned';
-    const usageType = vehicle.UsageType || 'passengers';
-    const monthlyCost = parseFloat(vehicle.MonthlyFixedCost) || 0;
-    const dailyRate = parseFloat(vehicle.DailyRate) || 0;
-    const roundTripRate = parseFloat(vehicle.RoundTripRate) || 0;
-    const oneWayRate = parseFloat(vehicle.OneWayRate) || 0;
+    // تحديد نوع السيارة (مراعاة حالة الأحرف)
+    const vehicleType = vehicle.Type || vehicle.type || 'owned';
+    const usageType = vehicle.UsageType || vehicle.usageType || 'passengers';
+    const monthlyCost = parseFloat(vehicle.MonthlyFixedCost || vehicle.monthlyFixedCost || 0);
+    const dailyRate = parseFloat(vehicle.DailyRate || vehicle.dailyRate || 0);
+    const roundTripRate = parseFloat(vehicle.RoundTripRate || vehicle.roundTripRate || 0);
+    const oneWayRate = parseFloat(vehicle.OneWayRate || vehicle.oneWayRate || 0);
     
     let costSystem = '';
     let dailyCost = 0;
     let calculationMethod = '';
     
-    // حساب التكلفة حسب نوع السيارة
-    if (type === 'rental' && monthlyCost > 0 && usageType !== 'luggage') {
+    // ✅ التصحيح: التحقق من نوع السيارة بشكل صحيح
+    const isRental = (vehicleType === 'rental' || vehicleType === 'Rental');
+    const isMonthlyRental = isRental && monthlyCost > 0 && usageType !== 'luggage';
+    const isDailyRental = isRental && dailyRate > 0 && !isMonthlyRental;
+    
+    if (isMonthlyRental) {
       // سيارة إيجار شهري
       costSystem = 'إيجار شهري';
       dailyCost = calculateMonthlyRentalDailyCost(monthlyCost, date);
       calculationMethod = `${monthlyCost} ÷ ${getDaysInMonth(date)} = ${dailyCost.toFixed(2)}`;
+      console.log(`💰 ${vehicleId}: Monthly rental - daily cost = ${dailyCost}`);
     } 
-    else if (type === 'rental' && dailyRate > 0) {
+    else if (isDailyRental) {
       // سيارة إيجار يومي
       costSystem = 'إيجار يومي';
       dailyCost = dailyRate;
       calculationMethod = `سعر اليوم = ${dailyRate}`;
+      console.log(`💰 ${vehicleId}: Daily rental - cost = ${dailyCost}`);
     }
     else {
-      // سيارة تشغيلات (مملوكة أو إيجار تشغيلي)
+      // سيارة تشغيلات
       costSystem = 'نظام التشغيلات';
       dailyCost = calculateDailyCost(goCount, returnCount, roundTripRate, oneWayRate);
       if (goCount === returnCount) {
@@ -626,13 +649,15 @@ async function generateDailyCostReport(fromDate, toDate) {
       } else {
         calculationMethod = `${goCount} × ${roundTripRate} + ${returnCount - goCount} × ${oneWayRate} = ${dailyCost}`;
       }
+      console.log(`💰 ${vehicleId}: Trip-based - cost = ${dailyCost} (Go:${goCount}, Return:${returnCount})`);
     }
     
     // التحقق من صلاحية الرخصة
     let licenseStatus = '🟢 سارية';
     let licenseWarning = false;
-    if (vehicle.LicenseExpiry) {
-      const expiryDate = new Date(vehicle.LicenseExpiry);
+    const licenseExpiry = vehicle.LicenseExpiry || vehicle.licenseExpiry;
+    if (licenseExpiry) {
+      const expiryDate = new Date(licenseExpiry);
       const today = new Date();
       const daysUntilExpiry = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));
       if (daysUntilExpiry <= 30 && daysUntilExpiry > 0) {
@@ -648,10 +673,10 @@ async function generateDailyCostReport(fromDate, toDate) {
       date: formatDateDDMMMYYYY(date),
       dateObj: new Date(date),
       vehicleId: vehicleId,
-      licensePlate: vehicle.LicensePlate || vehicleId,
-      type: type,
+      licensePlate: vehicle.LicensePlate || vehicle.licensePlate || vehicleId,
+      type: vehicleType,
       usageType: usageType,
-      driverName: vehicle.DriverName || '—',
+      driverName: vehicle.DriverName || vehicle.driverName || '—',
       monthlyFixedCost: monthlyCost,
       roundTripRate: roundTripRate,
       oneWayRate: oneWayRate,
@@ -662,9 +687,11 @@ async function generateDailyCostReport(fromDate, toDate) {
       calculationMethod: calculationMethod,
       licenseStatus: licenseStatus,
       licenseWarning: licenseWarning,
-      licenseExpiry: vehicle.LicenseExpiry || '—'
+      licenseExpiry: licenseExpiry || '—'
     });
   }
+  
+  console.log('📊 Cost data prepared:', costData.length);
   
   // حساب الرصيد التراكمي
   const resultWithBalance = calculateAccumulatedBalance(costData);
@@ -710,7 +737,6 @@ function renderDailyCostTable(data) {
     <tbody>
   `;
   
-  // تجميع الإجماليات لكل سيارة
   const vehicleTotals = new Map();
   
   for (const row of data) {
@@ -727,15 +753,15 @@ function renderDailyCostTable(data) {
     total.totalCost += row.dailyCost;
     total.lastAccumulated = row.accumulatedBalance;
     
-    // تحديد لون التنبيه
     const licenseWarningClass = row.licenseWarning ? 'license-warning' : '';
+    const isRental = (row.type === 'rental' || row.type === 'Rental' || row.ownerType === 'rental');
     
     html += `<tr>
       <td>${escapeHtml(row.date)}</td>
       <td>${escapeHtml(row.vehicleId)}</td>
       <td><strong>${escapeHtml(row.licensePlate)}</strong></td>
-      <td>${escapeHtml(row.type === 'rental' ? 'إيجار' : 'مملوكة')}</td>
-      <td>${escapeHtml(row.usageType === 'passengers' ? 'ركاب' : 'عدّة')}</td>
+      <td>${isRental ? 'إيجار' : 'مملوكة'}</td>
+      <td>${row.usageType === 'passengers' ? 'ركاب' : 'عدّة'}</td>
       <td>${escapeHtml(row.driverName)}</td>
       <td>${row.monthlyFixedCost > 0 ? row.monthlyFixedCost.toFixed(2) : '—'}</td>
       <td>${row.roundTripRate > 0 ? row.roundTripRate.toFixed(2) : '—'}</td>
@@ -749,12 +775,9 @@ function renderDailyCostTable(data) {
     </tr>`;
   }
   
-  // إغلاق tbody
   html += `</tbody>
-  <tfoot style="background: #f1f5f9;">
-  `;
+  <tfoot style="background: #f1f5f9;">`;
   
-  // إضافة صفوف الإجماليات لكل سيارة
   for (const [vehicleId, total] of vehicleTotals.entries()) {
     html += `<tr style="font-weight: bold; border-top: 2px solid #dde4f0;">
       <td colspan="2">إجمالي ${escapeHtml(total.licensePlate)}</td>
@@ -765,9 +788,9 @@ function renderDailyCostTable(data) {
     </tr>`;
   }
   
-  // إغلاق الجدول بالكامل
+  // ✅ إغلاق الجدول بشكل صحيح بدون ~[~DONE~]~
   html += `</tfoot>
-  ~[~DONE~]~`;
+~[~DONE~]~`;
   
   return html;
 }
