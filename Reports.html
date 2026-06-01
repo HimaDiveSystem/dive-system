@@ -788,9 +788,7 @@ function renderDailyCostTable(data) {
     </tr>`;
   }
   
-  // ✅ إغلاق الجدول بشكل صحيح بدون ~[~DONE~]~
-  html += `</tfoot>
-~[~DONE~]~`;
+   html += `</tfoot>`;
   
   return html;
 }
@@ -996,7 +994,339 @@ function resetFilters() {
 function exportToExcel() {
   showToast('Excel export coming soon...', 'info');
 }
+  // ============================================================
+// INSTRUCTORS REPORT
+// ============================================================
+async function generateInstructorsReport(invoices) {
+  const instructorsMap = new Map();
+  
+  for (const inv of invoices) {
+    const date = inv.activeDate || inv.ActiveDate || '';
+    const tripName = inv.trip || inv.Trip || '';
+    
+    let execInstructors = [];
+    try { execInstructors = JSON.parse(inv.InstructorsExecution || '[]'); } catch(e) {}
+    
+    for (const inst of execInstructors) {
+      if (!inst.instructorId) continue;
+      
+      if (!instructorsMap.has(inst.instructorId)) {
+        instructorsMap.set(inst.instructorId, {
+          instructorId: inst.instructorId,
+          name: inst.instructorName || inst.instructorId,
+          activities: [],
+          upSellTotal: 0,
+          upSellCount: 0
+        });
+      }
+      
+      const instructor = instructorsMap.get(inst.instructorId);
+      
+      if (inst.activities && inst.activities.length > 0) {
+        for (const act of inst.activities) {
+          instructor.activities.push({
+            date: date,
+            tripName: tripName,
+            activityName: act.displayName || act.activityName,
+            quantity: act.quantity || 0,
+            voucherNo: inv.voucherNo
+          });
+        }
+      } else {
+        if (inst.diver) instructor.activities.push({ date, tripName, activityName: 'Diver', quantity: inst.diver, voucherNo: inv.voucherNo });
+        if (inst.course) instructor.activities.push({ date, tripName, activityName: 'Course', quantity: inst.course, voucherNo: inv.voucherNo });
+        if (inst.intro) instructor.activities.push({ date, tripName, activityName: 'Intro', quantity: inst.intro, voucherNo: inv.voucherNo });
+      }
+    }
+    
+    let upSellData = [];
+    try { upSellData = JSON.parse(inv.InstructorsUpSell || '[]'); } catch(e) {}
+    
+    for (const upsell of upSellData) {
+      if (upsell.instructorId) {
+        if (!instructorsMap.has(upsell.instructorId)) {
+          instructorsMap.set(upsell.instructorId, {
+            instructorId: upsell.instructorId,
+            name: upsell.instructorName || upsell.instructorId,
+            activities: [],
+            upSellTotal: 0,
+            upSellCount: 0
+          });
+        }
+        const instructor = instructorsMap.get(upsell.instructorId);
+        instructor.upSellTotal += upsell.totalAmount || 0;
+        instructor.upSellCount++;
+      }
+    }
+  }
+  
+  const reportData = [];
+  for (const instructor of instructorsMap.values()) {
+    for (const activity of instructor.activities) {
+      reportData.push({
+        instructorId: instructor.instructorId,
+        instructorName: instructor.name,
+        date: activity.date,
+        tripName: activity.tripName,
+        activityName: activity.activityName,
+        quantity: activity.quantity,
+        voucherNo: activity.voucherNo,
+        upSellTotal: instructor.upSellTotal,
+        upSellCount: instructor.upSellCount
+      });
+    }
+    if (instructor.activities.length === 0 && instructor.upSellTotal > 0) {
+      reportData.push({
+        instructorId: instructor.instructorId,
+        instructorName: instructor.name,
+        date: '—',
+        tripName: '—',
+        activityName: '💰 UpSell Only',
+        quantity: 0,
+        voucherNo: '',
+        upSellTotal: instructor.upSellTotal,
+        upSellCount: instructor.upSellCount
+      });
+    }
+  }
+  
+  reportData.sort((a, b) => {
+    const dateA = parseDateFromString(a.date)?.getTime() || 0;
+    const dateB = parseDateFromString(b.date)?.getTime() || 0;
+    return dateB - dateA;
+  });
+  
+  return reportData;
+}
 
+function renderInstructorsTable(data) {
+  if (!data.length) return '<div class="loader">🚫 No instructor data found</div>';
+  
+  let html = `<table>
+    <thead>
+      <tr>
+        <th>Date</th><th>Instructor</th><th>Trip</th>
+        <th>Activity</th><th>Quantity</th>
+        <th>💰 UpSell Total</th><th>UpSell Count</th>
+        <th>Voucher</th>
+      </tr>
+    </thead>
+    <tbody>
+  `;
+  
+  let totalUpSell = 0;
+  
+  for (const row of data) {
+    totalUpSell += row.upSellTotal;
+    
+    html += `<tr>
+      <td>${escapeHtml(row.date)}</td>
+      <td><strong>${escapeHtml(row.instructorName)}</strong><br><span style="font-size:9px;">${escapeHtml(row.instructorId)}</span></td>
+      <td>${escapeHtml(row.tripName)}</td>
+      <td>${escapeHtml(row.activityName)}</td>
+      <td>${row.quantity || '—'}</td>
+      <td style="color: #16a34a; font-weight: bold;">${row.upSellTotal > 0 ? row.upSellTotal.toFixed(2) : '—'}</td>
+      <td>${row.upSellCount || '—'}</td>
+      <td style="font-size:9px;">${escapeHtml(row.voucherNo)}</td>
+    </table>`;
+  }
+  
+  html += `<tr style="background: var(--gray-100); font-weight: bold;">
+    <td colspan="5">TOTAL UpSell</td>
+    <td>${totalUpSell.toFixed(2)}</td>
+    <td colspan="2"></td>
+  </tr></tbody>`;
+  
+  return html;
+}
+  // ============================================================
+// CUSTOMERS REPORT
+// ============================================================
+async function generateCustomersReport(invoices) {
+  const reportData = [];
+  
+  for (const inv of invoices) {
+    const date = inv.activeDate || inv.ActiveDate || '';
+    const tripName = inv.trip || inv.Trip || '';
+    const passengers = calculatePassengerCount(inv);
+    
+    const extras = [];
+    if (parseInt(inv.extra) > 0) extras.push(`Extra:${inv.extra}`);
+    if (parseInt(inv.camel) > 0) extras.push(`Camel:${inv.camel}`);
+    if (parseInt(inv.dinner) > 0) extras.push(`Dinner:${inv.dinner}`);
+    if (parseInt(inv.vipDinner) > 0) extras.push(`VIP:${inv.vipDinner}`);
+    if (parseInt(inv.starGazing) > 0) extras.push(`Star:${inv.starGazing}`);
+    
+    reportData.push({
+      date: date,
+      tripName: tripName,
+      voucherNo: inv.voucherNo || '',
+      guestName: inv.guestName || '',
+      nationality: inv.nationality || '',
+      hotel: inv.hotel || '',
+      roomNo: inv.roomNo || '',
+      adults: passengers.adults,
+      children: passengers.children,
+      infants: passengers.infants,
+      totalPassengers: passengers.total,
+      extras: extras.join(', ')
+    });
+  }
+  
+  reportData.sort((a, b) => {
+    const dateA = parseDateFromString(a.date)?.getTime() || 0;
+    const dateB = parseDateFromString(b.date)?.getTime() || 0;
+    return dateA - dateB;
+  });
+  
+  return reportData;
+}
+
+function renderCustomersTable(data) {
+  if (!data.length) return '<div class="loader">🚫 No customer data found</div>';
+  
+  let html = `<table>
+    <thead>
+      <tr>
+        <th>Date</th><th>Trip</th><th>Voucher</th><th>Guest Name</th>
+        <th>Nationality</th><th>Hotel</th><th>Room</th>
+        <th>👤 A</th><th>👶 C</th><th>🍼 I</th><th>Total</th>
+        <th>Extras</th>
+      </tr>
+    </thead>
+    <tbody>
+  `;
+  
+  let totalAdults = 0, totalChildren = 0, totalInfants = 0, totalPassengers = 0;
+  
+  for (const row of data) {
+    totalAdults += row.adults;
+    totalChildren += row.children;
+    totalInfants += row.infants;
+    totalPassengers += row.totalPassengers;
+    
+    html += `<tr>
+      <td>${escapeHtml(row.date)}</td>
+      <td>${escapeHtml(row.tripName)}</td>
+      <td><strong>${escapeHtml(row.voucherNo)}</strong></td>
+      <td>${escapeHtml(row.guestName || '—')}</td>
+      <td>${escapeHtml(row.nationality || '—')}</td>
+      <td>${escapeHtml(row.hotel || '—')}</td>
+      <td>${escapeHtml(row.roomNo || '—')}</td>
+      <td>${row.adults || '—'}</td>
+      <td>${row.children || '—'}</td>
+      <td>${row.infants || '—'}</td>
+      <td><strong>${row.totalPassengers}</strong></td>
+      <td style="font-size:10px;">${escapeHtml(row.extras || '—')}</td>
+    </tr>`;
+  }
+  
+  html += `<tr style="background: var(--gray-100); font-weight: bold;">
+    <td colspan="7">TOTAL</td>
+    <td>${totalAdults}</td>
+    <td>${totalChildren}</td>
+    <td>${totalInfants}</td>
+    <td>${totalPassengers}</td>
+    <td></td>
+  </tr></tbody>`;
+  
+  return html;
+}
+// ============================================================
+// BOATS REPORT
+// ============================================================
+async function generateBoatsReport(invoices) {
+  const boatsMap = new Map();
+  
+  for (const inv of invoices) {
+    const date = inv.activeDate || inv.ActiveDate || '';
+    const tripName = inv.trip || inv.Trip || '';
+    let boatsData = [];
+    try { boatsData = JSON.parse(inv.BoatsUsed || '[]'); } catch(e) {}
+    
+    for (const b of boatsData) {
+      if (!b.boatId) continue;
+      const passengers = calculatePassengerCount(inv);
+      const key = `${b.boatId}|${date}|${tripName}`;
+      
+      if (!boatsMap.has(key)) {
+        boatsMap.set(key, {
+          boatId: b.boatId,
+          boatName: b.boatName || b.boatId,
+          date: date,
+          tripName: tripName,
+          adults: 0,
+          children: 0,
+          infants: 0,
+          totalPassengers: 0,
+          invoices: []
+        });
+      }
+      const record = boatsMap.get(key);
+      record.adults += passengers.adults;
+      record.children += passengers.children;
+      record.infants += passengers.infants;
+      record.totalPassengers += passengers.total;
+      if (!record.invoices.includes(inv.voucherNo)) record.invoices.push(inv.voucherNo);
+    }
+  }
+  
+  const reportData = Array.from(boatsMap.values());
+  reportData.sort((a, b) => {
+    const dateA = parseDateFromString(a.date)?.getTime() || 0;
+    const dateB = parseDateFromString(b.date)?.getTime() || 0;
+    return dateA - dateB;
+  });
+  
+  return reportData;
+}
+
+function renderBoatsTable(data) {
+  if (!data.length) return '<div class="loader">🚫 No boat data found</div>';
+  
+  let html = `<table>
+    <thead>
+      <tr>
+        <th>Date</th><th>Boat ID</th><th>Boat Name</th><th>Trip</th>
+        <th>👤 Adults</th><th>👶 Children</th><th>🍼 Infants</th>
+        <th>Total Pax</th><th>Invoices</th>
+      </tr>
+    </thead>
+    <tbody>
+  `;
+  
+  let totalAdults = 0, totalChildren = 0, totalInfants = 0, totalPassengers = 0;
+  
+  for (const row of data) {
+    totalAdults += row.adults;
+    totalChildren += row.children;
+    totalInfants += row.infants;
+    totalPassengers += row.totalPassengers;
+    
+    html += `<tr>
+      <td>${escapeHtml(row.date)}</td>
+      <td>${escapeHtml(row.boatId)}</td>
+      <td><strong>${escapeHtml(row.boatName)}</strong></td>
+      <td>${escapeHtml(row.tripName)}</td>
+      <td>${row.adults || '—'}</td>
+      <td>${row.children || '—'}</td>
+      <td>${row.infants || '—'}</td>
+      <td><strong>${row.totalPassengers}</strong></td>
+      <td style="font-size:9px;">${(row.invoices || []).join(', ')}</td>
+    </tr>`;
+  }
+  
+  html += `<tr style="background: var(--gray-100); font-weight: bold;">
+    <td colspan="4">TOTAL</td>
+    <td>${totalAdults}</td>
+    <td>${totalChildren}</td>
+    <td>${totalInfants}</td>
+    <td>${totalPassengers}</td>
+    <td></td>
+  </tr></tbody>`;
+  
+  return html;
+}
 // ============================================================
 // INITIALIZATION
 // ============================================================
