@@ -25,7 +25,6 @@
       --gray-50: #f8fafc;
       --gray-100: #f1f5f9;
       --gray-200: #e2e8f0;
-      --gray-500: #64748b;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'Cairo', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
@@ -135,7 +134,7 @@
       width: 100%;
       border-collapse: collapse;
       font-size: 11px;
-      min-width: 1000px;
+      min-width: 800px;
       background: white;
       border-radius: 12px;
       overflow: hidden;
@@ -223,6 +222,17 @@
     .toast-error { background: var(--red); }
     .toast-info { background: var(--blue); }
     
+    .sub-section {
+      margin-top: 24px;
+      padding-top: 16px;
+      border-top: 2px solid var(--gold);
+    }
+    .sub-section h3 {
+      color: var(--navy);
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+    
     @media (max-width: 768px) {
       th, td { padding: 6px 4px; font-size: 9px; }
       .filter-group input, .filter-group select { min-width: 100px; font-size: 10px; }
@@ -240,6 +250,7 @@
 
 <div class="tabs">
   <button class="tab-btn active" data-tab="vehicles">🚗 Vehicles Report</button>
+  <button class="tab-btn" data-tab="logistics">🚛 Logistics Report</button>
   <button class="tab-btn" data-tab="boats">⛵ Boats Report</button>
   <button class="tab-btn" data-tab="instructors">👨‍🏫 Instructors Report</button>
   <button class="tab-btn" data-tab="customers">👥 Customers Report</button>
@@ -264,7 +275,7 @@
   </div>
   <div class="filter-group">
     <label>🔍 Search</label>
-    <input type="text" id="filterSearch" placeholder="Voucher / Guest">
+    <input type="text" id="filterSearch" placeholder="Voucher / Guest / Vehicle" oninput="onSearchInput()">
   </div>
   <button class="btn-go" onclick="loadReport()">📊 Show Report</button>
   <button class="btn-reset" onclick="resetFilters()">Reset</button>
@@ -287,6 +298,8 @@ let currentTab = 'vehicles';
 let allInvoices = [];
 let filteredInvoices = [];
 let cachedVehicles = [];
+let vehicleTripRecords = [];
+let logisticsRecords = [];
 
 // ============================================================
 // UTILITIES
@@ -355,29 +368,6 @@ function goBack() {
 }
 
 // ============================================================
-// PASSENGER COUNT CALCULATION
-// ============================================================
-function calculatePassengerCount(invoice) {
-  const activitiesText = invoice.activitiesText || '';
-  const hasAdultChildInfant = /adult|child|infant/i.test(activitiesText);
-  
-  if (hasAdultChildInfant) {
-    const adultMatch = activitiesText.match(/adult[×x](\d+)/i);
-    const childMatch = activitiesText.match(/child[×x](\d+)/i);
-    const infantMatch = activitiesText.match(/infant[×x](\d+)/i);
-    const adults = adultMatch ? parseInt(adultMatch[1]) : 0;
-    const children = childMatch ? parseInt(childMatch[1]) : 0;
-    const infants = infantMatch ? parseInt(infantMatch[1]) : 0;
-    return { adults, children, infants, total: adults + children + infants };
-  } else {
-    const adults = parseInt(invoice.sgl) || 0;
-    const children = parseInt(invoice.dbl) || 0;
-    const infants = parseInt(invoice.trpl) || 0;
-    return { adults, children, infants, total: adults + children + infants };
-  }
-}
-
-// ============================================================
 // GET USER FROM URL
 // ============================================================
 function getUserFromUrl() {
@@ -418,6 +408,46 @@ function getVehicleLicensePlate(vehicleId) {
   return vehicle?.licensePlate || vehicleId;
 }
 
+async function loadVehicleTripRecords(fromDate, toDate) {
+  try {
+    const result = await gas('getVehicleTripRecords', { 
+      centerName: currentUser?.centerName,
+      fromDate: fromDate,
+      toDate: toDate
+    });
+    if (result?.success && Array.isArray(result.data)) {
+      vehicleTripRecords = result.data;
+    } else if (Array.isArray(result)) {
+      vehicleTripRecords = result;
+    } else {
+      vehicleTripRecords = [];
+    }
+  } catch(e) {
+    console.warn('loadVehicleTripRecords error:', e);
+    vehicleTripRecords = [];
+  }
+}
+
+async function loadLogisticsRecords(fromDate, toDate) {
+  try {
+    const result = await gas('getLogisticsRecords', { 
+      centerName: currentUser?.centerName,
+      fromDate: fromDate,
+      toDate: toDate
+    });
+    if (result?.success && Array.isArray(result.data)) {
+      logisticsRecords = result.data;
+    } else if (Array.isArray(result)) {
+      logisticsRecords = result;
+    } else {
+      logisticsRecords = [];
+    }
+  } catch(e) {
+    console.warn('loadLogisticsRecords error:', e);
+    logisticsRecords = [];
+  }
+}
+
 async function loadInvoices() {
   try {
     showToast('جاري تحميل الفواتير...', 'info');
@@ -435,6 +465,29 @@ async function loadInvoices() {
     console.error('loadInvoices error:', e);
     showToast('Error loading invoices: ' + e.message, 'error');
     return false;
+  }
+}
+
+// ============================================================
+// PASSENGER COUNT CALCULATION
+// ============================================================
+function calculatePassengerCount(invoice) {
+  const activitiesText = invoice.activitiesText || '';
+  const hasAdultChildInfant = /adult|child|infant/i.test(activitiesText);
+  
+  if (hasAdultChildInfant) {
+    const adultMatch = activitiesText.match(/adult[×x](\d+)/i);
+    const childMatch = activitiesText.match(/child[×x](\d+)/i);
+    const infantMatch = activitiesText.match(/infant[×x](\d+)/i);
+    const adults = adultMatch ? parseInt(adultMatch[1]) : 0;
+    const children = childMatch ? parseInt(childMatch[1]) : 0;
+    const infants = infantMatch ? parseInt(infantMatch[1]) : 0;
+    return { adults, children, infants, total: adults + children + infants };
+  } else {
+    const adults = parseInt(invoice.sgl) || 0;
+    const children = parseInt(invoice.dbl) || 0;
+    const infants = parseInt(invoice.trpl) || 0;
+    return { adults, children, infants, total: adults + children + infants };
   }
 }
 
@@ -470,7 +523,8 @@ function applyDateFilters() {
     filtered = filtered.filter(inv => {
       const voucher = (inv.voucherNo || '').toLowerCase();
       const guest = (inv.guestName || '').toLowerCase();
-      return voucher.includes(searchText) || guest.includes(searchText);
+      const vehicleMatch = (inv.VehiclesUsed || '').toLowerCase().includes(searchText);
+      return voucher.includes(searchText) || guest.includes(searchText) || vehicleMatch;
     });
   }
   
@@ -499,12 +553,48 @@ function applyDateFilters() {
   return filtered;
 }
 
+function onSearchInput() {
+  clearTimeout(window.searchTimeout);
+  window.searchTimeout = setTimeout(() => {
+    loadReport();
+  }, 500);
+}
+
 // ============================================================
-// VEHICLES REPORT
+// VEHICLES REPORT (من VehicleTripRecords)
 // ============================================================
-async function generateVehiclesReport(invoices) {
+async function generateVehiclesReport(invoices, fromDate, toDate) {
+  await loadVehicleTripRecords(fromDate, toDate);
+  
   const vehiclesMap = new Map();
   
+  // تجميع بيانات التشغيل من VehicleTripRecords
+  for (const record of vehicleTripRecords) {
+    const date = record.Date || record.date || '';
+    const tripName = record.TripName || record.tripName || '';
+    const vehicleId = record.VehicleID || record.vehicleId || '';
+    const goCount = parseInt(record.GoCount || record.goCount || 0);
+    const returnCount = parseInt(record.ReturnCount || record.returnCount || 0);
+    
+    if (!vehicleId) continue;
+    
+    const licensePlate = getVehicleLicensePlate(vehicleId);
+    const key = `${vehicleId}|${date}|${tripName}`;
+    
+    if (!vehiclesMap.has(key)) {
+      vehiclesMap.set(key, {
+        vehicleId, licensePlate, date, tripName,
+        goCount: 0, returnCount: 0, totalTrips: 0,
+        invoices: []
+      });
+    }
+    const record_data = vehiclesMap.get(key);
+    record_data.goCount += goCount;
+    record_data.returnCount += returnCount;
+    record_data.totalTrips = record_data.goCount + record_data.returnCount;
+  }
+  
+  // إضافة بيانات الركاب من الفواتير
   for (const inv of invoices) {
     const date = inv.activeDate || inv.ActiveDate || '';
     const tripName = inv.trip || inv.Trip || '';
@@ -513,24 +603,16 @@ async function generateVehiclesReport(invoices) {
     
     for (const v of vehiclesData) {
       if (!v.vehicleId) continue;
-      const licensePlate = getVehicleLicensePlate(v.vehicleId);
-      const passengers = calculatePassengerCount(inv);
       const key = `${v.vehicleId}|${date}|${tripName}`;
-      
-      if (!vehiclesMap.has(key)) {
-        vehiclesMap.set(key, {
-          vehicleId: v.vehicleId, licensePlate, date, tripName,
-          goCount: 0, returnCount: 0, adults: 0, children: 0, infants: 0, totalPassengers: 0, invoices: []
-        });
+      if (vehiclesMap.has(key)) {
+        const record = vehiclesMap.get(key);
+        const passengers = calculatePassengerCount(inv);
+        record.adults = (record.adults || 0) + passengers.adults;
+        record.children = (record.children || 0) + passengers.children;
+        record.infants = (record.infants || 0) + passengers.infants;
+        record.totalPassengers = (record.totalPassengers || 0) + passengers.total;
+        if (!record.invoices.includes(inv.voucherNo)) record.invoices.push(inv.voucherNo);
       }
-      const record = vehiclesMap.get(key);
-      record.goCount += v.goCount || 0;
-      record.returnCount += v.returnCount || 0;
-      record.adults += passengers.adults;
-      record.children += passengers.children;
-      record.infants += passengers.infants;
-      record.totalPassengers += passengers.total;
-      if (!record.invoices.includes(inv.voucherNo)) record.invoices.push(inv.voucherNo);
     }
   }
   
@@ -540,15 +622,18 @@ async function generateVehiclesReport(invoices) {
 }
 
 function renderVehiclesTable(data) {
-  if (!data.length) return '<div class="loader">🚫 No vehicle data found</div>';
+  if (!data.length) return '<div class="loader">🚫 No vehicle trip records found</div>';
   
   let html = `<table>
-    <thead><tr>
-      <th>Date</th><th>Vehicle ID</th><th>License Plate</th><th>Trip</th>
-      <th>🔄 Go</th><th>🔙 Return</th><th>Total Trips</th>
-      <th>👤 A</th><th>👶 C</th><th>🍼 I</th><th>Total Pax</th>
-      <th>Invoices</th>
-    </tr></thead><tbody>
+    <thead>
+      <tr>
+        <th>Date</th><th>Vehicle ID</th><th>License Plate</th><th>Trip</th>
+        <th>🔄 Go</th><th>🔙 Return</th><th>Total Trips</th>
+        <th>👤 Adults</th><th>👶 Children</th><th>🍼 Infants</th><th>Total Pax</th>
+        <th>Invoices</th>
+      </tr>
+    </thead>
+    <tbody>
   `;
   
   let totalGo=0, totalReturn=0, totalTrips=0, totalAdults=0, totalChildren=0, totalInfants=0, totalPassengers=0;
@@ -557,10 +642,10 @@ function renderVehiclesTable(data) {
     totalGo += row.goCount;
     totalReturn += row.returnCount;
     totalTrips += row.goCount + row.returnCount;
-    totalAdults += row.adults;
-    totalChildren += row.children;
-    totalInfants += row.infants;
-    totalPassengers += row.totalPassengers;
+    totalAdults += row.adults || 0;
+    totalChildren += row.children || 0;
+    totalInfants += row.infants || 0;
+    totalPassengers += row.totalPassengers || 0;
     
     html += `<tr>
       <td>${escapeHtml(row.date)}</td>
@@ -573,8 +658,8 @@ function renderVehiclesTable(data) {
       <td>${row.adults || '—'}</td>
       <td>${row.children || '—'}</td>
       <td>${row.infants || '—'}</td>
-      <td><strong>${row.totalPassengers}</strong></td>
-      <td style="font-size:9px;">${escapeHtml(row.invoices.join(', '))}</td>
+      <td><strong>${row.totalPassengers || '—'}</strong></td>
+      <td style="font-size:9px;">${escapeHtml((row.invoices || []).join(', '))}</td>
     </tr>`;
   }
   
@@ -589,7 +674,83 @@ function renderVehiclesTable(data) {
 }
 
 // ============================================================
-// BOATS REPORT (مختصر)
+// LOGISTICS VEHICLES REPORT
+// ============================================================
+async function generateLogisticsReport(fromDate, toDate) {
+  await loadLogisticsRecords(fromDate, toDate);
+  
+  const logisticsMap = new Map();
+  
+  for (const record of logisticsRecords) {
+    const date = record.Date || record.date || '';
+    const tripName = record.TripName || record.tripName || '';
+    const vehicleId = record.VehicleID || record.vehicleId || '';
+    const goCount = parseInt(record.GoCount || record.goCount || 0);
+    const returnCount = parseInt(record.ReturnCount || record.returnCount || 0);
+    
+    if (!vehicleId) continue;
+    
+    const licensePlate = getVehicleLicensePlate(vehicleId);
+    const key = `${vehicleId}|${date}|${tripName}`;
+    
+    if (!logisticsMap.has(key)) {
+      logisticsMap.set(key, {
+        vehicleId, licensePlate, date, tripName,
+        goCount: 0, returnCount: 0, totalTrips: 0
+      });
+    }
+    const record_data = logisticsMap.get(key);
+    record_data.goCount += goCount;
+    record_data.returnCount += returnCount;
+    record_data.totalTrips = record_data.goCount + record_data.returnCount;
+  }
+  
+  const reportData = Array.from(logisticsMap.values());
+  reportData.sort((a,b) => (parseDateFromString(a.date)?.getTime()||0) - (parseDateFromString(b.date)?.getTime()||0));
+  return reportData;
+}
+
+function renderLogisticsTable(data) {
+  if (!data.length) return '<div class="loader">🚫 No logistics records found</div>';
+  
+  let html = `<table>
+    <thead>
+      <tr>
+        <th>Date</th><th>Vehicle ID</th><th>License Plate</th><th>Trip</th>
+        <th>🔄 Go</th><th>🔙 Return</th><th>Total Trips</th>
+      </tr>
+    </thead>
+    <tbody>
+  `;
+  
+  let totalGo=0, totalReturn=0, totalTrips=0;
+  
+  for (const row of data) {
+    totalGo += row.goCount;
+    totalReturn += row.returnCount;
+    totalTrips += row.goCount + row.returnCount;
+    
+    html += `<tr>
+      <td>${escapeHtml(row.date)}</td>
+      <td>${escapeHtml(row.vehicleId)}</td>
+      <td><strong>${escapeHtml(row.licensePlate)}</strong></td>
+      <td>${escapeHtml(row.tripName)}</td>
+      <td>${row.goCount || '—'}</td>
+      <td>${row.returnCount || '—'}</td>
+      <td><strong>${row.goCount + row.returnCount}</strong></td>
+    </tr>`;
+  }
+  
+  html += `<tr style="background: var(--gray-100); font-weight: bold;">
+    <td colspan="4">TOTAL</td>
+    <td>${totalGo}</td><td>${totalReturn}</td><td>${totalTrips}</td>
+  </tr></tbody>~[~DONE~]~`;
+  
+  return html;
+}
+
+// ============================================================
+// BOATS REPORT (من BoatsUsed في الفواتير)
 // ============================================================
 async function generateBoatsReport(invoices) {
   const boatsMap = new Map();
@@ -627,7 +788,7 @@ function renderBoatsTable(data) {
 }
 
 // ============================================================
-// INSTRUCTORS REPORT (مختصر)
+// INSTRUCTORS REPORT
 // ============================================================
 async function generateInstructorsReport(invoices) {
   const instructorsMap = new Map();
@@ -669,7 +830,7 @@ async function generateInstructorsReport(invoices) {
 
 function renderInstructorsTable(data) {
   if (!data.length) return '<div class="loader">🚫 No instructor data found</div>';
-  let html = `<table><thead><tr><th>Date</th><th>Instructor</th><th>Trip</th><th>Activity</th><th>Qty</th><th>💰 UpSell Total</th><th>UpSell Count</th><th>Voucher</th></tr></thead><tbody>`;
+  let html = `<td><thead><tr><th>Date</th><th>Instructor</th><th>Trip</th><th>Activity</th><th>Qty</th><th>💰 UpSell Total</th><th>UpSell Count</th><th>Voucher</th></tr></thead><tbody>`;
   let totalUpSell = 0;
   for (const row of data) {
     totalUpSell += row.upSellTotal;
@@ -680,7 +841,7 @@ function renderInstructorsTable(data) {
 }
 
 // ============================================================
-// CUSTOMERS REPORT (مختصر)
+// CUSTOMERS REPORT
 // ============================================================
 async function generateCustomersReport(invoices) {
   const reportData = [];
@@ -701,13 +862,13 @@ async function generateCustomersReport(invoices) {
 
 function renderCustomersTable(data) {
   if (!data.length) return '<div class="loader">🚫 No customer data found</div>';
-  let html = `<td><thead><tr><th>Date</th><th>Trip</th><th>Voucher</th><th>Guest Name</th><th>Nationality</th><th>Hotel</th><th>Room</th><th>👤 A</th><th>👶 C</th><th>🍼 I</th><th>Total</th><th>Extras</th></tr></thead><tbody>`;
+  let html = `<table><thead><tr><th>Date</th><th>Trip</th><th>Voucher</th><th>Guest Name</th><th>Nationality</th><th>Hotel</th><th>Room</th><th>👤 A</th><th>👶 C</th><th>🍼 I</th><th>Total</th><th>Extras</th></tr></thead><tbody>`;
   let totalAdults=0, totalChildren=0, totalInfants=0, totalPassengers=0;
   for (const row of data) {
     totalAdults += row.adults; totalChildren += row.children; totalInfants += row.infants; totalPassengers += row.totalPassengers;
     html += `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.tripName)}</td><td><strong>${escapeHtml(row.voucherNo)}</strong></td><td>${escapeHtml(row.guestName||'—')}</td><td>${escapeHtml(row.nationality||'—')}</td><td>${escapeHtml(row.hotel||'—')}</td><td>${escapeHtml(row.roomNo||'—')}</td><td>${row.adults||'—'}</td><td>${row.children||'—'}</td><td>${row.infants||'—'}</td><td><strong>${row.totalPassengers}</strong></td><td style="font-size:10px;">${escapeHtml(row.extras||'—')}</td></tr>`;
   }
-  html += `<tr style="background:var(--gray-100);font-weight:bold;"><td colspan="7">TOTAL</td><td>${totalAdults}</td><td>${totalChildren}</td><td>${totalInfants}</td><td>${totalPassengers}</td><td></td></tr></tbody>~[~DONE~]~`;
+  html += `<tr style="background:var(--gray-100);font-weight:bold;"><td colspan="7">TOTAL</td><td>${totalAdults}</td><td>${totalChildren}</td><td>${totalInfants}</td><td>${totalPassengers}</td><td><tr></tbody>~[~DONE~]~`;
   return html;
 }
 
@@ -721,9 +882,12 @@ function updateSummary(data, tab) {
   let totalRecords = data.length;
   let totalPassengers = 0, totalTrips = 0, totalUpSell = 0;
   if (tab === 'vehicles') {
-    totalPassengers = data.reduce((s,r) => s + (r.totalPassengers||0), 0);
     totalTrips = data.reduce((s,r) => s + (r.goCount + r.returnCount), 0);
+    totalPassengers = data.reduce((s,r) => s + (r.totalPassengers || 0), 0);
     summaryDiv.innerHTML = `<div class="summary-title">📊 Summary</div><div class="summary-grid"><div class="summary-item"><div class="label">Total Records</div><div class="value">${totalRecords}</div></div><div class="summary-item"><div class="label">Total Vehicle Trips</div><div class="value">${totalTrips}</div></div><div class="summary-item"><div class="label">Total Passengers</div><div class="value">${totalPassengers}</div></div></div>`;
+  } else if (tab === 'logistics') {
+    totalTrips = data.reduce((s,r) => s + (r.goCount + r.returnCount), 0);
+    summaryDiv.innerHTML = `<div class="summary-title">📊 Summary</div><div class="summary-grid"><div class="summary-item"><div class="label">Total Records</div><div class="value">${totalRecords}</div></div><div class="summary-item"><div class="label">Total Logistics Trips</div><div class="value">${totalTrips}</div></div></div>`;
   } else if (tab === 'boats') {
     totalPassengers = data.reduce((s,r) => s + (r.totalPassengers||0), 0);
     summaryDiv.innerHTML = `<div class="summary-title">📊 Summary</div><div class="summary-grid"><div class="summary-item"><div class="label">Total Boat Trips</div><div class="value">${totalRecords}</div></div><div class="summary-item"><div class="label">Total Passengers</div><div class="value">${totalPassengers}</div></div></div>`;
@@ -740,17 +904,21 @@ function updateSummary(data, tab) {
 async function loadReport() {
   const container = document.getElementById('reportContainer');
   container.innerHTML = '<div class="loader"><div class="spinner"></div>Loading report data...</div>';
+  
+  const fromDate = document.getElementById('filterFromDate').value;
+  const toDate = document.getElementById('filterToDate').value;
+  
   filteredInvoices = applyDateFilters();
-  if (filteredInvoices.length === 0) {
-    container.innerHTML = '<div class="loader">⚠️ No invoices found for selected period</div>';
-    document.getElementById('summaryContainer').style.display = 'none';
-    return;
-  }
+  
   let reportData = [], html = '';
   try {
     if (currentTab === 'vehicles') {
-      reportData = await generateVehiclesReport(filteredInvoices);
+      reportData = await generateVehiclesReport(filteredInvoices, fromDate, toDate);
       html = renderVehiclesTable(reportData);
+      document.getElementById('vehicleFilterGroup').style.display = 'flex';
+    } else if (currentTab === 'logistics') {
+      reportData = await generateLogisticsReport(fromDate, toDate);
+      html = renderLogisticsTable(reportData);
       document.getElementById('vehicleFilterGroup').style.display = 'flex';
     } else if (currentTab === 'boats') {
       reportData = await generateBoatsReport(filteredInvoices);
@@ -788,11 +956,14 @@ async function exportToExcel() {
   showToast('Preparing Excel export...', 'info');
   try {
     let reportData = [];
-    if (currentTab === 'vehicles') reportData = await generateVehiclesReport(filteredInvoices);
+    const fromDate = document.getElementById('filterFromDate').value;
+    const toDate = document.getElementById('filterToDate').value;
+    if (currentTab === 'vehicles') reportData = await generateVehiclesReport(filteredInvoices, fromDate, toDate);
+    else if (currentTab === 'logistics') reportData = await generateLogisticsReport(fromDate, toDate);
     else if (currentTab === 'boats') reportData = await generateBoatsReport(filteredInvoices);
     else if (currentTab === 'instructors') reportData = await generateInstructorsReport(filteredInvoices);
     else reportData = await generateCustomersReport(filteredInvoices);
-    const result = await gas('exportReportToExcel', { reportType: currentTab, data: JSON.stringify(reportData), fromDate: document.getElementById('filterFromDate').value, toDate: document.getElementById('filterToDate').value, centerName: currentUser?.centerName });
+    const result = await gas('exportReportToExcel', { reportType: currentTab, data: JSON.stringify(reportData), fromDate: fromDate, toDate: toDate, centerName: currentUser?.centerName });
     if (result?.success && result.downloadUrl) { window.open(result.downloadUrl, '_blank'); showToast('✅ Export completed', 'success'); }
     else if (result?.csvData) { const blob = new Blob([result.csvData], { type: 'text/csv;charset=utf-8;' }); const link = document.createElement('a'); const url = URL.createObjectURL(blob); link.href = url; link.setAttribute('download', `${currentTab}_report_${new Date().toISOString().split('T')[0]}.csv`); document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(url); showToast('✅ Export completed', 'success'); }
     else showToast('❌ Export failed', 'error');
