@@ -942,18 +942,18 @@ async function loadReport() {
       html = renderDailyCostTable(reportData);
       document.getElementById('vehicleFilterGroup').style.display = 'flex';
     }
-    // تقرير المراكب
-    else if (currentTab === 'boats') {
-      reportData = await generateBoatsReport(allInvoices);
-      html = renderBoatsTable(reportData);
-      document.getElementById('vehicleFilterGroup').style.display = 'none';
-    }
-    // تقرير المدربين
-    else if (currentTab === 'instructors') {
-      reportData = await generateInstructorsReport(allInvoices);
-      html = renderInstructorsTable(reportData);
-      document.getElementById('vehicleFilterGroup').style.display = 'none';
-    }
+   // في قسم loadReport، قم بتحديث استدعاء boats و instructors:
+// في قسم loadReport، قم بتحديث استدعاء boats و instructors:
+else if (currentTab === 'boats') {
+  reportData = await generateBoatsReport(fromDate, toDate);
+  html = renderBoatsTable(reportData);
+  document.getElementById('vehicleFilterGroup').style.display = 'none';
+}
+else if (currentTab === 'instructors') {
+  reportData = await generateInstructorsReport(fromDate, toDate);
+  html = renderInstructorsTable(reportData);
+  document.getElementById('vehicleFilterGroup').style.display = 'none';
+}
     // تقرير العملاء
     else if (currentTab === 'customers') {
       reportData = await generateCustomersReport(allInvoices);
@@ -1098,47 +1098,207 @@ async function generateInstructorsReport(invoices) {
   
   return reportData;
 }
+  async function loadTripsForFilter() {
+  try {
+    const result = await gas('getAllInvoices', { includeCollection: 'true' });
+    if (Array.isArray(result)) {
+      const tripsSet = new Set();
+      result.forEach(inv => {
+        const trip = inv.trip || inv.Trip;
+        if (trip) tripsSet.add(trip);
+      });
+      
+      const tripSelect = document.getElementById('filterTrip');
+      tripSelect.innerHTML = '<option value="">All Trips</option>';
+      Array.from(tripsSet).sort().forEach(trip => {
+        const option = document.createElement('option');
+        option.value = trip;
+        option.textContent = trip;
+        tripSelect.appendChild(option);
+      });
+      console.log('✅ Trip filter loaded with', tripsSet.size, 'trips');
+    }
+  } catch(e) {
+    console.error('loadTripsForFilter error:', e);
+  }
+}
+// ============================================================
+// INSTRUCTORS REPORT - للإصلاح
+// ============================================================
+
+async function getInstructors() {
+  try {
+    const result = await gas('getInstructors');
+    return Array.isArray(result) ? result : [];
+  } catch(e) {
+    console.error('getInstructors error:', e);
+    return [];
+  }
+}
+
+async function getInstructorDailyLogs(fromDate, toDate) {
+  try {
+    const result = await gas('getInstructorDailyLogs', { fromDate, toDate });
+    if (result?.success && Array.isArray(result.data)) return result.data;
+    return [];
+  } catch(e) {
+    console.error('getInstructorDailyLogs error:', e);
+    return [];
+  }
+}
+
+async function generateInstructorsReport(fromDate, toDate) {
+  const instructors = await getInstructors();
+  const instructorMap = new Map();
+  instructors.forEach(inst => {
+    instructorMap.set(inst.id, {
+      name: inst.name || inst.id,
+      role: inst.role || 'Instructor'
+    });
+  });
+  
+  const logs = await getInstructorDailyLogs(fromDate, toDate);
+  console.log('📊 Instructor logs:', logs.length);
+  
+  const reportData = [];
+  
+  for (const log of logs) {
+    const date = log.Date || '';
+    const instructorId = log.InstructorID || '';
+    const tripName = log.Trip || '';
+    const activityType = log.ActivityType || '';
+    const quantity = parseInt(log.Quantity) || 0;
+    const upSellAmount = parseFloat(log.UpSellAmount) || 0;
+    const executionAmount = parseFloat(log.ExecutionAmount) || 0;
+    const totalAmount = parseFloat(log.Total) || 0;
+    
+    const instructor = instructorMap.get(instructorId) || { name: instructorId, role: 'Instructor' };
+    
+    // إضافة صف لكل نشاط
+    if (activityType && quantity > 0) {
+      reportData.push({
+        date: date,
+        instructorId: instructorId,
+        instructorName: instructor.name,
+        role: instructor.role,
+        tripName: tripName,
+        activityName: activityType,
+        quantity: quantity,
+        executionAmount: executionAmount,
+        upSellAmount: upSellAmount,
+        totalAmount: totalAmount
+      });
+    } else if (upSellAmount > 0) {
+      // UpSell فقط بدون نشاط
+      reportData.push({
+        date: date,
+        instructorId: instructorId,
+        instructorName: instructor.name,
+        role: instructor.role,
+        tripName: tripName,
+        activityName: '💰 UpSell',
+        quantity: 0,
+        executionAmount: 0,
+        upSellAmount: upSellAmount,
+        totalAmount: upSellAmount
+      });
+    }
+  }
+  
+  // ترتيب حسب التاريخ (أحدث أولاً)
+  reportData.sort((a, b) => {
+    const dateA = parseDateFromString(a.date)?.getTime() || 0;
+    const dateB = parseDateFromString(b.date)?.getTime() || 0;
+    return dateB - dateA;
+  });
+  
+  return reportData;
+}
 
 function renderInstructorsTable(data) {
   if (!data.length) return '<div class="loader">🚫 No instructor data found</div>';
   
   let html = `<table>
-    <thead>
-      <tr>
-        <th>Date</th><th>Instructor</th><th>Trip</th>
-        <th>Activity</th><th>Quantity</th>
-        <th>💰 UpSell Total</th><th>UpSell Count</th>
-        <th>Voucher</th>
+    <thead style="position: sticky; top: 0; z-index: 10;">
+      <tr style="background: var(--navy); color: var(--gold);">
+        <th style="padding: 10px; min-width: 80px;">Date</th>
+        <th style="padding: 10px; min-width: 100px;">Instructor ID</th>
+        <th style="padding: 10px; min-width: 140px;">Instructor Name</th>
+        <th style="padding: 10px; min-width: 100px;">Role</th>
+        <th style="padding: 10px; min-width: 120px;">Trip</th>
+        <th style="padding: 10px; min-width: 100px;">Activity</th>
+        <th style="padding: 10px; min-width: 50px;">Qty</th>
+        <th style="padding: 10px; min-width: 80px;">Execution</th>
+        <th style="padding: 10px; min-width: 80px;">UpSell</th>
+        <th style="padding: 10px; min-width: 80px;">Total</th>
       </tr>
     </thead>
     <tbody>
   `;
   
-  let totalUpSell = 0;
+  let totalExecution = 0, totalUpSell = 0, totalAmount = 0;
+  const instructorTotals = new Map();
   
   for (const row of data) {
-    totalUpSell += row.upSellTotal;
+    totalExecution += row.executionAmount;
+    totalUpSell += row.upSellAmount;
+    totalAmount += row.totalAmount;
+    
+    if (!instructorTotals.has(row.instructorId)) {
+      instructorTotals.set(row.instructorId, {
+        name: row.instructorName,
+        execution: 0,
+        upSell: 0,
+        total: 0
+      });
+    }
+    const instTotal = instructorTotals.get(row.instructorId);
+    instTotal.execution += row.executionAmount;
+    instTotal.upSell += row.upSellAmount;
+    instTotal.total += row.totalAmount;
     
     html += `<tr>
       <td>${escapeHtml(row.date)}</td>
-      <td><strong>${escapeHtml(row.instructorName)}</strong><br><span style="font-size:9px;">${escapeHtml(row.instructorId)}</span></td>
+      <td>${escapeHtml(row.instructorId)}</td>
+      <td><strong>${escapeHtml(row.instructorName)}</strong></td>
+      <td>${escapeHtml(row.role)}</td>
       <td>${escapeHtml(row.tripName)}</td>
       <td>${escapeHtml(row.activityName)}</td>
       <td>${row.quantity || '—'}</td>
-      <td style="color: #16a34a; font-weight: bold;">${row.upSellTotal > 0 ? row.upSellTotal.toFixed(2) : '—'}</td>
-      <td>${row.upSellCount || '—'}</td>
-      <td style="font-size:9px;">${escapeHtml(row.voucherNo)}</td>
-    </table>`;
+      <td>${row.executionAmount > 0 ? row.executionAmount.toFixed(2) : '—'}</td>
+      <td>${row.upSellAmount > 0 ? row.upSellAmount.toFixed(2) : '—'}</td>
+      <td><strong>${row.totalAmount.toFixed(2)}</strong></td>
+    </tr>`;
   }
   
-  html += `<tr style="background: var(--gray-100); font-weight: bold;">
-    <td colspan="5">TOTAL UpSell</td>
-    <td>${totalUpSell.toFixed(2)}</td>
-    <td colspan="2"></td>
-  </tr></tbody>`;
+  // إجمالي الفترة
+  html += `<tr style="background: var(--gray-100); font-weight: bold; border-top: 2px solid var(--border);">
+    <td colspan="7" style="text-align: center;">TOTAL FOR PERIOD</td>
+    <td><strong>${totalExecution.toFixed(2)}</strong></td>
+    <td><strong>${totalUpSell.toFixed(2)}</strong></td>
+    <td><strong>${totalAmount.toFixed(2)}</strong></td>
+  </tr>`;
+  
+  html += `</tbody>
+  <tfoot style="position: sticky; bottom: 0; background: #f8fafc; border-top: 2px solid var(--border);">`;
+  
+  // ملخص لكل مدرب
+  for (const [instId, total] of instructorTotals.entries()) {
+    html += `<tr style="font-weight: bold;">
+      <td colspan="2">💰 إجمالي ${escapeHtml(total.name)}</td>
+      <td colspan="5"></td>
+      <td>${total.execution.toFixed(2)}</td>
+      <td>${total.upSell.toFixed(2)}</td>
+      <td>${total.total.toFixed(2)}</td>
+    </tr>`;
+  }
+  
+  html += `</tfoot>
+  ~[~DONE~]~`;
   
   return html;
 }
+
   // ============================================================
 // CUSTOMERS REPORT
 // ============================================================
@@ -1181,30 +1341,66 @@ async function generateCustomersReport(invoices) {
   
   return reportData;
 }
-
+async function updateTripFilter() {
+  try {
+    // جلب جميع الفواتير
+    const result = await gas('getAllInvoices', { includeCollection: 'true' });
+    if (Array.isArray(result)) {
+      const tripsSet = new Set();
+      result.forEach(inv => {
+        const trip = inv.trip || inv.Trip;
+        if (trip) tripsSet.add(trip);
+      });
+      
+      const tripSelect = document.getElementById('filterTrip');
+      tripSelect.innerHTML = '<option value="">All Trips</option>';
+      Array.from(tripsSet).sort().forEach(trip => {
+        const option = document.createElement('option');
+        option.value = trip;
+        option.textContent = trip;
+        tripSelect.appendChild(option);
+      });
+      console.log('✅ Trip filter updated with', tripsSet.size, 'trips');
+    }
+  } catch(e) {
+    console.error('updateTripFilter error:', e);
+  }
+}
 function renderCustomersTable(data) {
   if (!data.length) return '<div class="loader">🚫 No customer data found</div>';
   
-  let html = `<table>
-    <thead>
-      <tr>
-        <th>Date</th><th>Trip</th><th>Voucher</th><th>Guest Name</th>
-        <th>Nationality</th><th>Hotel</th><th>Room</th>
-        <th>👤 A</th><th>👶 C</th><th>🍼 I</th><th>Total</th>
-        <th>Extras</th>
-      </tr>
-    </thead>
-    <tbody>
-  `;
-  
+  // حساب الإجماليات
   let totalAdults = 0, totalChildren = 0, totalInfants = 0, totalPassengers = 0;
-  
   for (const row of data) {
     totalAdults += row.adults;
     totalChildren += row.children;
     totalInfants += row.infants;
     totalPassengers += row.totalPassengers;
-    
+  }
+  
+  let html = `
+  <div style="position: relative; max-height: 500px; overflow: auto;">
+    <table style="width: 100%; border-collapse: collapse;">
+      <thead style="position: sticky; top: 0; z-index: 10; background: var(--navy);">
+        <tr style="background: var(--navy); color: var(--gold);">
+          <th style="padding: 10px; min-width: 80px;">Date</th>
+          <th style="padding: 10px; min-width: 120px;">Trip</th>
+          <th style="padding: 10px; min-width: 100px;">Voucher</th>
+          <th style="padding: 10px; min-width: 140px;">Guest Name</th>
+          <th style="padding: 10px; min-width: 100px;">Nationality</th>
+          <th style="padding: 10px; min-width: 100px;">Hotel</th>
+          <th style="padding: 10px; min-width: 70px;">Room</th>
+          <th style="padding: 10px; min-width: 50px;">👤 A</th>
+          <th style="padding: 10px; min-width: 50px;">👶 C</th>
+          <th style="padding: 10px; min-width: 50px;">🍼 I</th>
+          <th style="padding: 10px; min-width: 80px;">Total</th>
+          <th style="padding: 10px; min-width: 150px;">Extras</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+  
+  for (const row of data) {
     html += `<tr>
       <td>${escapeHtml(row.date)}</td>
       <td>${escapeHtml(row.tripName)}</td>
@@ -1221,57 +1417,121 @@ function renderCustomersTable(data) {
     </tr>`;
   }
   
-  html += `<tr style="background: var(--gray-100); font-weight: bold;">
-    <td colspan="7">TOTAL</td>
-    <td>${totalAdults}</td>
-    <td>${totalChildren}</td>
-    <td>${totalInfants}</td>
-    <td>${totalPassengers}</td>
-    <td></td>
-  </tr></tbody>`;
+  // صف الإجماليات (ثابت في الأسفل)
+  html += `
+      </tbody>
+      <tfoot style="position: sticky; bottom: 0; background: #f8fafc; font-weight: bold; border-top: 2px solid var(--border);">
+        <tr>
+          <td colspan="7" style="text-align: center;">TOTAL</td>
+          <td>${totalAdults}</td>
+          <td>${totalChildren}</td>
+          <td>${totalInfants}</td>
+          <td><strong>${totalPassengers}</strong></td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>`;
   
   return html;
 }
 // ============================================================
-// BOATS REPORT
+// BOATS REPORT (مجمع لكل مركب)
 // ============================================================
-async function generateBoatsReport(invoices) {
+// دالة مساعدة لجلب بيانات تشغيلات المراكب
+// ============================================================
+// BOATS REPORT - مجمع مع التكاليف
+// ============================================================
+
+async function getTripBoatsRecords(fromDate, toDate) {
+  try {
+    const result = await gas('getTripBoatsRecords', { fromDate, toDate });
+    if (result?.success && Array.isArray(result.data)) return result.data;
+    return [];
+  } catch(e) {
+    console.error('getTripBoatsRecords error:', e);
+    return [];
+  }
+}
+
+async function getBoats() {
+  try {
+    const result = await gas('getBoats');
+    return Array.isArray(result) ? result : [];
+  } catch(e) {
+    console.error('getBoats error:', e);
+    return [];
+  }
+}
+
+async function getBoatCostPerTrip(boatId) {
+  try {
+    const result = await gas('getBoatCostPerTrip', { boatId });
+    if (result?.success) return result.cost || 0;
+    return 0;
+  } catch(e) {
+    return 0;
+  }
+}
+
+async function generateBoatsReport(fromDate, toDate) {
+  // 1. جلب بيانات المراكب
+  const boats = await getBoats();
   const boatsMap = new Map();
+  boats.forEach(boat => {
+    boatsMap.set(boat.id, {
+      id: boat.id,
+      name: boat.Name || boat.name || boat.id,
+      capacity: parseInt(boat.Capacity || boat.capacity || 0)
+    });
+  });
   
-  for (const inv of invoices) {
-    const date = inv.activeDate || inv.ActiveDate || '';
-    const tripName = inv.trip || inv.Trip || '';
-    let boatsData = [];
-    try { boatsData = JSON.parse(inv.BoatsUsed || '[]'); } catch(e) {}
+  // 2. جلب بيانات تشغيلات المراكب
+  const tripRecords = await getTripBoatsRecords(fromDate, toDate);
+  console.log('📊 Trip boats records:', tripRecords.length);
+  
+  // 3. تجميع البيانات لكل مركب في كل يوم
+  const dailyBoatStats = new Map(); // key: boatId|date|tripName
+  
+  for (const record of tripRecords) {
+    const date = record.Date || '';
+    const tripName = record.TripName || '';
+    const boatId = record.BoatID || '';
+    const adults = parseInt(record.Adults) || 0;
+    const children = parseInt(record.Children) || 0;
+    const infants = parseInt(record.Infants) || 0;
+    const totalSeats = adults + children + infants;
     
-    for (const b of boatsData) {
-      if (!b.boatId) continue;
-      const passengers = calculatePassengerCount(inv);
-      const key = `${b.boatId}|${date}|${tripName}`;
-      
-      if (!boatsMap.has(key)) {
-        boatsMap.set(key, {
-          boatId: b.boatId,
-          boatName: b.boatName || b.boatId,
-          date: date,
-          tripName: tripName,
-          adults: 0,
-          children: 0,
-          infants: 0,
-          totalPassengers: 0,
-          invoices: []
-        });
-      }
-      const record = boatsMap.get(key);
-      record.adults += passengers.adults;
-      record.children += passengers.children;
-      record.infants += passengers.infants;
-      record.totalPassengers += passengers.total;
-      if (!record.invoices.includes(inv.voucherNo)) record.invoices.push(inv.voucherNo);
+    if (!date || !boatId) continue;
+    
+    const key = `${boatId}|${date}|${tripName}`;
+    if (!dailyBoatStats.has(key)) {
+      dailyBoatStats.set(key, {
+        boatId: boatId,
+        boatName: boatsMap.get(boatId)?.name || boatId,
+        capacity: boatsMap.get(boatId)?.capacity || 0,
+        date: date,
+        tripName: tripName,
+        adults: 0,
+        children: 0,
+        infants: 0,
+        totalPassengers: 0,
+        utilization: 0
+      });
+    }
+    
+    const stats = dailyBoatStats.get(key);
+    stats.adults += adults;
+    stats.children += children;
+    stats.infants += infants;
+    stats.totalPassengers += totalSeats;
+    if (stats.capacity > 0) {
+      stats.utilization = (stats.totalPassengers / stats.capacity) * 100;
     }
   }
   
-  const reportData = Array.from(boatsMap.values());
+  // 4. تحويل إلى مصفوفة وترتيب حسب التاريخ
+  const reportData = Array.from(dailyBoatStats.values());
   reportData.sort((a, b) => {
     const dateA = parseDateFromString(a.date)?.getTime() || 0;
     const dateB = parseDateFromString(b.date)?.getTime() || 0;
@@ -1284,18 +1544,26 @@ async function generateBoatsReport(invoices) {
 function renderBoatsTable(data) {
   if (!data.length) return '<div class="loader">🚫 No boat data found</div>';
   
-  let html = `<table>
-    <thead>
-      <tr>
-        <th>Date</th><th>Boat ID</th><th>Boat Name</th><th>Trip</th>
-        <th>👤 Adults</th><th>👶 Children</th><th>🍼 Infants</th>
-        <th>Total Pax</th><th>Invoices</th>
+  let html = `<td>
+    <thead style="position: sticky; top: 0; z-index: 10;">
+      <tr style="background: var(--navy); color: var(--gold);">
+        <th style="padding: 10px; min-width: 80px;">Date</th>
+        <th style="padding: 10px; min-width: 100px;">Boat ID</th>
+        <th style="padding: 10px; min-width: 140px;">Boat Name</th>
+        <th style="padding: 10px; min-width: 60px;">Capacity</th>
+        <th style="padding: 10px; min-width: 120px;">Trip</th>
+        <th style="padding: 10px; min-width: 50px;">👤 A</th>
+        <th style="padding: 10px; min-width: 50px;">👶 C</th>
+        <th style="padding: 10px; min-width: 50px;">🍼 I</th>
+        <th style="padding: 10px; min-width: 80px;">Total Pax</th>
+        <th style="padding: 10px; min-width: 80px;">Utilization</th>
       </tr>
     </thead>
     <tbody>
   `;
   
   let totalAdults = 0, totalChildren = 0, totalInfants = 0, totalPassengers = 0;
+  const boatTotals = new Map(); // لتجميع إجماليات كل مركب
   
   for (const row of data) {
     totalAdults += row.adults;
@@ -1303,30 +1571,145 @@ function renderBoatsTable(data) {
     totalInfants += row.infants;
     totalPassengers += row.totalPassengers;
     
+    // تجميع لكل مركب
+    if (!boatTotals.has(row.boatId)) {
+      boatTotals.set(row.boatId, {
+        boatName: row.boatName,
+        totalPassengers: 0,
+        daysCount: 0
+      });
+    }
+    const boatTotal = boatTotals.get(row.boatId);
+    boatTotal.totalPassengers += row.totalPassengers;
+    boatTotal.daysCount++;
+    
+    const utilizationColor = row.utilization > 80 ? '#16a34a' : (row.utilization > 50 ? '#eab308' : '#dc2626');
+    
     html += `<tr>
       <td>${escapeHtml(row.date)}</td>
       <td>${escapeHtml(row.boatId)}</td>
       <td><strong>${escapeHtml(row.boatName)}</strong></td>
+      <td>${row.capacity || '—'}</td>
       <td>${escapeHtml(row.tripName)}</td>
       <td>${row.adults || '—'}</td>
       <td>${row.children || '—'}</td>
       <td>${row.infants || '—'}</td>
       <td><strong>${row.totalPassengers}</strong></td>
-      <td style="font-size:9px;">${(row.invoices || []).join(', ')}</td>
+      <td style="color: ${utilizationColor}; font-weight: bold;">${row.utilization > 0 ? row.utilization.toFixed(1) + '%' : '—'}</td>
     </tr>`;
   }
   
-  html += `<tr style="background: var(--gray-100); font-weight: bold;">
-    <td colspan="4">TOTAL</td>
+  // إجمالي اليوم
+  html += `<tr style="background: var(--gray-100); font-weight: bold; border-top: 2px solid var(--border);">
+    <td colspan="5" style="text-align: center;">TOTAL FOR PERIOD</td>
     <td>${totalAdults}</td>
     <td>${totalChildren}</td>
     <td>${totalInfants}</td>
-    <td>${totalPassengers}</td>
+    <td><strong>${totalPassengers}</strong></td>
     <td></td>
-  </tr></tbody>`;
+  </tr>`;
+  
+  html += `</tbody>
+  <tfoot style="position: sticky; bottom: 0; background: #f8fafc; border-top: 2px solid var(--border);">`;
+  
+  // ملخص التكلفة لكل مركب
+  for (const [boatId, total] of boatTotals.entries()) {
+    html += `<tr style="font-weight: bold;">
+      <td colspan="4">💰 إجمالي ${escapeHtml(total.boatName)}</td>
+      <td colspan="5">${total.totalPassengers} راكب في ${total.daysCount} يوم</td>
+      <td></td>
+    </tr>`;
+  }
+  
+  html += `</tfoot>
+  ~[~DONE~]~`;
   
   return html;
 }
+  // ============================================================
+// INSTRUCTORS REPORT - للإصلاح
+// ============================================================
+async function generateInstructorsReport(invoices, fromDate, toDate) {
+  // جلب بيانات المدربين من الخادم
+  const instructors = await getInstructors();
+  console.log('📊 Instructors loaded:', instructors.length);
+  
+  // جلب سجلات المدربين اليومية
+  const instructorLogs = await getInstructorDailyLogs(fromDate, toDate);
+  console.log('📊 Instructor logs:', instructorLogs.length);
+  
+  const instructorsMap = new Map();
+  
+  for (const log of instructorLogs) {
+    const date = log.Date || log.date || '';
+    const instructorId = log.InstructorID || log.instructorId || '';
+    const tripName = log.Trip || log.trip || '';
+    const activityType = log.ActivityType || log.activityType || '';
+    const quantity = parseInt(log.Quantity || log.quantity || 0);
+    const upSellAmount = parseFloat(log.UpSellAmount || log.upSellAmount || 0);
+    
+    if (!date || !instructorId) continue;
+    
+    if (!instructorsMap.has(instructorId)) {
+      const instructor = instructors.find(i => i.id === instructorId);
+      instructorsMap.set(instructorId, {
+        instructorId: instructorId,
+        instructorName: instructor?.name || instructorId,
+        activities: [],
+        upSellTotal: 0,
+        upSellCount: 0
+      });
+    }
+    
+    const instructor_data = instructorsMap.get(instructorId);
+    
+    if (activityType && quantity > 0) {
+      instructor_data.activities.push({
+        date: date,
+        tripName: tripName,
+        activityName: activityType,
+        quantity: quantity
+      });
+    }
+    
+    if (upSellAmount > 0) {
+      instructor_data.upSellTotal += upSellAmount;
+      instructor_data.upSellCount++;
+    }
+  }
+  
+  const reportData = [];
+  for (const instructor of instructorsMap.values()) {
+    for (const activity of instructor.activities) {
+      reportData.push({
+        instructorId: instructor.instructorId,
+        instructorName: instructor.instructorName,
+        date: activity.date,
+        tripName: activity.tripName,
+        activityName: activity.activityName,
+        quantity: activity.quantity,
+        upSellTotal: instructor.upSellTotal,
+        upSellCount: instructor.upSellCount
+      });
+    }
+    if (instructor.activities.length === 0 && instructor.upSellTotal > 0) {
+      reportData.push({
+        instructorId: instructor.instructorId,
+        instructorName: instructor.instructorName,
+        date: '—',
+        tripName: '—',
+        activityName: '💰 UpSell Only',
+        quantity: 0,
+        upSellTotal: instructor.upSellTotal,
+        upSellCount: instructor.upSellCount
+      });
+    }
+  }
+  
+  return reportData;
+}
+
+
 // ============================================================
 // INITIALIZATION
 // ============================================================
@@ -1354,6 +1737,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('filterFromDate').value = `${weekAgo.getFullYear()}-${String(weekAgo.getMonth()+1).padStart(2,'0')}-${String(weekAgo.getDate()).padStart(2,'0')}`;
   document.getElementById('filterToDate').value = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
   await loadInvoices();
+  // بعد تحميل الفواتير
+await loadTripsForFilter();
   await loadReport();
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
