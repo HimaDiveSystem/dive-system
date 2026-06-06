@@ -243,72 +243,103 @@ async function gasWithSig(action, params) {
     .catch(err => { console.error('❌ savePackageInvoice failed:', err); throw err; });
 }
 
-document.addEventListener('DOMContentLoaded',()=>{
-  let ud=sessionStorage.getItem('currentUser');
-  if(!ud){const p=new URLSearchParams(location.search).get('user');if(p){ud=decodeURIComponent(p);sessionStorage.setItem('currentUser',ud);}}
-  if(!ud){location.href='index.html';return;}
-  try{currentUser=JSON.parse(ud);}catch{location.href='index.html';return;}
+document.addEventListener('DOMContentLoaded', () => {
+  // 1. استعادة بيانات المستخدم
+  let ud = sessionStorage.getItem('currentUser');
+  if (!ud) {
+    const p = new URLSearchParams(location.search).get('user');
+    if (p) {
+      ud = decodeURIComponent(p);
+      sessionStorage.setItem('currentUser', ud);
+    }
+  }
+  if (!ud) {
+    location.href = 'index.html';
+    return;
+  }
+  try {
+    currentUser = JSON.parse(ud);
+  } catch {
+    location.href = 'index.html';
+    return;
+  }
 
-  document.getElementById('userNameDisplay').textContent=currentUser.name||'User';
-  document.getElementById('userAvatar').textContent=(currentUser.name||'U')[0].toUpperCase();
-  if(currentUser.centerName){const e=document.getElementById('centerDisplay');e.textContent='🏢 '+currentUser.centerName;e.style.display='';}
-  if(currentUser.branchName){const e=document.getElementById('branchDisplay');e.textContent='📍 '+currentUser.branchName;e.style.display='';}
-  sessionPackages=[];
+  // 2. عرض معلومات المستخدم
+  document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
+  document.getElementById('userAvatar').textContent = (currentUser.name || 'U')[0].toUpperCase();
+  if (currentUser.centerName) {
+    const e = document.getElementById('centerDisplay');
+    e.textContent = '🏢 ' + currentUser.centerName;
+    e.style.display = '';
+  }
+  if (currentUser.branchName) {
+    const e = document.getElementById('branchDisplay');
+    e.textContent = '📍 ' + currentUser.branchName;
+    e.style.display = '';
+  }
+  sessionPackages = [];
 
+  // 3. عرض النموذج الرئيسي
   renderForm();
 
+  // 4. جلب أسعار الصرف
   gas('getLatestExchangeRates', { centerName: currentUser?.centerName }).then(r => {
-    if(!r)return;
-    C.rate=r;
-    const td=fmtDateKey(new Date());
-    if(!C.rateByDate[td])C.rateByDate[td]=r;
-    
-    const items=[
-      {lbl:'USD $',v:r.bUSD||r.sUSD},{lbl:'EUR €',v:r.bEUR||r.sEUR},
-      {lbl:'GBP £',v:r.bGBP||r.sGBP}
-    ].filter(x=>x.v&&+x.v>0);
-    
-    const tickerItems = items.map(it=>{
+    if (!r) return;
+    C.rate = r;
+    const td = fmtDateKey(new Date());
+    if (!C.rateByDate[td]) C.rateByDate[td] = r;
+
+    const items = [
+      { lbl: 'USD $', v: r.bUSD || r.sUSD },
+      { lbl: 'EUR €', v: r.bEUR || r.sEUR },
+      { lbl: 'GBP £', v: r.bGBP || r.sGBP }
+    ].filter(x => x.v && +x.v > 0);
+
+    const tickerItems = items.map(it => {
       const val = +it.v;
       const display = Number.isInteger(val) ? val.toString() : val.toFixed(2);
       return `<span class="ticker-item"><span class="rl">${it.lbl}</span><span class="rv">${display}</span></span>`;
     });
     const h = tickerItems.join('<span class="ticker-sep">◆</span>');
     document.getElementById('tickerInner').innerHTML = h + '<span class="ticker-sep" style="padding:0 20px"></span>' + h;
-    
+
     const rawDate = r.date || '';
     let displayDate = rawDate;
-    if(rawDate && (rawDate.includes('T') || rawDate.match(/^\d{4}-\d{2}-\d{2}/))){
-      try{
+    if (rawDate && (rawDate.includes('T') || rawDate.match(/^\d{4}-\d{2}-\d{2}/))) {
+      try {
         const d = new Date(rawDate);
-        if(!isNaN(d)){
-          const MN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-          displayDate = String(d.getDate()).padStart(2,'0')+'/'+MN[d.getMonth()]+'/'+d.getFullYear();
+        if (!isNaN(d)) {
+          const MN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          displayDate = String(d.getDate()).padStart(2, '0') + '/' + MN[d.getMonth()] + '/' + d.getFullYear();
         }
-      }catch(e){}
+      } catch (e) {}
     }
-    document.getElementById('tickerDate').textContent='📅 '+displayDate;
-  }).catch(()=>{});
+    document.getElementById('tickerDate').textContent = '📅 ' + displayDate;
+  }).catch(() => {});
 
-  // جلب رحلات Diving فقط
- gas('getTripsByCategory', { category: 'Diving', centerName: currentUser?.centerName }).then(d => {
-    if(!Array.isArray(d))return;
+  // 5. جلب رحلات Diving فقط (بدون محاولة إضافتها مباشرة)
+  gas('getTripsByCategory', { category: 'Diving', centerName: currentUser?.centerName }).then(d => {
+    if (!Array.isArray(d)) return;
     C.divingTrips = d;
-    const dl=document.getElementById('tripsList');
-    if(dl)dl.innerHTML=d.map(t=>`<option value="${t}">`).join('');
-}).catch(()=>{});
+    console.log('✅ تم تحميل', d.length, 'رحلات Diving');
+    // سيتم إضافة الرحلات عبر ensureTripsDatalist() بعد اكتمال renderForm()
+  }).catch(() => {});
+
+  // 6. جلب الجنسيات
   gas('getNationalities').then(d => {
-    if(!Array.isArray(d))return;
-    const dl=document.getElementById('nationalitiesList');
-    if(dl)dl.innerHTML=d.map(v=>`<option value="${v}">`).join('');
-  }).catch(()=>{});
+    if (!Array.isArray(d)) return;
+    const dl = document.getElementById('nationalitiesList');
+    if (dl) dl.innerHTML = d.map(v => `<option value="${v}">`).join('');
+  }).catch(() => {});
 
+  // 7. جلب الفنادق
   gas('getHotels').then(d => {
-    if(!Array.isArray(d))return;
-    const dl=document.getElementById('hotelsList');
-    if(dl)dl.innerHTML=d.map(v=>`<option value="${v}">`).join('');
-  }).catch(()=>{});
+    if (!Array.isArray(d)) return;
+    const dl = document.getElementById('hotelsList');
+    if (dl) dl.innerHTML = d.map(v => `<option value="${v}">`).join('');
+  }).catch(() => {});
 
+  // 8. جلب العملاء للاقتراح التلقائي
   gas('getAllCustomersForAC', { centerName: currentUser?.centerName }).then(raw => {
     if (!Array.isArray(raw)) return;
     const map = new Map();
@@ -322,9 +353,26 @@ document.addEventListener('DOMContentLoaded',()=>{
       });
     });
     C.customers = Array.from(map.values());
-  }).catch(()=>{});
-});
+  }).catch(() => {});
 
+  // 9. التأكد من وجود datalist للرحلات بعد اكتمال تحميل الصفحة
+  // استخدام setTimeout للتأكد من أن renderForm() اكتملت
+  setTimeout(() => {
+    if (C.divingTrips && C.divingTrips.length) {
+      ensureTripsDatalist();
+    } else {
+      // مراقبة متغير C.divingTrips
+      const checkInterval = setInterval(() => {
+        if (C.divingTrips && C.divingTrips.length) {
+          clearInterval(checkInterval);
+          ensureTripsDatalist();
+        }
+      }, 300);
+      // إيقاف المراقبة بعد 10 ثوانٍ
+      setTimeout(() => clearInterval(checkInterval), 10000);
+    }
+  }, 500);
+}); // ← إغلاق DOMContentLoaded
 function fmtDateKey(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function goBack() { 
   const returnUrl = sessionStorage.getItem('returnUrl');
