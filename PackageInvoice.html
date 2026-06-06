@@ -201,7 +201,10 @@ let packageDaysCount=3;
 let dayData=[];
 let calculationTimer=null;
 
-// ========== الدوال الأساسية ==========
+// ============================================
+// 1. الدوال الأساسية (gas, gasWithSig)
+// ============================================
+
 function gas(action, params = {}) {
   const u = new URL(GAS);
   u.searchParams.set('action', action);
@@ -243,149 +246,59 @@ async function gasWithSig(action, params) {
     .catch(err => { console.error('❌ savePackageInvoice failed:', err); throw err; });
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  // 1. استعادة بيانات المستخدم
-  let ud = sessionStorage.getItem('currentUser');
-  if (!ud) {
-    const p = new URLSearchParams(location.search).get('user');
-    if (p) {
-      ud = decodeURIComponent(p);
-      sessionStorage.setItem('currentUser', ud);
-    }
-  }
-  if (!ud) {
-    location.href = 'index.html';
-    return;
-  }
-  try {
-    currentUser = JSON.parse(ud);
-  } catch {
-    location.href = 'index.html';
-    return;
-  }
+// ============================================
+// 2. دوال مساعدة عامة
+// ============================================
 
-  // 2. عرض معلومات المستخدم
-  document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
-  document.getElementById('userAvatar').textContent = (currentUser.name || 'U')[0].toUpperCase();
-  if (currentUser.centerName) {
-    const e = document.getElementById('centerDisplay');
-    e.textContent = '🏢 ' + currentUser.centerName;
-    e.style.display = '';
-  }
-  if (currentUser.branchName) {
-    const e = document.getElementById('branchDisplay');
-    e.textContent = '📍 ' + currentUser.branchName;
-    e.style.display = '';
-  }
-  sessionPackages = [];
+function fmtDateKey(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
 
-  // 3. عرض النموذج الرئيسي
-  renderForm();
-
-  // 4. جلب أسعار الصرف
-  gas('getLatestExchangeRates', { centerName: currentUser?.centerName }).then(r => {
-    if (!r) return;
-    C.rate = r;
-    const td = fmtDateKey(new Date());
-    if (!C.rateByDate[td]) C.rateByDate[td] = r;
-
-    const items = [
-      { lbl: 'USD $', v: r.bUSD || r.sUSD },
-      { lbl: 'EUR €', v: r.bEUR || r.sEUR },
-      { lbl: 'GBP £', v: r.bGBP || r.sGBP }
-    ].filter(x => x.v && +x.v > 0);
-
-    const tickerItems = items.map(it => {
-      const val = +it.v;
-      const display = Number.isInteger(val) ? val.toString() : val.toFixed(2);
-      return `<span class="ticker-item"><span class="rl">${it.lbl}</span><span class="rv">${display}</span></span>`;
-    });
-    const h = tickerItems.join('<span class="ticker-sep">◆</span>');
-    document.getElementById('tickerInner').innerHTML = h + '<span class="ticker-sep" style="padding:0 20px"></span>' + h;
-
-    const rawDate = r.date || '';
-    let displayDate = rawDate;
-    if (rawDate && (rawDate.includes('T') || rawDate.match(/^\d{4}-\d{2}-\d{2}/))) {
-      try {
-        const d = new Date(rawDate);
-        if (!isNaN(d)) {
-          const MN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-          displayDate = String(d.getDate()).padStart(2, '0') + '/' + MN[d.getMonth()] + '/' + d.getFullYear();
-        }
-      } catch (e) {}
-    }
-    document.getElementById('tickerDate').textContent = '📅 ' + displayDate;
-  }).catch(() => {});
-
-  // 5. جلب رحلات Diving فقط (بدون محاولة إضافتها مباشرة)
-  gas('getTripsByCategory', { category: 'Diving', centerName: currentUser?.centerName }).then(d => {
-    if (!Array.isArray(d)) return;
-    C.divingTrips = d;
-    console.log('✅ تم تحميل', d.length, 'رحلات Diving');
-    // سيتم إضافة الرحلات عبر ensureTripsDatalist() بعد اكتمال renderForm()
-  }).catch(() => {});
-
-  // 6. جلب الجنسيات
-  gas('getNationalities').then(d => {
-    if (!Array.isArray(d)) return;
-    const dl = document.getElementById('nationalitiesList');
-    if (dl) dl.innerHTML = d.map(v => `<option value="${v}">`).join('');
-  }).catch(() => {});
-
-  // 7. جلب الفنادق
-  gas('getHotels').then(d => {
-    if (!Array.isArray(d)) return;
-    const dl = document.getElementById('hotelsList');
-    if (dl) dl.innerHTML = d.map(v => `<option value="${v}">`).join('');
-  }).catch(() => {});
-
-  // 8. جلب العملاء للاقتراح التلقائي
-  gas('getAllCustomersForAC', { centerName: currentUser?.centerName }).then(raw => {
-    if (!Array.isArray(raw)) return;
-    const map = new Map();
-    raw.forEach(c => {
-      if (c.phone) map.set(c.phone, {
-        phone: c.phone,
-        name: c.name || '',
-        nationality: c.nationality || '',
-        hotel: c.hotel || '',
-        roomNo: c.roomNo || ''
-      });
-    });
-    C.customers = Array.from(map.values());
-  }).catch(() => {});
-
-  // 9. التأكد من وجود datalist للرحلات بعد اكتمال تحميل الصفحة
-  // استخدام setTimeout للتأكد من أن renderForm() اكتملت
-  setTimeout(() => {
-    if (C.divingTrips && C.divingTrips.length) {
-      ensureTripsDatalist();
-    } else {
-      // مراقبة متغير C.divingTrips
-      const checkInterval = setInterval(() => {
-        if (C.divingTrips && C.divingTrips.length) {
-          clearInterval(checkInterval);
-          ensureTripsDatalist();
-        }
-      }, 300);
-      // إيقاف المراقبة بعد 10 ثوانٍ
-      setTimeout(() => clearInterval(checkInterval), 10000);
-    }
-  }, 500);
-}); // ← إغلاق DOMContentLoaded
-function fmtDateKey(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function goBack() { 
   const returnUrl = sessionStorage.getItem('returnUrl');
   if (returnUrl) location.href = returnUrl;
   else location.href = DASH[currentUser?.type] || 'Dashboard.html';
 }
-function showPDFOv(m){document.getElementById('pdfMsg').textContent=m;document.getElementById('pdfOverlay').classList.add('show');}
-function hidePDFOv(){document.getElementById('pdfOverlay').classList.remove('show');}
-function showAlert(msg,icon,btns){document.getElementById('alertMsg').textContent=msg;document.getElementById('alertIcon').textContent=icon||'ℹ️';document.getElementById('alertBtns').innerHTML=btns||'<button class="btn btn-save" onclick="closeAlert()">OK</button>';document.getElementById('alertModal').classList.add('open');}
-function closeAlert(){document.getElementById('alertModal').classList.remove('open');}
-function setBtns(d){['btnSave','btnNewBooking','btnClear'].forEach(id=>{const e=document.getElementById(id);if(e)e.disabled=d;});}
 
-// ========== دوال أسعار الصرف ==========
+function showPDFOv(m) {
+  document.getElementById('pdfMsg').textContent = m;
+  document.getElementById('pdfOverlay').classList.add('show');
+}
+
+function hidePDFOv() {
+  document.getElementById('pdfOverlay').classList.remove('show');
+}
+
+function showAlert(msg, icon, btns) {
+  document.getElementById('alertMsg').textContent = msg;
+  document.getElementById('alertIcon').textContent = icon || 'ℹ️';
+  document.getElementById('alertBtns').innerHTML = btns || '<button class="btn btn-save" onclick="closeAlert()">OK</button>';
+  document.getElementById('alertModal').classList.add('open');
+}
+
+function closeAlert() {
+  document.getElementById('alertModal').classList.remove('open');
+}
+
+function setBtns(d) {
+  ['btnSave', 'btnNewBooking', 'btnClear'].forEach(id => {
+    const e = document.getElementById(id);
+    if (e) e.disabled = d;
+  });
+}
+
+function esc(s) {
+  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function R2(n) {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+// ============================================
+// 3. دوال أسعار الصرف
+// ============================================
+
 async function getRate(dateStr, centerName) {
   if (!dateStr) return C.rate || null;
   if (C.rateByDate[dateStr]) return C.rateByDate[dateStr];
@@ -407,17 +320,20 @@ async function validateExchangeRateForDate(dateStr) {
   return { valid: true };
 }
 
-function rateFields(r){
-  if(!r)return null;
-  if(r.cash)return r;
-  return{cash:{USD:+r.sUSD||47.5,EUR:+r.sEUR||50.25,GBP:+r.sGBP||60},
-         visa:{USD:+r.sVUSD||46.3,EUR:+r.sVEUR||49,GBP:+r.sVGBP||58.5,LE:+r.sVLE||0.975}};
+function rateFields(r) {
+  if (!r) return null;
+  if (r.cash) return r;
+  return {
+    cash: { USD: +r.sUSD || 47.5, EUR: +r.sEUR || 50.25, GBP: +r.sGBP || 60 },
+    visa: { USD: +r.sVUSD || 46.3, EUR: +r.sVEUR || 49, GBP: +r.sVGBP || 58.5, LE: +r.sVLE || 0.975 }
+  };
 }
 
-function R2(n){return Math.round((n+Number.EPSILON)*100)/100;}
+// ============================================
+// 4. دوال العميل والاقتراح التلقائي
+// ============================================
 
-// ========== دوال العميل ==========
-let phoneSearchTimeout=null,nameSearchTimeout=null;
+let phoneSearchTimeout = null, nameSearchTimeout = null;
 
 function onPhoneInput() {
   const phoneVal = document.getElementById('phoneNumber').value.replace(/\D/g, '');
@@ -468,11 +384,47 @@ function acPick(id, i) {
   closeAC('acNameDrop');
 }
 
-function closeAC(id){const d=document.getElementById(id);if(d){d.classList.remove('open');d.innerHTML='';}}
-document.addEventListener('click',e=>{if(!e.target.closest('.ac-wrap')){closeAC('acPhoneDrop');closeAC('acNameDrop');}});
-function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function closeAC(id) {
+  const d = document.getElementById(id);
+  if (d) { d.classList.remove('open'); d.innerHTML = ''; }
+}
 
-// ========== دوال الباكيدج ==========
+document.addEventListener('click', e => {
+  if (!e.target.closest('.ac-wrap')) {
+    closeAC('acPhoneDrop');
+    closeAC('acNameDrop');
+  }
+});
+
+// ============================================
+// 5. دالة التأكد من وجود datalist وإضافة الرحلات
+// ============================================
+
+function ensureTripsDatalist() {
+  let dl = document.getElementById('tripsList');
+  if (!dl) {
+    dl = document.createElement('datalist');
+    dl.id = 'tripsList';
+    document.body.appendChild(dl);
+    console.log('✅ تم إنشاء datalist تلقائياً');
+  }
+  
+  if (C.divingTrips && C.divingTrips.length) {
+    dl.innerHTML = C.divingTrips.map(t => `<option value="${t}">`).join('');
+    console.log(`✅ تم إضافة ${C.divingTrips.length} رحلة إلى القائمة`);
+    
+    document.querySelectorAll('[list="tripsList"]').forEach(input => {
+      input.setAttribute('list', 'tripsList');
+    });
+  } else {
+    setTimeout(ensureTripsDatalist, 500);
+  }
+}
+
+// ============================================
+// 6. دوال الباكيدج (الأساسية)
+// ============================================
+
 function onPackageDaysChange() {
   const days = parseInt(document.getElementById('packageDays').value);
   if (isNaN(days) || days < 2) {
@@ -496,7 +448,6 @@ function buildDaysUI() {
   let html = '';
   for (let i = 0; i < packageDaysCount; i++) {
     const dayNum = i + 1;
-    const dayKey = `day_${i}`;
     const day = dayData[i] || { date: '', time: '', tripName: '', tripDef: [], tripPrices: [], items: [] };
     
     html += `
@@ -519,7 +470,6 @@ function buildDaysUI() {
   }
   container.innerHTML = html;
   
-  // استعادة البيانات المحفوظة
   for (let i = 0; i < packageDaysCount; i++) {
     if (dayData[i]) {
       const day = dayData[i];
@@ -544,7 +494,6 @@ async function onDayDateChange(dayIndex) {
   const date = document.getElementById(`dayDate_${dayIndex}`).value;
   if (!date) return;
   
-  // التحقق من وجود سعر صرف
   const rateCheck = await validateExchangeRateForDate(date);
   const rateErrorDiv = document.getElementById(`dayRateError_${dayIndex}`);
   if (!rateCheck.valid) {
@@ -561,35 +510,15 @@ async function onDayDateChange(dayIndex) {
   if (!dayData[dayIndex]) dayData[dayIndex] = {};
   dayData[dayIndex].date = date;
   
-  // تحديث سعر الصرف لهذا اليوم
   await getRate(date, currentUser?.centerName);
   scheduleTotalCalc();
 }
 
+let currentClockDayIndex = null;
+
 function openClockModalForDay(dayIndex) {
   currentClockDayIndex = dayIndex;
   openClockModal();
-}
-
-let currentClockDayIndex = null;
-
-function confirmClock() {
-  if (ckHour === null || ckMin === null) {
-    showAlert('الرجاء اختيار الساعة والدقيقة', '⚠️');
-    return;
-  }
-  const t = (ckHour < 10 ? '0' + ckHour : '' + ckHour) + ':' + (ckMin < 10 ? '0' + ckMin : '' + ckMin);
-  
-  if (currentClockDayIndex !== null) {
-    const timeInput = document.getElementById(`dayTime_${currentClockDayIndex}`);
-    const timeDisplay = document.getElementById(`dayTimeDisplay_${currentClockDayIndex}`);
-    if (timeInput) timeInput.value = t;
-    if (timeDisplay) { timeDisplay.textContent = t; timeDisplay.classList.remove('ph'); }
-    if (!dayData[currentClockDayIndex]) dayData[currentClockDayIndex] = {};
-    dayData[currentClockDayIndex].time = t;
-    scheduleTotalCalc();
-  }
-  closeClockModal();
 }
 
 async function loadTripForDay(dayIndex) {
@@ -602,7 +531,6 @@ async function loadTripForDay(dayIndex) {
     return;
   }
   
-  // التحقق من وجود سعر صرف مرة أخرى للتأكد
   const rateCheck = await validateExchangeRateForDate(date);
   if (!rateCheck.valid) {
     showAlert(rateCheck.message, '⚠️');
@@ -716,37 +644,11 @@ function calculatePackageTotal() {
   return total;
 }
 
-async function calculateTotalPaidInCurrency(currency, ratesByDate) {
-  const cU = parseFloat(document.getElementById('cashUSD')?.value) || 0;
-  const cE = parseFloat(document.getElementById('cashEUR')?.value) || 0;
-  const cG = parseFloat(document.getElementById('cashGBP')?.value) || 0;
-  const cL = parseFloat(document.getElementById('cashLE')?.value) || 0;
-  const vU = parseFloat(document.getElementById('visaUSD')?.value) || 0;
-  const vE = parseFloat(document.getElementById('visaEUR')?.value) || 0;
-  const vG = parseFloat(document.getElementById('visaGBP')?.value) || 0;
-  const vL = parseFloat(document.getElementById('visaLE')?.value) || 0;
-  
-  // تحويل كل عملة إلى LE باستخدام أسعار الصرف لكل يوم (متوسط أو أول يوم)
-  // للتبسيط: نستخدم سعر أول يوم للحزمة
-  const firstDate = dayData[0]?.date;
-  let rate = null;
-  if (firstDate && ratesByDate[firstDate]) rate = ratesByDate[firstDate];
-  else rate = C.rate;
-  
-  const r = rateFields(rate);
-  if (!r) return cU + cE + cG + cL + vU + vE + vG + vL;
-  
-  const LE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
-             vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
-  
-  if (currency === '$') return R2(LE / r.cash.USD);
-  if (currency === '€') return R2(LE / r.cash.EUR);
-  if (currency === '£') return R2(LE / r.cash.GBP);
-  return R2(LE);
+let _ct = null;
+function scheduleTotalCalc() {
+  clearTimeout(_ct);
+  _ct = setTimeout(updateAllCalc, 200);
 }
-
-let _ct=null;
-function scheduleTotalCalc(){clearTimeout(_ct);_ct=setTimeout(updateAllCalc,200);}
 
 async function updateAllCalc() {
   const currency = document.getElementById('invoiceCurrency')?.value || '';
@@ -773,8 +675,34 @@ async function updateAllCalc() {
   if (paidEl) paidEl.textContent = paid.toFixed(2);
 }
 
+async function calculateTotalPaidInCurrency(currency, ratesByDate) {
+  const cU = parseFloat(document.getElementById('cashUSD')?.value) || 0;
+  const cE = parseFloat(document.getElementById('cashEUR')?.value) || 0;
+  const cG = parseFloat(document.getElementById('cashGBP')?.value) || 0;
+  const cL = parseFloat(document.getElementById('cashLE')?.value) || 0;
+  const vU = parseFloat(document.getElementById('visaUSD')?.value) || 0;
+  const vE = parseFloat(document.getElementById('visaEUR')?.value) || 0;
+  const vG = parseFloat(document.getElementById('visaGBP')?.value) || 0;
+  const vL = parseFloat(document.getElementById('visaLE')?.value) || 0;
+  
+  const firstDate = dayData[0]?.date;
+  let rate = null;
+  if (firstDate && ratesByDate[firstDate]) rate = ratesByDate[firstDate];
+  else rate = C.rate;
+  
+  const r = rateFields(rate);
+  if (!r) return cU + cE + cG + cL + vU + vE + vG + vL;
+  
+  const LE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
+             vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
+  
+  if (currency === '$') return R2(LE / r.cash.USD);
+  if (currency === '€') return R2(LE / r.cash.EUR);
+  if (currency === '£') return R2(LE / r.cash.GBP);
+  return R2(LE);
+}
+
 async function collectPackageData() {
-  const phoneSign = document.getElementById('phoneCode')?.value || '+';
   const phoneRaw = document.getElementById('phoneNumber')?.value || '';
   const phoneDigits = phoneRaw.replace(/\D/g, '');
   const fullPhone = '00' + phoneDigits;
@@ -862,7 +790,6 @@ async function validatePackage() {
     if (!day.tripName) { showAlert(`الرجاء اختيار رحلة اليوم ${i+1}`, '⚠️'); return null; }
     if (day.items.length === 0) { showAlert(`الرجاء إدخال بنود الرحلة لليوم ${i+1}`, '⚠️'); return null; }
     
-    // التحقق من سعر الصرف لكل تاريخ
     const rateCheck = await validateExchangeRateForDate(day.date);
     if (!rateCheck.valid) { showAlert(rateCheck.message, '⚠️'); return null; }
   }
@@ -881,8 +808,7 @@ async function savePackageInvoice() {
       return;
     }
     
-    const savedSignature = signatureData || '';
-    formData.signatureData = savedSignature;
+    formData.signatureData = signatureData || '';
     
     const saveResult = await gasWithSig('savePackageInvoice', formData);
     if (!saveResult?.success) throw new Error(saveResult?.message || 'فشل الحفظ');
@@ -944,17 +870,16 @@ function clearFormFull() {
   scheduleTotalCalc();
 }
 
-function clearFormPartial() {
-  // محجوز للحجز الجديد بنفس العميل
-}
-
 function cancelSession() {
   sessionPackages = [];
   clearFormFull();
   closeAlert();
 }
 
-// ========== دوال الواجهة الرئيسية ==========
+// ============================================
+// 7. دوال الواجهة الرئيسية (renderForm)
+// ============================================
+
 function renderForm() {
   document.getElementById('mainContent').innerHTML = `
   <div class="card"><div class="card-head"><span class="ch-icon">👤</span><h3>بيانات العميل</h3></div><div class="card-body">
@@ -1021,61 +946,255 @@ function renderForm() {
   scheduleTotalCalc();
 }
 
-// ========== دوال الساعة (مأخوذة من SalesInvoice) ==========
-let ckHour=null,ckMin=null,ckMode='hour';
-const CX=115,CY=115;
+// ============================================
+// 8. دوال الساعة (Clock Picker)
+// ============================================
 
-function buildClockFace(){
-  const tg=document.getElementById('ckTicks'),ng=document.getElementById('ckNums');
-  if(!tg||!ng||tg.children.length)return;
-  for(let i=0;i<60;i++){const a=(i*6-90)*Math.PI/180,maj=i%5===0,r1=maj?96:103,r2=109,ln=document.createElementNS('http://www.w3.org/2000/svg','line');ln.setAttribute('x1',CX+r1*Math.cos(a));ln.setAttribute('y1',CY+r1*Math.sin(a));ln.setAttribute('x2',CX+r2*Math.cos(a));ln.setAttribute('y2',CY+r2*Math.sin(a));ln.setAttribute('stroke',maj?'#0f1f3d':'#c5cfe0');ln.setAttribute('stroke-width',maj?'2.5':'1');tg.appendChild(ln);}
-  for(let i=1;i<=12;i++){const a=(i*30-90)*Math.PI/180,t=document.createElementNS('http://www.w3.org/2000/svg','text');t.setAttribute('x',CX+82*Math.cos(a));t.setAttribute('y',CY+82*Math.sin(a));t.setAttribute('text-anchor','middle');t.setAttribute('dominant-baseline','central');t.setAttribute('font-size','14');t.setAttribute('font-weight','700');t.setAttribute('fill','#1a2540');t.setAttribute('font-family','Cairo,sans-serif');t.textContent=i;ng.appendChild(t);}
-  for(let i=1;i<=12;i++){const a=(i*30-90)*Math.PI/180,t=document.createElementNS('http://www.w3.org/2000/svg','text');t.setAttribute('x',CX+54*Math.cos(a));t.setAttribute('y',CY+54*Math.sin(a));t.setAttribute('text-anchor','middle');t.setAttribute('dominant-baseline','central');t.setAttribute('font-size','9');t.setAttribute('font-weight','600');t.setAttribute('fill','#94a3b8');t.setAttribute('font-family','Cairo,sans-serif');t.textContent=(i+12)%24||12;ng.appendChild(t);}
+let ckHour = null, ckMin = null, ckMode = 'hour';
+const CX = 115, CY = 115;
+
+function buildClockFace() {
+  const tg = document.getElementById('ckTicks'), ng = document.getElementById('ckNums');
+  if (!tg || !ng || tg.children.length) return;
+  for (let i = 0; i < 60; i++) {
+    const a = (i * 6 - 90) * Math.PI / 180, maj = i % 5 === 0, r1 = maj ? 96 : 103, r2 = 109;
+    const ln = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    ln.setAttribute('x1', CX + r1 * Math.cos(a));
+    ln.setAttribute('y1', CY + r1 * Math.sin(a));
+    ln.setAttribute('x2', CX + r2 * Math.cos(a));
+    ln.setAttribute('y2', CY + r2 * Math.sin(a));
+    ln.setAttribute('stroke', maj ? '#0f1f3d' : '#c5cfe0');
+    ln.setAttribute('stroke-width', maj ? '2.5' : '1');
+    tg.appendChild(ln);
+  }
+  for (let i = 1; i <= 12; i++) {
+    const a = (i * 30 - 90) * Math.PI / 180;
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    t.setAttribute('x', CX + 82 * Math.cos(a));
+    t.setAttribute('y', CY + 82 * Math.sin(a));
+    t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('dominant-baseline', 'central');
+    t.setAttribute('font-size', '14');
+    t.setAttribute('font-weight', '700');
+    t.setAttribute('fill', '#1a2540');
+    t.setAttribute('font-family', 'Cairo,sans-serif');
+    t.textContent = i;
+    ng.appendChild(t);
+  }
+  for (let i = 1; i <= 12; i++) {
+    const a = (i * 30 - 90) * Math.PI / 180;
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    t.setAttribute('x', CX + 54 * Math.cos(a));
+    t.setAttribute('y', CY + 54 * Math.sin(a));
+    t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('dominant-baseline', 'central');
+    t.setAttribute('font-size', '9');
+    t.setAttribute('font-weight', '600');
+    t.setAttribute('fill', '#94a3b8');
+    t.setAttribute('font-family', 'Cairo,sans-serif');
+    t.textContent = (i + 12) % 24 || 12;
+    ng.appendChild(t);
+  }
 }
 
-function updateHands(){
-  const h=ckHour!==null?ckHour:0,m=ckMin!==null?ckMin:0;
-  const ha=((h%12)*30+(m*.5)-90)*Math.PI/180,ma=(m*6-90)*Math.PI/180;
-  const hx=CX+50*Math.cos(ha),hy=CY+50*Math.sin(ha),mx=CX+68*Math.cos(ma),my=CY+68*Math.sin(ma);
-  const hh=document.getElementById('ckHandH');if(hh){hh.setAttribute('x2',hx);hh.setAttribute('y2',hy);}
-  const hm=document.getElementById('ckHandM');if(hm){hm.setAttribute('x2',mx);hm.setAttribute('y2',my);}
-  const dot=document.getElementById('ckDot');if(dot){if(ckMode==='hour'&&ckHour!==null){dot.setAttribute('cx',hx);dot.setAttribute('cy',hy);dot.setAttribute('opacity','1');}else if(ckMode==='minute'&&ckMin!==null){dot.setAttribute('cx',mx);dot.setAttribute('cy',my);dot.setAttribute('opacity','1');}else dot.setAttribute('opacity','0');}
-  const hs=ckHour!==null?(ckHour<10?'0'+ckHour:''+ckHour):'--',ms=ckMin!==null?(ckMin<10?'0'+ckMin:''+ckMin):'--';
-  const hEl=document.getElementById('ckH'),mEl=document.getElementById('ckM');
-  if(hEl){hEl.textContent=hs;hEl.style.color=ckMode==='hour'?'var(--gold)':'white';}
-  if(mEl){mEl.textContent=ms;mEl.style.color=ckMode==='minute'?'var(--gold)':'white';}
+function updateHands() {
+  const h = ckHour !== null ? ckHour : 0, m = ckMin !== null ? ckMin : 0;
+  const ha = ((h % 12) * 30 + (m * 0.5) - 90) * Math.PI / 180;
+  const ma = (m * 6 - 90) * Math.PI / 180;
+  const hx = CX + 50 * Math.cos(ha), hy = CY + 50 * Math.sin(ha);
+  const mx = CX + 68 * Math.cos(ma), my = CY + 68 * Math.sin(ma);
+  const hh = document.getElementById('ckHandH');
+  if (hh) { hh.setAttribute('x2', hx); hh.setAttribute('y2', hy); }
+  const hm = document.getElementById('ckHandM');
+  if (hm) { hm.setAttribute('x2', mx); hm.setAttribute('y2', my); }
+  const dot = document.getElementById('ckDot');
+  if (dot) {
+    if (ckMode === 'hour' && ckHour !== null) {
+      dot.setAttribute('cx', hx); dot.setAttribute('cy', hy); dot.setAttribute('opacity', '1');
+    } else if (ckMode === 'minute' && ckMin !== null) {
+      dot.setAttribute('cx', mx); dot.setAttribute('cy', my); dot.setAttribute('opacity', '1');
+    } else {
+      dot.setAttribute('opacity', '0');
+    }
+  }
+  const hs = ckHour !== null ? (ckHour < 10 ? '0' + ckHour : '' + ckHour) : '--';
+  const ms = ckMin !== null ? (ckMin < 10 ? '0' + ckMin : '' + ckMin) : '--';
+  const hEl = document.getElementById('ckH'), mEl = document.getElementById('ckM');
+  if (hEl) { hEl.textContent = hs; hEl.style.color = ckMode === 'hour' ? 'var(--gold)' : 'white'; }
+  if (mEl) { mEl.textContent = ms; mEl.style.color = ckMode === 'minute' ? 'var(--gold)' : 'white'; }
 }
 
-function openClockModal(){buildClockFace();ckHour=null;ckMin=null;ckMode='hour';document.getElementById('modeHour').classList.add('active');document.getElementById('modeMin').classList.remove('active');updateHands();document.getElementById('clockModal').classList.add('open');bindClockTouch();}
-function closeClockModal(){document.getElementById('clockModal').classList.remove('open');}
-function clearClock(){ckHour=null;ckMin=null;updateHands();}
-function setClockMode(m){ckMode=m;document.getElementById('modeHour').classList.toggle('active',m==='hour');document.getElementById('modeMin').classList.toggle('active',m==='minute');updateHands();}
-function bindClockTouch(){const wrap=document.getElementById('ckWrap');if(!wrap)return;const nw=wrap.cloneNode(true);wrap.parentNode.replaceChild(nw,wrap);nw.addEventListener('click',onClockClick);nw.addEventListener('touchend',e=>{e.preventDefault();onClockClick(e.changedTouches[0]);},{passive:false});}
-function onClockClick(e){const wrap=document.getElementById('ckWrap');if(!wrap)return;const rect=wrap.getBoundingClientRect();const sx=((e.clientX||e.pageX)-rect.left)*(230/rect.width),sy=((e.clientY||e.pageY)-rect.top)*(230/rect.height);const dx=sx-CX,dy=sy-CY;let angle=Math.atan2(dy,dx)*(180/Math.PI)+90;if(angle<0)angle+=360;if(ckMode==='hour'){let h=Math.round(angle/30)%12;if(h===0)h=12;if(Math.sqrt(dx*dx+dy*dy)<65)h=(h===12?0:h)+12;ckHour=h%24;ckMode='minute';document.getElementById('modeHour').classList.remove('active');document.getElementById('modeMin').classList.add('active');}else{ckMin=Math.round(angle/6)%60;}updateHands();}
+function openClockModal() {
+  buildClockFace();
+  ckHour = null; ckMin = null;
+  ckMode = 'hour';
+  document.getElementById('modeHour').classList.add('active');
+  document.getElementById('modeMin').classList.remove('active');
+  updateHands();
+  document.getElementById('clockModal').classList.add('open');
+  bindClockTouch();
+}
 
-// ========== دوال التوقيع ==========
-let sigCanvas=null,sigCtx=null,isDrawing=false,lastX=0,lastY=0;
+function closeClockModal() {
+  document.getElementById('clockModal').classList.remove('open');
+}
 
-function openSigModal(){document.getElementById('signatureModal').classList.add('open');sigCanvas=document.getElementById('signatureCanvas');sigCtx=sigCanvas.getContext('2d');sigCtx.clearRect(0,0,sigCanvas.width,sigCanvas.height);sigCtx.strokeStyle='#0f1f3d';sigCtx.lineWidth=2.5;sigCtx.lineCap='round';sigCtx.lineJoin='round';sigCanvas.addEventListener('touchstart',tStart,{passive:false});sigCanvas.addEventListener('touchmove',tMove,{passive:false});sigCanvas.addEventListener('touchend',()=>isDrawing=false);sigCanvas.addEventListener('mousedown',mDown);sigCanvas.addEventListener('mousemove',mMove);sigCanvas.addEventListener('mouseup',()=>isDrawing=false);sigCanvas.addEventListener('mouseleave',()=>isDrawing=false);}
-function closeSigModal(){document.getElementById('signatureModal').classList.remove('open');}
-function clearSigCanvas(){if(sigCtx)sigCtx.clearRect(0,0,sigCanvas.width,sigCanvas.height);}
+function clearClock() {
+  ckHour = null; ckMin = null;
+  updateHands();
+}
+
+function setClockMode(m) {
+  ckMode = m;
+  document.getElementById('modeHour').classList.toggle('active', m === 'hour');
+  document.getElementById('modeMin').classList.toggle('active', m === 'minute');
+  updateHands();
+}
+
+function bindClockTouch() {
+  const wrap = document.getElementById('ckWrap');
+  if (!wrap) return;
+  const nw = wrap.cloneNode(true);
+  wrap.parentNode.replaceChild(nw, wrap);
+  nw.addEventListener('click', onClockClick);
+  nw.addEventListener('touchend', e => {
+    e.preventDefault();
+    onClockClick(e.changedTouches[0]);
+  }, { passive: false });
+}
+
+function onClockClick(e) {
+  const wrap = document.getElementById('ckWrap');
+  if (!wrap) return;
+  const rect = wrap.getBoundingClientRect();
+  const sx = ((e.clientX || e.pageX) - rect.left) * (230 / rect.width);
+  const sy = ((e.clientY || e.pageY) - rect.top) * (230 / rect.height);
+  const dx = sx - CX, dy = sy - CY;
+  let angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
+  if (angle < 0) angle += 360;
+  if (ckMode === 'hour') {
+    let h = Math.round(angle / 30) % 12;
+    if (h === 0) h = 12;
+    if (Math.sqrt(dx * dx + dy * dy) < 65) h = (h === 12 ? 0 : h) + 12;
+    ckHour = h % 24;
+    ckMode = 'minute';
+    document.getElementById('modeHour').classList.remove('active');
+    document.getElementById('modeMin').classList.add('active');
+  } else {
+    ckMin = Math.round(angle / 6) % 60;
+  }
+  updateHands();
+}
+
+function confirmClock() {
+  if (ckHour === null || ckMin === null) {
+    showAlert('الرجاء اختيار الساعة والدقيقة', '⚠️');
+    return;
+  }
+  const t = (ckHour < 10 ? '0' + ckHour : '' + ckHour) + ':' + (ckMin < 10 ? '0' + ckMin : '' + ckMin);
+  
+  if (currentClockDayIndex !== null) {
+    const timeInput = document.getElementById(`dayTime_${currentClockDayIndex}`);
+    const timeDisplay = document.getElementById(`dayTimeDisplay_${currentClockDayIndex}`);
+    if (timeInput) timeInput.value = t;
+    if (timeDisplay) { timeDisplay.textContent = t; timeDisplay.classList.remove('ph'); }
+    if (!dayData[currentClockDayIndex]) dayData[currentClockDayIndex] = {};
+    dayData[currentClockDayIndex].time = t;
+    scheduleTotalCalc();
+  }
+  closeClockModal();
+}
+
+// ============================================
+// 9. دوال التوقيع (Signature)
+// ============================================
+
+let sigCanvas = null, sigCtx = null, isDrawing = false, lastX = 0, lastY = 0;
+
+function openSigModal() {
+  document.getElementById('signatureModal').classList.add('open');
+  sigCanvas = document.getElementById('signatureCanvas');
+  sigCtx = sigCanvas.getContext('2d');
+  sigCtx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
+  sigCtx.strokeStyle = '#0f1f3d';
+  sigCtx.lineWidth = 2.5;
+  sigCtx.lineCap = 'round';
+  sigCtx.lineJoin = 'round';
+  sigCanvas.addEventListener('touchstart', tStart, { passive: false });
+  sigCanvas.addEventListener('touchmove', tMove, { passive: false });
+  sigCanvas.addEventListener('touchend', () => isDrawing = false);
+  sigCanvas.addEventListener('mousedown', mDown);
+  sigCanvas.addEventListener('mousemove', mMove);
+  sigCanvas.addEventListener('mouseup', () => isDrawing = false);
+  sigCanvas.addEventListener('mouseleave', () => isDrawing = false);
+}
+
+function closeSigModal() {
+  document.getElementById('signatureModal').classList.remove('open');
+}
+
+function clearSigCanvas() {
+  if (sigCtx) sigCtx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
+}
+
 function confirmSignature() {
   if (!sigCanvas) return;
   const tempCanvas = document.createElement('canvas');
   const ctx = tempCanvas.getContext('2d');
-  tempCanvas.width = 200; tempCanvas.height = 80;
-  ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, 200, 80);
+  tempCanvas.width = 200;
+  tempCanvas.height = 80;
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, 200, 80);
   ctx.drawImage(sigCanvas, 0, 0, sigCanvas.width, sigCanvas.height, 0, 0, 200, 80);
   signatureData = tempCanvas.toDataURL('image/jpeg', 0.4);
   const sp = document.getElementById('sigPreview');
-  if (sp) { sp.style.display = 'block'; sp.innerHTML = `<img src="${signatureData}" alt="Signature" style="max-width:150px; border:1px solid #ccc;">`; }
+  if (sp) {
+    sp.style.display = 'block';
+    sp.innerHTML = `<img src="${signatureData}" alt="Signature" style="max-width:150px; border:1px solid #ccc;">`;
+  }
   closeSigModal();
 }
-function getPos(c,e){const r=c.getBoundingClientRect();return{x:(e.clientX-r.left)*(c.width/r.width),y:(e.clientY-r.top)*(c.height/r.height)};}
-function mDown(e){isDrawing=true;const p=getPos(sigCanvas,e);lastX=p.x;lastY=p.y;}
-function mMove(e){if(!isDrawing)return;const p=getPos(sigCanvas,e);sigCtx.beginPath();sigCtx.moveTo(lastX,lastY);sigCtx.lineTo(p.x,p.y);sigCtx.stroke();lastX=p.x;lastY=p.y;}
-function tStart(e){e.preventDefault();const t=e.touches[0],p=getPos(sigCanvas,t);isDrawing=true;lastX=p.x;lastY=p.y;}
-function tMove(e){e.preventDefault();if(!isDrawing)return;const t=e.touches[0],p=getPos(sigCanvas,t);sigCtx.beginPath();sigCtx.moveTo(lastX,lastY);sigCtx.lineTo(p.x,p.y);sigCtx.stroke();lastX=p.x;lastY=p.y;}
+
+function getPos(c, e) {
+  const r = c.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * (c.width / r.width), y: (e.clientY - r.top) * (c.height / r.height) };
+}
+
+function mDown(e) {
+  isDrawing = true;
+  const p = getPos(sigCanvas, e);
+  lastX = p.x; lastY = p.y;
+}
+
+function mMove(e) {
+  if (!isDrawing) return;
+  const p = getPos(sigCanvas, e);
+  sigCtx.beginPath();
+  sigCtx.moveTo(lastX, lastY);
+  sigCtx.lineTo(p.x, p.y);
+  sigCtx.stroke();
+  lastX = p.x; lastY = p.y;
+}
+
+function tStart(e) {
+  e.preventDefault();
+  const t = e.touches[0];
+  const p = getPos(sigCanvas, t);
+  isDrawing = true;
+  lastX = p.x; lastY = p.y;
+}
+
+function tMove(e) {
+  e.preventDefault();
+  if (!isDrawing) return;
+  const t = e.touches[0];
+  const p = getPos(sigCanvas, t);
+  sigCtx.beginPath();
+  sigCtx.moveTo(lastX, lastY);
+  sigCtx.lineTo(p.x, p.y);
+  sigCtx.stroke();
+  lastX = p.x; lastY = p.y;
+}
 </script>
 </body>
 </html>
