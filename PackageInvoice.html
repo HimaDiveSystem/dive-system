@@ -579,6 +579,113 @@ function applyTripToDay(dayIndex, tripData) {
   
   renderTripTableForDay(dayIndex, tripData.items, tripData.prices || [], dayData[dayIndex].items);
 }
+// ============================================
+// 10. دوال تحميل البيانات
+// ============================================
+
+async function loadExchangeRates() {
+  try {
+    console.log('📡 جاري تحميل أسعار الصرف...');
+    const rates = await gas('getLatestExchangeRates', { centerName: currentUser?.centerName });
+    if (rates) {
+      C.rate = rates;
+      
+      const items = [
+        { lbl: 'USD $', v: rates.bUSD || rates.sUSD || 50 },
+        { lbl: 'EUR €', v: rates.bEUR || rates.sEUR || 55 },
+        { lbl: 'GBP £', v: rates.bGBP || rates.sGBP || 60 }
+      ].filter(x => x.v && +x.v > 0);
+      
+      const tickerItems = items.map(it => {
+        const val = +it.v;
+        const display = Number.isInteger(val) ? val.toString() : val.toFixed(2);
+        return `<span class="ticker-item"><span class="rl">${it.lbl}</span><span class="rv">${display}</span></span>`;
+      });
+      const h = tickerItems.join('<span class="ticker-sep">◆</span>');
+      const tickerInner = document.getElementById('tickerInner');
+      if (tickerInner) tickerInner.innerHTML = h + '<span class="ticker-sep" style="padding:0 20px"></span>' + h;
+      
+      const rawDate = rates.date || '';
+      let displayDate = rawDate;
+      if (rawDate && (rawDate.includes('T') || rawDate.match(/^\d{4}-\d{2}-\d{2}/))) {
+        try {
+          const d = new Date(rawDate);
+          if (!isNaN(d)) {
+            const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            displayDate = String(d.getDate()).padStart(2,'0') + '/' + MN[d.getMonth()] + '/' + d.getFullYear();
+          }
+        } catch(e) {}
+      }
+      const tickerDate = document.getElementById('tickerDate');
+      if (tickerDate) tickerDate.textContent = '📅 ' + displayDate;
+      
+      console.log('✅ تم تحميل أسعار الصرف');
+    }
+  } catch(e) { console.error('❌ فشل تحميل أسعار الصرف:', e); }
+}
+
+async function loadCustomers() {
+  try {
+    console.log('📡 جاري تحميل العملاء...');
+    const raw = await gas('getAllCustomersForAC', { centerName: currentUser?.centerName });
+    if (Array.isArray(raw)) {
+      const map = new Map();
+      raw.forEach(c => {
+        if (c.phone) map.set(c.phone, {
+          phone: c.phone,
+          name: c.name || '',
+          nationality: c.nationality || '',
+          hotel: c.hotel || '',
+          roomNo: c.roomNo || ''
+        });
+      });
+      C.customers = Array.from(map.values());
+      console.log('✅ تم تحميل', C.customers.length, 'عميل');
+    }
+  } catch(e) { console.error('❌ فشل تحميل العملاء:', e); }
+}
+
+async function loadTrips() {
+  try {
+    console.log('📡 جاري تحميل الرحلات...');
+    const trips = await gas('getTripsByCategory', { category: 'Diving', centerName: currentUser?.centerName });
+    C.divingTrips = trips || [];
+    console.log('✅ تم تحميل', C.divingTrips.length, 'رحلة');
+    
+    ensureTripsDatalist();
+  } catch(e) { console.error('❌ فشل تحميل الرحلات:', e); }
+}
+
+async function loadNationalities() {
+  try {
+    const d = await gas('getNationalities');
+    if (Array.isArray(d)) {
+      const dl = document.getElementById('nationalitiesList');
+      if (dl) dl.innerHTML = d.map(v => `<option value="${v}">`).join('');
+    }
+  } catch(e) { console.error('❌ فشل تحميل الجنسيات:', e); }
+}
+
+async function loadHotels() {
+  try {
+    const d = await gas('getHotels');
+    if (Array.isArray(d)) {
+      const dl = document.getElementById('hotelsList');
+      if (dl) dl.innerHTML = d.map(v => `<option value="${v}">`).join('');
+    }
+  } catch(e) { console.error('❌ فشل تحميل الفنادق:', e); }
+}
+
+async function loadAllData() {
+  await Promise.all([
+    loadExchangeRates(),
+    loadCustomers(),
+    loadTrips(),
+    loadNationalities(),
+    loadHotels()
+  ]);
+  console.log('🎉 تم تحميل جميع البيانات بنجاح');
+}
 
 function renderTripTableForDay(dayIndex, items, prices, savedItems) {
   if (!items || !items.length) return;
