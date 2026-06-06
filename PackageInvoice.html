@@ -1052,7 +1052,137 @@ function renderForm() {
   buildDaysUI();
   scheduleTotalCalc();
 }
+document.addEventListener('DOMContentLoaded', async () => {
+  // ============================================
+  // 1. استعادة بيانات المستخدم
+  // ============================================
+  let ud = sessionStorage.getItem('currentUser');
+  if (!ud) {
+    const p = new URLSearchParams(location.search).get('user');
+    if (p) {
+      ud = decodeURIComponent(p);
+      sessionStorage.setItem('currentUser', ud);
+    }
+  }
+  if (!ud) {
+    location.href = 'index.html';
+    return;
+  }
+  try {
+    currentUser = JSON.parse(ud);
+  } catch {
+    location.href = 'index.html';
+    return;
+  }
 
+  // ============================================
+  // 2. عرض معلومات المستخدم
+  // ============================================
+  document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
+  document.getElementById('userAvatar').textContent = (currentUser.name || 'U')[0].toUpperCase();
+  if (currentUser.centerName) {
+    const e = document.getElementById('centerDisplay');
+    e.textContent = '🏢 ' + currentUser.centerName;
+    e.style.display = '';
+  }
+  if (currentUser.branchName) {
+    const e = document.getElementById('branchDisplay');
+    e.textContent = '📍 ' + currentUser.branchName;
+    e.style.display = '';
+  }
+  sessionPackages = [];
+
+  // ============================================
+  // 3. عرض النموذج الرئيسي
+  // ============================================
+  renderForm();
+
+  // ============================================
+  // 4. تحميل جميع البيانات بشكل متوازي
+  // ============================================
+  try {
+    // تحميل أسعار الصرف
+    const rates = await gas('getLatestExchangeRates', { centerName: currentUser?.centerName });
+    if (rates) {
+      C.rate = rates;
+      const td = fmtDateKey(new Date());
+      if (!C.rateByDate[td]) C.rateByDate[td] = rates;
+
+      const items = [
+        { lbl: 'USD $', v: rates.bUSD || rates.sUSD },
+        { lbl: 'EUR €', v: rates.bEUR || rates.sEUR },
+        { lbl: 'GBP £', v: rates.bGBP || rates.sGBP }
+      ].filter(x => x.v && +x.v > 0);
+
+      const tickerItems = items.map(it => {
+        const val = +it.v;
+        const display = Number.isInteger(val) ? val.toString() : val.toFixed(2);
+        return `<span class="ticker-item"><span class="rl">${it.lbl}</span><span class="rv">${display}</span></span>`;
+      });
+      const h = tickerItems.join('<span class="ticker-sep">◆</span>');
+      document.getElementById('tickerInner').innerHTML = h + '<span class="ticker-sep" style="padding:0 20px"></span>' + h;
+
+      const rawDate = rates.date || '';
+      let displayDate = rawDate;
+      if (rawDate && (rawDate.includes('T') || rawDate.match(/^\d{4}-\d{2}-\d{2}/))) {
+        try {
+          const d = new Date(rawDate);
+          if (!isNaN(d)) {
+            const MN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            displayDate = String(d.getDate()).padStart(2, '0') + '/' + MN[d.getMonth()] + '/' + d.getFullYear();
+          }
+        } catch (e) {}
+      }
+      document.getElementById('tickerDate').textContent = '📅 ' + displayDate;
+    }
+
+    // تحميل رحلات Diving
+    const divingTrips = await gas('getTripsByCategory', { category: 'Diving', centerName: currentUser?.centerName });
+    if (Array.isArray(divingTrips)) {
+      C.divingTrips = divingTrips;
+      console.log('✅ تم تحميل', divingTrips.length, 'رحلات Diving');
+    }
+
+    // تحميل الجنسيات
+    const nationalities = await gas('getNationalities');
+    if (Array.isArray(nationalities)) {
+      const dl = document.getElementById('nationalitiesList');
+      if (dl) dl.innerHTML = nationalities.map(v => `<option value="${v}">`).join('');
+    }
+
+    // تحميل الفنادق
+    const hotels = await gas('getHotels');
+    if (Array.isArray(hotels)) {
+      const dl = document.getElementById('hotelsList');
+      if (dl) dl.innerHTML = hotels.map(v => `<option value="${v}">`).join('');
+    }
+
+    // تحميل العملاء
+    const customersRaw = await gas('getAllCustomersForAC', { centerName: currentUser?.centerName });
+    if (Array.isArray(customersRaw)) {
+      const map = new Map();
+      customersRaw.forEach(c => {
+        if (c.phone) map.set(c.phone, {
+          phone: c.phone,
+          name: c.name || '',
+          nationality: c.nationality || '',
+          hotel: c.hotel || '',
+          roomNo: c.roomNo || ''
+        });
+      });
+      C.customers = Array.from(map.values());
+      console.log('✅ تم تحميل', C.customers.length, 'عميل');
+    }
+
+    // إنشاء datalist وإضافة الرحلات
+    ensureTripsDatalist();
+
+  } catch (error) {
+    console.error('❌ خطأ في تحميل البيانات:', error);
+  }
+
+  console.log('🎉 اكتمل تحميل الصفحة والبيانات');
+});
 // ============================================
 // 8. دوال الساعة (Clock Picker)
 // ============================================
