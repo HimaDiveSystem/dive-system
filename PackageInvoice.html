@@ -448,19 +448,26 @@ function buildDaysUI() {
   let html = '';
   for (let i = 0; i < packageDaysCount; i++) {
     const dayNum = i + 1;
-    const day = dayData[i] || { date: '', time: '', tripName: '', tripDef: [], tripPrices: [], items: [] };
+    const day = dayData[i] || { 
+      date: '', 
+      time: '', 
+      tripName: '', 
+      tripDef: [], 
+      tripPrices: [], 
+      items: []  // ✅ مصفوفة فارغة بدون أصفار
+    };
     
     html += `
       <div class="day-card" id="dayCard_${i}">
         <div class="day-header">
-          <span class="day-title">🏝️ اليوم ${dayNum}</span>
+          <span class="day-title">🏝️ Day ${dayNum}</span>
           <span class="day-subtotal" id="daySubtotal_${i}">0.00</span>
         </div>
         <div class="day-body">
           <div class="day-row">
-            <div class="fgroup"><label class="req">تاريخ التنفيذ</label><input type="date" class="fc" id="dayDate_${i}" onchange="onDayDateChange(${i})"></div>
-            <div class="fgroup"><label class="req">وقت المغادرة</label><input type="hidden" id="dayTime_${i}"><button type="button" class="time-btn-display" onclick="openClockModalForDay(${i})"><span id="dayTimeDisplay_${i}" class="ph">اختر الوقت...</span><span style="font-size:18px">🕐</span></button></div>
-            <div class="fgroup"><label class="req">اسم الرحلة</label><input type="text" class="fc" id="dayTrip_${i}" list="tripsList" placeholder="اختر رحلة غوص" onchange="loadTripForDay(${i})"></div>
+            <div class="fgroup"><label class="req">Execution Date</label><input type="date" class="fc" id="dayDate_${i}" onchange="onDayDateChange(${i})"></div>
+            <div class="fgroup"><label class="req">Departure Time</label><input type="hidden" id="dayTime_${i}"><button type="button" class="time-btn-display" onclick="openClockModalForDay(${i})"><span id="dayTimeDisplay_${i}" class="ph">Select time...</span><span style="font-size:18px">🕐</span></button></div>
+            <div class="fgroup"><label class="req">Trip Name</label><input type="text" class="fc" id="dayTrip_${i}" list="tripsList" placeholder="Select diving trip" onchange="loadTripForDay(${i})"></div>
           </div>
           <div id="dayTripItems_${i}" class="trip-table" style="display:none"></div>
           <div id="dayRateError_${i}" class="rate-error" style="display:none"></div>
@@ -489,7 +496,6 @@ function buildDaysUI() {
   
   scheduleTotalCalc();
 }
-
 async function onDayDateChange(dayIndex) {
   const date = document.getElementById(`dayDate_${dayIndex}`).value;
   if (!date) return;
@@ -546,7 +552,7 @@ async function loadTripForDay(dayIndex) {
   
   const container = document.getElementById(`dayTripItems_${dayIndex}`);
   container.style.display = 'block';
-  container.innerHTML = `<div class="trip-loading"><div class="trip-loading-spin"></div>جاري تحميل بيانات الرحلة...</div>`;
+  container.innerHTML = `<div class="trip-loading"><div class="trip-loading-spin"></div>Loading trip data...</div>`;
   
   try {
     const d = await gas('getTripData', {
@@ -558,7 +564,7 @@ async function loadTripForDay(dayIndex) {
     if (!d || !d.items || !d.items.length) {
       container.innerHTML = '';
       container.style.display = 'none';
-      showAlert('الرحلة غير موجودة: ' + tripName, '⚠️');
+      showAlert('Trip not found: ' + tripName, '⚠️');
       return;
     }
     C.trips[key] = d;
@@ -566,16 +572,19 @@ async function loadTripForDay(dayIndex) {
   } catch (e) {
     container.innerHTML = '';
     container.style.display = 'none';
-    showAlert('خطأ في تحميل الرحلة: ' + e.message, '❌');
+    showAlert('Error loading trip: ' + e.message, '❌');
   }
 }
-
 function applyTripToDay(dayIndex, tripData) {
   if (!dayData[dayIndex]) dayData[dayIndex] = {};
   dayData[dayIndex].tripDef = tripData.items;
   dayData[dayIndex].tripPrices = tripData.prices || [];
   dayData[dayIndex].tripName = tripData.name;
-  if (!dayData[dayIndex].items) dayData[dayIndex].items = [];
+  
+  // ✅ تهيئة savedItems كمصفوفة فارغة (بدون أصفار)
+  if (!dayData[dayIndex].items) {
+    dayData[dayIndex].items = new Array(tripData.items.length).fill('');
+  }
   
   renderTripTableForDay(dayIndex, tripData.items, tripData.prices || [], dayData[dayIndex].items);
 }
@@ -587,23 +596,21 @@ function renderTripTableForDay(dayIndex, items, prices, savedItems) {
   let hasAnyItems = false;
   
   for (let i = 0; i < items.length; i++) {
-    const qty = (savedItems && savedItems[i]) ? savedItems[i] : 0;
+    // ✅ جعل القيمة الافتراضية فارغة بدلاً من 0
+    const qty = (savedItems && savedItems[i] && savedItems[i] > 0) ? savedItems[i] : '';
     const priceValue = prices[i] || 0;
-    const total = qty * priceValue;
-    
-    // ✅ إخفاء البنود التي كميتها 0 (يمكن للمستخدم إظهارها لاحقاً)
-    const displayStyle = (qty === 0) ? 'style="opacity:0.5;"' : '';
+    const total = (qty && qty > 0) ? qty * priceValue : 0;
     
     rows += `
-      <tr> ${displayStyle}
+      <tr>
         <td style="font-weight:600">${esc(items[i])}</td>
-        <td><input type="number" id="dayQty_${dayIndex}_${i}" min="0" placeholder="0" value="${qty}" oninput="onDayQtyChange(${dayIndex}, ${i})"></td>
-        <td><input type="number" id="dayPrice_${dayIndex}_${i}" value="${priceValue}" readonly></td>
-        <td><input type="number" id="dayTotal_${dayIndex}_${i}" value="${total.toFixed(2)}" readonly></td>
+        <td><input type="number" id="dayQty_${dayIndex}_${i}" min="0" placeholder="0" value="${qty}" oninput="onDayQtyChange(${dayIndex}, ${i})" style="text-align:center;"></td>
+        <td><input type="number" id="dayPrice_${dayIndex}_${i}" value="${priceValue}" readonly style="text-align:center;"></td>
+        <td><input type="number" id="dayTotal_${dayIndex}_${i}" value="${total.toFixed(2)}" readonly style="text-align:center;"></td>
       </tr>
     `;
     
-    if (qty > 0) hasAnyItems = true;
+    if (qty && qty > 0) hasAnyItems = true;
   }
   
   const container = document.getElementById(`dayTripItems_${dayIndex}`);
@@ -618,9 +625,11 @@ function renderTripTableForDay(dayIndex, items, prices, savedItems) {
   
   updateDaySubtotal(dayIndex);
 }
-
 function onDayQtyChange(dayIndex, itemIndex) {
-  const qty = parseFloat(document.getElementById(`dayQty_${dayIndex}_${itemIndex}`).value) || 0;
+  // ✅ قراءة القيمة، إذا كانت فارغة أو NaN اعتبرها 0
+  let qtyRaw = document.getElementById(`dayQty_${dayIndex}_${itemIndex}`).value;
+  let qty = (qtyRaw === '' || qtyRaw === null) ? 0 : parseFloat(qtyRaw) || 0;
+  
   const price = parseFloat(document.getElementById(`dayPrice_${dayIndex}_${itemIndex}`).value) || 0;
   const total = qty * price;
   document.getElementById(`dayTotal_${dayIndex}_${itemIndex}`).value = total.toFixed(2);
