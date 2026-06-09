@@ -174,7 +174,48 @@ let currentUser = null, employees = [], statusMap = {}, balanceMap = {}, current
 const STATUSES = [{key:'حضور',cls:'P',label:'✅ حضور',val:1},{key:'غياب',cls:'A',label:'❌ غياب',val:0},{key:'إجازة',cls:'L',label:'🏖️ إجازة',val:1},{key:'نصف يوم',cls:'H',label:'½ نصف',val:0.5},{key:'غياب بدون إذن',cls:'U',label:'⛔ بدون إذن',val:-1},{key:'غياب يوم بيومين',cls:'D',label:'🔴 يوم×2',val:-2}];
 const MONTHS_AR = {Jan:'يناير',Feb:'فبراير',Mar:'مارس',Apr:'أبريل',May:'مايو',Jun:'يونيو',Jul:'يوليو',Aug:'أغسطس',Sep:'سبتمبر',Oct:'أكتوبر',Nov:'نوفمبر',Dec:'ديسمبر'};
 function statusToValue(s){ const st = STATUSES.find(x=>x.key===s); return st ? st.val : 0; }
-function jsonp(action, params={}){ return new Promise((res,rej)=>{ const cb='cb_'+Date.now()+'_'+Math.floor(Math.random()*99999); params.action=action; params.callback=cb; const qs=Object.entries(params).map(([k,v])=>k+'='+encodeURIComponent(String(v??''))).join('&'); const sc=document.createElement('script'); const to=setTimeout(()=>{delete window[cb];sc.remove();rej(new Error('انتهت المهلة'));},30000); window[cb]=d=>{clearTimeout(to);delete window[cb];sc.remove();res(d);}; sc.onerror=()=>{clearTimeout(to);delete window[cb];sc.remove();rej(new Error('خطأ في الاتصال'));}; sc.src=GAS_URL+'?'+qs; document.head.appendChild(sc); }); }
+// استبدل دالة jsonp الحالية بهذه (لنقل المعاملات بشكل صحيح)
+function jsonp(action, params = {}) {
+  return new Promise((resolve, reject) => {
+    const callbackName = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 99999);
+    params.action = action;
+    params.callback = callbackName;
+    
+    // ✅ أضف centerId و centerName تلقائياً إذا كان المستخدم موجوداً
+    if (currentUser) {
+      if (!params.centerId && currentUser.centerId) params.centerId = currentUser.centerId || currentUser.id || '';
+      if (!params.centerName && currentUser.centerName) params.centerName = currentUser.centerName;
+    }
+    
+    const queryString = Object.entries(params)
+      .map(([k, v]) => k + '=' + encodeURIComponent(String(v ?? '')))
+      .join('&');
+    
+    const script = document.createElement('script');
+    const timeout = setTimeout(() => {
+      delete window[callbackName];
+      script.remove();
+      reject(new Error('انتهت المهلة'));
+    }, 30000);
+    
+    window[callbackName] = (data) => {
+      clearTimeout(timeout);
+      delete window[callbackName];
+      script.remove();
+      resolve(data);
+    };
+    
+    script.onerror = () => {
+      clearTimeout(timeout);
+      delete window[callbackName];
+      script.remove();
+      reject(new Error('خطأ في الاتصال بالخادم'));
+    };
+    
+    script.src = GAS_URL + '?' + queryString;
+    document.head.appendChild(script);
+  });
+}
 document.addEventListener('DOMContentLoaded',()=>{ const ud=sessionStorage.getItem('currentUser'); if(!ud){ document.querySelector('.content').innerHTML='<div class="empty"><span class="empty-icon">🔒</span><h3 style="color:#e74c3c">يرجى تسجيل الدخول أولاً</h3><br><button class="btn-primary" onclick="location.href=\'AccountantDashboard.html\'">لوحة التحكم</button></div>'; return; } try{ currentUser=JSON.parse(ud); }catch(e){ location.href='AccountantDashboard.html'; return; } document.getElementById('userBadge').textContent = currentUser.name||'—'; const t=new Date(); const yr=document.getElementById('selYear'); for(let y=t.getFullYear()+1;y>=2020;y--){ const op=document.createElement('option'); op.value=y; op.textContent=y; if(y===t.getFullYear()) op.selected=true; yr.appendChild(op); } const mKeys=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; document.getElementById('selMonth').value=mKeys[t.getMonth()]; onPeriodChange(); });
 function onPeriodChange(){ const m=document.getElementById('selMonth').value; const y=document.getElementById('selYear').value; document.getElementById('btnNext1').disabled=!(m&&y); }
 async function confirmPeriod(){ const m=document.getElementById('selMonth').value; const y=document.getElementById('selYear').value; if(!m||!y){showToast('اختر الشهر والسنة أولاً','error');return;} const btn=document.getElementById('btnNext1'); btn.disabled=true; btn.innerHTML='<span class="loader" style="width:16px;height:16px;border-width:2px;margin:0;display:inline-block;vertical-align:middle;margin-left:6px;"></span> جاري...'; try{ await Promise.race([jsonp('setAttendancePeriod',{year:y,month:m}), new Promise(res=>setTimeout(()=>res({success:true}),3000))]); currentMonth=m; currentYear=y; document.getElementById('step1Card').style.display='none'; document.getElementById('step2Card').style.display='block'; document.getElementById('periodBadge').textContent=MONTHS_AR[m]+' '+y; const mIdx=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].indexOf(m); const firstDay=y+'-'+String(mIdx+1).padStart(2,'0')+'-01'; const lastDayNum=new Date(parseInt(y),mIdx+1,0).getDate(); const lastDay=y+'-'+String(mIdx+1).padStart(2,'0')+'-'+String(lastDayNum).padStart(2,'0'); const inp=document.getElementById('attDate'); inp.min=firstDay; inp.max=lastDay; const today=new Date(); const todayStr=today.toISOString().split('T')[0]; inp.value=todayStr; if(todayStr<firstDay) inp.value=firstDay; if(todayStr>lastDay) inp.value=lastDay; onDateChange(); setStep(2); }catch(e){ showToast('❌ '+e.message,'error'); }finally{ btn.disabled=false; btn.innerHTML='التالي ◀ اختيار اليوم'; } }
@@ -234,12 +275,14 @@ async function saveAndOpenSalary() {
 
 async function goToSalaryReport() {
   try {
-    // مزامنة البيانات أولاً
-    await jsonp('syncWorkingDaysToSalaries', { month: currentMonth, year: currentYear });
+    await jsonp('syncWorkingDaysToSalaries', { 
+      month: currentMonth, 
+      year: currentYear,
+      centerId: currentUser.centerId   // ✅ أضف هذا صراحةً
+    });
     const userParam = encodeURIComponent(JSON.stringify(currentUser));
     window.location.href = `SalaryReport.html?month=${currentMonth}&year=${currentYear}&user=${userParam}`;
   } catch(e) {
-    console.error('خطأ في الانتقال لتقرير المرتبات:', e);
     showToast('❌ ' + e.message, 'error');
   }
 }
