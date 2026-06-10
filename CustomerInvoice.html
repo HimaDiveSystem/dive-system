@@ -309,8 +309,16 @@ function gas(action, params = {}) {
     url.searchParams.set('action', action);
     url.searchParams.set('callback', callbackName);
     url.searchParams.set('_t', Date.now());
+    
+    // ✅ إضافة centerName و centerId تلقائياً
+    if (currentUser && currentUser.centerName && !params.centerName) {
+      params.centerName = currentUser.centerName;
+    }
+    if (currentUser && currentUser.centerId && !params.centerId) {
+      params.centerId = currentUser.centerId;
+    }
+    
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v ?? '')));
-
     window[callbackName] = function(data) {
       delete window[callbackName];
       if (script.parentNode) script.parentNode.removeChild(script);
@@ -390,7 +398,10 @@ function formatActivitiesText(items, quantities) {
 async function loadCustomerData(customerIdFromUrl) {
   try {
     console.log('🟢 loadCustomerData - بدء التحميل للعميل ID:', customerIdFromUrl);
-    const res = await gas('getAllSuppliersCustomers');
+    // ✅ إضافة centerName لجلب العملاء الخاصة بالمركز فقط
+    const res = await gas('getAllSuppliersCustomers', { 
+      centerName: currentUser?.centerName || '' 
+    });
     console.log('🟢 getAllSuppliersCustomers response:', res);
     allCustomers = Array.isArray(res) ? res.filter(c => c.customerType === 'Customer') : [];
     console.log('🟢 عدد العملاء:', allCustomers.length);
@@ -430,7 +441,10 @@ async function loadCustomerData(customerIdFromUrl) {
 // ====================== جلب بيانات الرحلات ======================
 async function loadTripsData() {
   try {
-    const res = await gas('getAllTrips');
+    // ✅ إضافة centerName لجلب الرحلات الخاصة بالمركز
+    const res = await gas('getAllTrips', { 
+      centerName: currentUser?.centerName || '' 
+    });
     allTrips = Array.isArray(res) ? res : [];
     console.log('🟢 getAllTrips response:', allTrips.length, 'رحلة');
     return true;
@@ -439,22 +453,20 @@ async function loadTripsData() {
     return false;
   }
 }
-
 // ====================== جلب بيانات الجنسيات والفنادق ======================
 async function loadLookups() {
   try {
+    // ✅ إضافة centerName لجلب الجنسيات والفنادق من الملف الرئيسي أو المركز
     const [nationalitiesRes, hotelsRes] = await Promise.all([
-      gas('getNationalities'),
-      gas('getHotels')
+      gas('getNationalities', { centerName: currentUser?.centerName || '' }),
+      gas('getHotels', { centerName: currentUser?.centerName || '' })
     ]);
     allNationalities = Array.isArray(nationalitiesRes) ? nationalitiesRes : [];
     allHotels = Array.isArray(hotelsRes) ? hotelsRes : [];
-    console.log('🟢 الجنسيات:', allNationalities.length, 'فنادق:', allHotels.length);
   } catch (e) {
     console.error('❌ loadLookups error:', e);
   }
 }
-
 // ====================== عند تغيير العميل ======================
 function onCustomerChange() {
   const customerName = document.getElementById('customer')?.value;
@@ -501,7 +513,12 @@ async function onTripChange() {
   }
   
   try {
-    const tripData = await gas('getTripData', { tripName, currency: '$' });
+    // ✅ إضافة centerName لجلب بيانات الرحلة من ملف المركز
+    const tripData = await gas('getTripData', { 
+      tripName, 
+      currency: '$',
+      centerName: currentUser?.centerName || '' 
+    });
     if (tripData && tripData.items && tripData.items.length > 0) {
       currentTripItems = tripData.items;
       activitiesQuantities = new Array(currentTripItems.length).fill(0);
@@ -633,8 +650,10 @@ async function saveInvoice() {
     state: 'pending',
     salesId: currentUser?.id || '',
     salesName: currentUser?.name || '',
-    centerName: centerName,
+     centerName: selectedCustomer?.parentCenter || currentUser?.centerName || '',
     branchName: currentUser?.branchName || '',
+    // ✅ إضافة centerName صراحةً للحفظ
+    centerNameForSave: currentUser?.centerName || ''
     invoiceCurrency: currency || '',
     cost: false
   };
@@ -643,8 +662,8 @@ async function saveInvoice() {
   if (btn) btn.disabled = true;
   
   try {
-    const result = await gas('saveInvoice', invoiceData);
-    if(result?.success){
+     const result = await gas('saveInvoice', { ...invoiceData, centerName: currentUser?.centerName || '' });
+        if(result?.success){
       showAlert(
         `✅ تم حفظ الفاتورة بنجاح\nرقم الفاتورة: ${result.voucherNo}\nالعميل: ${customer}\n${restAmount > 0 ? 'المبلغ المتبقي: ' + restAmount + ' ' + currency : ''}`,
         '✅',
