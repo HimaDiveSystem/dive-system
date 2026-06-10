@@ -75,7 +75,7 @@
 <div id="pdfOverlay" class="modal"><div class="modal-content"><div class="spinner"></div><p id="pdfMsg">جاري المعالجة...</p></div></div>
 
 <script>
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbwC1BRoLAJthZqxWTYyMUSjPNNGfCI0BjTfhE7ZiVx67rUP__OKAj0vlwD1-RUCOMSE/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec';
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 let currentUser = null, currentInvoice = null, originalInvoice = null;
@@ -121,9 +121,12 @@ function jsonpRequest(action, params = {}, isPost = false) {
   return new Promise((resolve, reject) => {
     const cbName = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 99999);
     
-    // إضافة centerName تلقائياً إذا كان موجوداً
-    if (currentInvoice && currentInvoice.centerName) {
+    // ✅ إضافة centerName تلقائياً من currentInvoice أو currentUser
+    if (currentInvoice && currentInvoice.centerName && !params.centerName) {
       params.centerName = currentInvoice.centerName;
+    }
+    if (currentUser && currentUser.centerName && !params.centerName && !currentInvoice) {
+      params.centerName = currentUser.centerName;
     }
     
     params.action = action;
@@ -416,7 +419,7 @@ async function submitCollection() {
       customer: currentInvoice.customer || '',
       state: currentInvoice.state || 'pending',
       invoiceCurrency: currentInvoice.invoiceCurrency || 'LE',
-      centerName: currentInvoice.centerName || '',
+     centerName: currentInvoice.centerName || '',  // ✅ أضف هذا
       branchName: currentInvoice.branchName || '',
       salesName: currentInvoice.salesName || '',
       cashUSD: cU, cashEUR: cE, cashGBP: cG, cashLE: cL,
@@ -511,21 +514,24 @@ async function saveChanges() {
   console.log('🔵 editedData:', editedData);
   showLoader(true, 'جاري حفظ التعديلات وإنشاء PDF...');
   try {
-    await gas('updateInvoice', editedData);
+    // ✅ إضافة centerName صراحةً
+    const updateParams = { ...editedData, centerName: currentInvoice.centerName };
+    await gas('updateInvoice', updateParams);
     await gas('copyInvoiceToEdit', {
       originalData: JSON.stringify(originalInvoice),
       editedData: JSON.stringify(editedData),
       userId: currentUser?.id || '',
-      editSummary: 'تعديل الفاتورة'
+      editSummary: 'تعديل الفاتورة',
+      centerName: currentInvoice.centerName  // ✅ أضف هذا
     });
     
     const pdfResult = await gas('saveAndGenerateSinglePDF_New', {
       voucherNo: editedData.voucherNo,
       prices: JSON.stringify(editedData.tripPrices || []),
-      total: editedData.actualPrice || 0
+      total: editedData.actualPrice || 0,
+      centerName: currentInvoice.centerName  // ✅ أضف هذا
     });
-    
-    console.log('🔵 pdfResult بعد الاستدعاء:', pdfResult);
+       console.log('🔵 pdfResult بعد الاستدعاء:', pdfResult);
     console.log('🔵 typeof pdfResult:', typeof pdfResult);
     console.log('🔵 JSON:', JSON.stringify(pdfResult));
     
@@ -551,21 +557,25 @@ async function saveChanges() {
 }
 
 async function loadInvoice() {
-  const params = new URLSearchParams(location.search);
+ const params = new URLSearchParams(location.search);
   const voucherNo = params.get('voucherNo');
-  const centerName = params.get('centerName');  // ✅ إضافة centerName من URL
+  let centerName = params.get('centerName');  
+  if (!centerName && currentUser && currentUser.centerName) {
+    centerName = currentUser.centerName;
+  }
   
   if (!voucherNo) { 
     showAlert('رقم الفاتورة غير موجود', '<button class="btn btn-primary" onclick="goBack()">رجوع</button>'); 
     return; 
   }
   
+  
   sessionStorage.setItem('returnUrl', document.referrer || 'Dashboard.html');
   showLoader(true, 'جاري تحميل الفاتورة...');
   
   try {
     // ✅ جلب الفاتورة مع centerName
-    const invoiceResult = await jsonpRequest('getInvoiceByVoucher', { 
+     const invoiceResult = await jsonpRequest('getInvoiceByVoucher', { 
       voucherNo: voucherNo,
       centerName: centerName 
     });
@@ -578,18 +588,17 @@ async function loadInvoice() {
     document.getElementById('voucherDisplay').textContent = voucherNo;
     
     // ✅ جلب الموظفين من ملف المركز الخاص
-    let employees = [];
-    if (currentInvoice.centerName) {
-      try {
-        employees = await jsonpRequest('getEmployeesByCenter', { 
-          centerName: currentInvoice.centerName 
-        });
-        allEmployees = Array.isArray(employees) ? employees : [];
-      } catch(e) {
-        console.warn('فشل جلب الموظفين:', e);
-      }
-    }
-    
+   let employees = [];
+if (currentInvoice.centerName) {
+  try {
+    employees = await jsonpRequest('getEmployeesByCenter', { 
+      centerName: currentInvoice.centerName 
+    });
+    allEmployees = Array.isArray(employees) ? employees : [];
+  } catch(e) {
+    console.warn('فشل جلب الموظفين:', e);
+  }
+}    
     // ✅ جلب بيانات الرحلات (من الملف الرئيسي - عامة)
     const [tripData, tripPricesData, uniqueTrips] = await Promise.all([
       jsonpRequest('getTripData', { tripName: currentInvoice.trip, currency: currentInvoice.invoiceCurrency || 'LE' }),
@@ -752,7 +761,12 @@ async function changeTrip() {
   const newTrip = document.getElementById('tripName')?.value;
   const currency = document.getElementById('invoiceCurrency')?.value;
   if (!newTrip || !currency) return;
-  const td = await gas('getTripData', { tripName: newTrip, currency });
+  // ✅ إضافة centerName
+  const td = await gas('getTripData', { 
+    tripName: newTrip, 
+    currency,
+    centerName: currentInvoice?.centerName || currentUser?.centerName || ''
+  });
   if (td?.items) {
     let rows = '';
     for (let i = 0; i < td.items.length; i++) {
