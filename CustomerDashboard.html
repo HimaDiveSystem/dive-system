@@ -180,8 +180,16 @@ function gas(action, params={}) {
     url.searchParams.set('action',action);
     url.searchParams.set('callback',cb);
     url.searchParams.set('_t',Date.now());
-    Object.entries(params).forEach(([k,v])=>url.searchParams.set(k,String(v??'')));
-    window[cb]=(data)=>{ delete window[cb]; if(s.parentNode) s.parentNode.removeChild(s); resolve(data); };
+    
+    // ✅ إضافة centerName و centerId تلقائياً
+    if (currentUser && currentUser.centerName && !params.centerName) {
+      params.centerName = currentUser.centerName;
+    }
+    if (currentUser && currentUser.centerId && !params.centerId) {
+      params.centerId = currentUser.centerId;
+    }
+    
+    Object.entries(params).forEach(([k,v])=>url.searchParams.set(k,String(v??'')));    window[cb]=(data)=>{ delete window[cb]; if(s.parentNode) s.parentNode.removeChild(s); resolve(data); };
     const s=document.createElement('script');
     s.src=url.toString();
     s.onerror=()=>{ delete window[cb]; if(s.parentNode) s.parentNode.removeChild(s); reject(new Error('خطأ في الاتصال')); };
@@ -1072,7 +1080,8 @@ function openEditCustomer(){
     return;
   }
   const userParam = encodeURIComponent(JSON.stringify(loggedInUser));
-  location.href = `ManageSupplierCustomers.html?customerId=${customerAccount.customerId}&user=${userParam}`;
+  // ✅ إضافة centerName إلى الرابط
+  location.href = `ManageSupplierCustomers.html?customerId=${customerAccount.customerId}&centerName=${currentUser?.centerName || ''}&user=${userParam}`;
 }
 
 function addNewInvoice() {
@@ -1083,8 +1092,8 @@ function addNewInvoice() {
   const returnUrl = window.location.href;
   sessionStorage.setItem('returnUrl', returnUrl);
   const userParam = encodeURIComponent(JSON.stringify(loggedInUser));
-  // ✅ تمرير customerId بدلاً من customerName
-  location.href = `CustomerInvoice.html?customerId=${customerAccount.customerId}&returnUrl=${encodeURIComponent(returnUrl)}&user=${userParam}`;
+  // ✅ إضافة centerName إلى الرابط
+  location.href = `CustomerInvoice.html?customerId=${customerAccount.customerId}&centerName=${currentUser?.centerName || ''}&returnUrl=${encodeURIComponent(returnUrl)}&user=${userParam}`;
 }
   
 
@@ -1116,11 +1125,12 @@ async function refreshCustomerData() {
       branchesParam = [loggedInUser.branchName];
     }
     
-    const result = await gas('collectAndUpdateCustomerSheet', {
-      customerId: customerAccount.customerId,
-      userId: loggedInUser?.id || '',
-      selectedBranches: JSON.stringify(branchesParam)
-    });
+   const result = await gas('collectAndUpdateCustomerSheet', {
+    customerId: customerAccount.customerId,
+    userId: loggedInUser?.id || '',
+    selectedBranches: JSON.stringify(branchesParam),
+    centerName: currentUser?.centerName || ''  // ✅ أضف هذا
+  });
     
     if(result && result.success) {
       showAlert(`✅ تم تحديث البيانات بنجاح!\nتم تحديث ${result.updatedDates || 0} تاريخ`, '✅');
@@ -1142,7 +1152,10 @@ async function refreshCustomerData() {
 
 async function loadSheetDataOnly() {
   const sheetName = customerAccount.customerName + '_' + customerAccount.category + '_' + customerAccount.customerType;
-  const res = await gas('getAccountSheetData', {sheetName});
+  const res = await gas('getAccountSheetData', {
+    sheetName: sheetName,
+    centerName: currentUser?.centerName || ''  // ✅ أضف هذا
+  });
   if(res?.success && Array.isArray(res.data)) {
     sheetData = res.data;
     parseSheetStructure();
@@ -1152,7 +1165,10 @@ async function loadSheetDataOnly() {
 async function loadAll(){
   document.getElementById('mainContent').innerHTML='<div class="loader"><div class="spinner"></div>جاري جلب الحساب...</div>';
   try{
-    const allAcc = await gas('getAllSuppliersCustomers');
+    // ✅ إضافة centerName لجلب الحسابات الخاصة بالمركز فقط
+    const allAcc = await gas('getAllSuppliersCustomers', { 
+      centerName: currentUser?.centerName || '' 
+    });
     const accounts = Array.isArray(allAcc) ? allAcc : [];
     
     if (viewingCustomer && viewingCustomer.customerId) {
@@ -1280,14 +1296,14 @@ function goBackToDashboard() {
   if (!returnUrl && document.referrer) returnUrl = document.referrer;
   if (returnUrl && returnUrl.includes('ManageSupplierCustomers.html')) {
     const userParam = encodeURIComponent(JSON.stringify(loggedInUser || currentUser));
-    location.href = `ManageSupplierCustomers.html?user=${userParam}`;
+    // ✅ إضافة centerName إلى الرابط
+    location.href = `ManageSupplierCustomers.html?centerName=${currentUser?.centerName || ''}&user=${userParam}`;
     return;
   }
   const dashboardPage = DASHBOARDS[userType] || 'Dashboard.html';
   const userParam = encodeURIComponent(JSON.stringify(loggedInUser || currentUser));
-  location.href = `${dashboardPage}?user=${userParam}`;
+  location.href = `${dashboardPage}?centerName=${currentUser?.centerName || ''}&user=${userParam}`;
 }
-
 window.doLogout = goBackToDashboard;
 window.closeAlert = closeAlert;
 window.switchTab = switchTab;
