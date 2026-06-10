@@ -417,7 +417,7 @@
 // ══════════════════════════════════════════════════════════
 // CONFIG
 // ══════════════════════════════════════════════════════════
-const GAS = 'https://script.google.com/macros/s/AKfycbwC1BRoLAJthZqxWTYyMUSjPNNGfCI0BjTfhE7ZiVx67rUP__OKAj0vlwD1-RUCOMSE/exec';
+const GAS = 'https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec';
 
 // ══════════════════════════════════════════════════════════
 // STATE
@@ -456,6 +456,7 @@ function jsonpRequest(action, params = {}) {
   return new Promise((resolve, reject) => {
     const cbName = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 99999);
     if (currentUser && currentUser.centerId) params.centerId = currentUser.centerId;
+    if (currentUser && currentUser.centerName && !params.centerName) params.centerName = currentUser.centerName;
     params.action   = action;
     params.callback = cbName;
 
@@ -780,11 +781,24 @@ async function loadEmployees() {
   try {
     const result = await jsonpRequest('getEmployeesByCenter', {
       centerId: currentUser?.centerId || '',
-      branchId: currentUser?.branchId || ''
+      branchId: currentUser?.branchId || '',
+      centerName: currentUser?.centerName || ''  // ✅ أضف هذا
     });
-    if (Array.isArray(result)) {
-      employees = result;
-      filteredEmployees = [...employees];
+    // بعد جلب result
+if (Array.isArray(result)) {
+  // ✅ تأكد من أن هؤلاء موظفون فقط (وليسوا عملاء أو منفذين)
+  employees = result.filter(emp => {
+    // استبعاد العملاء والمنفذين حسب نوع المستخدم
+    const isEmployee = emp.userType === 'Employee' || 
+                       emp.userType === 'Admin' || 
+                       emp.userType === 'Owner' ||
+                       emp.userType === 'Accountant' ||
+                       emp.userType === 'Sales' ||
+                       (!emp.userType && emp.position); // إذا لم يحدد نوع
+    return isEmployee;
+  });
+  filteredEmployees = [...employees];
+}    
       renderStats();
 
       const userType = currentUser?.type || '';
@@ -1196,7 +1210,7 @@ async function saveEmployee() {
       paymentSystem: g('empPaymentSystem'),
       status: isEdit ? g('empStatus') : 'نشط',
       centerId: currentUser?.centerId || '',
-      centerName: currentUser?.centerName || '',
+      centerName: currentUser?.centerName || '',  // ✅ أضف هذا
       hasSystemAccess: hasAccess ? 'true' : 'false',
       userType: g('empUserType') || 'Employee',
       username: hasAccess ? g('empUsername') : '',
@@ -1204,7 +1218,7 @@ async function saveEmployee() {
       password: hasAccess ? g('empPassword') : '',
       address: hasAccess ? g('empAddress') : ''
     };
-
+    
     const result = await jsonpRequest(isEdit ? 'updateEmployee' : 'addNewEmployee', params);
     if (!result || result.success !== true) throw new Error(result?.message || 'فشل حفظ البيانات');
 
@@ -1235,7 +1249,11 @@ if (hasPending) {
 async function viewHistory(serial) {
   try {
     const [history, emp] = [
-      await jsonpRequest('getSalaryHistory', { serial, centerId: currentUser?.centerId || '' }),
+      await jsonpRequest('getSalaryHistory', { 
+        serial, 
+        centerId: currentUser?.centerId || '',
+        centerName: currentUser?.centerName || ''  // ✅ أضف هذا
+      }),
       employees.find(e => e.serial === serial)
     ];
     
@@ -1311,7 +1329,8 @@ async function viewHistory(serial) {
 }
 
 function viewAttendance(serial) {
-  window.open('MyAttendance.html?serial=' + serial + '&centerId=' + (currentUser?.centerId || ''), '_blank');
+  const userParam = encodeURIComponent(JSON.stringify(currentUser));
+  window.open(`MyAttendance.html?serial=${serial}&centerId=${currentUser?.centerId || ''}&centerName=${currentUser?.centerName || ''}&user=${userParam}`, '_blank');
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1461,7 +1480,11 @@ function showInfo(html) {
   document.getElementById('confirmModal').classList.add('open');
 }
 
-function goBack() { window.location.href = 'AccountantDashboard.html'; }
+function goBack() { 
+  const returnUrl = sessionStorage.getItem('returnUrl');
+  if (returnUrl) location.href = returnUrl;
+  else window.location.href = 'AccountantDashboard.html';
+}
 </script>
 </body>
 </html>
