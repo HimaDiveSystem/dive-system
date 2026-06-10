@@ -182,6 +182,10 @@
       <button class="spin-btn" onclick="spinDate(-1)" title="Previous day">◀</button>
       <button class="spin-btn" onclick="spinDate(1)"  title="Next day">▶</button>
     </div>
+     <div class="last-date-info" style="display:flex; align-items:center; gap:8px; margin-right:auto;">
+    <span style="font-size:11px; color:#64748b;">📅 آخر تاريخ في الخزينة:</span>
+    <span id="lastCashDate" style="font-weight:700; color:#1e2b4f; background:#f1f5f9; padding:4px 12px; border-radius:20px;">—</span>
+  </div>
     <div id="branchSelWrap" style="display:none">
       <select class="branch-sel" id="branchSel" onchange="onBranchChange()">
         <option value="">-- اختر فرع --</option>
@@ -227,7 +231,7 @@ let canViewAllBranches=false;
 let systemTotals={invoices:{},revenues:{},income:{},expenses:{},balance:{},accumulatedBalance:{}};
 let savedCountData=null;
 let hasChanges=false;
-
+let lastCashDateStr = '';  // آخر تاريخ في شيت Cash_Sum
 function toDDMMMYYYY(dateStr) {
   if(!dateStr) return '';
   if(/^\d{1,2}\/[A-Za-z]{3}\/\d{4}$/.test(dateStr)) return dateStr;
@@ -269,12 +273,35 @@ function onNatPick() {
     loadData();  // ✅ تغيير: loadData() بدلاً من updateCashSumAndReload()
   }
 }
-
+async function getLastCashDate() {
+  try {
+    const result = await callGAS('getLastCashDateFromCenter', { 
+      centerName: currentUser?.centerName 
+    });
+    if (result?.success && result.lastDate) {
+      lastCashDateStr = result.lastDate;
+      document.getElementById('lastCashDate').textContent = lastCashDateStr;
+      return lastCashDateStr;
+    } else {
+      document.getElementById('lastCashDate').textContent = '—';
+      return null;
+    }
+  } catch(e) {
+    console.error('❌ getLastCashDate error:', e);
+    document.getElementById('lastCashDate').textContent = 'خطأ';
+    return null;
+  }
+}
 // في spinDate() - استبدل updateCashSumAndReload() بـ loadData()
 function spinDate(d) {
   if (!currentDateISO) {
     currentDateISO = getTodayDDMMMYYYY();
   }
+  // بعد تعيين currentDateISO
+if (lastCashDateStr && isDateAfterLastCashDate(currentDateISO)) {
+  showDateWarning(currentDateISO);
+  return;
+}
   const match = currentDateISO.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
   if (match) {
     const day = parseInt(match[1]);
@@ -291,12 +318,205 @@ function spinDate(d) {
     loadData();  // ✅ تغيير: loadData() بدلاً من updateCashSumAndReload()
   }
 }
-
+function isDateAfterLastCashDate(dateToCheck) {
+  if (!lastCashDateStr || !dateToCheck) return false;
+  
+  // تحويل إلى كائنات Date للمقارنة
+  const checkDate = new Date(dateToCheck);
+  const lastDate = new Date(lastCashDateStr);
+  
+  if (isNaN(checkDate) || isNaN(lastDate)) return false;
+  
+  return checkDate > lastDate;
+}
+  function showDateWarning(targetDate) {
+  // إزالة أي modal موجود مسبقاً
+  const existingModal = document.getElementById('cashDateWarningModal');
+  if (existingModal) existingModal.remove();
+  
+  const overlay = document.createElement('div');
+  overlay.id = 'cashDateWarningModal';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:20000;font-family:"Cairo",sans-serif;';
+  
+  overlay.innerHTML = `
+    <div style="background:white;width:90%;max-width:450px;border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3);overflow:hidden;animation:modalFadeIn 0.25s ease-out;direction:rtl;">
+      <div style="background:#fef3c7;padding:20px 24px;border-bottom:3px solid #f59e0b;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:28px;">⚠️</span>
+          <h2 style="margin:0;font-size:1.4rem;color:#92400e;">تنبيه</h2>
+        </div>
+      </div>
+      <div style="padding:24px;">
+        <p style="margin:0 0 15px 0;font-weight:bold;color:#7c2d12;font-size:15px;">
+          📅 التاريخ المطلوب (${targetDate}) يتجاوز آخر تاريخ مسجل في الخزينة (${lastCashDateStr || '—'})
+        </p>
+        <p style="margin:0 0 20px 0;font-size:13px;color:#475569;">
+          هل تريد إضافة التواريخ المفقودة إلى شيت الخزينة؟
+        </p>
+        <div style="display:flex;gap:12px;justify-content:center;">
+          <button id="cashDateAddBtn" style="background:#16a34a;color:white;border:none;padding:10px 24px;border-radius:40px;font-size:14px;font-weight:bold;cursor:pointer;">➕ إضافة تواريخ</button>
+          <button id="cashDateCancelBtn" style="background:#e5e7eb;color:#374151;border:none;padding:10px 24px;border-radius:40px;font-size:14px;font-weight:bold;cursor:pointer;">✖️ إلغاء</button>
+        </div>
+      </div>
+    </div>
+    <style>
+      @keyframes modalFadeIn {
+        from { opacity: 0; transform: scale(0.95) translateY(-10px); }
+        to { opacity: 1; transform: scale(1) translateY(0); }
+      }
+    </style>
+  `;
+  
+  document.body.appendChild(overlay);
+  document.body.style.overflow = 'hidden';
+  
+  const addBtn = document.getElementById('cashDateAddBtn');
+  const cancelBtn = document.getElementById('cashDateCancelBtn');
+  
+  const closeModal = () => {
+    overlay.remove();
+    document.body.style.overflow = '';
+  };
+  
+  addBtn.onclick = () => {
+    closeModal();
+    openDateRangeModal(targetDate);
+  };
+  
+  cancelBtn.onclick = () => {
+    closeModal();
+    // إعادة تعيين حقل التاريخ إلى آخر تاريخ صالح
+    if (lastCashDateStr) {
+      document.getElementById('dateTxt').value = lastCashDateStr;
+      currentDateISO = lastCashDateStr;
+    }
+  };
+  
+  overlay.onclick = (e) => {
+    if (e.target === overlay) {
+      closeModal();
+      if (lastCashDateStr) {
+        document.getElementById('dateTxt').value = lastCashDateStr;
+        currentDateISO = lastCashDateStr;
+      }
+    }
+  };
+}
+  function openDateRangeModal(targetDate) {
+  // إزالة أي modal موجود مسبقاً
+  const existingModal = document.getElementById('cashDateRangeModal');
+  if (existingModal) existingModal.remove();
+  
+  const overlay = document.createElement('div');
+  overlay.id = 'cashDateRangeModal';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:20001;font-family:"Cairo",sans-serif;';
+  
+  overlay.innerHTML = `
+    <div style="background:white;width:90%;max-width:400px;border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3);overflow:hidden;animation:modalFadeIn 0.25s ease-out;direction:rtl;">
+      <div style="background:linear-gradient(135deg,#0f1f3d,#1a3260);padding:18px 24px;">
+        <h3 style="margin:0;color:#f5c842;font-size:1.2rem;">📅 إضافة تواريخ مفقودة</h3>
+      </div>
+      <div style="padding:24px;">
+        <p style="margin:0 0 15px 0;font-size:13px;color:#475569;">
+          آخر تاريخ مسجل: <strong style="color:#1e2b4f;">${lastCashDateStr || '—'}</strong>
+        </p>
+        <div class="fgroup" style="margin-bottom:20px;">
+          <label style="font-size:12px;font-weight:700;color:#6c757d;">📅 التاريخ المستهدف</label>
+          <input type="date" id="targetDateInput" style="width:100%;padding:10px;border:2px solid #d0ddeb;border-radius:12px;font-size:14px;font-family:'Cairo',sans-serif;" value="${targetDate}">
+        </div>
+        <div style="display:flex;gap:12px;justify-content:center;">
+          <button id="confirmAddDatesBtn" style="background:#0f1f3d;color:#f5c842;border:none;padding:10px 24px;border-radius:40px;font-size:14px;font-weight:bold;cursor:pointer;">✅ إضافة</button>
+          <button id="cancelAddDatesBtn" style="background:#e5e7eb;color:#374151;border:none;padding:10px 24px;border-radius:40px;font-size:14px;font-weight:bold;cursor:pointer;">✖️ إلغاء</button>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(overlay);
+  document.body.style.overflow = 'hidden';
+  
+  const confirmBtn = document.getElementById('confirmAddDatesBtn');
+  const cancelBtn = document.getElementById('cancelAddDatesBtn');
+  
+  const closeModal = () => {
+    overlay.remove();
+    document.body.style.overflow = '';
+  };
+  
+  confirmBtn.onclick = async () => {
+    const targetDateInput = document.getElementById('targetDateInput').value;
+    if (!targetDateInput) {
+      showToast('الرجاء إدخال تاريخ صحيح', 'error');
+      return;
+    }
+    
+    // تحويل تاريخ الإدخال من yyyy-mm-dd إلى dd/MMM/yyyy
+    const [year, month, day] = targetDateInput.split('-');
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const monthName = months[parseInt(month) - 1];
+    const targetDateStr = `${parseInt(day)}/${monthName}/${year}`;
+    
+    // التحقق من أن التاريخ المستهدف أكبر من آخر تاريخ
+    const targetDateObj = new Date(year, parseInt(month)-1, parseInt(day));
+    const lastDateObj = new Date(lastCashDateStr);
+    
+    if (targetDateObj <= lastDateObj) {
+      showToast('⚠️ التاريخ المستهدف يجب أن يكون أكبر من آخر تاريخ مسجل', 'error');
+      return;
+    }
+    
+    closeModal();
+    showToast('⏳ جاري إضافة التواريخ المفقودة...', 'info', 10000);
+    
+    try {
+      const result = await callGAS('addMissingCashDates', {
+        lastDate: lastCashDateStr,
+        targetDate: targetDateStr,
+        centerName: currentUser?.centerName,
+        branchName: selectedBranch || currentUser?.branchName
+      });
+      
+      if (result?.success) {
+        showToast(`✅ تم إضافة ${result.addedDays || 0} يوم بنجاح`, 'success');
+        // إعادة تحميل آخر تاريخ والبيانات
+        await getLastCashDate();
+        await updateCashSumAndReload();
+      } else {
+        showToast('❌ فشل إضافة التواريخ: ' + (result?.message || ''), 'error');
+      }
+    } catch(e) {
+      showToast('❌ خطأ: ' + e.message, 'error');
+    }
+  };
+  
+  cancelBtn.onclick = () => {
+    closeModal();
+    // إعادة تعيين حقل التاريخ إلى آخر تاريخ صالح
+    if (lastCashDateStr) {
+      document.getElementById('dateTxt').value = lastCashDateStr;
+      currentDateISO = lastCashDateStr;
+    }
+  };
+  
+  overlay.onclick = (e) => {
+    if (e.target === overlay) {
+      closeModal();
+      if (lastCashDateStr) {
+        document.getElementById('dateTxt').value = lastCashDateStr;
+        currentDateISO = lastCashDateStr;
+      }
+    }
+  };
+}
 function onDateTxt() {
   const v = document.getElementById('dateTxt').value.trim();
   if (/^\d{1,2}\/[A-Za-z]{3}\/\d{4}$/.test(v)) {
     currentDateISO = v;
   }
+  if (lastCashDateStr && isDateAfterLastCashDate(currentDateISO)) {
+  showDateWarning(currentDateISO);
+  return;
+}
 }
 
 function onDateBlur(){
@@ -304,6 +524,10 @@ function onDateBlur(){
   if(!v||!/^\d{1,2}\/[A-Za-z]{3}\/\d{4}$/.test(v)){
     document.getElementById('dateTxt').value=currentDateISO||getTodayDDMMMYYYY();
   }
+  if (lastCashDateStr && isDateAfterLastCashDate(currentDateISO)) {
+  showDateWarning(currentDateISO);
+  return;
+}
 }
 
 
@@ -464,13 +688,19 @@ async function loadData() {
     selectedBranch = currentUser.branchName;
   }
   
+  // ✅ التحقق من أن التاريخ ليس أكبر من آخر تاريخ مسجل
+  if (lastCashDateStr && isDateAfterLastCashDate(currentDateISO)) {
+    showDateWarning(currentDateISO);
+    return;
+  }
+  
   const targetBranch = selectedBranch;
   
   // تصفية البيانات حسب اليوم والفرع
   const dayInv = allInvoices.filter(inv => toDDMMMYYYY(inv.issueDate) === currentDateISO && inv.branchName === targetBranch);
   const dayRev = allRevenues.filter(r => toDDMMMYYYY(r.date) === currentDateISO && r.branchName === targetBranch);
   const dayExp = allExpenses.filter(e => toDDMMMYYYY(e.date) === currentDateISO && e.branchName === targetBranch);
-  
+ 
   const invT = sumCur(dayInv, 'invoice');
   const revT = sumCur(dayRev, 'revenue');
   const expT = sumCur(dayExp, 'expense');
