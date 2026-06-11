@@ -119,7 +119,7 @@
 </div>
 
 <script>
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbwC1BRoLAJthZqxWTYyMUSjPNNGfCI0BjTfhE7ZiVx67rUP__OKAj0vlwD1-RUCOMSE/exec';
+const GAS_URL = ''https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec';
 const DASH = { Admin:'Dashboard.html', Owner:'OwnerDashboard.html', Sales:'SalesDashboard.html', Accountant:'AccountantDashboard.html' };
 
 let currentUser = null;
@@ -139,6 +139,10 @@ function showAlert(msg) {
 function jsonp(action, params = {}) {
   return new Promise((res, rej) => {
     const cb = 'cb_' + Date.now() + '_' + Math.floor(Math.random()*99999);
+    // ✅ إضافة centerName تلقائياً
+    if (currentUser && currentUser.centerName && !params.centerName) {
+      params.centerName = currentUser.centerName;
+    }
     params.action = action; params.callback = cb;
     const qs = Object.entries(params).map(([k,v]) => k+'='+encodeURIComponent(String(v??''))).join('&');
     const sc = document.createElement('script');
@@ -163,8 +167,16 @@ function fmtDisplayDate(ymd) {   // "01 Mar 2026"
 }
 
 // ── goBack ──
-function goBack() { window.location.href = DASH[currentUser?.type] || 'Dashboard.html'; }
-
+function goBack() { 
+  const returnUrl = sessionStorage.getItem('returnUrl');
+  if (returnUrl) {
+    location.href = returnUrl;
+  } else {
+    const dashboardPage = DASH[currentUser?.type] || 'AccountantDashboard.html';
+    const userParam = encodeURIComponent(JSON.stringify(currentUser));
+    location.href = `${dashboardPage}?centerName=${currentUser?.centerName || ''}&user=${userParam}`;
+  }
+}
 // ── Tabs ──
 function showTab(tab, el) {
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
@@ -275,7 +287,11 @@ async function onDateChange() {
   const st = document.getElementById('dateStatus');
 
   try {
-    const r = await jsonp('getExchangeRateByDateStr', { dateStr: gasDate });
+    const r = await jsonp('getExchangeRateByDateStr', { 
+      dateStr: gasDate,
+      centerName: currentUser?.centerName || ''  // ✅ أضف هذا
+    });
+ 
     if (r && r.found) {
       // ── تاريخ موجود → نملأ الحقول ──
       setVal('bUSD', r.bankUSD);  setVal('bEUR', r.bankEUR);
@@ -340,7 +356,7 @@ async function saveRates() {
   const pct  = parseFloat(document.getElementById('bankPct').value)||0;
   const f    = 1 - pct/100;
 
-  const btn = document.getElementById('btnSave');
+ const btn = document.getElementById('btnSave');
   btn.disabled = true; btn.textContent = '⏳ جاري الحفظ...';
 
   try {
@@ -350,7 +366,8 @@ async function saveRates() {
       bankVUSD: bU*f, bankVEUR: bE*f, bankVGBP: bG*f, bankVLE: f,
       salesUSD: sU,  salesEUR: sE,  salesGBP: sG,  salesLE: 1,
       salesVUSD:sU*f, salesVEUR:sE*f, salesVGBP:sG*f, salesVLE: f,
-      bankPct:  pct
+      bankPct:  pct,
+      centerName: currentUser?.centerName || ''  // ✅ أضف هذا
     });
     if (r && r.success) {
       showMsg('success', r.message || 'تم الحفظ بنجاح ✅');
@@ -392,7 +409,9 @@ async function showAllRates() {
   const content = document.getElementById('mainContent');
   content.innerHTML = '<div class="loader"></div>';
   try {
-    const rates = await jsonp('getAllExchangeRatesNew');
+    const rates = await jsonp('getAllExchangeRatesNew', { 
+      centerName: currentUser?.centerName || '' 
+    });
     if (!rates || !rates.length) { content.innerHTML='<div class="empty">لا توجد بيانات</div>'; return; }
     let html = `<div class="table-outer"><div class="table-scroll">
       <table class="rates-table">
@@ -428,18 +447,18 @@ async function showAllRates() {
     content.innerHTML = html;
   } catch(e) { content.innerHTML = `<div class="empty">خطأ: ${e.message}</div>`; }
 }
-
 // ── آخر تاريخ ──
 async function loadLastDate() {
   try {
-    const r = await jsonp('getLastExchangeDate');
+    const r = await jsonp('getLastExchangeDate', { 
+      centerName: currentUser?.centerName || '' 
+    });
     const raw = r?.date || r || null;
     lastDateDisplay = raw || 'لا توجد بيانات';
     const el = document.getElementById('lastDateLbl');
     if (el) el.textContent = lastDateDisplay;
   } catch(e) {}
 }
-
 // ── Init ──
 document.addEventListener('DOMContentLoaded', async () => {
   let ud = sessionStorage.getItem('currentUser');
