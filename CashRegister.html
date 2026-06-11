@@ -644,19 +644,8 @@ async function updateCashSumAndReload() {
 }
 
 async function prefetchAll(){
-  try{
-    const [inv,rev,exp]=await Promise.all([
-      callGAS('getAllInvoices', { centerName: currentUser?.centerName || '' }),  // ✅ تمرير centerName
-      callGAS('getAllRevenues'),
-      callGAS('getAllExpenses'),
-    ]);
-    allInvoices=Array.isArray(inv)?inv:[];
-    allRevenues=Array.isArray(rev)?rev:[];
-    allExpenses=Array.isArray(exp)?exp:[];
-    console.log('✅ prefetchAll completed');
-  }catch(e){
-    document.getElementById('mainContent').innerHTML=`<div class="load-state">⚠️ Failed to load data: ${e.message}</div>`;
-  }
+  // لا نحتاج إلى جلب أي بيانات مسبقاً
+  console.log('✅ prefetchAll: using on-demand data loading');
 }
 
 function sumCur(rows,type){
@@ -703,46 +692,77 @@ async function loadData() {
   
   const targetBranch = selectedBranch;
   
-  // تصفية البيانات حسب اليوم والفرع
-  const dayInv = allInvoices.filter(inv => toDDMMMYYYY(inv.issueDate) === currentDateISO && inv.branchName === targetBranch);
-  const dayRev = allRevenues.filter(r => toDDMMMYYYY(r.date) === currentDateISO && r.branchName === targetBranch);
-  const dayExp = allExpenses.filter(e => toDDMMMYYYY(e.date) === currentDateISO && e.branchName === targetBranch);
- 
-  const invT = sumCur(dayInv, 'invoice');
-  const revT = sumCur(dayRev, 'revenue');
-  const expT = sumCur(dayExp, 'expense');
-  const incT = {};
-  const balT = {};
-
-  CURRENCIES.forEach(c => {
-    incT[c.key] = roundTwo((invT[c.key] || 0) + (revT[c.key] || 0));
-    balT[c.key] = roundTwo((incT[c.key] || 0) - (expT[c.key] || 0));
-  });
-
-  systemTotals = { invoices: invT, revenues: revT, income: incT, expenses: expT, balance: balT };
+  showToast('⏳ جاري تحميل بيانات اليوم...', 'info', 5000);
+  document.getElementById('mainContent').innerHTML = '<div class="load-state"><div class="spinner"></div><br>جاري تحميل بيانات ' + currentDateISO + '...</div>';
   
-  // جلب الرصيد التراكمي من Cash_Sum
   try {
-    const cashSumData = await callGAS('getCashSumData', { dateISO: currentDateISO, branchName: targetBranch });
-    if (cashSumData?.success && cashSumData.accumulatedBalance) {
-      systemTotals.accumulatedBalance = cashSumData.accumulatedBalance;
-      systemTotals.balance = cashSumData.accumulatedBalance;
-      console.log('✅ تم جلب الرصيد التراكمي:', cashSumData.accumulatedBalance);
-    } else {
+    // ✅ جلب البيانات ليوم واحد فقط
+    const [dayInv, dayRev, dayExp] = await Promise.all([
+      callGAS('getInvoicesByDateOnly', { 
+        dateStr: currentDateISO, 
+        branchName: targetBranch,
+        centerName: currentUser?.centerName || ''
+      }),
+      callGAS('getRevenuesByDateOnly', { 
+        dateStr: currentDateISO, 
+        branchName: targetBranch,
+        centerName: currentUser?.centerName || ''
+      }),
+      callGAS('getExpensesByDateOnly', { 
+        dateStr: currentDateISO, 
+        branchName: targetBranch,
+        centerName: currentUser?.centerName || ''
+      })
+    ]);
+    
+    const invT = sumCur(dayInv || [], 'invoice');
+    const revT = sumCur(dayRev || [], 'revenue');
+    const expT = sumCur(dayExp || [], 'expense');
+    const incT = {};
+    const balT = {};
+
+    CURRENCIES.forEach(c => {
+      incT[c.key] = roundTwo((invT[c.key] || 0) + (revT[c.key] || 0));
+      balT[c.key] = roundTwo((incT[c.key] || 0) - (expT[c.key] || 0));
+    });
+
+    systemTotals = { 
+      invoices: invT, 
+      revenues: revT, 
+      income: incT, 
+      expenses: expT, 
+      balance: balT 
+    };
+    
+    // جلب الرصيد التراكمي من Cash_Sum
+    try {
+      const cashSumData = await callGAS('getCashSumData', { 
+        dateISO: currentDateISO, 
+        branchName: targetBranch,
+        centerName: currentUser?.centerName || ''
+      });
+      if (cashSumData?.success && cashSumData.accumulatedBalance) {
+        systemTotals.accumulatedBalance = cashSumData.accumulatedBalance;
+        systemTotals.balance = cashSumData.accumulatedBalance;
+      } else {
+        systemTotals.accumulatedBalance = balT;
+        systemTotals.balance = balT;
+      }
+    } catch(e) {
+      console.warn('❌ فشل جلب الرصيد التراكمي:', e);
       systemTotals.accumulatedBalance = balT;
       systemTotals.balance = balT;
-      console.log('⚠️ لا توجد بيانات تراكمية، استخدام الرصيد اليومي');
     }
+    
+    renderPage(dayInv?.length || 0, dayRev?.length || 0, dayExp?.length || 0);
+    loadSavedCount();
+    
   } catch(e) {
-    console.warn('❌ فشل جلب الرصيد التراكمي:', e);
-    systemTotals.accumulatedBalance = balT;
-    systemTotals.balance = balT;
+    console.error('❌ loadData error:', e);
+    document.getElementById('mainContent').innerHTML = `<div class="load-state">❌ خطأ في تحميل البيانات: ${e.message}</div>`;
+    showToast('❌ خطأ في تحميل البيانات', 'error');
   }
-  
-  renderPage(dayInv.length, dayRev.length, dayExp.length);
-  loadSavedCount();
 }
-
 function renderPage(invCnt,revCnt,expCnt){
   const dt=currentDateISO;
   const ch=()=>CURRENCIES.map(c=>`<div class="cur-header-cell"><span class="flag">${c.flag}</span><span class="code">${c.label}</span></div>`).join('');
