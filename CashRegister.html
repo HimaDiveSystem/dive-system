@@ -232,6 +232,16 @@ let systemTotals={invoices:{},revenues:{},income:{},expenses:{},balance:{},accum
 let savedCountData=null;
 let hasChanges=false;
 let lastCashDateStr = '';  // آخر تاريخ في شيت Cash_Sum
+  // إعدادات التخزين المؤقت
+let dataCache = {
+  invoices: {},   // { "dd/MMM/yyyy": [...] }
+  revenues: {},   // { "dd/MMM/yyyy": [...] }
+  expenses: {},   // { "dd/MMM/yyyy": [...] }
+  range: { startDate: null, endDate: null }
+};
+let isDataLoaded = false;
+const CACHE_DAYS_RANGE = 10; // 10 أيام قبل و 10 أيام بعد
+  
 function toDDMMMYYYY(dateStr) {
   if(!dateStr) return '';
   if(/^\d{1,2}\/[A-Za-z]{3}\/\d{4}$/.test(dateStr)) return dateStr;
@@ -643,9 +653,65 @@ async function updateCashSumAndReload() {
   }
 }
 
-async function prefetchAll(){
-  // لا نحتاج إلى جلب أي بيانات مسبقاً
-  console.log('✅ prefetchAll: using on-demand data loading');
+async function prefetchAll() {
+  console.log('🚀 prefetchAll: بدء تجميع البيانات تلقائياً...');
+  
+  // تعيين التاريخ إلى اليوم الحالي
+  const todayStr = getTodayDDMMMYYYY();
+  currentDateISO = todayStr;
+  document.getElementById('dateTxt').value = todayStr;
+  
+  // حساب نطاق التواريخ (10 أيام قبل + 10 أيام بعد)
+  const dateObj = new Date();
+  const startDate = new Date(dateObj);
+  startDate.setDate(dateObj.getDate() - CACHE_DAYS_RANGE);
+  const endDate = new Date(dateObj);
+  endDate.setDate(dateObj.getDate() + CACHE_DAYS_RANGE);
+  
+  const startStr = formatDateForCache(startDate);
+  const endStr = formatDateForCache(endDate);
+  
+  console.log(`📅 نطاق التواريخ: ${startStr} → ${endStr}`);
+  
+  try {
+    showToast('⏳ جاري تجميع البيانات في الخلفية...', 'info', 10000);
+    
+    // جلب البيانات لجميع التواريخ في النطاق دفعة واحدة
+    const result = await callGAS('fetchCashDataInRange', {
+      startDate: startStr,
+      endDate: endStr,
+      branchName: selectedBranch || currentUser?.branchName || '',
+      centerName: currentUser?.centerName || ''
+    });
+    
+    if (result?.success) {
+      dataCache.invoices = result.invoices || {};
+      dataCache.revenues = result.revenues || {};
+      dataCache.expenses = result.expenses || {};
+      dataCache.range.startDate = startStr;
+      dataCache.range.endDate = endStr;
+      isDataLoaded = true;
+      console.log('✅ تم تجميع البيانات بنجاح');
+      showToast('✅ تم تجميع البيانات بنجاح', 'success', 2000);
+      
+      // تحميل بيانات اليوم الحالي
+      await loadData();
+    } else {
+      console.error('❌ فشل تجميع البيانات:', result?.message);
+      showToast('❌ فشل تجميع البيانات: ' + (result?.message || ''), 'error');
+    }
+  } catch(e) {
+    console.error('❌ prefetchAll error:', e);
+    showToast('❌ خطأ في تجميع البيانات: ' + e.message, 'error');
+  }
+}
+
+function formatDateForCache(date) {
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = months[date.getMonth()];
+  const year = date.getFullYear();
+  return `${day}/${month}/${year}`;
 }
 
 function sumCur(rows,type){
@@ -684,36 +750,57 @@ async function loadData() {
     selectedBranch = currentUser.branchName;
   }
   
+  const targetBranch = selectedBranch;
+  
   // ✅ التحقق من أن التاريخ ليس أكبر من آخر تاريخ مسجل
   if (lastCashDateStr && isDateAfterLastCashDate(currentDateISO)) {
     showDateWarning(currentDateISO);
     return;
   }
   
-  const targetBranch = selectedBranch;
+  showToast('⏳ جاري تحميل بيانات ' + currentDateISO + '...', 'info', 3000);
   
-  showToast('⏳ جاري تحميل بيانات اليوم...', 'info', 5000);
+  // عرض مؤشر تحميل
   document.getElementById('mainContent').innerHTML = '<div class="load-state"><div class="spinner"></div><br>جاري تحميل بيانات ' + currentDateISO + '...</div>';
   
   try {
-    // ✅ جلب البيانات ليوم واحد فقط
-    const [dayInv, dayRev, dayExp] = await Promise.all([
-      callGAS('getInvoicesByDateOnly', { 
-        dateStr: currentDateISO, 
-        branchName: targetBranch,
-        centerName: currentUser?.centerName || ''
-      }),
-      callGAS('getRevenuesByDateOnly', { 
-        dateStr: currentDateISO, 
-        branchName: targetBranch,
-        centerName: currentUser?.centerName || ''
-      }),
-      callGAS('getExpensesByDateOnly', { 
-        dateStr: currentDateISO, 
-        branchName: targetBranch,
-        centerName: currentUser?.centerName || ''
-      })
-    ]);
+    let dayInv = [], dayRev = [], dayExp = [];
+    
+    // ✅ استخدام البيانات المخزنة مؤقتاً إذا كانت موجودة
+    if (isDataLoaded && dataCache.invoices[currentDateISO]) {
+      console.log('📦 استخدام البيانات المخزنة مؤقتاً لـ ' + currentDateISO);
+      dayInv = dataCache.invoices[currentDateISO] || [];
+      dayRev = dataCache.revenues[currentDateISO] || [];
+      dayExp = dataCache.expenses[currentDateISO] || [];
+    } else {
+      // ✅ جلب البيانات من الخادم (للتاريخ خارج النطاق)
+      console.log('🌐 جلب البيانات من الخادم لـ ' + currentDateISO);
+      [dayInv, dayRev, dayExp] = await Promise.all([
+        callGAS('getInvoicesByDateOnly', { 
+          dateStr: currentDateISO, 
+          branchName: targetBranch,
+          centerName: currentUser?.centerName || ''
+        }),
+        callGAS('getRevenuesByDateOnly', { 
+          dateStr: currentDateISO, 
+          branchName: targetBranch,
+          centerName: currentUser?.centerName || ''
+        }),
+        callGAS('getExpensesByDateOnly', { 
+          dateStr: currentDateISO, 
+          branchName: targetBranch,
+          centerName: currentUser?.centerName || ''
+        })
+      ]);
+      
+      // ✅ تخزين البيانات في Cache
+      if (dataCache.range.startDate && dataCache.range.endDate && 
+          isDateInRange(currentDateISO, dataCache.range.startDate, dataCache.range.endDate)) {
+        dataCache.invoices[currentDateISO] = dayInv;
+        dataCache.revenues[currentDateISO] = dayRev;
+        dataCache.expenses[currentDateISO] = dayExp;
+      }
+    }
     
     const invT = sumCur(dayInv || [], 'invoice');
     const revT = sumCur(dayRev || [], 'revenue');
@@ -762,6 +849,26 @@ async function loadData() {
     document.getElementById('mainContent').innerHTML = `<div class="load-state">❌ خطأ في تحميل البيانات: ${e.message}</div>`;
     showToast('❌ خطأ في تحميل البيانات', 'error');
   }
+}
+
+function isDateInRange(dateStr, startStr, endStr) {
+  if (!startStr || !endStr) return false;
+  
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const monthMap = {'Jan':0,'Feb':1,'Mar':2,'Apr':3,'May':4,'Jun':5,'Jul':6,'Aug':7,'Sep':8,'Oct':9,'Nov':10,'Dec':11};
+  
+  const parseDate = (d) => {
+    const m = d.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
+    if (!m) return null;
+    return new Date(parseInt(m[3]), monthMap[m[2]], parseInt(m[1]));
+  };
+  
+  const target = parseDate(dateStr);
+  const start = parseDate(startStr);
+  const end = parseDate(endStr);
+  
+  if (!target || !start || !end) return false;
+  return target >= start && target <= end;
 }
 function renderPage(invCnt,revCnt,expCnt){
   const dt=currentDateISO;
