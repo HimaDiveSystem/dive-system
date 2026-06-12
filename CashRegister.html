@@ -691,54 +691,56 @@ async function updateCashSumAndReload() {
 async function prefetchAll() {
   console.log('🚀 prefetchAll: بدء تجميع البيانات تلقائياً...');
   
-  // تعيين التاريخ إلى اليوم الحالي
-  const todayStr = getTodayDDMMMYYYY();
-  currentDateISO = todayStr;
-  document.getElementById('dateTxt').value = todayStr;
-  
-  // حساب نطاق التواريخ (10 أيام قبل + 10 أيام بعد)
-  const dateObj = new Date();
-  const startDate = new Date(dateObj);
-  startDate.setDate(dateObj.getDate() - CACHE_DAYS_RANGE);
-  const endDate = new Date(dateObj);
-  endDate.setDate(dateObj.getDate() + CACHE_DAYS_RANGE);
-  
-  const startStr = formatDateForCache(startDate);
-  const endStr = formatDateForCache(endDate);
-  
-  console.log(`📅 نطاق التواريخ: ${startStr} → ${endStr}`);
-  
-  try {
-    showToast('⏳ جاري تجميع البيانات في الخلفية...', 'info', 10000);
+  // ✅ تأخير تحميل البيانات حتى يتم تحميل جميع الدوال
+  setTimeout(async () => {
+    // تعيين التاريخ إلى اليوم الحالي
+    const todayStr = getTodayDDMMMYYYY();
+    currentDateISO = todayStr;
+    document.getElementById('dateTxt').value = todayStr;
     
-    // جلب البيانات لجميع التواريخ في النطاق دفعة واحدة
-    const result = await callGAS('fetchCashDataInRange', {
-      startDate: startStr,
-      endDate: endStr,
-      branchName: selectedBranch || currentUser?.branchName || '',
-      centerName: currentUser?.centerName || ''
-    });
+    // حساب نطاق التواريخ (10 أيام قبل + 10 أيام بعد)
+    const dateObj = new Date();
+    const startDate = new Date(dateObj);
+    startDate.setDate(dateObj.getDate() - CACHE_DAYS_RANGE);
+    const endDate = new Date(dateObj);
+    endDate.setDate(dateObj.getDate() + CACHE_DAYS_RANGE);
     
-    if (result?.success) {
-      dataCache.invoices = result.invoices || {};
-      dataCache.revenues = result.revenues || {};
-      dataCache.expenses = result.expenses || {};
-      dataCache.range.startDate = startStr;
-      dataCache.range.endDate = endStr;
-      isDataLoaded = true;
-      console.log('✅ تم تجميع البيانات بنجاح');
-      showToast('✅ تم تجميع البيانات بنجاح', 'success', 2000);
+    const startStr = formatDateForCache(startDate);
+    const endStr = formatDateForCache(endDate);
+    
+    console.log(`📅 نطاق التواريخ: ${startStr} → ${endStr}`);
+    
+    try {
+      showToast('⏳ جاري تجميع البيانات في الخلفية...', 'info', 10000);
+      // جلب البيانات لجميع التواريخ في النطاق دفعة واحدة
+      const result = await callGAS('fetchCashDataInRange', {
+        startDate: startStr,
+        endDate: endStr,
+        branchName: selectedBranch || currentUser?.branchName || '',
+        centerName: currentUser?.centerName || ''
+      });
       
-      // تحميل بيانات اليوم الحالي
-      await loadData();
-    } else {
-      console.error('❌ فشل تجميع البيانات:', result?.message);
-      showToast('❌ فشل تجميع البيانات: ' + (result?.message || ''), 'error');
+      if (result?.success) {
+        dataCache.invoices = result.invoices || {};
+        dataCache.revenues = result.revenues || {};
+        dataCache.expenses = result.expenses || {};
+        dataCache.range.startDate = startStr;
+        dataCache.range.endDate = endStr;
+        isDataLoaded = true;
+        console.log('✅ تم تجميع البيانات بنجاح');
+        showToast('✅ تم تجميع البيانات بنجاح', 'success', 2000);
+        
+        // تحميل بيانات اليوم الحالي
+        await loadData();
+      } else {
+        console.error('❌ فشل تجميع البيانات:', result?.message);
+        showToast('❌ فشل تجميع البيانات: ' + (result?.message || ''), 'error');
+      }
+    } catch(e) {
+      console.error('❌ prefetchAll error:', e);
+      showToast('❌ خطأ في تجميع البيانات: ' + e.message, 'error');
     }
-  } catch(e) {
-    console.error('❌ prefetchAll error:', e);
-    showToast('❌ خطأ في تجميع البيانات: ' + e.message, 'error');
-  }
+  }, 100);  // ✅ إغلاق setTimeout هنا
 }
 
 function formatDateForCache(date) {
@@ -769,6 +771,63 @@ function sumCur(rows,type){
     }
   });
   Object.keys(r).forEach(k=>r[k]=roundTwo(r[k]));return r;
+}
+function renderPage(invCnt, revCnt, expCnt) {
+  const dt = currentDateISO;
+  const ch = () => CURRENCIES.map(c => `<div class="cur-header-cell"><span class="flag">${c.flag}</span><span class="code">${c.label}</span></div>`).join('');
+  
+  document.getElementById('mainContent').innerHTML = `
+    <div class="cur-headers">${ch()}</div>
+    <div class="section-card"><div class="section-head sh-inv"><h3>🧾 Invoices <small style="font-size:11px;opacity:.7">(${dt})</small></h3><span class="sh-badge">${invCnt} invoices</span></div><div class="section-body"><div class="cur-grid">${curRow('invoices')}</div></div></div>
+    <div class="section-card"><div class="section-head sh-rev"><h3>💵 Other Revenues</h3><span class="sh-badge">${revCnt} entries</span></div><div class="section-body"><div class="cur-grid">${curRow('revenues')}</div></div></div>
+    <div class="section-card"><div class="section-head sh-tin"><h3>📈 Total Income</h3><span class="sh-badge">Invoices + Revenue</span></div><div class="section-body"><div class="cur-grid">${curRow('income')}</div></div></div>
+    <div class="section-card"><div class="section-head sh-exp"><h3>📉 Expenses</h3><span class="sh-badge">${expCnt} entries</span></div><div class="section-body"><div class="cur-grid">${curRow('expenses')}</div></div></div>
+    <div class="section-card"><div class="section-head sh-bal"><h3>💰 Daily Cash Balance</h3><span class="sh-badge">Income − Expenses</span></div><div class="section-body"><div class="cur-grid">${curRow('balance')}</div><div class="balance-note">※ Net daily movement</div></div></div>
+    <div class="section-card"><div class="section-head sh-cnt"><h3>🏧 Physical Cash Count & Verification</h3><span class="sh-badge" id="lastSaveLabel">Not saved yet</span></div><div class="section-body"><div class="counter-grid" id="counterGrid"></div><div class="counter-footer"><textarea class="counter-notes" id="countNotes" rows="2" placeholder="Notes about cash count..."></textarea><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end"><button class="save-count-btn" id="saveCountBtn" onclick="saveCashCount()">💾 Save Count to Sheet</button><button class="save-count-btn" id="clearCountBtn" onclick="resetCounters()" style="background:#7c3aed;">🗑️ مسح الحقول</button></div><div class="save-info" id="saveInfo"></div></div></div></div></div>
+  `;
+  
+  buildCounters();
+  hasChanges = false;
+  markSavedStatus();
+}
+function curRow(section) {
+  const t = systemTotals[section] || {};
+  return CURRENCIES.map(c => {
+    const v = t[c.key] || 0;
+    const cls = v > 0 ? 'pos' : v < 0 ? 'neg' : 'zer';
+    return `<div class="cur-col"><div class="cur-val ${cls}">${v !== 0 ? fmtN(v) : '—'}</div></div>`;
+  }).join('');
+}
+
+function buildCounters() {
+  const grid = document.getElementById('counterGrid');
+  if (!grid) return;
+  
+  grid.innerHTML = CASH_CURS.map(cur => {
+    const sysVal = systemTotals.balance[cur.key] || 0;
+    const denomHtml = cur.denoms.map(d => d ? `
+      <div class="denom-cell">
+        <div class="d-label">${d}</div>
+        <input type="number" class="d-input" id="${cur.key}_d${d}" min="0" placeholder="0" oninput="calcCur('${cur.key}');markUnsaved()" onfocus="this.select()">
+        <div class="d-sub" id="${cur.key}_s${d}"></div>
+      </div>
+    ` : '<div class="denom-cell"></div>').join('');
+    
+    return `
+      <div class="counter-row" style="border-left-color:${cur.color}">
+        <div class="crh">
+          <span class="cur-flag-big">${cur.flag}</span>
+          <span class="cur-name" style="color:${cur.color}">${cur.name}</span>
+          <div class="cr-summary">
+            <div class="sum-box sys"><label>System Balance</label><div class="sv" id="${cur.key}_sys">${sysVal ? fmtN(sysVal) : '—'}</div></div>
+            <div class="sum-box act"><label>Actual Count</label><div class="sv" id="${cur.key}_act">—</div></div>
+            <div class="sum-box dif zero" id="${cur.key}_difBox"><label>Difference</label><div class="sv" id="${cur.key}_dif">—</div></div>
+          </div>
+        </div>
+        <div class="denom-grid">${denomHtml}</div>
+      </div>
+    `;
+  }).join('');
 }
 
 async function loadData() {
@@ -979,63 +1038,6 @@ function isDateInRange(dateStr, startStr, endStr) {
   
   if (!target || !start || !end) return false;
   return target >= start && target <= end;
-}
-function renderPage(invCnt, revCnt, expCnt) {
-  const dt = currentDateISO;
-  const ch = () => CURRENCIES.map(c => `<div class="cur-header-cell"><span class="flag">${c.flag}</span><span class="code">${c.label}</span></div>`).join('');
-  
-  document.getElementById('mainContent').innerHTML = `
-    <div class="cur-headers">${ch()}</div>
-    <div class="section-card"><div class="section-head sh-inv"><h3>🧾 Invoices <small style="font-size:11px;opacity:.7">(${dt})</small></h3><span class="sh-badge">${invCnt} invoices</span></div><div class="section-body"><div class="cur-grid">${curRow('invoices')}</div></div></div>
-    <div class="section-card"><div class="section-head sh-rev"><h3>💵 Other Revenues</h3><span class="sh-badge">${revCnt} entries</span></div><div class="section-body"><div class="cur-grid">${curRow('revenues')}</div></div></div>
-    <div class="section-card"><div class="section-head sh-tin"><h3>📈 Total Income</h3><span class="sh-badge">Invoices + Revenue</span></div><div class="section-body"><div class="cur-grid">${curRow('income')}</div></div></div>
-    <div class="section-card"><div class="section-head sh-exp"><h3>📉 Expenses</h3><span class="sh-badge">${expCnt} entries</span></div><div class="section-body"><div class="cur-grid">${curRow('expenses')}</div></div></div>
-    <div class="section-card"><div class="section-head sh-bal"><h3>💰 Daily Cash Balance</h3><span class="sh-badge">Income − Expenses</span></div><div class="section-body"><div class="cur-grid">${curRow('balance')}</div><div class="balance-note">※ Net daily movement</div></div></div>
-    <div class="section-card"><div class="section-head sh-cnt"><h3>🏧 Physical Cash Count & Verification</h3><span class="sh-badge" id="lastSaveLabel">Not saved yet</span></div><div class="section-body"><div class="counter-grid" id="counterGrid"></div><div class="counter-footer"><textarea class="counter-notes" id="countNotes" rows="2" placeholder="Notes about cash count..."></textarea><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end"><button class="save-count-btn" id="saveCountBtn" onclick="saveCashCount()">💾 Save Count to Sheet</button><button class="save-count-btn" id="clearCountBtn" onclick="resetCounters()" style="background:#7c3aed;">🗑️ مسح الحقول</button></div><div class="save-info" id="saveInfo"></div></div></div></div></div>
-  `;
-  
-  buildCounters();
-  hasChanges = false;
-  markSavedStatus();
-}
-function curRow(section) {
-  const t = systemTotals[section] || {};
-  return CURRENCIES.map(c => {
-    const v = t[c.key] || 0;
-    const cls = v > 0 ? 'pos' : v < 0 ? 'neg' : 'zer';
-    return `<div class="cur-col"><div class="cur-val ${cls}">${v !== 0 ? fmtN(v) : '—'}</div></div>`;
-  }).join('');
-}
-
-function buildCounters() {
-  const grid = document.getElementById('counterGrid');
-  if (!grid) return;
-  
-  grid.innerHTML = CASH_CURS.map(cur => {
-    const sysVal = systemTotals.balance[cur.key] || 0;
-    const denomHtml = cur.denoms.map(d => d ? `
-      <div class="denom-cell">
-        <div class="d-label">${d}</div>
-        <input type="number" class="d-input" id="${cur.key}_d${d}" min="0" placeholder="0" oninput="calcCur('${cur.key}');markUnsaved()" onfocus="this.select()">
-        <div class="d-sub" id="${cur.key}_s${d}"></div>
-      </div>
-    ` : '<div class="denom-cell"></div>').join('');
-    
-    return `
-      <div class="counter-row" style="border-left-color:${cur.color}">
-        <div class="crh">
-          <span class="cur-flag-big">${cur.flag}</span>
-          <span class="cur-name" style="color:${cur.color}">${cur.name}</span>
-          <div class="cr-summary">
-            <div class="sum-box sys"><label>System Balance</label><div class="sv" id="${cur.key}_sys">${sysVal ? fmtN(sysVal) : '—'}</div></div>
-            <div class="sum-box act"><label>Actual Count</label><div class="sv" id="${cur.key}_act">—</div></div>
-            <div class="sum-box dif zero" id="${cur.key}_difBox"><label>Difference</label><div class="sv" id="${cur.key}_dif">—</div></div>
-          </div>
-        </div>
-        <div class="denom-grid">${denomHtml}</div>
-      </div>
-    `;
-  }).join('');
 }
 
 function calcCur(curKey){
