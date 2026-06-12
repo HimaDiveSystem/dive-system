@@ -793,103 +793,75 @@ async function loadData() {
     return;
   }
   
-  showToast('⏳ جاري تحميل بيانات ' + currentDateISO + '...', 'info', 3000);
+  showToast('⏳ جاري تحميل بيانات ' + currentDateISO + '...', 'info', 2000);
   
   // عرض مؤشر تحميل
   document.getElementById('mainContent').innerHTML = '<div class="load-state"><div class="spinner"></div><br>جاري تحميل بيانات ' + currentDateISO + '...</div>';
   
   try {
-    let dayInv = [], dayRev = [], dayExp = [];
-    
-    // ✅ التحقق من وجود البيانات في Cache
-    if (isDataLoaded && dataCache.invoices[currentDateISO]) {
-      console.log('📦 استخدام البيانات المخزنة مؤقتاً لـ ' + currentDateISO);
-      dayInv = dataCache.invoices[currentDateISO] || [];
-      dayRev = dataCache.revenues[currentDateISO] || [];
-      dayExp = dataCache.expenses[currentDateISO] || [];
-    } 
-    else {
-      console.log('🌐 جلب البيانات من الخادم لـ ' + currentDateISO);
-      
-      // ✅ توسيع نطاق Cache ليشمل التواريخ المجاورة
-      await expandCacheAroundDate(currentDateISO, targetBranch);
-      
-      // ✅ بعد التوسيع، حاول مرة أخرى من Cache
-      if (dataCache.invoices[currentDateISO]) {
-        dayInv = dataCache.invoices[currentDateISO] || [];
-        dayRev = dataCache.revenues[currentDateISO] || [];
-        dayExp = dataCache.expenses[currentDateISO] || [];
-      } else {
-        // ✅ جلب هذا التاريخ فقط إذا لم يتمكن من توسيع النطاق
-        [dayInv, dayRev, dayExp] = await Promise.all([
-          callGAS('getInvoicesByDateOnly', { 
-            dateStr: currentDateISO, 
-            branchName: targetBranch,
-            centerName: currentUser?.centerName || ''
-          }),
-          callGAS('getRevenuesByDateOnly', { 
-            dateStr: currentDateISO, 
-            branchName: targetBranch,
-            centerName: currentUser?.centerName || ''
-          }),
-          callGAS('getExpensesByDateOnly', { 
-            dateStr: currentDateISO, 
-            branchName: targetBranch,
-            centerName: currentUser?.centerName || ''
-          })
-        ]);
-        
-        // ✅ تخزين في Cache
-        dataCache.invoices[currentDateISO] = dayInv;
-        dataCache.revenues[currentDateISO] = dayRev;
-        dataCache.expenses[currentDateISO] = dayExp;
-        
-        // ✅ تحديث نطاق Cache
-        updateCacheRange(currentDateISO);
-      }
-    }
-    
-    const invT = sumCur(dayInv || [], 'invoice');
-    const revT = sumCur(dayRev || [], 'revenue');
-    const expT = sumCur(dayExp || [], 'expense');
-    const incT = {};
-    const balT = {};
-
-    CURRENCIES.forEach(c => {
-      incT[c.key] = roundTwo((invT[c.key] || 0) + (revT[c.key] || 0));
-      balT[c.key] = roundTwo((incT[c.key] || 0) - (expT[c.key] || 0));
+    // ✅✅✅ الحل السحري: قراءة البيانات مباشرة من شيت Cash_Sum ✅✅✅
+    const cashSumData = await callGAS('getCashSumData', { 
+      dateISO: currentDateISO, 
+      branchName: targetBranch,
+      centerName: currentUser?.centerName || ''
     });
-
-    systemTotals = { 
-      invoices: invT, 
-      revenues: revT, 
-      income: incT, 
-      expenses: expT, 
-      balance: balT 
-    };
     
-    // جلب الرصيد التراكمي من Cash_Sum
-    try {
-      const cashSumData = await callGAS('getCashSumData', { 
-        dateISO: currentDateISO, 
+    if (cashSumData?.success && cashSumData.found) {
+      // ✅ تم العثور على البيانات في شيت Cash_Sum
+      console.log('✅ تم جلب البيانات من Cash_Sum لـ ' + currentDateISO);
+      
+      // بناء systemTotals من البيانات الموجودة
+      systemTotals = {
+        invoices: cashSumData.invoices || {},
+        revenues: cashSumData.revenues || {},
+        income: cashSumData.income || {},
+        expenses: cashSumData.expenses || {},
+        balance: cashSumData.dailyBalance || {},
+        accumulatedBalance: cashSumData.accumulatedBalance || {}
+      };
+      
+      // عرض الصفحة مع البيانات
+      renderPage(0, 0, 0); // الأعداد ليست مهمة لأننا نعرض من Cash_Sum
+      loadSavedCount();
+      showToast('✅ تم تحميل بيانات الخزينة', 'success', 1500);
+      
+    } else {
+      // ❌ لم يتم العثور على بيانات في Cash_Sum - نحتاج إلى حسابها أولاً
+      console.log('⚠️ لا توجد بيانات في Cash_Sum لـ ' + currentDateISO + '، جاري التحديث...');
+      
+      // استدعاء دالة التحديث
+      const updateResult = await callGAS('updateAllCashSum', { 
         branchName: targetBranch,
         centerName: currentUser?.centerName || ''
       });
-      if (cashSumData?.success && cashSumData.accumulatedBalance) {
-        systemTotals.accumulatedBalance = cashSumData.accumulatedBalance;
-        systemTotals.balance = cashSumData.accumulatedBalance;
+      
+      if (updateResult.success) {
+        // إعادة المحاولة لجلب البيانات
+        const retryData = await callGAS('getCashSumData', { 
+          dateISO: currentDateISO, 
+          branchName: targetBranch,
+          centerName: currentUser?.centerName || ''
+        });
+        
+        if (retryData?.success && retryData.found) {
+          systemTotals = {
+            invoices: retryData.invoices || {},
+            revenues: retryData.revenues || {},
+            income: retryData.income || {},
+            expenses: retryData.expenses || {},
+            balance: retryData.dailyBalance || {},
+            accumulatedBalance: retryData.accumulatedBalance || {}
+          };
+          renderPage(0, 0, 0);
+          loadSavedCount();
+          showToast('✅ تم تحديث وعرض بيانات الخزينة', 'success');
+        } else {
+          throw new Error('لا توجد بيانات بعد التحديث');
+        }
       } else {
-        systemTotals.accumulatedBalance = balT;
-        systemTotals.balance = balT;
+        throw new Error(updateResult.message || 'فشل تحديث الخزينة');
       }
-    } catch(e) {
-      console.warn('❌ فشل جلب الرصيد التراكمي:', e);
-      systemTotals.accumulatedBalance = balT;
-      systemTotals.balance = balT;
     }
-    
-    renderPage(dayInv?.length || 0, dayRev?.length || 0, dayExp?.length || 0);
-    loadSavedCount();
     
   } catch(e) {
     console.error('❌ loadData error:', e);
@@ -1008,19 +980,30 @@ function isDateInRange(dateStr, startStr, endStr) {
   if (!target || !start || !end) return false;
   return target >= start && target <= end;
 }
-function renderPage(invCnt,revCnt,expCnt){
-  const dt=currentDateISO;
-  const ch=()=>CURRENCIES.map(c=>`<div class="cur-header-cell"><span class="flag">${c.flag}</span><span class="code">${c.label}</span></div>`).join('');
-  document.getElementById('mainContent').innerHTML=`
-  <div class="cur-headers">${ch()}</div>
-  <div class="section-card"><div class="section-head sh-inv"><h3>🧾 Invoices <small style="font-size:11px;opacity:.7">(${dt})</small></h3><span class="sh-badge">${invCnt} invoices</span></div><div class="section-body"><div class="cur-grid">${curRow('invoices')}</div></div></div>
-  <div class="section-card"><div class="section-head sh-rev"><h3>💵 Other Revenues</h3><span class="sh-badge">${revCnt} entries</span></div><div class="section-body"><div class="cur-grid">${curRow('revenues')}</div></div></div>
-  <div class="section-card"><div class="section-head sh-tin"><h3>📈 Total Income</h3><span class="sh-badge">Invoices + Revenue</span></div><div class="section-body"><div class="cur-grid">${curRow('income')}</div></div></div>
-  <div class="section-card"><div class="section-head sh-exp"><h3>📉 Expenses</h3><span class="sh-badge">${expCnt} entries</span></div><div class="section-body"><div class="cur-grid">${curRow('expenses')}</div></div></div>
-  <div class="section-card"><div class="section-head sh-bal"><h3>💰 Daily Cash Balance</h3><span class="sh-badge">Income − Expenses</span></div><div class="section-body"><div class="cur-grid">${curRow('balance')}</div><div class="balance-note">※ Net daily movement</div></div></div>
-<div class="section-card"><div class="section-head sh-cnt"><h3>🏧 Physical Cash Count & Verification</h3><span class="sh-badge" id="lastSaveLabel">Not saved yet</span></div><div class="section-body"><div class="counter-grid" id="counterGrid"></div><div class="counter-footer"><textarea class="counter-notes" id="countNotes" rows="2" placeholder="Notes about cash count..."></textarea><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end"><button class="save-count-btn" id="saveCountBtn" onclick="saveCashCount()">💾 Save Count to Sheet</button><button class="save-count-btn" id="clearCountBtn" onclick="resetCounters()" style="background:#7c3aed;">🗑️ مسح الحقول</button></div><div class="save-info" id="saveInfo"></div></div></div></div></div>`;  buildCounters();
- // resetCounters();  // ✅ علق هذا السطر - لا تمسح العدادات عند إعادة رسم الصفحة
-  hasChanges=false;
+function renderPageFromCashData(data) {
+  const dt = currentDateISO;
+  
+  // دالة لإنشاء صف من البيانات
+  const createRow = (currencies) => {
+    return CURRENCIES.map(c => {
+      const v = currencies[c.key] || 0;
+      const cls = v > 0 ? 'pos' : v < 0 ? 'neg' : 'zer';
+      return `<div class="cur-col"><div class="cur-val ${cls}">${v !== 0 ? fmtN(v) : '—'}</div></div>`;
+    }).join('');
+  };
+  
+  document.getElementById('mainContent').innerHTML = `
+    <div class="cur-headers">${CURRENCIES.map(c => `<div class="cur-header-cell"><span class="flag">${c.flag}</span><span class="code">${c.label}</span></div>`).join('')}</div>
+    <div class="section-card"><div class="section-head sh-inv"><h3>🧾 Invoices <small style="font-size:11px;opacity:.7">(${dt})</small></h3><span class="sh-badge">—</span></div><div class="section-body"><div class="cur-grid">${createRow(data.invoices || {})}</div></div></div>
+    <div class="section-card"><div class="section-head sh-rev"><h3>💵 Other Revenues</h3><span class="sh-badge">—</span></div><div class="section-body"><div class="cur-grid">${createRow(data.revenues || {})}</div></div></div>
+    <div class="section-card"><div class="section-head sh-tin"><h3>📈 Total Income</h3><span class="sh-badge">Invoices + Revenue</span></div><div class="section-body"><div class="cur-grid">${createRow(data.income || {})}</div></div></div>
+    <div class="section-card"><div class="section-head sh-exp"><h3>📉 Expenses</h3><span class="sh-badge">—</span></div><div class="section-body"><div class="cur-grid">${createRow(data.expenses || {})}</div></div></div>
+    <div class="section-card"><div class="section-head sh-bal"><h3>💰 Daily Cash Balance</h3><span class="sh-badge">Income − Expenses</span></div><div class="section-body"><div class="cur-grid">${createRow(data.dailyBalance || {})}</div><div class="balance-note">※ Net daily movement</div></div></div>
+    <div class="section-card"><div class="section-head sh-cnt"><h3>🏧 Physical Cash Count & Verification</h3><span class="sh-badge" id="lastSaveLabel">Not saved yet</span></div><div class="section-body"><div class="counter-grid" id="counterGrid"></div><div class="counter-footer"><textarea class="counter-notes" id="countNotes" rows="2" placeholder="Notes about cash count..."></textarea><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end"><button class="save-count-btn" id="saveCountBtn" onclick="saveCashCount()">💾 Save Count to Sheet</button><button class="save-count-btn" id="clearCountBtn" onclick="resetCounters()" style="background:#7c3aed;">🗑️ مسح الحقول</button></div><div class="save-info" id="saveInfo"></div></div></div></div></div>
+  `;
+  
+  buildCounters();
+  hasChanges = false;
   markSavedStatus();
 }
 
