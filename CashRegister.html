@@ -152,6 +152,41 @@
       .cur-headers,.cur-grid,.denom-grid{grid-template-columns:repeat(2,1fr);}
       .cr-summary{width:100%;}
     }
+    /* مؤشر تحميل محسّن */
+.load-state {
+  position: relative;
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.load-state .spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid #e2e8f0;
+  border-top-color: #1a3260;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 16px;
+}
+
+.load-state .loading-text {
+  font-size: 14px;
+  color: #1a3260;
+  font-weight: 600;
+}
+
+.load-state .loading-hint {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 8px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
   </style>
 </head>
 <body>
@@ -766,39 +801,51 @@ async function loadData() {
   try {
     let dayInv = [], dayRev = [], dayExp = [];
     
-    // ✅ استخدام البيانات المخزنة مؤقتاً إذا كانت موجودة
+    // ✅ التحقق من وجود البيانات في Cache
     if (isDataLoaded && dataCache.invoices[currentDateISO]) {
       console.log('📦 استخدام البيانات المخزنة مؤقتاً لـ ' + currentDateISO);
       dayInv = dataCache.invoices[currentDateISO] || [];
       dayRev = dataCache.revenues[currentDateISO] || [];
       dayExp = dataCache.expenses[currentDateISO] || [];
-    } else {
-      // ✅ جلب البيانات من الخادم (للتاريخ خارج النطاق)
+    } 
+    else {
       console.log('🌐 جلب البيانات من الخادم لـ ' + currentDateISO);
-      [dayInv, dayRev, dayExp] = await Promise.all([
-        callGAS('getInvoicesByDateOnly', { 
-          dateStr: currentDateISO, 
-          branchName: targetBranch,
-          centerName: currentUser?.centerName || ''
-        }),
-        callGAS('getRevenuesByDateOnly', { 
-          dateStr: currentDateISO, 
-          branchName: targetBranch,
-          centerName: currentUser?.centerName || ''
-        }),
-        callGAS('getExpensesByDateOnly', { 
-          dateStr: currentDateISO, 
-          branchName: targetBranch,
-          centerName: currentUser?.centerName || ''
-        })
-      ]);
       
-      // ✅ تخزين البيانات في Cache
-      if (dataCache.range.startDate && dataCache.range.endDate && 
-          isDateInRange(currentDateISO, dataCache.range.startDate, dataCache.range.endDate)) {
+      // ✅ توسيع نطاق Cache ليشمل التواريخ المجاورة
+      await expandCacheAroundDate(currentDateISO, targetBranch);
+      
+      // ✅ بعد التوسيع، حاول مرة أخرى من Cache
+      if (dataCache.invoices[currentDateISO]) {
+        dayInv = dataCache.invoices[currentDateISO] || [];
+        dayRev = dataCache.revenues[currentDateISO] || [];
+        dayExp = dataCache.expenses[currentDateISO] || [];
+      } else {
+        // ✅ جلب هذا التاريخ فقط إذا لم يتمكن من توسيع النطاق
+        [dayInv, dayRev, dayExp] = await Promise.all([
+          callGAS('getInvoicesByDateOnly', { 
+            dateStr: currentDateISO, 
+            branchName: targetBranch,
+            centerName: currentUser?.centerName || ''
+          }),
+          callGAS('getRevenuesByDateOnly', { 
+            dateStr: currentDateISO, 
+            branchName: targetBranch,
+            centerName: currentUser?.centerName || ''
+          }),
+          callGAS('getExpensesByDateOnly', { 
+            dateStr: currentDateISO, 
+            branchName: targetBranch,
+            centerName: currentUser?.centerName || ''
+          })
+        ]);
+        
+        // ✅ تخزين في Cache
         dataCache.invoices[currentDateISO] = dayInv;
         dataCache.revenues[currentDateISO] = dayRev;
         dataCache.expenses[currentDateISO] = dayExp;
+        
+        // ✅ تحديث نطاق Cache
+        updateCacheRange(currentDateISO);
       }
     }
     
@@ -850,7 +897,98 @@ async function loadData() {
     showToast('❌ خطأ في تحميل البيانات', 'error');
   }
 }
+  // ✅ توسيع نطاق Cache حول تاريخ معين
+async function expandCacheAroundDate(targetDateStr, branchName) {
+  // تحويل التاريخ إلى كائن Date
+  const targetDate = parseDateFromDDMMMYYYY(targetDateStr);
+  if (!targetDate) return;
+  
+  // حساب النطاق الجديد (5 أيام قبل + 5 أيام بعد)
+  const newStartDate = new Date(targetDate);
+  newStartDate.setDate(targetDate.getDate() - 5);
+  
+  const newEndDate = new Date(targetDate);
+  newEndDate.setDate(targetDate.getDate() + 5);
+  
+  const newStartStr = formatDateForCache(newStartDate);
+  const newEndStr = formatDateForCache(newEndDate);
+  
+  // التحقق مما إذا كان النطاق الجديد داخل النطاق الحالي
+  const currentStart = dataCache.range.startDate;
+  const currentEnd = dataCache.range.endDate;
+  
+  if (currentStart && currentEnd && 
+      isDateInRange(newStartStr, currentStart, currentEnd) &&
+      isDateInRange(newEndStr, currentStart, currentEnd)) {
+    console.log('📦 النطاق المطلوب موجود بالفعل في Cache');
+    return;
+  }
+  
+  console.log(`🔄 توسيع النطاق إلى: ${newStartStr} → ${newEndStr}`);
+  
+  try {
+    const result = await callGAS('fetchCashDataInRange', {
+      startDate: newStartStr,
+      endDate: newEndStr,
+      branchName: branchName,
+      centerName: currentUser?.centerName || ''
+    });
+    
+    if (result?.success) {
+      // دمج البيانات الجديدة مع البيانات الموجودة
+      dataCache.invoices = { ...dataCache.invoices, ...(result.invoices || {}) };
+      dataCache.revenues = { ...dataCache.revenues, ...(result.revenues || {}) };
+      dataCache.expenses = { ...dataCache.expenses, ...(result.expenses || {}) };
+      dataCache.range.startDate = newStartStr;
+      dataCache.range.endDate = newEndStr;
+      isDataLoaded = true;
+      console.log('✅ تم توسيع Cache بنجاح');
+    }
+  } catch(e) {
+    console.error('❌ فشل توسيع Cache:', e);
+  }
+}
 
+// ✅ تحديث نطاق Cache عند إضافة تاريخ جديد
+function updateCacheRange(newDateStr) {
+  if (!dataCache.range.startDate && !dataCache.range.endDate) {
+    dataCache.range.startDate = newDateStr;
+    dataCache.range.endDate = newDateStr;
+    return;
+  }
+  
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const monthMap = {'Jan':0,'Feb':1,'Mar':2,'Apr':3,'May':4,'Jun':5,'Jul':6,'Aug':7,'Sep':8,'Oct':9,'Nov':10,'Dec':11};
+  
+  const parseDate = (d) => {
+    const m = d.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
+    if (!m) return null;
+    return new Date(parseInt(m[3]), monthMap[m[2]], parseInt(m[1]));
+  };
+  
+  const currentStart = parseDate(dataCache.range.startDate);
+  const currentEnd = parseDate(dataCache.range.endDate);
+  const newDate = parseDate(newDateStr);
+  
+  if (!currentStart || !currentEnd || !newDate) return;
+  
+  // توسيع النطاق إذا كان التاريخ الجديد خارج النطاق الحالي
+  if (newDate < currentStart) {
+    dataCache.range.startDate = newDateStr;
+  }
+  if (newDate > currentEnd) {
+    dataCache.range.endDate = newDateStr;
+  }
+}
+
+// ✅ تحويل dd/MMM/yyyy إلى كائن Date
+function parseDateFromDDMMMYYYY(dateStr) {
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const monthMap = {'Jan':0,'Feb':1,'Mar':2,'Apr':3,'May':4,'Jun':5,'Jul':6,'Aug':7,'Sep':8,'Oct':9,'Nov':10,'Dec':11};
+  const m = dateStr.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
+  if (!m) return null;
+  return new Date(parseInt(m[3]), monthMap[m[2]], parseInt(m[1]));
+}
 function isDateInRange(dateStr, startStr, endStr) {
   if (!startStr || !endStr) return false;
   
