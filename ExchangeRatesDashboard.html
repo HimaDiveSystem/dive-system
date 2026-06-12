@@ -164,7 +164,15 @@ function fmtDisplayDate(ymd) {   // "01 Mar 2026"
 // ══════════════════════════════════════════════════════════
 // دوال التحقق من التاريخ وإضافة التواريخ المفقودة
 // ══════════════════════════════════════════════════════════
-
+// الحصول على تاريخ اليوم بصيغة dd/MMM/yyyy
+function getTodayFormatted() {
+  const today = new Date();
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const day = String(today.getDate()).padStart(2, '0');
+  const month = months[today.getMonth()];
+  const year = today.getFullYear();
+  return `${day}/${month}/${year}`;
+}
 function isDateAfterLastDate(dateToCheck, lastDateStr) {
   if (!lastDateStr || !dateToCheck) return false;
   
@@ -392,19 +400,23 @@ function showTab(tab, el) {
 // نموذج الإضافة / التعديل
 // ════════════════════════════════════
 function showAddForm() {
+  const todayFormatted = getTodayFormatted();
+  lastDateDisplay = lastDateDisplay || todayFormatted;
+  
   document.getElementById('mainContent').innerHTML = `
     <!-- التاريخ -->
     <div class="date-section">
       <div class="date-row">
         <span class="date-label">📅 التاريخ:</span>
         <div class="date-input" style="display: flex; gap: 8px; align-items: center;">
-          <input type="text" id="rateDateText" placeholder="dd/MMM/yyyy" value="" 
+          <input type="text" id="rateDateText" placeholder="dd/MMM/yyyy" value="${todayFormatted}" 
                  style="padding: 10px 14px; border: 2px solid #d0ddeb; border-radius: 12px; font-size: 14px; font-weight: 600; width: 160px; text-align: center;"
                  onchange="onDateTextChange()">
           <button class="cal-btn" onclick="openDatePicker()" style="background: #1e2b4f; color: #ffd966; border: none; padding: 10px 14px; border-radius: 12px; cursor: pointer;">📅</button>
         </div>
         <div class="info-box">آخر تاريخ: <span id="lastDateLbl">${lastDateDisplay}</span></div>
         <span class="date-status" id="dateStatus"></span>
+        <button onclick="refreshData()" style="background: #27ae60; color: white; border: none; padding: 10px 14px; border-radius: 12px; cursor: pointer;">🔄 تحديث</button>
       </div>
     </div>
        <!-- أسعار البنك (B:E) -->
@@ -483,6 +495,10 @@ function showAddForm() {
       <button class="btn-secondary"            onclick="clearForm()">🔄 إعادة تعيين</button>
     </div>
     <div id="msgArea"></div>`;
+   setTimeout(() => {
+    onDateTextChange();
+  }, 100);
+
 }
 // ══════════════════════════════════════════════════════════
 // Date Picker مخصص بصيغة dd/MMM/yyyy
@@ -814,21 +830,63 @@ async function loadLastDate() {
       centerName: currentUser?.centerName || '' 
     });
     const raw = r?.date || r || null;
-    lastDateDisplay = raw || 'لا توجد بيانات';
+    lastDateDisplay = raw || getTodayFormatted();
     const el = document.getElementById('lastDateLbl');
     if (el) el.textContent = lastDateDisplay;
-  } catch(e) {}
+    
+    // ✅ إذا كان حقل التاريخ فارغاً، قم بتعيينه إلى تاريخ اليوم
+    const dateInput = document.getElementById('rateDateText');
+    if (dateInput && !dateInput.value) {
+      dateInput.value = getTodayFormatted();
+      // تحميل البيانات بعد تعيين التاريخ
+      setTimeout(() => onDateTextChange(), 100);
+    }
+  } catch(e) {
+    console.error('loadLastDate error:', e);
+    lastDateDisplay = getTodayFormatted();
+    const el = document.getElementById('lastDateLbl');
+    if (el) el.textContent = lastDateDisplay;
+  }
 }
+  async function refreshData() {
+  const displayDate = document.getElementById('rateDateText')?.value;
+  if (displayDate) {
+    await onDateTextChange();
+  } else {
+    const todayFormatted = getTodayFormatted();
+    document.getElementById('rateDateText').value = todayFormatted;
+    await onDateTextChange();
+  }
+}
+
+// أضف زر تحديث في الواجهة إذا أردت
 // ── Init ──
 document.addEventListener('DOMContentLoaded', async () => {
   let ud = sessionStorage.getItem('currentUser');
   if (!ud) {
-    try { const p=new URLSearchParams(location.search),u=p.get('user'); if(u){ud=decodeURIComponent(u);sessionStorage.setItem('currentUser',ud);} } catch(e){}
+    try { 
+      const p = new URLSearchParams(location.search);
+      const u = p.get('user'); 
+      if (u) {
+        ud = decodeURIComponent(u);
+        sessionStorage.setItem('currentUser', ud);
+      } 
+    } catch(e) {}
   }
-  if (!ud) { location.href='index.html'; return; }
-  try { currentUser=JSON.parse(ud); } catch(e) { location.href='index.html'; return; }
+  if (!ud) { location.href = 'index.html'; return; }
+  try { 
+    currentUser = JSON.parse(ud); 
+  } catch(e) { 
+    location.href = 'index.html'; 
+    return; 
+  }
+  
   document.getElementById('userNameDisplay').textContent = currentUser.name || '—';
+  
+  // ✅ تحميل آخر تاريخ أولاً
   await loadLastDate();
+  
+  // ✅ عرض تبويب الإضافة (سيقوم تلقائياً بتعيين التاريخ والتحميل)
   showTab('add', document.getElementById('tab-add'));
 });
 </script>
