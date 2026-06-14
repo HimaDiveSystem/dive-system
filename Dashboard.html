@@ -294,10 +294,44 @@
 // ══════════════════════════════════════════════════
 // الإعدادات
 // ══════════════════════════════════════════════════
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbwC1BRoLAJthZqxWTYyMUSjPNNGfCI0BjTfhE7ZiVx67rUP__OKAj0vlwD1-RUCOMSE/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec';
 
 let centers=[], branches=[], staff=[], currentUser=null;
 let cachedActivities = null;
+    // ============================================================
+  // ✅ التحقق من صحة الجلسة - منع التوجيه المتكرر
+  // ============================================================
+  function checkSessionValidity() {
+    try {
+      // التحقق من وجود جلسة صالحة في localStorage
+      const stored = localStorage.getItem('currentUser');
+      if (!stored) {
+        // لا توجد جلسة، اخرج من الصفحة
+        window.location.href = 'index.html';
+        return false;
+      }
+      
+      const data = JSON.parse(stored);
+      // التحقق من صلاحية الجلسة (24 ساعة)
+      if (data.expiry && Date.now() < data.expiry) {
+        return true; // الجلسة صالحة
+      } else {
+        // الجلسة منتهية
+        localStorage.removeItem('currentUser');
+        window.location.href = 'index.html';
+        return false;
+      }
+    } catch(e) {
+      window.location.href = 'index.html';
+      return false;
+    }
+  }
+  
+  // ✅ تنفيذ التحقق فوراً
+  if (!checkSessionValidity()) {
+    // سيتم التوجيه داخل الدالة، نوقف تنفيذ باقي الكود
+    throw new Error('جلسة غير صالحة');
+  }
 // ══════════════════════════════════════════════════
 // JSONP — لكل الطلبات
 // ══════════════════════════════════════════════════
@@ -1229,12 +1263,35 @@ async function runCheckNow() {
 // تهيئة الصفحة
 // ══════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', async ()=>{
-  const ud=sessionStorage.getItem('currentUser');
-  if(!ud){ location.href='index.html'; return; }
-  try { currentUser=JSON.parse(ud); } catch(e){ location.href='index.html'; return; }
+  // ✅ التحقق من الجلسة أولاً من localStorage
+  const storedUser = localStorage.getItem('currentUser');
+  if (!storedUser) { 
+    location.href = 'index.html'; 
+    return; 
+  }
+  
+  let ud = sessionStorage.getItem('currentUser');
+  if (!ud && storedUser) {
+    try {
+      const parsed = JSON.parse(storedUser);
+      ud = JSON.stringify(parsed.user);
+      sessionStorage.setItem('currentUser', ud);
+    } catch(e) {}
+  }
+  
+  if(!ud){ 
+    location.href='index.html'; 
+    return; 
+  }
+  try { 
+    currentUser=JSON.parse(ud); 
+  } catch(e){ 
+    location.href='index.html'; 
+    return; 
+  }
   document.getElementById('userNameDisplay').textContent=currentUser.name||'مدير';
 
-  // ربط قائمة التنقل
+  // ربط قائمة التنقل ...
   document.getElementById('mi-welcome') .addEventListener('click',()=>{ setActive('mi-welcome'); document.getElementById('contentArea').innerHTML=`<div class="content-area"><div class="welcome-area"><div class="welcome-icon">🏝️</div><h2>مرحباً بك في لوحة التحكم</h2><p>من هنا يمكنك إدارة جميع مراكز وفروع الغوص</p></div></div>`; });
   document.getElementById('mi-centers') .addEventListener('click', showCenters);
   document.getElementById('mi-branches').addEventListener('click', showBranches);
@@ -1256,8 +1313,13 @@ document.addEventListener('DOMContentLoaded', async ()=>{
   document.getElementById('userForm')  .addEventListener('submit', saveUser);
   document.getElementById('phoneSearch').addEventListener('input', e=>searchUserByPhone(e.target.value));
   document.getElementById('userCenterId').addEventListener('change', e=>loadBranchesForCenter(e.target.value));
-  document.getElementById('logoutBtn').addEventListener('click',()=>{
-    showConfirm('هل أنت متأكد من تسجيل الخروج؟', ()=>{ sessionStorage.removeItem('currentUser'); location.href='index.html'; });
+ document.getElementById('logoutBtn').addEventListener('click',()=>{
+    showConfirm('هل أنت متأكد من تسجيل الخروج؟', ()=>{ 
+      // ✅ مسح localStorage و sessionStorage معاً
+      localStorage.removeItem('currentUser'); 
+      sessionStorage.removeItem('currentUser'); 
+      location.href='index.html'; 
+    });
   });
 
   // تحميل البيانات
