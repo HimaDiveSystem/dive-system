@@ -171,7 +171,40 @@ const DASHBOARDS = {
 };
 
 const UNLIMITED_TYPES = ['Admin', 'Owner', 'AccountantManager', 'FinancialManager'];
-
+  // ============================================================
+  // ✅ التحقق من صحة الجلسة - منع التوجيه المتكرر
+  // ============================================================
+  function checkSessionValidity() {
+    try {
+      // التحقق من وجود جلسة صالحة في localStorage
+      const stored = localStorage.getItem('currentUser');
+      if (!stored) {
+        // لا توجد جلسة، اخرج من الصفحة
+        window.location.href = 'index.html';
+        return false;
+      }
+      
+      const data = JSON.parse(stored);
+      // التحقق من صلاحية الجلسة (24 ساعة)
+      if (data.expiry && Date.now() < data.expiry) {
+        return true; // الجلسة صالحة
+      } else {
+        // الجلسة منتهية
+        localStorage.removeItem('currentUser');
+        window.location.href = 'index.html';
+        return false;
+      }
+    } catch(e) {
+      window.location.href = 'index.html';
+      return false;
+    }
+  }
+  
+  // ✅ تنفيذ التحقق فوراً
+  if (!checkSessionValidity()) {
+    // سيتم التوجيه داخل الدالة، نوقف تنفيذ باقي الكود
+    throw new Error('جلسة غير صالحة');
+  }
 // ====================== اتصال JSONP ======================
 function gas(action, params={}) {
   return new Promise((resolve,reject) => {
@@ -1260,13 +1293,27 @@ async function loadAll(){
   }
 }
 document.addEventListener('DOMContentLoaded', async () => {
+  // ✅ التحقق من الجلسة أولاً من localStorage
+  const storedUser = localStorage.getItem('currentUser');
+  if (!storedUser) { 
+    location.href = 'index.html'; 
+    return; 
+  }
+  
   let ud = sessionStorage.getItem('currentUser');
   if (!ud) { 
     const p = new URLSearchParams(location.search).get('user'); 
     if (p) { 
       ud = decodeURIComponent(p); 
       sessionStorage.setItem('currentUser', ud); 
-    } 
+    } else if (storedUser) {
+      // ✅ إذا لم توجد في sessionStorage، جلب من localStorage
+      try {
+        const parsed = JSON.parse(storedUser);
+        ud = JSON.stringify(parsed.user);
+        sessionStorage.setItem('currentUser', ud);
+      } catch(e) {}
+    }
   }
   if (!ud) { location.href = 'index.html'; return; }
   try { 
@@ -1288,10 +1335,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('userChip').textContent = loggedInUser.name || 'User';
   await loadAll();
 });
-
+  
 function goBackToDashboard() {
   const userType = loggedInUser?.type || currentUser?.type || 'Accountant';
-  if (userType === 'Customer') { location.href = 'index.html'; return; }
+  if (userType === 'Customer') { 
+    // ✅ مسح الجلسة عند الخروج لحساب العميل
+    localStorage.removeItem('currentUser');
+    sessionStorage.removeItem('currentUser');
+    location.href = 'index.html'; 
+    return; 
+  }
   let returnUrl = sessionStorage.getItem('returnUrl');
   if (!returnUrl && document.referrer) returnUrl = document.referrer;
   if (returnUrl && returnUrl.includes('ManageSupplierCustomers.html')) {
@@ -1300,6 +1353,10 @@ function goBackToDashboard() {
     location.href = `ManageSupplierCustomers.html?centerName=${currentUser?.centerName || ''}&user=${userParam}`;
     return;
   }
+  const dashboardPage = DASHBOARDS[userType] || 'Dashboard.html';
+  const userParam = encodeURIComponent(JSON.stringify(loggedInUser || currentUser));
+  location.href = `${dashboardPage}?centerName=${currentUser?.centerName || ''}&user=${userParam}`;
+}
   const dashboardPage = DASHBOARDS[userType] || 'Dashboard.html';
   const userParam = encodeURIComponent(JSON.stringify(loggedInUser || currentUser));
   location.href = `${dashboardPage}?centerName=${currentUser?.centerName || ''}&user=${userParam}`;
