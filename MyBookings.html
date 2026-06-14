@@ -202,7 +202,6 @@ let ftimer=null;
     throw new Error('جلسة غير صالحة');
   }
 function parseDt(s){if(!s)return null;const st=String(s).trim();const m=st.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})/);if(m){const i=MN.findIndex(n=>n.toLowerCase()===m[2].toLowerCase());if(i!==-1)return new Date(m[3],i,m[1]).getTime();}const d=new Date(st);return isNaN(d)?null:d.getTime();}
-function todayISO(){return new Date().toISOString().split('T')[0];}
 function showAlert(m,i='ℹ️'){document.getElementById('aMsg').textContent=m;document.getElementById('aIcon').textContent=i;document.getElementById('alertModal').classList.add('open');}
 function closeAlert(){document.getElementById('alertModal').classList.remove('open');}
 function goBack(){
@@ -265,36 +264,25 @@ function apply() {
   const q = document.getElementById('fSearch').value.toLowerCase().trim();
   const selectedBranch = document.getElementById('fBranch')?.value || '';
   
-  // التحقق من صحة التاريخ إذا كان مملوءاً
-  if (fDateRaw && !isValidDDMMMYYYY(fDateRaw)) {
-    showAlert('Please enter date as DD/MMM/YYYY (e.g., 15/Jun/2026)', '⚠️');
-    return;
+  // دالة للتحقق من صحة التاريخ
+  function isValidDate(dateStr) {
+    if (!dateStr) return true;
+    return /^\d{1,2}\/[A-Za-z]{3}\/\d{4}$/.test(dateStr);
   }
-  if (tDateRaw && !isValidDDMMMYYYY(tDateRaw)) {
-    showAlert('Please enter date as DD/MMM/YYYY (e.g., 15/Jun/2026)', '⚠️');
-    return;
-  }
+  
+  // إذا كان التاريخ غير صحيح، تجاهله (بدون رسالة خطأ)
+  const fDate = isValidDate(fDateRaw) ? fDateRaw : null;
+  const tDate = isValidDate(tDateRaw) ? tDateRaw : null;
   
   filtInv = allInv.filter(inv => {
     const state = (inv.state || '').toLowerCase();
-    if (curStatus === 'all') {
-      // جميع الفواتير
-    } else if (curStatus === 'refund') {
-      if (state !== 'refund') return false;
-    } else {
-      if (state !== curStatus) return false;
-    }
-    
-    // تصفية حسب الفرع
+    if (curStatus !== 'all' && state !== curStatus) return false;
     if (selectedBranch && inv.branchName !== selectedBranch) return false;
     
-    // ✅ مقارنة التواريخ كنصوص بصيغة DD/MMM/YYYY
     const invDate = inv.activeDate || '';
+    if (fDate && invDate < fDate) return false;
+    if (tDate && invDate > tDate) return false;
     
-    if (fDateRaw && invDate < fDateRaw) return false;
-    if (tDateRaw && invDate > tDateRaw) return false;
-    
-    // بحث نصي
     if (q) {
       const searchText = [inv.voucherNo, inv.guestName, inv.trip, inv.hotel, inv.contactNo]
         .map(x => x || '').join(' ').toLowerCase();
@@ -308,11 +296,7 @@ function apply() {
   doSort();
   renderAll();
 }
-  function isValidDDMMMYYYY(dateStr) {
-  if (!dateStr) return true; // Empty is valid
-  return /^\d{1,2}\/[A-Za-z]{3}\/\d{4}$/.test(dateStr);
-}
-function setTodayDates() {
+  function setTodayDates() {
   const today = new Date();
   const formattedToday = formatToDDMMMYYYY(today);
   document.getElementById('fFrom').value = formattedToday;
@@ -356,11 +340,7 @@ function reset() {
   document.getElementById('fSearch').value = '';
   document.getElementById('fBranch').value = '';
   curStatus = 'all';
-  // تحديث التبويب النشط
-  ['all','pending','confirmed','cancel','refund'].forEach(s => {
-    const btn = document.getElementById('tab' + s.charAt(0).toUpperCase() + s.slice(1));
-    if (btn) btn.classList.remove('active');
-  });
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
   document.getElementById('tabAll').classList.add('active');
   apply();
 }
@@ -428,8 +408,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('userNameDisplay').textContent=currentUser.name||'User';
   if(!['Admin','Owner','Sales'].includes(currentUser.type)){showAlert('No permission','❌');setTimeout(()=>location.href='Dashboard.html',2000);return;}
   /* ✅ تاريخ اليوم للحقلين */
-  const t=todayISO();
-  document.getElementById('fFrom').value=t;document.getElementById('fTo').value=t;
+  /* ✅ لا نضع تواريخ افتراضية */
   const params=new URLSearchParams(location.search);
   const initStatus=params.get('status')||'pending';
   switchTab(initStatus);
