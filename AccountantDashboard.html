@@ -195,7 +195,40 @@ let currentUser = null;
 let allAccounts = [];
 let filteredNames = [];
 let currentDestination = 'dashboard';
-
+  // ============================================================
+  // ✅ التحقق من صحة الجلسة - منع التوجيه المتكرر
+  // ============================================================
+  function checkSessionValidity() {
+    try {
+      // التحقق من وجود جلسة صالحة في localStorage
+      const stored = localStorage.getItem('currentUser');
+      if (!stored) {
+        // لا توجد جلسة، اخرج من الصفحة
+        window.location.href = 'index.html';
+        return false;
+      }
+      
+      const data = JSON.parse(stored);
+      // التحقق من صلاحية الجلسة (24 ساعة)
+      if (data.expiry && Date.now() < data.expiry) {
+        return true; // الجلسة صالحة
+      } else {
+        // الجلسة منتهية
+        localStorage.removeItem('currentUser');
+        window.location.href = 'index.html';
+        return false;
+      }
+    } catch(e) {
+      window.location.href = 'index.html';
+      return false;
+    }
+  }
+  
+  // ✅ تنفيذ التحقق فوراً
+  if (!checkSessionValidity()) {
+    // سيتم التوجيه داخل الدالة، نوقف تنفيذ باقي الكود
+    throw new Error('جلسة غير صالحة');
+  }
 // دالة جديدة لتأمين النصوص (بدلاً من esc الغير معرفة)
 function safeEscape(str) {
   if (!str) return '';
@@ -276,11 +309,12 @@ function showConfirm(m,onOk){
 }
 function logout(){
   showConfirm('هل أنت متأكد من تسجيل الخروج؟',()=>{
+    // ✅ مسح localStorage و sessionStorage معاً
+    localStorage.removeItem('currentUser');
     sessionStorage.removeItem('currentUser');
     location.href='index.html';
   });
-} 
-
+}
 function go(url){
   sessionStorage.setItem('currentUser',JSON.stringify(currentUser));
   location.href=url;
@@ -602,12 +636,26 @@ function showDashboard(){
 }
 
 document.addEventListener('DOMContentLoaded',()=>{
-  let ud=sessionStorage.getItem('currentUser');
+  // ✅ التحقق من الجلسة أولاً من localStorage
+  const storedUser = localStorage.getItem('currentUser');
+  if (!storedUser) { 
+    location.href = 'index.html'; 
+    return; 
+  }
+  
+  let ud = sessionStorage.getItem('currentUser');
   if(!ud){
     const p=new URLSearchParams(location.search).get('user');
     if(p){
       ud=decodeURIComponent(p);
       sessionStorage.setItem('currentUser',ud);
+    } else if (storedUser) {
+      // ✅ إذا لم توجد في sessionStorage، جلب من localStorage
+      try {
+        const parsed = JSON.parse(storedUser);
+        ud = JSON.stringify(parsed.user);
+        sessionStorage.setItem('currentUser', ud);
+      } catch(e) {}
     }
   }
   if(!ud){
