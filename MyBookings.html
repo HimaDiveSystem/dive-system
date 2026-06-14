@@ -100,11 +100,11 @@
       </select>
     </div>
     <div class="fg"><label>From Date</label>
-      <input type="text" class="fc" id="fFrom" placeholder="DD/MMM/YYYY" onchange="apply()" value="">
-    </div>
-    <div class="fg"><label>To Date</label>
-      <input type="text" class="fc" id="fTo" placeholder="DD/MMM/YYYY" onchange="apply()" value="">
-    </div>
+  <input type="date" class="fc" id="fFrom" onchange="convertDateFromISO(this)" value="">
+</div>
+<div class="fg"><label>To Date</label>
+  <input type="date" class="fc" id="fTo" onchange="convertDateFromISO(this)" value="">
+</div>
     <div class="fg"><label>Search</label>
       <input type="text" class="fc" id="fSearch" placeholder="Voucher, Guest, Trip..." oninput="debounce()" style="min-width:160px">
     </div>
@@ -177,17 +177,15 @@ function loadInv() {
 }
 
 function apply(){
-  const fDate=document.getElementById('fFrom').value.trim();
-  const tDate=document.getElementById('fTo').value.trim();
-  const q=document.getElementById('fSearch').value.toLowerCase().trim();
-  const selectedBranch=document.getElementById('fBranch')?.value||'';
-  filtInv=allInv.filter(inv=>{
+  const q = document.getElementById('fSearch').value.toLowerCase().trim();
+  const selectedBranch = document.getElementById('fBranch')?.value||'';
+  filtInv = allInv.filter(inv=>{
     const state=(inv.state||'').toLowerCase();
     if(curStatus!=='all'&&state!==curStatus)return false;
     if(selectedBranch&&inv.branchName!==selectedBranch)return false;
     const invDate=inv.activeDate||'';
-    if(fDate&&invDate<fDate)return false;
-    if(tDate&&invDate>tDate)return false;
+    if(selectedFromDate && invDate < selectedFromDate)return false;
+    if(selectedToDate && invDate > selectedToDate)return false;
     if(q){const s=[inv.voucherNo,inv.guestName,inv.trip,inv.hotel,inv.contactNo].map(x=>x||'').join(' ').toLowerCase();if(!s.includes(q))return false;}
     return true;
   });
@@ -196,7 +194,24 @@ function apply(){
   doSort();
   renderAll();
 }
+let selectedFromDate = '';
+let selectedToDate = '';
 
+function convertDateFromISO(input) {
+  const isoValue = input.value;
+  if (!isoValue) {
+    if (input.id === 'fFrom') selectedFromDate = '';
+    else selectedToDate = '';
+    apply();
+    return;
+  }
+  const [year, month, day] = isoValue.split('-');
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const formattedDate = `${parseInt(day)}/${months[parseInt(month) - 1]}/${year}`;
+  if (input.id === 'fFrom') selectedFromDate = formattedDate;
+  else selectedToDate = formattedDate;
+  apply();
+}
 function updateCountsFromFiltered(){
   const counts={all:filtInv.length,pending:0,confirmed:0,cancel:0,refund:0};
   filtInv.forEach(inv=>{const s=(inv.state||'').toLowerCase();if(s==='pending')counts.pending++;else if(s==='confirmed')counts.confirmed++;else if(s==='cancel')counts.cancel++;else if(s==='refund')counts.refund++;});
@@ -208,12 +223,24 @@ function updateCountsFromFiltered(){
 }
 
 function loadBranchesFilter(){
-  const branches=[...new Set(allInv.map(inv=>inv.branchName).filter(b=>b))];
-  const select=document.getElementById('fBranch');
-  if(select&&branches.length){
-    const currentValue=select.value;
-    select.innerHTML='<option value="">📍 All Branches</option>'+branches.map(b=>`<option value="${b}">🏢 ${b}</option>`).join('');
-    if(currentValue)select.value=currentValue;
+  // إذا كان المستخدم محاسب، لا تعرض له خيار اختيار الفرع
+  if (currentUser?.type === 'Accountant') {
+    const select = document.getElementById('fBranch');
+    if (select) {
+      select.innerHTML = `<option value="${currentUser.branchName || 'Main Branch'}">🏢 ${currentUser.branchName || 'Main Branch'}</option>`;
+      select.disabled = true;
+    }
+    return;
+  }
+  
+  // باقي الكود للمستخدمين العاديين (Admin, Owner, Sales)
+  const branches = [...new Set(allInv.map(inv => inv.branchName).filter(b => b))];
+  const select = document.getElementById('fBranch');
+  if (select && branches.length) {
+    const currentValue = select.value;
+    select.innerHTML = '<option value="">📍 All Branches</option>' + 
+      branches.map(b => `<option value="${b}">🏢 ${b}</option>`).join('');
+    if (currentValue) select.value = currentValue;
   }
 }
 
