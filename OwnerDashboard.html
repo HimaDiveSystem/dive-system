@@ -146,17 +146,56 @@
 </div>
 
 <script>
-const GAS_URL='https://script.google.com/macros/s/AKfycbwC1BRoLAJthZqxWTYyMUSjPNNGfCI0BjTfhE7ZiVx67rUP__OKAj0vlwD1-RUCOMSE/exec';
+const GAS_URL='https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec';
 let currentUser=null,notifInterval=null;
-
+  // ============================================================
+  // ✅ التحقق من صحة الجلسة - منع التوجيه المتكرر
+  // ============================================================
+  function checkSessionValidity() {
+    try {
+      // التحقق من وجود جلسة صالحة في localStorage
+      const stored = localStorage.getItem('currentUser');
+      if (!stored) {
+        // لا توجد جلسة، اخرج من الصفحة
+        window.location.href = 'index.html';
+        return false;
+      }
+      
+      const data = JSON.parse(stored);
+      // التحقق من صلاحية الجلسة (24 ساعة)
+      if (data.expiry && Date.now() < data.expiry) {
+        return true; // الجلسة صالحة
+      } else {
+        // الجلسة منتهية
+        localStorage.removeItem('currentUser');
+        window.location.href = 'index.html';
+        return false;
+      }
+    } catch(e) {
+      window.location.href = 'index.html';
+      return false;
+    }
+  }
+  
+  // ✅ تنفيذ التحقق فوراً
+  if (!checkSessionValidity()) {
+    // سيتم التوجيه داخل الدالة، نوقف تنفيذ باقي الكود
+    throw new Error('جلسة غير صالحة');
+  }
 function getUserFromUrl(){try{const p=new URLSearchParams(location.search).get('user');return p?JSON.parse(decodeURIComponent(p)):null;}catch{return null;}}
 
 function showConfirm(msg,onOk){const m=document.getElementById('confirmModal');document.getElementById('confirmMsg').textContent=msg;m.classList.add('open');const ok=document.getElementById('confirmOk'),ca=document.getElementById('confirmCancel');const oh=()=>{m.classList.remove('open');onOk();ok.removeEventListener('click',oh);ca.removeEventListener('click',ch);};const ch=()=>{m.classList.remove('open');ok.removeEventListener('click',oh);ca.removeEventListener('click',ch);};ok.addEventListener('click',oh);ca.addEventListener('click',ch);}
 
 function showAlert(msg){const m=document.getElementById('alertModal');document.getElementById('alertMsg').textContent=msg;m.classList.add('open');const b=document.getElementById('alertOk');const h=()=>{m.classList.remove('open');b.removeEventListener('click',h);};b.addEventListener('click',h);}
 
-function logout(){showConfirm('هل أنت متأكد من تسجيل الخروج؟',()=>{clearInterval(notifInterval);sessionStorage.removeItem('currentUser');location.href='index.html';});}
-function openNotifications(){location.href='Notifications.html';}
+function logout(){showConfirm('هل أنت متأكد من تسجيل الخروج؟',()=>{
+  clearInterval(notifInterval);
+  // ✅ مسح localStorage و sessionStorage معاً
+  localStorage.removeItem('currentUser');
+  sessionStorage.removeItem('currentUser');
+  location.href='index.html';
+});}
+  function openNotifications(){location.href='Notifications.html';}
 function goInvoices(){location.href='BookingsToday.html';}
 
 async function fetchNotifCount(){
@@ -231,8 +270,25 @@ function displayStaff(data){
 
 /* ── Init ── */
 document.addEventListener('DOMContentLoaded',async()=>{
+  // ✅ التحقق من الجلسة أولاً من localStorage
+  const storedUser = localStorage.getItem('currentUser');
+  if (!storedUser) { 
+    location.href = 'index.html'; 
+    return; 
+  }
+  
   let ud=sessionStorage.getItem('currentUser');
-  if(!ud){const u=getUserFromUrl();if(u){ud=JSON.stringify(u);sessionStorage.setItem('currentUser',ud);}}
+  if(!ud){
+    const u=getUserFromUrl();
+    if(u){ud=JSON.stringify(u);sessionStorage.setItem('currentUser',ud);}
+    else if(storedUser){
+      try {
+        const parsed = JSON.parse(storedUser);
+        ud = JSON.stringify(parsed.user);
+        sessionStorage.setItem('currentUser', ud);
+      } catch(e) {}
+    }
+  }
   if(!ud){location.href='index.html';return;}
   try{currentUser=JSON.parse(ud);}catch{location.href='index.html';return;}
   document.getElementById('userNameDisplay').textContent=currentUser.name||'صاحب مركز';
