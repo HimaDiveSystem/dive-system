@@ -131,13 +131,46 @@
 // ══════════════════════════════════════════════════════════
 // CONFIG
 // ══════════════════════════════════════════════════════════
-const GAS = 'https://script.google.com/macros/s/AKfycbwC1BRoLAJthZqxWTYyMUSjPNNGfCI0BjTfhE7ZiVx67rUP__OKAj0vlwD1-RUCOMSE/exec';
+const GAS = 'https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec';
 
 let currentUser = null;
 let instructors = [];
 let vehicles = [];
 let boats = [];
-
+  // ============================================================
+  // ✅ التحقق من صحة الجلسة - منع التوجيه المتكرر
+  // ============================================================
+  function checkSessionValidity() {
+    try {
+      // التحقق من وجود جلسة صالحة في localStorage
+      const stored = localStorage.getItem('currentUser');
+      if (!stored) {
+        // لا توجد جلسة، اخرج من الصفحة
+        window.location.href = 'index.html';
+        return false;
+      }
+      
+      const data = JSON.parse(stored);
+      // التحقق من صلاحية الجلسة (24 ساعة)
+      if (data.expiry && Date.now() < data.expiry) {
+        return true; // الجلسة صالحة
+      } else {
+        // الجلسة منتهية
+        localStorage.removeItem('currentUser');
+        window.location.href = 'index.html';
+        return false;
+      }
+    } catch(e) {
+      window.location.href = 'index.html';
+      return false;
+    }
+  }
+  
+  // ✅ تنفيذ التحقق فوراً
+  if (!checkSessionValidity()) {
+    // سيتم التوجيه داخل الدالة، نوقف تنفيذ باقي الكود
+    throw new Error('جلسة غير صالحة');
+  }
 // ══════════════════════════════════════════════════════════
 // دالة تنسيق التاريخ (dd/mm/yyyy)
 // ══════════════════════════════════════════════════════════
@@ -181,7 +214,22 @@ function jsonpRequest(action, params = {}) {
 // INIT
 // ══════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', async () => {
-  const ud = sessionStorage.getItem('currentUser');
+  // ✅ التحقق من الجلسة أولاً من localStorage
+  const storedUser = localStorage.getItem('currentUser');
+  if (!storedUser) {
+    document.querySelector('.content').innerHTML = '<div style="text-align:center;padding:60px;color:#e74c3c;"><h3>يرجى تسجيل الدخول أولاً</h3></div>';
+    return;
+  }
+  
+  let ud = sessionStorage.getItem('currentUser');
+  if (!ud && storedUser) {
+    try {
+      const parsed = JSON.parse(storedUser);
+      ud = JSON.stringify(parsed.user);
+      sessionStorage.setItem('currentUser', ud);
+    } catch(e) {}
+  }
+  
   if (!ud) {
     document.querySelector('.content').innerHTML = '<div style="text-align:center;padding:60px;color:#e74c3c;"><h3>يرجى تسجيل الدخول أولاً</h3></div>';
     return;
@@ -218,6 +266,8 @@ function openOperationAccess() {
 }
 
 function goBack() {
+  // ✅ مسح localStorage و sessionStorage معاً
+  localStorage.removeItem('currentUser');
   sessionStorage.clear();
   window.location.href = 'index.html';
 }
