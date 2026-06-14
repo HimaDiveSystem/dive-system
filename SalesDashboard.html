@@ -104,7 +104,7 @@
   </div>
 
 <script>
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbwC1BRoLAJthZqxWTYyMUSjPNNGfCI0BjTfhE7ZiVx67rUP__OKAj0vlwD1-RUCOMSE/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec';
   // ── جدول الصفحات ──
   const PAGES = {
     Login:               'index.html',
@@ -118,7 +118,40 @@ const GAS_URL = 'https://script.google.com/macros/s/AKfycbwC1BRoLAJthZqxWTYyMUSj
 
   let currentUser    = null;
   let selectedBranch = null;
-
+  // ============================================================
+  // ✅ التحقق من صحة الجلسة - منع التوجيه المتكرر
+  // ============================================================
+  function checkSessionValidity() {
+    try {
+      // التحقق من وجود جلسة صالحة في localStorage
+      const stored = localStorage.getItem('currentUser');
+      if (!stored) {
+        // لا توجد جلسة، اخرج من الصفحة
+        window.location.href = 'index.html';
+        return false;
+      }
+      
+      const data = JSON.parse(stored);
+      // التحقق من صلاحية الجلسة (24 ساعة)
+      if (data.expiry && Date.now() < data.expiry) {
+        return true; // الجلسة صالحة
+      } else {
+        // الجلسة منتهية
+        localStorage.removeItem('currentUser');
+        window.location.href = 'index.html';
+        return false;
+      }
+    } catch(e) {
+      window.location.href = 'index.html';
+      return false;
+    }
+  }
+  
+  // ✅ تنفيذ التحقق فوراً
+  if (!checkSessionValidity()) {
+    // سيتم التوجيه داخل الدالة، نوقف تنفيذ باقي الكود
+    throw new Error('جلسة غير صالحة');
+  }
   function navigateTo(page) {
     window.location.href = PAGES[page] || (page + '.html');
   }
@@ -297,17 +330,37 @@ function openPassportScanner() {
     }
     window.location.href = 'PassportScan.html';
 }
-  function logout() {
+   function logout() {
     showConfirm('هل أنت متأكد من تسجيل الخروج؟', function() {
+      // ✅ مسح localStorage و sessionStorage معاً
+      localStorage.removeItem('currentUser');
       sessionStorage.clear();
       window.location.href = 'index.html';
     });
   }
 
   // ── التحميل الأولي ──
-  document.addEventListener('DOMContentLoaded', async function() {
-    const userData = sessionStorage.getItem('currentUser');
-    if (!userData) { window.location.href = 'index.html'; return; }
+   document.addEventListener('DOMContentLoaded', async function() {
+    // ✅ التحقق من الجلسة أولاً من localStorage
+    const storedUser = localStorage.getItem('currentUser');
+    if (!storedUser) { 
+      window.location.href = 'index.html'; 
+      return; 
+    }
+    
+    // ✅ محاولة جلب البيانات من sessionStorage أولاً، ثم localStorage
+    let userData = sessionStorage.getItem('currentUser');
+    if (!userData && storedUser) {
+      try {
+        const parsed = JSON.parse(storedUser);
+        userData = JSON.stringify(parsed.user);
+      } catch(e) {}
+    }
+    
+    if (!userData) { 
+      window.location.href = 'index.html'; 
+      return; 
+    }
 
     try {
       currentUser = JSON.parse(userData);
