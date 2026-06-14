@@ -167,13 +167,55 @@ let currentUser=null,allInv=[],filtInv=[];
 let curStatus='pending',pg=1;const PS=20;
 let sortCol='activeDate',sortDir='asc';
 let ftimer=null;
-
+  // ============================================================
+  // ✅ التحقق من صحة الجلسة - منع التوجيه المتكرر
+  // ============================================================
+  function checkSessionValidity() {
+    try {
+      // التحقق من وجود جلسة صالحة في localStorage
+      const stored = localStorage.getItem('currentUser');
+      if (!stored) {
+        // لا توجد جلسة، اخرج من الصفحة
+        window.location.href = 'index.html';
+        return false;
+      }
+      
+      const data = JSON.parse(stored);
+      // التحقق من صلاحية الجلسة (24 ساعة)
+      if (data.expiry && Date.now() < data.expiry) {
+        return true; // الجلسة صالحة
+      } else {
+        // الجلسة منتهية
+        localStorage.removeItem('currentUser');
+        window.location.href = 'index.html';
+        return false;
+      }
+    } catch(e) {
+      window.location.href = 'index.html';
+      return false;
+    }
+  }
+  
+  // ✅ تنفيذ التحقق فوراً
+  if (!checkSessionValidity()) {
+    // سيتم التوجيه داخل الدالة، نوقف تنفيذ باقي الكود
+    throw new Error('جلسة غير صالحة');
+  }
 function parseDt(s){if(!s)return null;const st=String(s).trim();const m=st.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})/);if(m){const i=MN.findIndex(n=>n.toLowerCase()===m[2].toLowerCase());if(i!==-1)return new Date(m[3],i,m[1]).getTime();}const d=new Date(st);return isNaN(d)?null:d.getTime();}
 function todayISO(){return new Date().toISOString().split('T')[0];}
 function showAlert(m,i='ℹ️'){document.getElementById('aMsg').textContent=m;document.getElementById('aIcon').textContent=i;document.getElementById('alertModal').classList.add('open');}
 function closeAlert(){document.getElementById('alertModal').classList.remove('open');}
-function goBack(){window.location.href=DASH[currentUser?.type]||'SalesDashboard.html';}
-
+function goBack(){
+  // حفظ الجلسة في localStorage قبل العودة (للتأكد من وجودها)
+  if (currentUser) {
+    const storedData = {
+      user: currentUser,
+      expiry: Date.now() + (24 * 60 * 60 * 1000)
+    };
+    localStorage.setItem('currentUser', JSON.stringify(storedData));
+  }
+  window.location.href = DASH[currentUser?.type] || 'SalesDashboard.html';
+}
 function switchTab(status){
   curStatus=status;pg=1;
   ['all','pending','confirmed','cancel','refund'].forEach(s=>{
@@ -360,8 +402,27 @@ function renderPag(){const total=Math.ceil(filtInv.length/PS);let pages=[];if(pg
 function gotoPage(p){pg=p;renderTable();}
 
 document.addEventListener('DOMContentLoaded',()=>{
+  // ✅ التحقق من الجلسة أولاً من localStorage
+  const storedUser = localStorage.getItem('currentUser');
+  if (!storedUser) { 
+    location.href = 'index.html'; 
+    return; 
+  }
+  
   let ud=sessionStorage.getItem('currentUser');
-  if(!ud){const p=new URLSearchParams(location.search).get('user');if(p){ud=decodeURIComponent(p);sessionStorage.setItem('currentUser',ud);}}
+  if(!ud){
+    const p=new URLSearchParams(location.search).get('user');
+    if(p){
+      ud=decodeURIComponent(p);
+      sessionStorage.setItem('currentUser',ud);
+    } else if (storedUser) {
+      try {
+        const parsed = JSON.parse(storedUser);
+        ud = JSON.stringify(parsed.user);
+        sessionStorage.setItem('currentUser', ud);
+      } catch(e) {}
+    }
+  }
   if(!ud){location.href='index.html';return;}
   try{currentUser=JSON.parse(ud);}catch{location.href='index.html';return;}
   document.getElementById('userNameDisplay').textContent=currentUser.name||'User';
