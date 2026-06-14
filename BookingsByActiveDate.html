@@ -447,7 +447,7 @@
 </div>
 
 <script>
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbwC1BRoLAJthZqxWTYyMUSjPNNGfCI0BjTfhE7ZiVx67rUP__OKAj0vlwD1-RUCOMSE/exec';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec';
 const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const DASH = {Admin:'Dashboard.html',Owner:'OwnerDashboard.html',Sales:'SalesDashboard.html',Accountant:'AccountantDashboard.html'};
 const ALLOWED = ['Admin','Owner','Sales','Accountant','FinancialManager','CenterManager','BranchManager'];
@@ -463,7 +463,40 @@ let pendingDeleteVoucher = null;
 let cachedExchangeRate = null;
 let selectedCustomerFilter = null;
 let selectedCategoryFilter = null;
-
+  // ============================================================
+  // ✅ التحقق من صحة الجلسة - منع التوجيه المتكرر
+  // ============================================================
+  function checkSessionValidity() {
+    try {
+      // التحقق من وجود جلسة صالحة في localStorage
+      const stored = localStorage.getItem('currentUser');
+      if (!stored) {
+        // لا توجد جلسة، اخرج من الصفحة
+        window.location.href = 'index.html';
+        return false;
+      }
+      
+      const data = JSON.parse(stored);
+      // التحقق من صلاحية الجلسة (24 ساعة)
+      if (data.expiry && Date.now() < data.expiry) {
+        return true; // الجلسة صالحة
+      } else {
+        // الجلسة منتهية
+        localStorage.removeItem('currentUser');
+        window.location.href = 'index.html';
+        return false;
+      }
+    } catch(e) {
+      window.location.href = 'index.html';
+      return false;
+    }
+  }
+  
+  // ✅ تنفيذ التحقق فوراً
+  if (!checkSessionValidity()) {
+    // سيتم التوجيه داخل الدالة، نوقف تنفيذ باقي الكود
+    throw new Error('جلسة غير صالحة');
+  }
 /* ===== FIX 1: Dynamic sticky offset calculation ===== */
 function updateStickyOffsets() {
   const header = document.getElementById('mainHeader');
@@ -539,7 +572,17 @@ function closeAlert() { document.getElementById('alertModal').classList.remove('
 function closeQuickModal() { document.getElementById('quickModal').classList.remove('open'); }
 function closeCollectionQuickModal() { document.getElementById('collectionModal').classList.remove('open'); }
 
-function goBack() { window.location.href = DASH[currentUser?.type] || 'Dashboard.html'; }
+function goBack() { 
+  // حفظ الجلسة في localStorage قبل العودة (للتأكد من وجودها)
+  if (currentUser) {
+    const storedData = {
+      user: currentUser,
+      expiry: Date.now() + (24 * 60 * 60 * 1000)
+    };
+    localStorage.setItem('currentUser', JSON.stringify(storedData));
+  }
+  window.location.href = DASH[currentUser?.type] || 'AccountantDashboard.html'; 
+}
 function editInvoice(v) {
   sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
   sessionStorage.setItem('sourcePage', 'BookingsByActiveDate');
@@ -1580,20 +1623,25 @@ function fixStickyHeaderManually() {
 document.addEventListener('DOMContentLoaded', async function() {
   document.getElementById('confirmDeleteBtn').onclick = executeDelete;
   
-  // Initial sticky offset calculation
-  updateStickyOffsets();
-  window.addEventListener('resize', updateStickyOffsets);
+  // ✅ التحقق من الجلسة أولاً من localStorage
+  const storedUser = localStorage.getItem('currentUser');
+  if (!storedUser) { 
+    location.href = 'index.html'; 
+    return; 
+  }
   
-  // تحديث ارتفاع حاوية الجدول
-  updateTblWrapHeight();
-  window.addEventListener('resize', updateTblWrapHeight);
-
   let ud = sessionStorage.getItem('currentUser');
   if (!ud) {
     const p = new URLSearchParams(location.search).get('user');
     if (p) {
       ud = decodeURIComponent(p);
       sessionStorage.setItem('currentUser', ud);
+    } else if (storedUser) {
+      try {
+        const parsed = JSON.parse(storedUser);
+        ud = JSON.stringify(parsed.user);
+        sessionStorage.setItem('currentUser', ud);
+      } catch(e) {}
     }
   }
   if (!ud) {
@@ -1612,6 +1660,15 @@ document.addEventListener('DOMContentLoaded', async function() {
     setTimeout(() => location.href = 'Dashboard.html', 2000);
     return;
   }
+  
+  // Initial sticky offset calculation
+  updateStickyOffsets();
+  window.addEventListener('resize', updateStickyOffsets);
+  
+  // تحديث ارتفاع حاوية الجدول
+  updateTblWrapHeight();
+  window.addEventListener('resize', updateTblWrapHeight);
+  
   const t = todayISO();
   document.getElementById('fFromNat').value = t;
   document.getElementById('fFromTxt').value = isoToTxt(t);
@@ -1620,7 +1677,7 @@ document.addEventListener('DOMContentLoaded', async function() {
   await loadCustomersAndSuppliers();
   window.addEventListener('scroll', hideAll);
   loadInv();
-    fixStickyHeaderManually();
+  fixStickyHeaderManually();
 });
 </script>
 </body>
