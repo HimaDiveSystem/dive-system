@@ -197,7 +197,9 @@
     
     @media(max-width:600px){.action-grid{grid-template-columns:1fr;}.filter-row{grid-template-columns:1fr;}.header-center{display:none;}}
 </style>
-   <script src="ui.js"></script>
+  <script src="ui.js"></script>
+<script src="config.js"></script>
+<script src="session.js"></script>
 </head>
 <body>
 <div class="container">
@@ -241,7 +243,6 @@
 </div>
 
 <script>
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec';
 
 let currentUser = null;
 let allAccounts = [];
@@ -250,36 +251,7 @@ let currentDestination = 'dashboard';
   // ============================================================
   // ✅ التحقق من صحة الجلسة - منع التوجيه المتكرر
   // ============================================================
-  function checkSessionValidity() {
-  try {
-    const stored = localStorage.getItem('currentUser');
-    if (!stored) {
-      window.location.href = 'index.html';
-      return false;
-    }
-    
-    const data = JSON.parse(stored);
-    // ✅ التحقق من صلاحية 24 ساعة
-    if (data.expiry && Date.now() < data.expiry) {
-      return true;
-    } else {
-      localStorage.removeItem('currentUser');
-      sessionStorage.clear();
-      window.location.href = 'index.html';
-      return false;
-    }
-  } catch(e) {
-    localStorage.removeItem('currentUser');
-    window.location.href = 'index.html';
-    return false;
-  }
-}
-  
-  // ✅ تنفيذ التحقق فوراً
-  if (!checkSessionValidity()) {
-    // سيتم التوجيه داخل الدالة، نوقف تنفيذ باقي الكود
-    throw new Error('جلسة غير صالحة');
-  }
+ 
 // دالة جديدة لتأمين النصوص (بدلاً من esc الغير معرفة)
 function safeEscape(str) {
   if (!str) return '';
@@ -293,45 +265,6 @@ function safeEscape(str) {
   });
 }
 
-function gas(action, params = {}) {
-  return new Promise((resolve, reject) => {
-    const callbackName = 'jsonp_callback_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
-    const url = new URL(GAS_URL);
-    url.searchParams.set('action', action);
-    url.searchParams.set('callback', callbackName);
-    url.searchParams.set('_t', Date.now());
-    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v ?? '')));
-    
-    window[callbackName] = function(data) {
-      delete window[callbackName];
-      if (document.body.contains(script)) {
-        document.body.removeChild(script);
-      }
-      resolve(data);
-    };
-    
-    const script = document.createElement('script');
-    script.src = url.toString();
-    script.onerror = () => {
-      delete window[callbackName];
-      if (document.body.contains(script)) {
-        document.body.removeChild(script);
-      }
-      reject(new Error('فشل الاتصال بالخادم'));
-    };
-    document.body.appendChild(script);
-    
-    setTimeout(() => {
-      if (window[callbackName]) {
-        delete window[callbackName];
-        if (document.body.contains(script)) {
-          document.body.removeChild(script);
-        }
-        reject(new Error('انتهى وقت الاتصال'));
-      }
-    }, 30000);
-  });
-}
 
 function showAlert(m){
   document.getElementById('alertMsg').textContent=m;
@@ -359,7 +292,12 @@ function showConfirm(m,onOk){
   ca.addEventListener('click',ch);
 }
 function logout() {
-  showLogoutConfirm();
+  // ✅ استخدام Session.logout من session.js مع تأكيد الخروج
+  if (typeof showLogoutConfirm !== 'undefined') {
+    showLogoutConfirm();
+  } else {
+    Session.logout();
+  }
 }
 function go(url){
   sessionStorage.setItem('currentUser',JSON.stringify(currentUser));
@@ -376,7 +314,7 @@ async function openCustomerSelect(destination = 'dashboard') {
   document.getElementById('filterContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري تحميل العملاء...</div>';
   
   try {
-    const res = await gas('getAllSuppliersCustomers');
+    const res = await callGAS('getAllSuppliersCustomers');
     allAccounts = Array.isArray(res) ? res : [];
     
     const types = [];
@@ -517,11 +455,20 @@ function closeCustomerSelect() {
 
 async function openEmployeeAttendance() {
   try {
+    // ✅ التأكد من وجود currentUser (قد يكون من Session)
+    if (!currentUser) {
+      currentUser = Session.getUser();
+    }
+    if (!currentUser) {
+      showAlert('يرجى تسجيل الدخول أولاً');
+      return;
+    }
+    
     console.log("===== بدء اختبار سجل حضور موظف آخر =====");
     console.log("بيانات المستخدم الحالي:", currentUser);
     console.log("فرع المستخدم:", currentUser?.branchName);
-    
-    const employees = await gas('getAllEmployees');
+   
+    const employees = await callGAS('getAllEmployees');
     console.log("عدد الموظفين المستلمين:", employees?.length);
     
     if (!Array.isArray(employees) || employees.length === 0) {
@@ -607,8 +554,15 @@ async function openEmployeeAttendance() {
   }
 }
 function showDashboard(){
-  document.getElementById('userNameDisplay').textContent = currentUser.name || 'محاسب';
+ if (!currentUser) {
+    currentUser = Session.getUser();
+    if (!currentUser) {
+      window.location.href = 'index.html';
+      return;
+    }
+  }
   
+  document.getElementById('userNameDisplay').textContent = currentUser.name || 'محاسب';  
   const headerInfo = document.getElementById('headerInfo');
   if (headerInfo) {
     headerInfo.innerHTML = `
@@ -685,52 +639,23 @@ document.addEventListener('DOMContentLoaded',()=>{
   Theme.applyToPage();
   Theme.setPageTitle('قائمة المحاسب المتكاملة');
   
-  // ✅ التحقق من صحة الجلسة أولاً
-  if (!checkSessionValidity()) {
+  // ✅ استخدام Session.checkValidity() من session.js
+  if (!Session.checkValidity()) {
     return; // تم التوجيه داخل الدالة
   }
   
-  // ✅ جلب المستخدم من localStorage
-  let ud = null;
-  const storedUser = localStorage.getItem('currentUser');
-  if (storedUser) {
-    try {
-      const parsed = JSON.parse(storedUser);
-      ud = JSON.stringify(parsed.user);
-      sessionStorage.setItem('currentUser', ud);
-    } catch(e) {}
-  }
+  // ✅ استخدام Session.getUser() من session.js
+  currentUser = Session.getUser();
   
-  // ✅ محاولة من sessionStorage كبديل
-  if (!ud) {
-    ud = sessionStorage.getItem('currentUser');
-  }
-  
-  // ✅ من parameters
-  if(!ud){
-    const p = new URLSearchParams(location.search).get('user');
-    if(p){
-      ud = decodeURIComponent(p);
-      sessionStorage.setItem('currentUser', ud);
-    }
-  }
-  
-  if(!ud){
+  if (!currentUser) {
     location.href = 'index.html';
     return;
   }
   
-  try{
-    currentUser = JSON.parse(ud);
-  } catch(e){
-    location.href = 'index.html';
-    return;
-  }
-  
-  // ✅ التحقق من الصلاحية
-  if(currentUser.type !== 'Accountant' && currentUser.type !== 'Admin' && currentUser.type !== 'AccountantManager' && currentUser.type !== 'FinancialManager'){
-    location.href = 'index.html';
-    return;
+  // ✅ التحقق من الصلاحية باستخدام Session.checkPermission()
+  const allowedTypes = ['Accountant', 'Admin', 'AccountantManager', 'FinancialManager'];
+  if (!Session.checkPermission(allowedTypes)) {
+    return; // تم التوجيه داخل الدالة
   }
   
   showDashboard();
