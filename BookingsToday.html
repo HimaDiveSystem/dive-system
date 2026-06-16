@@ -1,11 +1,21 @@
 <!DOCTYPE html>
 <html dir="ltr">
 <head>
+  <!-- ✅ توحيد مظهر المتصفح -->
+<meta name="theme-color" content="#1e2b4f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" type="image/png" href="favicon.png">
+<meta name="description" content="نظام إدارة مراكز الغوص">
+<meta name="author" content="Dive System">
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes">
   <title>Bookings by Issue Date</title>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+  <script src="ui.js"></script>
+  <script src="config.js"></script>
+  <script src="session.js"></script>
    <style>
     :root{
       --navy:#0f1f3d;--navy2:#1a3260;--gold:#f5c842;--gold2:#e6b800;
@@ -443,10 +453,9 @@
 </div>
 
 <script>
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec';
 const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const DASH = {Admin:'Dashboard.html',Owner:'OwnerDashboard.html',Sales:'SalesDashboard.html',Accountant:'AccountantDashboard.html'};
-const ALLOWED = ['Admin','Owner','Sales','Accountant','FinancialManager','CenterManager','BranchManager'];
+const DASH = CONFIG.DASHBOARD_PAGES || {Admin:'Dashboard.html',Owner:'OwnerDashboard.html',Sales:'SalesDashboard.html',Accountant:'AccountantDashboard.html'};
+  const ALLOWED = ['Admin','Owner','Sales','Accountant','FinancialManager','CenterManager','BranchManager'];
 
 let currentUser = null, allInv = [], filtInv = [], allCustomers = [];
 let pg = 1;
@@ -463,37 +472,10 @@ let selectedCategoryFilter = null;
   // ============================================================
   // ✅ التحقق من صحة الجلسة - منع التوجيه المتكرر
   // ============================================================
-  function checkSessionValidity() {
-    try {
-      // التحقق من وجود جلسة صالحة في localStorage
-      const stored = localStorage.getItem('currentUser');
-      if (!stored) {
-        // لا توجد جلسة، اخرج من الصفحة
-        window.location.href = 'index.html';
-        return false;
-      }
-      
-      const data = JSON.parse(stored);
-      // التحقق من صلاحية الجلسة (24 ساعة)
-      if (data.expiry && Date.now() < data.expiry) {
-        return true; // الجلسة صالحة
-      } else {
-        // الجلسة منتهية
-        localStorage.removeItem('currentUser');
-        window.location.href = 'index.html';
-        return false;
-      }
-    } catch(e) {
-      window.location.href = 'index.html';
-      return false;
-    }
-  }
-  
-  // ✅ تنفيذ التحقق فوراً
-  if (!checkSessionValidity()) {
-    // سيتم التوجيه داخل الدالة، نوقف تنفيذ باقي الكود
-    throw new Error('جلسة غير صالحة');
-  }
+// ✅ استخدام Session.checkValidity() من session.js
+if (!Session.checkValidity()) {
+  throw new Error('جلسة غير صالحة');
+}
 function updateStickyOffsets() {
   const header = document.getElementById('mainHeader');
   const custBar = document.getElementById('customerSelectorBar');
@@ -577,17 +559,11 @@ function closeQuickModal() { document.getElementById('quickModal').classList.rem
 function closeCollectionQuickModal() { document.getElementById('collectionModal').classList.remove('open'); }
 
 function goBack() { 
-  // حفظ الجلسة في localStorage قبل العودة (للتأكد من وجودها)
   if (currentUser) {
-    const storedData = {
-      user: currentUser,
-      expiry: Date.now() + (24 * 60 * 60 * 1000)
-    };
-    localStorage.setItem('currentUser', JSON.stringify(storedData));
+    Session.save(currentUser);
   }
   window.location.href = DASH[currentUser?.type] || 'Dashboard.html'; 
 }
-
 function editInvoice(v) {
   sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
   sessionStorage.setItem('sourcePage', 'BookingsByIssueDate');
@@ -703,7 +679,7 @@ function valDates() {
 function gas(action, params = {}) {
   return new Promise((resolve, reject) => {
     const callbackName = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
-    const url = new URL(GAS_URL);
+    const url = new URL(CONFIG.GAS_URL);
     url.searchParams.set('action', action);
     url.searchParams.set('callback', callbackName);
     url.searchParams.set('_t', Date.now());
@@ -1671,38 +1647,27 @@ function exportToExcel(){
 document.addEventListener('DOMContentLoaded', async function() {
   document.getElementById('confirmDeleteBtn').onclick = executeDelete;
   
-  // ✅ التحقق من الجلسة أولاً من localStorage
-  const storedUser = localStorage.getItem('currentUser');
-  if (!storedUser) { 
-    location.href = 'index.html'; 
-    return; 
+  // ✅ تطبيق الثيم الموحد
+  if (typeof Theme !== 'undefined' && Theme.applyToPage) {
+    Theme.applyToPage();
+    Theme.setPageTitle('الحجوزات حسب تاريخ الإصدار');
   }
   
-  let ud = sessionStorage.getItem('currentUser');
-  if (!ud) {
-    const p = new URLSearchParams(location.search).get('user');
-    if (p) {
-      ud = decodeURIComponent(p);
-      sessionStorage.setItem('currentUser', ud);
-    } else if (storedUser) {
-      try {
-        const parsed = JSON.parse(storedUser);
-        ud = JSON.stringify(parsed.user);
-        sessionStorage.setItem('currentUser', ud);
-      } catch(e) {}
-    }
-  }
-  if (!ud) {
+  // ✅ استخدام Session.checkValidity() من session.js
+  if (!Session.checkValidity()) {
     location.href = 'index.html';
     return;
   }
-  try {
-    currentUser = JSON.parse(ud);
-  } catch {
+  
+  // ✅ استخدام Session.getUser() من session.js
+  currentUser = Session.getUser();
+  if (!currentUser) {
     location.href = 'index.html';
     return;
   }
+  
   document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
+  
   if (!ALLOWED.includes(currentUser.type)) {
     showAlert('No permission', '❌');
     setTimeout(() => location.href = 'Dashboard.html', 2000);
