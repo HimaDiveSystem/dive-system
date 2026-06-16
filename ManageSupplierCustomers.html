@@ -1,11 +1,20 @@
 <!DOCTYPE html>
 <html dir="rtl">
 <head>
+  <meta name="theme-color" content="#1e2b4f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <meta name="description" content="إدارة العملاء والمنفذين">
+  <meta name="author" content="Dive System">
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes">
   <title>إدارة العملاء والمنفذين</title>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+  <script src="ui.js"></script>
+  <script src="config.js"></script>
+  <script src="session.js"></script>
   <style>
     :root{
       --navy:#0f1f3d;--navy2:#1a3260;--gold:#f5c842;
@@ -144,8 +153,8 @@
 </div>
 
 <script>
-const GAS = 'https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec';
-const DASH = {
+const GAS_URL = CONFIG.GAS_URL;
+const DASHBOARDS = CONFIG.DASHBOARD_PAGES || {
   Admin: 'Dashboard.html',
   Owner: 'OwnerDashboard.html',
   Sales: 'SalesDashboard.html',
@@ -153,7 +162,11 @@ const DASH = {
   Customer: 'CustomerDashboard.html'
 };
 
+
 let currentUser = null;
+let viewingCustomer = null;
+let loggedInUser = null;
+
 let allAccounts = [];
 let selectedAccount = null;
 let isEdit = false;
@@ -164,18 +177,34 @@ let _currentCategory = '';
 let _editSheetDates = null;
 let _formStep1Data = {};
 let directEditCustomerId = null;
+if (!Session.checkValidity()) {
+  window.location.href = 'index.html';
+  return;
+}
+
+// ✅ جلب المستخدم الحالي
+currentUser = Session.getUser();
+loggedInUser = currentUser;
 
 // ====================== دوال الاتصال ======================
 function gas(action, params = {}) {
   return new Promise((resolve, reject) => {
     const callbackName = 'jsonp_callback_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
-    const url = new URL(GAS);
+    const url = new URL(CONFIG.GAS_URL);  // ✅ استخدام CONFIG
     url.searchParams.set('action', action);
     url.searchParams.set('callback', callbackName);
     url.searchParams.set('_t', Date.now());
-    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v ?? '')));
     
-    window[callbackName] = function(data) {
+    // ✅ إضافة centerName و centerId تلقائياً
+    if (currentUser && currentUser.centerName && !params.centerName) {
+      params.centerName = currentUser.centerName;
+    }
+    if (currentUser && currentUser.centerId && !params.centerId) {
+      params.centerId = currentUser.centerId;
+    }
+    
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v ?? '')));
+     window[callbackName] = function(data) {
       delete window[callbackName];
       if (document.body.contains(script)) {
         document.body.removeChild(script);
@@ -219,10 +248,9 @@ async function gasPost(data) {
 // ====================== دوال مساعدة ======================
 function goBack() { 
   const userType = currentUser?.type || 'Customer';
-  const dashboardPage = DASH[userType] || 'Dashboard.html';
+  const dashboardPage = DASHBOARDS[userType] || 'Dashboard.html';
   location.href = dashboardPage;
 }
-
 function showAlert(msg, icon, btns) {
   document.getElementById('alertIcon').textContent = icon || 'ℹ️';
   document.getElementById('alertMsg').textContent = msg;
@@ -320,7 +348,10 @@ async function fetchTripItems(tripName) {
     return tripItems[tripName];
   }
   try {
-    const res = await gas('getTripDefinition', { tripName: tripName });
+   const res = await gas('getTripDefinition', { 
+  tripName: tripName,
+  centerName: currentUser?.centerName || ''  // ✅ إضافة
+});
     const items = Array.isArray(res?.items) ? res.items.filter(Boolean) : [];
     tripItems[tripName] = items;
     return items;
@@ -334,7 +365,9 @@ async function fetchTripItems(tripName) {
 // ====================== عرض الجدول ======================
 async function loadAccounts() {
   try {
-    const res = await gas('getAllSuppliersCustomers');
+    const res = await gas('getAllSuppliersCustomers', { 
+      centerName: currentUser?.centerName || ''  // ✅ إضافة
+    });
     allAccounts = Array.isArray(res) ? res : [];
     renderTable();
     
@@ -560,10 +593,11 @@ async function openEdit() {
   document.getElementById('formFooter').innerHTML = '';
 
   try {
-    const datesRes = await gasPost({
-      action: 'getAccountSheetDates',
-      customerId: selectedAccount.customerId
-    });
+  const datesRes = await gasPost({
+  action: 'getAccountSheetDates',
+  customerId: selectedAccount.customerId,
+  centerName: currentUser?.centerName || ''  // ✅ إضافة
+});
     console.log('نتيجة getAccountSheetDates:', datesRes);
     
     if (datesRes?.success) {
@@ -582,9 +616,10 @@ async function openEdit() {
     if (category !== 'Submarine') {
       console.log('جلب الرحلات والبنود للأنشطة العادية...');
       const tripsRes = await gasPost({
-        action: 'getExistingTripsAndPrices',
-        customerId: selectedAccount.customerId
-      });
+  action: 'getExistingTripsAndPrices',
+  customerId: selectedAccount.customerId,
+  centerName: currentUser?.centerName || ''  // ✅ إضافة
+});
       console.log('نتيجة getExistingTripsAndPrices:', tripsRes);
       
       if (tripsRes?.success && tripsRes.tripsData) {
@@ -679,7 +714,10 @@ async function goStep2() {
 
   try {
     if (cat !== 'Submarine') {
-      const res = await gas('getTripsByCategory', { category: cat });
+      const res = await gas('getTripsByCategory', { 
+  category: cat,
+  centerName: currentUser?.centerName || ''  // ✅ إضافة
+});
       tripsForCategory = Array.isArray(res) ? res : [];
     }
   } catch(e) { 
@@ -1019,12 +1057,19 @@ async function doSave() {
     formData.pricesData = JSON.stringify(pricesData);
 
     let result;
-    if (isEdit && selectedAccount) {
-      result = await gasPost({ action: 'updateSupplierCustomer', ...formData });
-    } else {
-      result = await gasPost({ action: 'addSupplierCustomer', ...formData });
-    }
-
+   if (isEdit && selectedAccount) {
+  result = await gasPost({ 
+    action: 'updateSupplierCustomer', 
+    ...formData,
+    centerName: currentUser?.centerName || ''  // ✅ إضافة
+  });
+} else {
+  result = await gasPost({ 
+    action: 'addSupplierCustomer', 
+    ...formData,
+    centerName: currentUser?.centerName || ''  // ✅ إضافة
+  });
+}
     if (btn) {
       btn.disabled = false;
       btn.textContent = isEdit ? 'تحديث البيانات' : 'حفظ وإنشاء الشيت';
@@ -1127,8 +1172,13 @@ async function loadCurrentPricesForDate(dateISO) {
     const sheetName = selectedAccount.customerName + '_' + selectedAccount.category + '_' + selectedAccount.customerType;
     console.log('📡 جلب البيانات من الشيت:', sheetName);
     
-    const result = await gasPost({ action: 'getAccountSheetData', sheetName });
-    
+  const result = await gasPost({
+  action: 'updatePricesFromDate',
+  customerId: selectedAccount.customerId,
+  startUpdateDate: startDate,
+  pricesData: JSON.stringify(pricesData),
+  centerName: currentUser?.centerName || ''  // ✅ إضافة
+});
     if (!result?.success || !Array.isArray(result.data) || result.data.length < 4) {
       area.innerHTML = '<div class="no-data">لا توجد بيانات في شيت الحساب</div>';
       return;
@@ -1362,7 +1412,11 @@ async function confirmDelete() {
   
   closeAlert();
   try {
-    const res = await gasPost({ action: 'deleteSupplierCustomer', customerId: selectedAccount.customerId });
+    const res = await gasPost({ 
+  action: 'deleteSupplierCustomer', 
+  customerId: selectedAccount.customerId,
+  centerName: currentUser?.centerName || ''  // ✅ إضافة
+});
     if (res?.success) {
       selectedAccount = null;
       await loadAccounts();
@@ -1395,7 +1449,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     currentUser = JSON.parse(ud);
   } catch(e) { location.href = 'index.html'; return; }
   
-  document.getElementById('userChip').textContent = currentUser.name || 'User';
+  document.getElementById('userChip').textContent = currentUser?.name || 'User';
   
   const urlParams = new URLSearchParams(location.search);
   const directId = urlParams.get('customerId');
