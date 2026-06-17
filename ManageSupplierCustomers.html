@@ -4,7 +4,7 @@
   <meta name="theme-color" content="#1e2b4f">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
- <link rel="icon" type="image/png" href="https://himadivesystem.github.io/dive-system/favicon.png">
+<link rel="icon" type="image/png" href="favicon.png">
   <meta name="description" content="إدارة العملاء والمنفذين">
   <meta name="author" content="Dive System">
   <base target="_top">
@@ -349,11 +349,26 @@ async function fetchTripItems(tripName) {
     return tripItems[tripName];
   }
   try {
-   const res = await gas('getTripDefinition', { 
-  tripName: tripName,
-  centerName: currentUser?.centerName || ''  // ✅ إضافة
-});
-    const items = Array.isArray(res?.items) ? res.items.filter(Boolean) : [];
+    // ✅ استخدام getAllTrips مع includeItems: true
+    const res = await gas('getAllTrips', { 
+      centerName: currentUser?.centerName || '',
+      includeItems: true
+    });
+    
+    if (Array.isArray(res)) {
+      const trip = res.find(t => t.name === tripName);
+      if (trip && trip.items) {
+        tripItems[tripName] = trip.items;
+        return trip.items;
+      }
+    }
+    
+    // ✅ Fallback: محاولة getTripDefinition
+    const res2 = await gas('getTripDefinition', { 
+      tripName: tripName,
+      centerName: currentUser?.centerName || ''
+    });
+    const items = Array.isArray(res2?.items) ? res2.items.filter(Boolean) : [];
     tripItems[tripName] = items;
     return items;
   } catch(e) {
@@ -362,7 +377,6 @@ async function fetchTripItems(tripName) {
     return [];
   }
 }
-
 // ====================== عرض الجدول ======================
 async function loadAccounts() {
   try {
@@ -631,32 +645,30 @@ async function openEdit() {
     const category = selectedAccount.category;
     if (category !== 'Submarine') {
       console.log('جلب الرحلات والبنود للأنشطة العادية...');
-      const tripsRes = await gasPost({
-  action: 'getExistingTripsAndPrices',
-  customerId: selectedAccount.customerId,
-  centerName: currentUser?.centerName || ''  // ✅ إضافة
+    // ✅ استخدام getAllTrips مع includeItems: true
+const tripsRes = await gas('getAllTrips', { 
+  centerName: currentUser?.centerName || '',
+  includeItems: true
 });
-      console.log('نتيجة getExistingTripsAndPrices:', tripsRes);
-      
-      if (tripsRes?.success && tripsRes.tripsData) {
-        selectedAccount._existingTripsData = tripsRes.tripsData;
-        selectedAccount._existingPricesData = tripsRes.pricesData || {};
-        selectedAccount._existingTripsList = tripsRes.tripsData.map(t => t.name);
-        
-        for (const trip of tripsRes.tripsData) {
-          if (!tripItems[trip.name]) {
-            tripItems[trip.name] = trip.items;
-          }
-        }
-        
-        if (selectedAccount._existingTripsList.length > 0) {
-          selectedAccount._sheetInfo += `<br>📋 الرحلات الموجودة: ${selectedAccount._existingTripsList.join(', ')}`;
-        }
-      } else {
-        selectedAccount._existingTripsList = [];
-        selectedAccount._existingPricesData = {};
-      }
+
+console.log('نتيجة getAllTrips:', tripsRes);
+
+if (Array.isArray(tripsRes) && tripsRes.length > 0) {
+  selectedAccount._existingTripsList = tripsRes.map(t => t.name);
+  selectedAccount._existingPricesData = {};
+  
+  // تخزين البنود في cache
+  for (const trip of tripsRes) {
+    if (trip.items && trip.items.length > 0) {
+      tripItems[trip.name] = trip.items;
     }
+  }
+  
+  selectedAccount._sheetInfo += `<br>📋 الرحلات الموجودة: ${selectedAccount._existingTripsList.join(', ')}`;
+} else {
+  selectedAccount._existingTripsList = [];
+  selectedAccount._existingPricesData = {};
+}
     
     if (selectedAccount.loginEmail) {
       selectedAccount.hasSystemAccess = true;
@@ -829,17 +841,17 @@ function renderStep2(cat) {
           if (cb) cb.checked = true;
         }
       }
-      Promise.all(prevTrips.map(async function(tripName) {
-        if (!tripItems[tripName]) {
-          await fetchTripItems(tripName);
-        }
-      })).then(function() {
-        return loadPriceInputsWithValues(prevTrips, savedPrices);
-      }).then(function() {
-        setTimeout(updateSaveButtonState, 100);
-      }).catch(function(err) {
-        console.error('خطأ في تحميل الأسعار:', err);
-      });
+   Promise.all(prevTrips.map(async function(tripName) {
+  if (!tripItems[tripName]) {
+    await fetchTripItems(tripName);
+  }
+})).then(function() {
+  return loadPriceInputsWithValues(prevTrips, savedPrices);
+}).then(function() {
+  setTimeout(updateSaveButtonState, 100);
+}).catch(function(err) {
+  console.error('خطأ في تحميل الأسعار:', err);
+});
     }, 200);
   }
 
@@ -879,11 +891,11 @@ async function loadPriceInputsWithValues(tripNames, savedPrices) {
     return;
   }
 
-  for (const tripName of tripNames) {
-    if (!tripItems[tripName]) {
-      await fetchTripItems(tripName);
-    }
+ for (const tripName of tripNames) {
+  if (!tripItems[tripName]) {
+    await fetchTripItems(tripName);
   }
+}
 
   if (priceTitle) priceTitle.style.display = 'flex';
 
