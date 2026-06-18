@@ -279,6 +279,11 @@ function updateHeaderCustomerInfo() {
   if(customerAccount && customerAccount.customerName) {
     document.getElementById('customerNameSpan').textContent = customerAccount.customerName;
     document.getElementById('customerCategorySpan').textContent = customerAccount.category || '-';
+    
+    // ✅ تحديث نوع الحساب في العنوان
+    const typeLabel = customerAccount.customerType === 'Supplier' ? '🏢 لوحة المنفذ' : '🏢 لوحة العميل';
+    const headerTitle = document.querySelector('.header h2');
+    if (headerTitle) headerTitle.textContent = typeLabel;
   }
 }
 
@@ -1181,37 +1186,47 @@ async function loadSheetDataOnly() {
 async function loadAll(){
   document.getElementById('mainContent').innerHTML='<div class="loader"><div class="spinner"></div>جاري جلب الحساب...</div>';
   try{
-    // ✅ إضافة centerName لجلب الحسابات الخاصة بالمركز فقط
-    const allAcc = await gas('getAllSuppliersCustomers', { 
-      centerName: currentUser?.centerName || '' 
-    });
-    const accounts = Array.isArray(allAcc) ? allAcc : [];
+    // ✅ استخدام الدالة الموحدة getCustomerDashboardData
+    const params = {
+      customerId: viewingCustomer?.customerId || customerAccount?.customerId,
+      centerName: currentUser?.centerName || ''
+    };
     
-    if (viewingCustomer && viewingCustomer.customerId) {
-      customerAccount = accounts.find(a => a.customerId === viewingCustomer.customerId);
-     if (customerAccount) {
-  updateHeaderCustomerInfo();
-  // ✅ تحديث viewingCustomer ببيانات العميل الكاملة
-  viewingCustomer.category = customerAccount.category;
-  viewingCustomer.customerName = customerAccount.customerName;
-  viewingCustomer.customerType = customerAccount.customerType;
-  viewingCustomer.startDate = customerAccount.startDate;
-  viewingCustomer.endDate = customerAccount.endDate; 
-       }
-    } else if (loggedInUser?.type === 'Customer') {
-      customerAccount = accounts.find(a => 
-        a.customerType === 'Customer' && 
-        (a.loginEmail === loggedInUser?.email || a.customerName === loggedInUser?.name)
-      );
-    }
+    const dashboardData = await gas('getCustomerDashboardData', params);
     
-    if(!customerAccount){
-      document.getElementById('mainContent').innerHTML=`<div class="card"><div class="card-body no-data">⚠️ لا يوجد حساب مرتبط بهذا المستخدم</div></div>`;
+    if (!dashboardData?.success) {
+      document.getElementById('mainContent').innerHTML=`
+        <div class="card"><div class="card-body no-data">⚠️ ${dashboardData?.message || 'لا توجد بيانات'}</div></div>
+      `;
       return;
     }
-
-    updateHeaderCustomerInfo();
-
+    
+    // ✅ تعيين بيانات العميل/المنفذ
+    customerAccount = dashboardData.customer;
+    const isSupplier = customerAccount.customerType === 'Supplier';
+    
+    // ✅ تعيين المدفوعات حسب النوع
+    paymentsData = dashboardData.payments || [];
+    
+    // ✅ تحديث عنوان الصفحة
+    const typeLabel = isSupplier ? '🏢 لوحة المنفذ' : '🏢 لوحة العميل';
+    document.querySelector('.header h2').textContent = typeLabel;
+    
+    // ✅ تحديث معلومات العميل/المنفذ
+    document.getElementById('customerNameSpan').textContent = customerAccount.customerName;
+    document.getElementById('customerCategorySpan').textContent = customerAccount.category || '-';
+    
+    // ✅ تعيين بيانات الشيت
+    if (dashboardData.sheetData && dashboardData.sheetData.length >= 4) {
+      sheetData = dashboardData.sheetData;
+    } else {
+      document.getElementById('mainContent').innerHTML=`
+        <div class="card"><div class="card-body no-data">⚠️ لا توجد بيانات في شيت الحساب</div></div>
+      `;
+      return;
+    }
+    
+    // ✅ جلب الفروع
     const isUnlimited = UNLIMITED_TYPES.includes(loggedInUser?.type);
     if(isUnlimited && loggedInUser?.centerId) {
       const branchesRes = await gas('getBranchesByCenterId', { centerId: loggedInUser.centerId });
@@ -1224,57 +1239,16 @@ async function loadAll(){
     } else if(!isUnlimited && loggedInUser?.branchName) {
       selectedBranches = [loggedInUser.branchName];
     }
-
-    const sheetName = customerAccount.customerName + '_' + customerAccount.category + '_' + customerAccount.customerType;
-    document.getElementById('mainContent').innerHTML=`<div class="loader"><div class="spinner"></div>جاري جلب شيت "${sheetName}"...</div>`;
-
-    const res = await gas('getAccountSheetData', {sheetName});
-    if(!res?.success||!Array.isArray(res.data)||res.data.length<4){
-      document.getElementById('mainContent').innerHTML=`<div class="card"><div class="card-body no-data">⚠️ ${res?.message||'لا توجد بيانات في الشيت'}</div></div>`;
-      return;
-    }
-    sheetData = res.data;
     
-    // ✅ تعيين التواريخ الافتراضية من شيت العميل
-    if(res?.success && Array.isArray(res.data) && res.data.length > 3) {
-      let firstDate = null;
-      let lastDate = null;
-      for(let i = 3; i < res.data.length; i++) {
-        const dateVal = res.data[i][0];
-        if(dateVal && !firstDate) {
-          firstDate = dateVal;
-        }
-        if(dateVal) {
-          lastDate = dateVal;
-        }
-      }
-      
-      if(firstDate) {
-        const firstDateObj = new Date(firstDate);
-        if(!isNaN(firstDateObj)) {
-          const firstDateISO = firstDateObj.toISOString().split('T')[0];
-          const fStart = document.getElementById('fStart');
-          if(fStart) fStart.value = firstDateISO;
-        }
-      }
-      
-      if(lastDate) {
-        const lastDateObj = new Date(lastDate);
-        if(!isNaN(lastDateObj)) {
-          const lastDateISO = lastDateObj.toISOString().split('T')[0];
-          const fEnd = document.getElementById('fEnd');
-          if(fEnd) fEnd.value = lastDateISO;
-        }
-      }
-    }
+    // ✅ عرض الصفحة
+    renderPage('', '');
     
-    await refreshCustomerData();
-
   } catch(e){
     console.error('loadAll error:',e);
     showAlert('خطأ في التحميل: '+e.message,'❌');
   }
 }
+  
 document.addEventListener('DOMContentLoaded', async () => {
   // ✅ التحقق من الجلسة أولاً من localStorage
   const storedUser = localStorage.getItem('currentUser');
