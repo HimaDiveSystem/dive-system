@@ -3,17 +3,65 @@
 <head>
   <base target="_top">
   <meta charset="UTF-8">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <meta name="description" content="نظام إدارة مراكز الغوص - إدخال فاتورة للعملاء والمنفذين">
+  <meta name="author" content="Dive System">
+  <meta name="theme-color" content="#1e2b4f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes">
   <title>إدخال فاتورة - العميل</title>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+  <script src="ui.js"></script>
+  <script src="config.js"></script>
+  <script src="session.js"></script>
   <style>
-    :root{
-      --navy:#0f1f3d;--navy2:#1a3260;--gold:#f5c842;
-      --blue:#2563eb;--green:#16a34a;--red:#dc2626;
-      --bg:#f0f4f8;--card:#fff;--border:#dde4f0;--text:#1a2540;--text-lt:#5a6a8a;
-      --radius:16px;--radius-sm:10px;--shadow:0 4px 24px rgba(15,31,61,.10);
+    :root {
+      /* الألوان الأساسية (النظام الموحد) */
+      --color-primary: #1e2b4f;
+      --color-secondary: #f5c842;
+      --color-success: #27ae60;
+      --color-danger: #e74c3c;
+      --color-warning: #f39c12;
+      --color-info: #3498db;
+      --color-light: #f0f4f8;
+      --color-text: #1a2540;
+      --color-text-light: #5a6a8a;
+      
+      /* التدرجات */
+      --gradient-primary: linear-gradient(135deg, #1e2b4f 0%, #152238 100%);
+      --gradient-secondary: linear-gradient(135deg, #f5c842 0%, #e6b800 100%);
+      --gradient-success: linear-gradient(135deg, #27ae60 0%, #1e8449 100%);
+      --gradient-danger: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+      
+      /* الظلال والحواف */
+      --radius-lg: 16px;
+      --radius-xl: 24px;
+      --shadow-md: 0 4px 16px rgba(15,31,61,0.12);
+      --shadow-lg: 0 8px 24px rgba(15,31,61,0.15);
+      
+      /* الألوان الإضافية للتوافق مع الكود القديم */
+      --navy: #0f1f3d;
+      --navy2: #1a3260;
+      --gold: #f5c842;
+      --gold2: #e6b800;
+      --blue: #2563eb;
+      --green: #16a34a;
+      --red: #dc2626;
+      --orange: #ea580c;
+      --purple: #7c3aed;
+      --teal: #0d9488;
+      --bg: #f0f4f8;
+      --card: #fff;
+      --border: #dde4f0;
+      --radius: 16px;
+      --shadow: 0 4px 24px rgba(15,31,61,0.10);
+      
+      /* الخط */
+      --font-primary: 'Cairo', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     }
-    *{margin:0;padding:0;box-sizing:border-box;}
+   
+      *{margin:0;padding:0;box-sizing:border-box;}
     body{font-family:'Cairo',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
 
     .header{background:linear-gradient(135deg,var(--navy),var(--navy2));color:white;padding:13px 22px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:100;box-shadow:0 2px 12px rgba(15,31,61,.25);}
@@ -156,7 +204,6 @@
 </div>
 
 <script>
-const GAS_URL='https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec';
 let currentUser = null;
 let selectedCustomer = null;
 let allCustomers = [];
@@ -305,7 +352,7 @@ function onClockClick(e) {
 function gas(action, params = {}) {
   return new Promise((resolve, reject) => {
     const callbackName = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
-    const url = new URL(GAS_URL);
+    const url = new URL(CONFIG.GAS_URL);
     url.searchParams.set('action', action);
     url.searchParams.set('callback', callbackName);
     url.searchParams.set('_t', Date.now());
@@ -350,7 +397,9 @@ function goBack() {
   } else if (currentUser?.type === 'Customer') {
     location.href = 'CustomerDashboard.html';
   } else {
-    location.href = 'Dashboard.html';
+    const dashboardPage = CONFIG.DASHBOARD_PAGES?.[currentUser?.type] || 'Dashboard.html';
+    const userParam = encodeURIComponent(JSON.stringify(currentUser));
+    location.href = `${dashboardPage}?centerName=${currentUser?.centerName || ''}&user=${userParam}`;
   }
 }
 
@@ -403,7 +452,9 @@ async function loadCustomerData(customerIdFromUrl) {
       centerName: currentUser?.centerName || '' 
     });
     console.log('🟢 getAllSuppliersCustomers response:', res);
-    allCustomers = Array.isArray(res) ? res.filter(c => c.customerType === 'Customer') : [];
+    // جلب العملاء والمنفذين معاً
+allCustomers = Array.isArray(res) ? res : [];
+// أو إذا كنت تريد تصفية حسب النوع حسب الحاجة
     console.log('🟢 عدد العملاء:', allCustomers.length);
     
     if (customerIdFromUrl) {
@@ -626,12 +677,15 @@ async function saveInvoice() {
   
   const centerName = selectedCustomer?.parentCenter || currentUser?.centerName || '';
   
-  const invoiceData = {
+ const isSupplier = selectedCustomer?.customerType === 'Supplier';
+
+const invoiceData = {
     issueDate: issueDate,
     activeDate: dateToInput(activeDate),
     time: tripTime,
     trip: tripName,
-    customer: customer,
+    customer: isSupplier ? '' : customer,
+    supplier: isSupplier ? customer : '',
     executor: currentUser?.branchName || currentUser?.centerName || '',
     guestName: guestName,
     nationality: nationality,
@@ -653,7 +707,7 @@ async function saveInvoice() {
      centerName: selectedCustomer?.parentCenter || currentUser?.centerName || '',
     branchName: currentUser?.branchName || '',
     // ✅ إضافة centerName صراحةً للحفظ
-    centerNameForSave: currentUser?.centerName || ''
+    centerNameForSave: currentUser?.centerName || '',
     invoiceCurrency: currency || '',
     cost: false
   };
@@ -737,13 +791,13 @@ function renderForm(customerIdFromUrl) {
       <div class="card-head"><span class="ch-icon">🏢</span><h3>بيانات العميل</h3></div>
       <div class="card-body">
         <div class="fgrid">
-          <div class="fgroup"><label class="req">العميل</label>
-            <select class="fc" id="customer" onchange="onCustomerChange()" ${customerIdFromUrl ? 'disabled' : ''}>
-              <option value="">-- اختر العميل --</option>
-              ${customersOptions}
-            </select>
-          </div>
-          <div class="fgroup"><label class="req">اسم السائح</label><input type="text" class="fc" id="guestName" placeholder="الاسم الكامل"></div>
+          <div class="fgroup"><label class="req">${selectedCustomer?.customerType === 'Supplier' ? 'المنفذ' : 'العميل'}</label>
+  <select class="fc" id="customer" onchange="onCustomerChange()" ${customerIdFromUrl ? 'disabled' : ''}>
+    <option value="">-- اختر ${selectedCustomer?.customerType === 'Supplier' ? 'المنفذ' : 'العميل'} --</option>
+    ${customersOptions}
+  </select>
+</div>
+<div class="fgroup"><label class="req">اسم السائح</label><input type="text" class="fc" id="guestName" placeholder="الاسم الكامل"></div>
           <div class="fgroup"><label class="req">رقم الهاتف</label><input type="tel" class="fc" id="contactNo" placeholder="2010xxxxxxx"></div>
           <div class="fgroup"><label class="req">الجنسية</label>
             <input type="text" class="fc" id="nationality" list="nationalitiesList" placeholder="اختر الجنسية">
@@ -850,16 +904,26 @@ function renderForm(customerIdFromUrl) {
 
 // ====================== تهيئة الصفحة ======================
 document.addEventListener('DOMContentLoaded', async () => {
-  let ud = sessionStorage.getItem('currentUser');
-  if (!ud) {
-    const p = new URLSearchParams(location.search).get('user');
-    if (p) { ud = decodeURIComponent(p); sessionStorage.setItem('currentUser', ud); }
+  // ✅ تطبيق الثيم الموحد
+  if (typeof Theme !== 'undefined' && Theme.applyToPage) {
+    Theme.applyToPage();
   }
-  if (!ud) { location.href = 'index.html'; return; }
-  try { currentUser = JSON.parse(ud); } catch(e) { location.href = 'index.html'; return; }
+  Theme.setPageTitle('إدخال فاتورة');
+  
+  // ✅ استخدام Session.checkValidity() من session.js
+  if (!Session.checkValidity()) {
+    return;
+  }
+  
+  // ✅ استخدام Session.getUser() من session.js
+  currentUser = Session.getUser();
+  if (!currentUser) {
+    location.href = 'index.html';
+    return;
+  }
   
   const urlParams = new URLSearchParams(location.search);
-  const customerId = urlParams.get('customerId');  // ✅ اقرأ customerId من الرابط
+  const customerId = urlParams.get('customerId');
   returnUrl = urlParams.get('returnUrl') || sessionStorage.getItem('returnUrl');
   
   if (returnUrl && !sessionStorage.getItem('returnUrl')) {
@@ -868,7 +932,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   document.getElementById('userChip').textContent = currentUser.name || 'User';
   
-  // تحميل البيانات بالتسلسل الصحيح
   try {
     const customerLoaded = await loadCustomerData(customerId);
     if (!customerLoaded || !selectedCustomer) {
@@ -884,7 +947,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     showError('حدث خطأ أثناء تحميل الصفحة: ' + e.message);
   }
 });
-
 // ====================== دوال عامة ======================
 window.goBack = goBack;
 window.closeAlert = closeAlert;
