@@ -3,31 +3,41 @@
 <head>
   <base target="_top">
   <meta charset="UTF-8">
+  <!-- ✅ توحيد مظهر المتصفح -->
+<meta name="theme-color" content="#1e2b4f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" type="image/png" href="favicon.png">
+<meta name="description" content="نظام إدارة مراكز الغوص - توزيع المدربين والمراكب والسيارات">
+<meta name="author" content="Dive System">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes">
   <title>Operations Access - Assign Instructors & Vehicles</title>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+<script src="ui.js"></script>
+<script src="config.js"></script>
+<script src="session.js"></script>
   <style>
-    :root {
-      --navy: #0f1f3d;
-      --navy2: #1a3260;
-      --gold: #f5c842;
-      --gold2: #e6b800;
-      --blue: #2563eb;
-      --blue-lt: #3b82f6;
-      --green: #16a34a;
-      --red: #dc2626;
-      --orange: #ea580c;
-      --purple: #7c3aed;
-      --bg: #f0f4f8;
-      --card: #fff;
-      --border: #dde4f0;
-      --text: #1a2540;
-      --text-lt: #5a6a8a;
-      --gray-50: #f8fafc;
-      --gray-100: #f1f5f9;
-      --gray-200: #e2e8f0;
-      --gray-500: #64748b;
-    }
+   /* ✅ متغيرات الثيم الموحد */
+:root {
+  --color-primary: #1e2b4f;
+  --color-secondary: #f5c842;
+  --color-success: #27ae60;
+  --color-danger: #e74c3c;
+  --color-warning: #f39c12;
+  --color-info: #3498db;
+  --color-light: #f0f4f8;
+  --color-text: #1a2540;
+  --color-text-light: #5a6a8a;
+  --gradient-primary: linear-gradient(135deg, #1e2b4f 0%, #152238 100%);
+  --gradient-secondary: linear-gradient(135deg, #f5c842 0%, #e6b800 100%);
+  --gradient-success: linear-gradient(135deg, #27ae60 0%, #1e8449 100%);
+  --gradient-danger: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --shadow-md: 0 4px 16px rgba(15,31,61,0.12);
+  --shadow-lg: 0 8px 24px rgba(15,31,61,0.15);
+  --font-primary: 'Cairo', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'Cairo', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
     
@@ -726,9 +736,7 @@
 // ============================================================
 // CONFIGURATION & GLOBALS
 // ============================================================
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec';
-const DASH = { Admin: 'Dashboard.html', Owner: 'OwnerDashboard.html', Sales: 'SalesDashboard.html', Accountant: 'AccountantDashboard.html', OperationsManager: 'OperationAccess.html', OperationsSupervisor: 'OperationAccess.html' };
-
+const DASH = CONFIG.DASHBOARD_PAGES || { Admin: 'Dashboard.html', Owner: 'OwnerDashboard.html', Sales: 'SalesDashboard.html', Accountant: 'AccountantDashboard.html', OperationsManager: 'OperationAccess.html', OperationsSupervisor: 'OperationAccess.html' };
 const BOAT_TRIPS = ['Private Boat (max 10 persons)', 'Ras Mohamed Boat', 'Local Boat', 'Tiran Island By Boat', 'Boat Trip Half Day'];
 
 let currentUser = null;
@@ -778,41 +786,20 @@ let isSavingBoats = false;
     // ============================================================
   // ✅ التحقق من صحة الجلسة - منع التوجيه المتكرر
   // ============================================================
-  function checkSessionValidity() {
-    try {
-      // التحقق من وجود جلسة صالحة في localStorage
-      const stored = localStorage.getItem('currentUser');
-      if (!stored) {
-        // لا توجد جلسة، اخرج من الصفحة
-        window.location.href = 'index.html';
-        return false;
-      }
-      
-      const data = JSON.parse(stored);
-      // التحقق من صلاحية الجلسة (24 ساعة)
-      if (data.expiry && Date.now() < data.expiry) {
-        return true; // الجلسة صالحة
-      } else {
-        // الجلسة منتهية
-        localStorage.removeItem('currentUser');
-        window.location.href = 'index.html';
-        return false;
-      }
-    } catch(e) {
-      window.location.href = 'index.html';
-      return false;
-    }
-  }
+ 
   
-  // ✅ تنفيذ التحقق فوراً
-  if (!checkSessionValidity()) {
-    // سيتم التوجيه داخل الدالة، نوقف تنفيذ باقي الكود
-    throw new Error('جلسة غير صالحة');
-  }
+  if (!Session.checkValidity()) {
+  throw new Error('جلسة غير صالحة');
+}
 // دالة لجلب أسماء رحلات Diving من TripDefinitions (حسب عمود Category)
 async function loadDivingTripNames() {
   try {
-    const tripDefs = await gas('getTripDefinitions', { centerName: currentUser?.centerName });
+    // ✅ محاولة جلب البيانات من الخادم
+    const tripDefs = await gas('getTripDefinitions', { 
+      centerName: currentUser?.centerName || '' 
+    });
+    
+    console.log('📊 Trip definitions response:', tripDefs);
     
     if (tripDefs && Array.isArray(tripDefs) && tripDefs.length > 0) {
       // ✅ تصفية: فقط الرحلات التي Category === 'Diving'
@@ -821,20 +808,35 @@ async function loadDivingTripNames() {
           const category = (trip.Category || '').toLowerCase();
           return category === 'diving';
         })
-        .map(trip => trip.TripName);
+        .map(trip => trip.TripName)
+        .filter(Boolean);
       
       console.log(`✅ تم تحميل ${divingTripNames.length} رحلة Diving من الخادم:`, divingTripNames);
-    } else {
-      // ✅ إذا لم تنجح من الخادم، استخدم البحث بالكلمات المفتاحية
-      console.log('⚠️ لم يتم تحميل البيانات من الخادم، سيتم استخدام البحث بالكلمات المفتاحية');
-      divingTripNames = []; // تركها فارغة لاستخدام البحث بالكلمات
     }
+    
+    // ✅ إذا لم يتم العثور على رحلات Diving، استخدم البحث بالكلمات المفتاحية
+    if (divingTripNames.length === 0) {
+      console.log('⚠️ لم يتم العثور على رحلات Diving، استخدام البحث بالكلمات المفتاحية');
+      const divingKeywords = ['diving', 'dive', 'scuba', 'snorkel', 'intro dive', 'boat dive'];
+      
+      // ✅ إذا كان tripDefs موجوداً، ابحث فيه
+      if (tripDefs && Array.isArray(tripDefs)) {
+        divingTripNames = tripDefs
+          .map(trip => trip.TripName)
+          .filter(name => 
+            name && divingKeywords.some(keyword => name.toLowerCase().includes(keyword))
+          );
+        console.log(`🔍 تم العثور على ${divingTripNames.length} رحلة بالبحث في TripDefinitions:`, divingTripNames);
+      }
+    }
+    
+    return divingTripNames;
+    
   } catch(e) {
-    console.warn('Failed to load trip definitions:', e);
-    divingTripNames = []; // تركها فارغة لاستخدام البحث بالكلمات
+    console.warn('⚠️ loadDivingTripNames error:', e);
+    divingTripNames = [];
+    return [];
   }
-  
-  return divingTripNames;
 }
 
 // دالة للتحقق مما إذا كانت الرحلة من نوع Diving
@@ -893,13 +895,13 @@ function jsonpRequest(action, params = {}) {
     params.action = action;
     params.callback = cbName;
     const qs = Object.entries(params).map(([k, v]) => k + '=' + encodeURIComponent(String(v ?? ''))).join('&');
-    const url = GAS_URL + '?' + qs;
+    const url = CONFIG.GAS_URL + '?' + qs;  // ✅ استخدام CONFIG.GAS_URL
     const script = document.createElement('script');
     const timeout = setTimeout(() => { cleanup(); reject(new Error('Request timeout')); }, 30000);
     const cleanup = () => { clearTimeout(timeout); delete window[cbName]; script.remove(); };
     window[cbName] = (data) => { cleanup(); resolve(data); };
     script.onerror = () => { cleanup(); reject(new Error('Network error')); };
-    script.src = url;
+   script.src = CONFIG.GAS_URL + '?' + qs;
     document.head.appendChild(script);
   });
 }
@@ -952,21 +954,15 @@ function escapeHtml(str) {
   
 
 function goBack() {
-  // حفظ الجلسة في localStorage قبل العودة (للتأكد من وجودها)
+  // ✅ استخدام Session.save لتحديث الجلسة
   if (currentUser) {
-    const storedData = {
-      user: currentUser,
-      expiry: Date.now() + (24 * 60 * 60 * 1000)
-    };
-    localStorage.setItem('currentUser', JSON.stringify(storedData));
+    Session.save(currentUser);
   }
   
-  // ✅ العودة للصفحة السابقة في التاريخ
   if (window.history.length > 1) {
     window.history.back();
   } else {
-    // إذا لم توجد صفحة سابقة، اذهب للوحة التحكم حسب نوع المستخدم
-    const defaultPage = DASH[currentUser?.type || 'Admin'] || 'Dashboard.html';
+    const defaultPage = CONFIG.DASHBOARD_PAGES?.[currentUser?.type || 'Admin'] || 'Dashboard.html';
     window.location.href = defaultPage;
   }
 }
@@ -5203,12 +5199,24 @@ async function refreshLogisticsBadge() {
 // INITIALIZATION
 // ============================================================
 document.addEventListener('DOMContentLoaded', async () => {
-  // ✅ التحقق من الجلسة أولاً من localStorage
-  const storedUser = localStorage.getItem('currentUser');
-  if (!storedUser) { 
-    window.location.href = 'index.html'; 
-    return; 
+  // ✅ تطبيق الثيم الموحد
+  if (typeof Theme !== 'undefined' && Theme.applyToPage) {
+    Theme.applyToPage();
   }
+  Theme.setPageTitle('مدير الحركة');
+  
+  // ✅ استخدام Session.checkValidity() من session.js
+  if (!Session.checkValidity()) {
+    return;
+  }
+  
+  // ✅ استخدام Session.getUser() من session.js
+  currentUser = Session.getUser();
+  if (!currentUser) {
+    location.href = 'index.html';
+    return;
+  }
+
   
   let ud = sessionStorage.getItem('currentUser');
   if (!ud && storedUser) {
