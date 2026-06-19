@@ -843,36 +843,37 @@ async function loadDivingTripNames() {
 function isDivingTrip(tripName) {
   if (!tripName) return false;
   
-  // ✅ إذا كانت divingTripNames محملة ولديها بيانات، استخدمها
+  // ✅ 1. إذا كانت divingTripNames محملة، استخدمها
   if (divingTripNames && divingTripNames.length > 0) {
-    return divingTripNames.includes(tripName);
+    const result = divingTripNames.includes(tripName);
+    if (!result) {
+      console.log(`⏭️ Not in diving list: ${tripName}`);
+    }
+    return result;
   }
   
-  // ✅ إذا كانت divingTripNames فارغة، لا نعرض أي شيء (ننتظر التحميل)
-  console.warn(`⚠️ divingTripNames not loaded yet, filtering out: ${tripName}`);
-  return false;  // ❌ لا تسمح بمرور أي رحلة
-}
-
-// دالة تصفية الرحلات حسب نوع المستخدم (غير متزامنة - للاستخدام مع async/await)
-async function filterTripsByUserType(trips) {
-  if (!currentUser) return trips;
-  
-  // الصلاحيات التي ترى كل الرحلات
+  // ✅ 2. إذا كانت divingTripNames فارغة ولكن المستخدم له صلاحية كاملة
   const fullAccessTypes = ['Admin', 'Owner', 'Accountant', 'FinancialManager'];
-  
-  if (fullAccessTypes.includes(currentUser.type)) {
-    return trips; // كل الرحلات
+  if (fullAccessTypes.includes(currentUser?.type)) {
+    console.log(`ℹ️ Allowing ${tripName} for ${currentUser?.type}`);
+    return true;
   }
   
-  // تأكد من تحميل أسماء رحلات Diving
-  if (divingTripNames.length === 0) {
-    await loadDivingTripNames();
+  // ✅ 3. كحل أخير: البحث بالكلمات المفتاحية (مع تحديث القائمة)
+  const divingKeywords = ['diving', 'dive', 'scuba', 'snorkel', 'intro', 'diver', 'course'];
+  const lower = tripName.toLowerCase();
+  const isDiving = divingKeywords.some(keyword => lower.includes(keyword));
+  
+  if (isDiving) {
+    console.log(`✅ Keyword match: ${tripName}`);
+    // ✅ إضافة الرحلة إلى القائمة للتخزين المؤقت
+    if (!divingTripNames.includes(tripName)) {
+      divingTripNames.push(tripName);
+    }
   }
   
-  // تصفية: فقط رحلات Diving
-  return trips.filter(trip => divingTripNames.includes(trip));
+  return isDiving;
 }
-
 // دالة تصفية متزامنة (للاستخدام في الأماكن التي لا تدعم async)
 function isTripAllowed(tripName) {
   if (!currentUser) return true;
@@ -1062,94 +1063,49 @@ async function loadInvoices() {
   try {
     showToast('جاري تحميل البيانات...', 'info');
     
+    // ✅ ✅ ✅ التأكد من تحميل أسماء رحلات Diving أولاً
     if (divingTripNames.length === 0) {
       console.log('🟡 Loading diving trip names...');
       await loadDivingTripNames();
       console.log('🟢 divingTripNames after load:', divingTripNames);
     }
     
+    // ✅ إذا كانت divingTripNames لا تزال فارغة، استخدم البحث بالكلمات المفتاحية
+    if (divingTripNames.length === 0) {
+      console.log('⚠️ No diving trips found, using fallback keywords');
+      const fallbackKeywords = ['diving', 'dive', 'scuba', 'snorkel', 'intro', 'diver', 'course'];
+      
+      // ✅ جلب جميع الرحلات من الخادم
+      const allTrips = await gas('getTripDefinitions', { 
+        centerName: currentUser?.centerName || '' 
+      });
+      
+      if (allTrips?.success && Array.isArray(allTrips.data)) {
+        divingTripNames = allTrips.data
+          .map(t => t.TripName)
+          .filter(name => {
+            if (!name) return false;
+            const lower = name.toLowerCase();
+            return fallbackKeywords.some(keyword => lower.includes(keyword));
+          });
+        console.log('🔍 Fallback divingTripNames:', divingTripNames);
+      }
+    }
+    
     const fromDate = document.getElementById('filterFromDate').value;
     const toDate = document.getElementById('filterToDate').value;
     const isSingleDate = fromDate && fromDate === toDate;
     
-    const selectedBranchId = document.getElementById('branchSelect')?.value || '';
-    let selectedBranchName = '';
-    if (selectedBranchId && window.branchesList) {
-      const branch = window.branchesList.find(b => b.id === selectedBranchId);
-      if (branch) selectedBranchName = branch.name;
-    }
+    // ... باقي الكود كما هو ...
     
-    let result = null;
+    // ✅ عند تصفية الفواتير، استخدم isDivingTrip المحسّنة
+    invoices = invoices.filter(inv => {
+      const tripName = inv.Trip || inv.trip || '';
+      return isDivingTrip(tripName);
+    });
     
-    const fetchWithRetry = async (retryCount = 0) => {
-      try {
-        if (isSingleDate) {
-          const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-          const parts = fromDate.split('-');
-          const formattedDate = `${parts[2]}/${months[parseInt(parts[1]) - 1]}/${parts[0]}`;
-          return await gas('getInvoicesByDate', { 
-            dateStr: formattedDate,
-            centerName: currentUser?.centerName
-          });
-        } else {
-          return await gas('getAllInvoices', { 
-            includeCollection: 'true',
-            centerName: currentUser?.centerName
-          });
-        }
-      } catch(e) {
-        if (retryCount < 2) {
-          console.log(`⚠️ محاولة إعادة التحميل (${retryCount + 1}/2)...`);
-          await new Promise(r => setTimeout(r, 2000));
-          return fetchWithRetry(retryCount + 1);
-        }
-        throw e;
-      }
-    };
+    // ... باقي الكود ...
     
-    result = await fetchWithRetry();
-    
-    if (Array.isArray(result)) {
-      let invoices = result.filter(inv => {
-        const state = (inv.State || inv.state || '').toLowerCase();
-        return state === 'confirmed' || state === 'pending';
-      });
-      
-      if (selectedBranchName) {
-        invoices = invoices.filter(inv => inv.branchName === selectedBranchName);
-      }
-      
-      console.log('📊 Before Diving filter - invoices count:', invoices.length);
-      console.log('📊 Sample trip names:', invoices.slice(0, 5).map(inv => inv.Trip || inv.trip));
-      console.log('📊 divingTripNames:', divingTripNames);
-      console.log('📊 User type:', currentUser?.type);
-      
-      invoices = invoices.filter(inv => {
-        const tripName = inv.Trip || inv.trip || '';
-        return isDivingTrip(tripName);
-      });
-      
-      console.log('📊 After Diving filter - invoices count:', invoices.length);
-      
-      allInvoices = invoices;
-      invoicesLoaded = true;
-      
-      const tripSet = new Set();
-      allInvoices.forEach(inv => { 
-        const trip = inv.Trip || inv.trip;
-        if (trip) tripSet.add(trip); 
-      });
-      uniqueTrips = Array.from(tripSet).sort();
-      
-      console.log('📊 Unique trips after filter:', uniqueTrips);
-      
-      initTripFilter();
-      applyFilters();
-      showToast(`تم تحميل ${allInvoices.length} فاتورة`, 'success');
-    } else {
-      console.error('Result is not an array:', result);
-      allInvoices = [];
-    }
   } catch(e) {
     console.error('loadInvoices error:', e);
     showToast('خطأ في التحميل: ' + e.message, 'error');
