@@ -1071,17 +1071,28 @@ function showToast(msg, type) {
 function formatDateDDMMMYYYY(date) {
   if (!date) return '';
   
-  // إذا كان التاريخ بالفعل بصيغة dd/MMM/yyyy، أعده كما هو
+  // ✅ إذا كان التاريخ بالفعل بصيغة dd/MMM/yyyy، أعده كما هو
   if (typeof date === 'string' && date.match(/^\d{1,2}\/[A-Za-z]{3}\/\d{4}$/)) {
     return date;
   }
   
-  // محاولة تحويل إلى Date
+  // ✅ إذا كان التاريخ بصيغة MM/DD/YYYY، حوله إلى dd/MMM/yyyy
+  if (typeof date === 'string' && date.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
+    const parts = date.split('/');
+    const monthIndex = parseInt(parts[0]) - 1;
+    const day = parseInt(parts[1]);
+    const year = parseInt(parts[2]);
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    if (monthIndex >= 0 && monthIndex < 12 && day >= 1 && day <= 31) {
+      return `${String(day).padStart(2, '0')}/${months[monthIndex]}/${year}`;
+    }
+  }
+  
+  // ✅ محاولة تحويل إلى Date
   let d;
   if (date instanceof Date) {
     d = date;
   } else {
-    // محاولة parseDateFromString أولاً
     const parsed = parseDateFromString(date);
     if (parsed) {
       d = parsed;
@@ -1095,7 +1106,6 @@ function formatDateDDMMMYYYY(date) {
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return `${String(d.getDate()).padStart(2, '0')}/${months[d.getMonth()]}/${d.getFullYear()}`;
 }
-
 function escapeHtml(str) {
   if (!str) return '';
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -1359,7 +1369,6 @@ function getSelectedTrips() {
   return hasAllTrips || selected.length === 0 ? [] : selected;
 }
 
-
 function applyFilters() {
   // ✅ الحصول على التواريخ من حقول الإدخال (صيغة YYYY-MM-DD)
   const fromDateInput = document.getElementById('filterFromDate').value;
@@ -1368,7 +1377,7 @@ function applyFilters() {
   const state = document.getElementById('filterState').value;
   const selectedTrips = getSelectedTrips();
   
-  // ✅ تحويل التواريخ من YYYY-MM-DD إلى dd/MMM/yyyy للمقارنة مع بيانات الفواتير
+  // ✅ تحويل التواريخ من YYYY-MM-DD إلى dd/MMM/yyyy
   let fromDateStr = '';
   let toDateStr = '';
   
@@ -1393,6 +1402,8 @@ function applyFilters() {
       toDateStr = `${String(day).padStart(2, '0')}/${months[monthIndex]}/${year}`;
     }
   }
+  
+  console.log('🔍 Filter dates:', { fromDateStr, toDateStr });
   
   // ✅ الحصول على الفرع المختار
   const selectedBranchId = document.getElementById('branchSelect')?.value || '';
@@ -1422,26 +1433,16 @@ function applyFilters() {
   filteredInvoices = [];
   
   for (const inv of allInvoices) {
-    // ✅ معالجة التاريخ النشط - تحويل إلى صيغة موحدة
+    // ✅ الحصول على التاريخ النشط وتوحيد صيغته
     let activeDateStr = inv.activeDate || '';
     let activeDateFormatted = '';
     
     if (activeDateStr) {
-      // ✅ إذا كان التاريخ بصيغة dd/MMM/yyyy، استخدمه مباشرة
-      if (activeDateStr.match(/^\d{1,2}\/[A-Za-z]{3}\/\d{4}$/)) {
-        activeDateFormatted = activeDateStr;
-      } else {
-        // ✅ حاول تحويل التاريخ
-        const parsed = parseDateFromString(activeDateStr);
-        if (parsed) {
-          activeDateFormatted = formatDateDDMMMYYYY(parsed);
-        } else {
-          activeDateFormatted = activeDateStr;
-        }
-      }
+      // ✅ استخدام formatDateDDMMMYYYY لتوحيد الصيغة
+      activeDateFormatted = formatDateDDMMMYYYY(activeDateStr);
     }
     
-    // ✅ تصفية حسب نطاق التواريخ (مقارنة النصوص مباشرة)
+    // ✅ مقارنة التواريخ كنصوص (بصيغة dd/MMM/yyyy)
     if (fromDateStr && activeDateFormatted < fromDateStr) continue;
     if (toDateStr && activeDateFormatted > toDateStr) continue;
     
@@ -1460,7 +1461,7 @@ function applyFilters() {
     // ✅ تصفية حسب الفرع
     if (selectedBranchName && inv.branchName !== selectedBranchName) continue;
     
-    // ✅ تصفية حسب النص (رقم الفاتورة أو اسم العميل)
+    // ✅ تصفية حسب النص
     if (search) {
       const voucher = (inv.voucherNo || '').toLowerCase();
       const guest = (inv.guestName || '').toLowerCase();
@@ -1471,11 +1472,7 @@ function applyFilters() {
   }
   
   console.log(`📊 Filtered: ${filteredInvoices.length} invoices out of ${allInvoices.length}`);
-  console.log('📊 Filtered invoices sample:', filteredInvoices.slice(0, 3).map(inv => ({
-    voucher: inv.voucherNo,
-    activeDate: inv.activeDate,
-    trip: inv.trip
-  })));
+  console.log('📊 Date range:', { fromDateStr, toDateStr });
   
   // ✅ ترتيب النتائج
   doSort();
@@ -1594,10 +1591,21 @@ function getActivitiesFromInvoice(invoice) {
     return new Date(parseInt(match2[1]), parseInt(match2[2]) - 1, parseInt(match2[3]));
   }
   
-  // ✅ صيغة dd/MM/yyyy
-  const match3 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  // ✅ صيغة MM/DD/YYYY (التي تظهر في الصورة)
+  const match3 = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (match3) {
-    return new Date(parseInt(match3[3]), parseInt(match3[2]) - 1, parseInt(match3[1]));
+    const month = parseInt(match3[1]) - 1;
+    const day = parseInt(match3[2]);
+    const year = parseInt(match3[3]);
+    if (month >= 0 && month < 12 && day >= 1 && day <= 31) {
+      return new Date(year, month, day);
+    }
+  }
+  
+  // ✅ صيغة dd/MM/yyyy
+  const match4 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (match4) {
+    return new Date(parseInt(match4[3]), parseInt(match4[2]) - 1, parseInt(match4[1]));
   }
   
   // محاولة أخيرة
