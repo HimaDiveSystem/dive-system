@@ -2140,213 +2140,231 @@ async function loadAndPopulateAssignments(dateISO) {
   updateSelectionBadges();
 }
 async function openAssignVehicles(voucherNo) {
-  const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
-  if (!invoice) return;
-  if (selectedVehicles.length === 0) { 
-    showToast('اختر السيارات أولاً من زر السيارات', 'error'); 
-    return; 
-  }
-  
-  currentAssignVoucher = voucherNo;
-  currentAssignInvoice = invoice;
-  const currentDate = getCurrentDateISO();
-  const tripName = invoice.trip || '';
-  
-  // ✅ حساب تفاصيل الركاب من الفاتورة
-  const adults = parseInt(invoice.sgl) || 0;
-  const children = parseInt(invoice.dbl) || 0;
-  const infants = parseInt(invoice.trpl) || 0;
-  const totalPassengers = adults + children;
-  
-  let savedVehicles = [];
-  try { savedVehicles = JSON.parse(invoice.VehiclesUsed || '[]'); } catch(e) {}
-  
-  // ✅ دالة لحساب المقاعد المحجوزة من فواتير أخرى
-  async function getTotalBookedSeatsForVehicle(vehicleId, currentDate, tripName, excludeVoucher) {
-    let totalGo = 0;
-    let totalReturn = 0;
+    const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
+    if (!invoice) return;
     
-    for (const inv of allInvoices) {
-      const invDate = formatDateDDMMMYYYY(inv.activeDate);
-      const invTrip = inv.trip;
-      const invVoucher = inv.voucherNo;
-      
-      if (invDate === currentDate && invTrip === tripName && invVoucher !== excludeVoucher) {
-        let vehiclesData = [];
-        try {
-          vehiclesData = JSON.parse(inv.VehiclesUsed || '[]');
-        } catch(e) {}
-        
-        for (const v of vehiclesData) {
-          if (v.vehicleId === vehicleId) {
-            totalGo += v.goCount || 0;
-            totalReturn += v.returnCount || 0;
-          }
+    // ✅ التحقق من وجود سيارات مختارة لليوم
+    if (selectedVehicles.length === 0) { 
+        showToast('اختر السيارات أولاً من زر السيارات', 'error'); 
+        return; 
+    }
+    
+    currentAssignVoucher = voucherNo;
+    currentAssignInvoice = invoice;
+    const currentDate = getCurrentDateISO();
+    const tripName = invoice.trip || '';
+    
+    // ✅ حساب تفاصيل الركاب من الفاتورة
+    const adults = parseInt(invoice.sgl) || 0;
+    const children = parseInt(invoice.dbl) || 0;
+    const infants = parseInt(invoice.trpl) || 0;
+    const totalPassengers = adults + children;
+    
+    let savedVehicles = [];
+    try { savedVehicles = JSON.parse(invoice.VehiclesUsed || '[]'); } catch(e) {}
+    
+    // ✅ عرض شاشة تحميل
+    document.getElementById('assignVehiclesContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري تحميل البيانات...</div>';
+    openModal('assignVehiclesModal');
+    
+    // ✅ ✅ ✅ جلب السجلات المحفوظة لليوم من VehicleTripRecords
+    let tripRecords = [];
+    try {
+        const result = await gas('getVehicleTripRecords', { 
+            date: currentDate,
+            centerName: currentUser?.centerName 
+        });
+        if (result?.success && Array.isArray(result.data)) {
+            // ✅ تصفية السجلات حسب الرحلة فقط
+            tripRecords = result.data.filter(r => 
+                (r.TripName || r.tripName) === tripName
+            );
+            console.log('📊 Trip records for', tripName, ':', tripRecords);
         }
-      }
+    } catch(e) {
+        console.warn('Failed to load vehicle trip records:', e);
     }
     
-    return { goSeats: totalGo, returnSeats: totalReturn };
-  }
-  
-  // ✅ عرض شاشة تحميل
-  document.getElementById('assignVehiclesContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري تحميل البيانات...</div>';
-  openModal('assignVehiclesModal');
-  
-  // ✅ جلب جميع البيانات بالتوازي مع التخزين المؤقت
-  const fetchPromises = [];
-  for (const vehId of selectedVehicles) {
-    const vehicle = cachedVehicles.find(v => v.id === vehId);
-    if (!vehicle) continue;
+    // ✅ ✅ ✅ بناء قائمة السيارات: فقط السيارات المرتبطة بالرحلة
+    let relevantVehicleIds = new Set();
     
-    const saved = savedVehicles.find(v => v.vehicleId === vehId);
-    const savedGo = saved?.goCount || 0;
-    const savedReturn = saved?.returnCount || 0;
-    const savedAdult = saved?.adults || 0;
-    const savedChild = saved?.children || 0;
-    const savedInfant = saved?.infants || 0;
-    
-    // ✅ التخزين المؤقت للنتائج من API
-    const cacheKey = `${currentDate}|${tripName}|${vehId}`;
-    let bookedResult = cachedVehicleSeats[cacheKey];
-    if (!bookedResult) {
-      bookedResult = await gas('getVehicleBookedSeatsForTrip', { 
-        date: currentDate, 
-        tripName, 
-        vehicleId: vehId, 
-        excludeVoucher: voucherNo, 
-        centerName: currentUser?.centerName 
-      });
-      cachedVehicleSeats[cacheKey] = bookedResult;
+    // 1️⃣ إضافة السيارات من السجلات المحفوظة
+    for (const record of tripRecords) {
+        const vehicleId = record.VehicleID || record.vehicleId;
+        if (vehicleId) relevantVehicleIds.add(vehicleId);
     }
     
-    // ✅ الحصول على الحجوزات من الفواتير الأخرى (بما فيها الفواتير المحفوظة)
-    const otherBookings = await getTotalBookedSeatsForVehicle(vehId, currentDate, tripName, voucherNo);
+    // 2️⃣ إضافة السيارات المحفوظة في الفاتورة نفسها
+    for (const saved of savedVehicles) {
+        if (saved.vehicleId) relevantVehicleIds.add(saved.vehicleId);
+    }
     
-    // ✅ إجمالي المقاعد المحجوزة = من API + من الفواتير الأخرى
-    const totalBookedGo = (bookedResult.goSeats || 0) + otherBookings.goSeats;
-    const totalBookedReturn = (bookedResult.returnSeats || 0) + otherBookings.returnSeats;
+    // 3️⃣ ✅ إذا لم يتم العثور على سيارات مرتبطة بالرحلة، استخدم جميع السيارات المختارة
+    //    ولكن مع تنبيه للمستخدم
+    if (relevantVehicleIds.size === 0) {
+        console.log('⚠️ No vehicles found for trip:', tripName);
+        // ✅ استخدم جميع السيارات المختارة مع تحذير
+        for (const vehId of selectedVehicles) {
+            relevantVehicleIds.add(vehId);
+        }
+        showToast('⚠️ لا توجد سيارات مرتبطة بهذه الرحلة، عرض جميع السيارات المختارة', 'warning');
+    }
     
-    fetchPromises.push(Promise.resolve({
-      vehicle,
-      capacity: vehicle.capacity || 0,
-      savedGo, savedReturn, savedAdult, savedChild, savedInfant,
-      totalBookedGo,
-      totalBookedReturn
-    }));
-  }
-  
-  const results = await Promise.all(fetchPromises);
-  
-  // ✅ بناء HTML
-  let vehiclesHtml = `
-    <div class="summary-box" style="margin-bottom: 12px; padding: 12px; background: var(--navy); color: white; border-radius: 8px;">
-      <strong>📊 Invoice Summary:</strong><br>
-      Trip: ${escapeHtml(tripName)}<br>
-      👤 Adults: ${adults} | 👶 Children: ${children} | 🍼 Infants: ${infants}<br>
-      <span style="font-size: 11px; opacity: 0.8;">💡 Total passengers needing seats: ${totalPassengers}</span>
-    </div>
-    <div style="overflow-x:auto; max-height: 450px;">
-      <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
-        <thead>
-          <tr style="background: var(--navy); color: var(--gold);">
-            <th style="padding: 8px;">Vehicle</th>
-            <th style="padding: 8px;">Cap.</th>
-            <th style="padding: 8px;">🔄 Go<br><span style="font-size: 9px;">(Available)</span></th>
-            <th style="padding: 8px;">🔙 Ret.<br><span style="font-size: 9px;">(Available)</span></th>
-            <th style="padding: 8px;">👤 A</th>
-            <th style="padding: 8px;">👶 C</th>
-            <th style="padding: 8px;">🍼 I</th>
-            <th style="padding: 8px;">Sel</th>
-           </tr>
-        </thead>
-        <tbody>
-  `;
-  
-  for (const res of results) {
-    const { vehicle, capacity, savedGo, savedReturn, savedAdult, savedChild, savedInfant, totalBookedGo, totalBookedReturn } = res;
+    // ✅ جلب بيانات السيارات
+    const fetchPromises = [];
+    for (const vehId of relevantVehicleIds) {
+        const vehicle = cachedVehicles.find(v => v.id === vehId);
+        if (!vehicle) continue;
+        
+        const saved = savedVehicles.find(v => v.vehicleId === vehId);
+        const savedGo = saved?.goCount || 0;
+        const savedReturn = saved?.returnCount || 0;
+        const savedAdult = saved?.adults || 0;
+        const savedChild = saved?.children || 0;
+        const savedInfant = saved?.infants || 0;
+        
+        // ✅ حساب المقاعد المحجوزة من فواتير أخرى (نفس اليوم ونفس الرحلة)
+        const cacheKey = `${currentDate}|${tripName}|${vehId}`;
+        let bookedResult = cachedVehicleSeats[cacheKey];
+        if (!bookedResult) {
+            bookedResult = await gas('getVehicleBookedSeatsForTrip', { 
+                date: currentDate, 
+                tripName, 
+                vehicleId: vehId, 
+                excludeVoucher: voucherNo, 
+                centerName: currentUser?.centerName 
+            });
+            cachedVehicleSeats[cacheKey] = bookedResult;
+        }
+        
+        fetchPromises.push(Promise.resolve({
+            vehicle,
+            capacity: vehicle.capacity || 0,
+            savedGo, savedReturn, savedAdult, savedChild, savedInfant,
+            bookedGo: bookedResult.goSeats || 0,
+            bookedReturn: bookedResult.returnSeats || 0
+        }));
+    }
     
-    const defaultAdultQty = savedAdult > 0 ? savedAdult : adults;
-    const defaultChildQty = savedChild > 0 ? savedChild : children;
-    const defaultInfantQty = savedInfant;
-    const defaultGoValue = savedGo > 0 ? savedGo : totalPassengers;
-    const defaultReturnValue = savedReturn > 0 ? savedReturn : totalPassengers;
+    const results = await Promise.all(fetchPromises);
     
-    // ✅ الحد الأقصى لكل حقل (السعة - إجمالي المحجوز)
-    const maxGoValue = Math.max(0, capacity - totalBookedGo);
-    const maxReturnValue = Math.max(0, capacity - totalBookedReturn);
+    // ✅ بناء HTML
+    let vehiclesHtml = `
+        <div class="summary-box" style="margin-bottom: 12px; padding: 12px; background: var(--navy); color: white; border-radius: 8px;">
+            <strong>📊 Invoice Summary:</strong><br>
+            Trip: ${escapeHtml(tripName)}<br>
+            👤 Adults: ${adults} | 👶 Children: ${children} | 🍼 Infants: ${infants}<br>
+            <span style="font-size: 11px; opacity: 0.8;">💡 Total passengers needing seats: ${totalPassengers}</span>
+            <br><span style="font-size: 10px; opacity: 0.6;">🚗 Vehicles for this trip: ${relevantVehicleIds.size}</span>
+        </div>
+        <div style="overflow-x:auto; max-height: 450px;">
+            <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
+                <thead>
+                    <tr style="background: var(--navy); color: var(--gold);">
+                        <th style="padding: 8px;">Vehicle</th>
+                        <th style="padding: 8px;">Cap.</th>
+                        <th style="padding: 8px;">🔄 Go<br><span style="font-size: 9px;">(Available)</span></th>
+                        <th style="padding: 8px;">🔙 Ret.<br><span style="font-size: 9px;">(Available)</span></th>
+                        <th style="padding: 8px;">👤 A</th>
+                        <th style="padding: 8px;">👶 C</th>
+                        <th style="padding: 8px;">🍼 I</th>
+                        <th style="padding: 8px;">Sel</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
     
-    // ✅ المقاعد المتاحة بعد إضافة القيم الحالية
-    const availableGo = Math.max(0, maxGoValue - defaultGoValue);
-    const availableReturn = Math.max(0, maxReturnValue - defaultReturnValue);
+    for (const res of results) {
+        const { vehicle, capacity, savedGo, savedReturn, savedAdult, savedChild, savedInfant, bookedGo, bookedReturn } = res;
+        
+        const defaultAdultQty = savedAdult > 0 ? savedAdult : adults;
+        const defaultChildQty = savedChild > 0 ? savedChild : children;
+        const defaultInfantQty = savedInfant;
+        const defaultGoValue = savedGo > 0 ? savedGo : totalPassengers;
+        const defaultReturnValue = savedReturn > 0 ? savedReturn : totalPassengers;
+        
+        // ✅ الحد الأقصى = السعة - المحجوز
+        const maxGoValue = Math.max(0, capacity - bookedGo);
+        const maxReturnValue = Math.max(0, capacity - bookedReturn);
+        const availableGo = Math.max(0, maxGoValue - defaultGoValue);
+        const availableReturn = Math.max(0, maxReturnValue - defaultReturnValue);
+        const isChecked = (savedGo > 0 || savedReturn > 0 || savedAdult > 0 || savedChild > 0);
+        
+        vehiclesHtml += `
+            <tr>
+                <td style="padding: 8px; background: var(--navy); color: var(--gold); font-weight: bold;">
+                    <strong>${escapeHtml(vehicle.licensePlate)}</strong><br>
+                    <span style="font-size: 9px;">🚗 ${escapeHtml(vehicle.driverName || 'No driver')}</span>
+                    <div style="font-size: 8px; color: #aaa;">ID: ${vehicle.id}</div>
+                </td>
+                <td style="text-align: center; padding: 8px; background: var(--gray-50); font-weight: bold;">${capacity}</td>
+                <td style="text-align: center; padding: 8px;">
+                    <input type="number" class="assign-go" data-id="${vehicle.id}" 
+                           value="${defaultGoValue}" 
+                           min="0" max="${maxGoValue}" 
+                           data-original-max="${maxGoValue}"
+                           style="width: 60px; text-align: center; padding: 4px; border-radius: 4px; border: 1px solid var(--border);">
+                    <div class="available-text" style="font-size: 9px; color: ${availableGo > 0 ? 'green' : 'red'};">(🟢 ${availableGo} available)</div>
+                </td>
+                <td style="text-align: center; padding: 8px;">
+                    <input type="number" class="assign-return" data-id="${vehicle.id}" 
+                           value="${defaultReturnValue}" 
+                           min="0" max="${maxReturnValue}" 
+                           data-original-max="${maxReturnValue}"
+                           style="width: 60px; text-align: center; padding: 4px; border-radius: 4px; border: 1px solid var(--border);">
+                    <div class="available-text" style="font-size: 9px; color: ${availableReturn > 0 ? 'green' : 'red'};">(🟢 ${availableReturn} available)</div>
+                </td>
+                <td style="text-align: center; padding: 8px;">
+                    <input type="number" class="assign-adult" data-id="${vehicle.id}" 
+                           value="${defaultAdultQty || ''}" 
+                           min="0" max="${adults}" 
+                           style="width: 55px; text-align: center; padding: 4px;">
+                </td>
+                <td style="text-align: center; padding: 8px;">
+                    <input type="number" class="assign-child" data-id="${vehicle.id}" 
+                           value="${defaultChildQty || ''}" 
+                           min="0" max="${children}" 
+                           style="width: 55px; text-align: center; padding: 4px;">
+                </td>
+                <td style="text-align: center; padding: 8px;">
+                    <input type="number" class="assign-infant" data-id="${vehicle.id}" 
+                           value="${defaultInfantQty || ''}" 
+                           min="0" max="${infants}" 
+                           style="width: 55px; text-align: center; padding: 4px;">
+                </td>
+                <td style="text-align: center; padding: 8px;">
+                    <input type="checkbox" class="assign-select" data-id="${vehicle.id}" 
+                           ${isChecked ? 'checked' : ''} 
+                           style="width: 18px; height: 18px;">
+                </td>
+            </tr>
+        `;
+    }
     
-    const isChecked = (savedGo > 0 || savedReturn > 0 || savedAdult > 0 || savedChild > 0);
+    if (results.length === 0) {
+        vehiclesHtml += `
+            <tr>
+                <td colspan="8" style="text-align: center; padding: 20px; color: var(--text-lt);">
+                    ⚠️ No vehicles available for this trip.<br>
+                    <span style="font-size: 10px;">Please select vehicles from the Vehicles button first.</span>
+                </td>
+            </tr>
+        `;
+    }
     
     vehiclesHtml += `
-      <tr>
-        <td style="padding: 8px; background: var(--navy); color: var(--gold); font-weight: bold;">
-          <strong>${escapeHtml(vehicle.licensePlate)}</strong><br>
-          <span style="font-size: 9px;">🚗 ${escapeHtml(vehicle.driverName || 'No driver')}</span>
-          <div style="font-size: 8px; color: #aaa;">ID: ${vehicle.id}</div>
-        </td>
-        <td style="text-align: center; padding: 8px; background: var(--gray-50); font-weight: bold;">${capacity}</td>
-        <td style="text-align: center; padding: 8px;">
-          <input type="number" class="assign-go" data-id="${vehicle.id}" 
-                 value="${defaultGoValue}" 
-                 min="0" max="${maxGoValue}" 
-                 data-original-max="${maxGoValue}"
-                 style="width: 60px; text-align: center; padding: 4px; border-radius: 4px; border: 1px solid var(--border);">
-          <div class="available-text" style="font-size: 9px; color: ${availableGo > 0 ? 'green' : 'red'};">(🟢 ${availableGo} available)</div>
-        </td>
-        <td style="text-align: center; padding: 8px;">
-          <input type="number" class="assign-return" data-id="${vehicle.id}" 
-                 value="${defaultReturnValue}" 
-                 min="0" max="${maxReturnValue}" 
-                 data-original-max="${maxReturnValue}"
-                 style="width: 60px; text-align: center; padding: 4px; border-radius: 4px; border: 1px solid var(--border);">
-          <div class="available-text" style="font-size: 9px; color: ${availableReturn > 0 ? 'green' : 'red'};">(🟢 ${availableReturn} available)</div>
-        </td>
-        <td style="text-align: center; padding: 8px;">
-          <input type="number" class="assign-adult" data-id="${vehicle.id}" 
-                 value="${defaultAdultQty || ''}" 
-                 min="0" max="${adults}" 
-                 style="width: 55px; text-align: center; padding: 4px;">
-        </td>
-        <td style="text-align: center; padding: 8px;">
-          <input type="number" class="assign-child" data-id="${vehicle.id}" 
-                 value="${defaultChildQty || ''}" 
-                 min="0" max="${children}" 
-                 style="width: 55px; text-align: center; padding: 4px;">
-        </td>
-        <td style="text-align: center; padding: 8px;">
-          <input type="number" class="assign-infant" data-id="${vehicle.id}" 
-                 value="${defaultInfantQty || ''}" 
-                 min="0" max="${infants}" 
-                 style="width: 55px; text-align: center; padding: 4px;">
-        </td>
-        <td style="text-align: center; padding: 8px;">
-          <input type="checkbox" class="assign-select" data-id="${vehicle.id}" 
-                 ${isChecked ? 'checked' : ''} 
-                 style="width: 18px; height: 18px;">
-        </td>
-      </tr>
+                </tbody>
+            </table>
+        </div>
+        <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);">
+            <button class="btn btn-secondary" onclick="closeModal('assignVehiclesModal')">Cancel</button>
+            <button class="btn btn-primary" onclick="saveVehicleAssignment()" ${results.length === 0 ? 'disabled' : ''}>✅ Assign</button>
+        </div>
     `;
-  }
-  
-  vehiclesHtml += `
-        </tbody>
-      </table>
-    </div>
-    <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);">
-      <button class="btn btn-secondary" onclick="closeModal('assignVehiclesModal')">Cancel</button>
-      <button class="btn btn-primary" onclick="saveVehicleAssignment()">✅ Assign</button>
-    </div>
-  `;
-  
-  document.getElementById('assignVehiclesContent').innerHTML = vehiclesHtml;
-  attachVehicleAssignmentEvents();
+    
+    document.getElementById('assignVehiclesContent').innerHTML = vehiclesHtml;
+    attachVehicleAssignmentEvents();
 }
-
 // ✅ دالة مساعدة لربط الأحداث في Assign Vehicles
 function attachVehicleAssignmentEvents() {
   // ✅ دالة لحساب المقاعد المتاحة ديناميكياً
