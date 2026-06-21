@@ -447,7 +447,36 @@ th:hover {
     .card-action-btn.instructor { background: var(--green); }
     .card-action-btn.vehicle { background: var(--purple); }
     .card-action-btn.boat { background: var(--blue); }
+    /* ✅ إصلاح حقول التاريخ للهواتف */
+@media (max-width: 768px) {
+    /* جعل حقل التاريخ والأيقونة في صف واحد */
+    .filter-group .date-input-wrap {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        width: 100%;
+    }
     
+    .filter-group .date-input-wrap input[type="text"] {
+        flex: 1;
+        min-width: 100px;
+        width: auto;
+    }
+    
+    .filter-group .date-input-wrap .cal-btn {
+        flex-shrink: 0;
+        padding: 6px 10px;
+        height: 34px;
+        font-size: 14px;
+    }
+    
+    /* تعديل عرض حقول التاريخ */
+    #filterFromDateTxt,
+    #filterToDateTxt {
+        width: 100% !important;
+        min-width: 80px !important;
+    }
+}
     /* ========== RESPONSIVE BREAKPOINT ========== */
     @media (max-width: 768px) {
       .tbl-wrap {
@@ -1207,54 +1236,55 @@ function openCalendar(w) {
         return;
     }
     
-    try {
-        // إظهار الحقل المخفي
-        hiddenInput.style.cssText = 'position:fixed;top:-200px;left:-200px;opacity:0;width:1px;height:1px;pointer-events:auto;z-index:9999;display:block;';
+    // ✅ على الهواتف، اعرض الحقل مباشرة في منتصف الشاشة
+    if (window.innerWidth <= 768) {
+        // إظهار الحقل المخفي في منتصف الشاشة
+        hiddenInput.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:90%;max-width:320px;height:auto;padding:25px 20px;background:white;border-radius:16px;box-shadow:0 10px 50px rgba(0,0,0,0.4);opacity:1;z-index:99999;font-size:20px;pointer-events:auto;display:block;border:2px solid var(--gold);';
+        hiddenInput.focus();
         
-        // إزالة المستمع القديم لمنع التكرار
-        const newHidden = hiddenInput.cloneNode(true);
-        hiddenInput.parentNode.replaceChild(newHidden, hiddenInput);
-        const freshHidden = document.getElementById('filter' + w + 'DateHidden');
-        freshHidden.style.cssText = 'position:fixed;top:-200px;left:-200px;opacity:0;width:1px;height:1px;pointer-events:auto;z-index:9999;display:block;';
+        // ✅ عند الإغلاق (blur أو تغيير)، إخفاء الحقل
+        const hide = () => {
+            hiddenInput.style.cssText = 'display:none;';
+            hiddenInput.removeEventListener('blur', hide);
+        };
+        hiddenInput.addEventListener('blur', hide);
         
-        freshHidden.addEventListener('change', function() {
-            const val = freshHidden.value;
+        // ✅ عند اختيار تاريخ
+        hiddenInput.addEventListener('change', function onChange() {
+            const val = hiddenInput.value;
             if (val) {
                 textInput.value = isoToTxt(val);
-                // تحديث hidden input الأصلي
                 const origHidden = document.getElementById('filter' + w + 'DateHidden');
                 if (origHidden) origHidden.value = val;
                 onDateTextChange();
             }
-            freshHidden.style.cssText = 'display:none;';
+            hide();
+            hiddenInput.removeEventListener('change', onChange);
         });
         
-        freshHidden.showPicker();
-    } catch(e) {
-        // Fallback: إنشاء input مؤقت
-        const tmp = document.createElement('input');
-        tmp.type = 'date';
-        tmp.style.cssText = 'position:fixed;top:-200px;left:-200px;opacity:0;width:1px;height:1px;pointer-events:auto;z-index:9999;';
-        document.body.appendChild(tmp);
-        tmp.addEventListener('change', function() {
-            const val = tmp.value;
-            if (val) {
-                const origHidden = document.getElementById('filter' + w + 'DateHidden');
-                if (origHidden) origHidden.value = val;
-                textInput.value = isoToTxt(val);
-                onDateTextChange();
-            }
-            document.body.removeChild(tmp);
-        });
-        tmp.addEventListener('blur', function() {
-            setTimeout(() => {
-                if (document.body.contains(tmp)) document.body.removeChild(tmp);
-            }, 300);
-        });
-        try { tmp.showPicker(); } catch(e2) { tmp.click(); }
+        return;
     }
+    
+    // ✅ على سطح المكتب، استخدم showPicker
+    try {
+        hiddenInput.style.cssText = 'position:fixed;top:-200px;left:-200px;opacity:0;width:1px;height:1px;pointer-events:auto;z-index:9999;display:block;';
+        hiddenInput.showPicker();
+    } catch(e) {
+        hiddenInput.click();
+    }
+    
+    hiddenInput.addEventListener('change', function onChange() {
+        const val = hiddenInput.value;
+        if (val) {
+            textInput.value = isoToTxt(val);
+            const origHidden = document.getElementById('filter' + w + 'DateHidden');
+            if (origHidden) origHidden.value = val;
+            onDateTextChange();
+        }
+        hiddenInput.style.cssText = 'display:none;';
+        hiddenInput.removeEventListener('change', onChange);
+    });
 }
-
 // ✅ عند تغيير النص يدوياً
 function onDateTextChange() {
     const fromTxt = document.getElementById('filterFromDateTxt');
@@ -3054,83 +3084,118 @@ async function executeResetAllSelections() {
 }
 
 function showVehicleDetails(voucherNo, vehicleId) {
-  const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
-  if (!invoice) return;
-  
-  let vehiclesData = [];
-  try { vehiclesData = JSON.parse(invoice.VehiclesUsed || '[]'); } catch(e) {}
-  
-  const vehicle = vehiclesData.find(v => v.vehicleId === vehicleId);
-  if (!vehicle) { showToast('Vehicle data not found', 'error'); return; }
-  
-  const cachedVehicle = cachedVehicles.find(v => v.id === vehicleId);
-  
-  let html = `
-    <div style="padding: 8px;">
-      <div style="background: var(--navy); color: var(--gold); padding: 12px; border-radius: 8px; margin-bottom: 16px; text-align: center;">
-        <strong>🚗 Vehicle Details</strong>
-      </div>
-      <div style="padding: 0 8px;">
-        <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border);">
-          <span style="font-weight: bold;">License Plate:</span>
-          <span>${escapeHtml(vehicle.licensePlate || cachedVehicle?.licensePlate || '—')}</span>
+    const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
+    if (!invoice) {
+        showToast('Invoice not found', 'error');
+        return;
+    }
+    
+    let vehiclesData = [];
+    try { 
+        vehiclesData = JSON.parse(invoice.VehiclesUsed || '[]'); 
+    } catch(e) {
+        console.warn('Failed to parse VehiclesUsed:', e);
+    }
+    
+    const vehicle = vehiclesData.find(v => v.vehicleId === vehicleId);
+    if (!vehicle) { 
+        showToast('Vehicle data not found', 'error'); 
+        return; 
+    }
+    
+    const cachedVehicle = cachedVehicles.find(v => v.id === vehicleId);
+    
+    // ✅ عرض تفاصيل السيارة بشكل واضح
+    let html = `
+        <div style="padding: 8px;">
+            <div style="background: var(--navy); color: var(--gold); padding: 12px; border-radius: 8px; margin-bottom: 16px; text-align: center;">
+                <strong>🚗 Vehicle Details</strong>
+            </div>
+            <div style="padding: 0 8px;">
+                <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border);">
+                    <span style="font-weight: bold;">License Plate:</span>
+                    <span style="font-weight: 600;">${escapeHtml(vehicle.licensePlate || cachedVehicle?.licensePlate || '—')}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border);">
+                    <span style="font-weight: bold;">Driver:</span>
+                    <span>${escapeHtml(vehicle.driverName || cachedVehicle?.driverName || '—')}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border);">
+                    <span style="font-weight: bold;">Capacity:</span>
+                    <span>${cachedVehicle?.capacity || '—'} seats</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border);">
+                    <span style="font-weight: bold;">Go / Return:</span>
+                    <span>🔄 ${vehicle.goCount || 0} / 🔙 ${vehicle.returnCount || 0}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 10px 0;">
+                    <span style="font-weight: bold;">Passengers:</span>
+                    <span>👤 ${vehicle.adults || 0}A / 👶 ${vehicle.children || 0}C / 🍼 ${vehicle.infants || 0}I</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--border);">
+                    <span style="font-weight: bold;">Vehicle ID:</span>
+                    <span style="font-size: 11px; color: var(--text-lt);">${escapeHtml(vehicleId)}</span>
+                </div>
+            </div>
         </div>
-        <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border);">
-          <span style="font-weight: bold;">Driver:</span>
-          <span>${escapeHtml(vehicle.driverName || cachedVehicle?.driverName || '—')}</span>
-        </div>
-        <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border);">
-          <span style="font-weight: bold;">Go / Return:</span>
-          <span>🔄 ${vehicle.goCount || 0} / 🔙 ${vehicle.returnCount || 0}</span>
-        </div>
-        <div style="display: flex; justify-content: space-between; padding: 10px 0;">
-          <span style="font-weight: bold;">Passengers:</span>
-          <span>👤 ${vehicle.adults || 0}A / 👶 ${vehicle.children || 0}C / 🍼 ${vehicle.infants || 0}I</span>
-        </div>
-      </div>
-    </div>
-  `;
-  
-  document.getElementById('detailsModalContent').innerHTML = html;
-  document.getElementById('detailsModalTitle').innerHTML = '🚗 Vehicle Details';
-  openModal('detailsModal');
+    `;
+    
+    document.getElementById('detailsModalContent').innerHTML = html;
+    document.getElementById('detailsModalTitle').innerHTML = '🚗 Vehicle Details';
+    openModal('detailsModal');
 }
 
 function showBoatDetails(voucherNo, boatId) {
-  const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
-  if (!invoice) return;
-  
-  let boatsData = [];
-  try { boatsData = JSON.parse(invoice.BoatsUsed || '[]'); } catch(e) {}
-  
-  const boat = boatsData.find(b => b.boatId === boatId);
-  if (!boat) { showToast('Boat data not found', 'error'); return; }
-  
-  // ✅ الحصول على اسم المركب من cachedBoats
-  const cachedBoat = cachedBoats.find(b => b.id === boatId);
-  const boatName = boat.boatName || cachedBoat?.name || '—';
-  
-  let html = `
-    <div style="padding: 8px;">
-      <div style="background: var(--navy); color: var(--gold); padding: 12px; border-radius: 8px; margin-bottom: 16px; text-align: center;">
-        <strong>⛵ Boat Details</strong>
-      </div>
-      <div style="padding: 0 8px;">
-        <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border);">
-          <span style="font-weight: bold;">Boat Name:</span>
-          <span>${escapeHtml(boatName)}</span>
+    const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
+    if (!invoice) {
+        showToast('Invoice not found', 'error');
+        return;
+    }
+    
+    let boatsData = [];
+    try { 
+        boatsData = JSON.parse(invoice.BoatsUsed || '[]'); 
+    } catch(e) {
+        console.warn('Failed to parse BoatsUsed:', e);
+    }
+    
+    const boat = boatsData.find(b => b.boatId === boatId);
+    if (!boat) { 
+        showToast('Boat data not found', 'error'); 
+        return; 
+    }
+    
+    // ✅ الحصول على اسم المركب من cachedBoats
+    const cachedBoat = cachedBoats.find(b => b.id === boatId);
+    const boatName = boat.boatName || cachedBoat?.name || boatId || '—';
+    
+    // ✅ عرض تفاصيل المركب
+    let html = `
+        <div style="padding: 8px;">
+            <div style="background: var(--navy); color: var(--gold); padding: 12px; border-radius: 8px; margin-bottom: 16px; text-align: center;">
+                <strong>⛵ Boat Details</strong>
+            </div>
+            <div style="padding: 0 8px;">
+                <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border);">
+                    <span style="font-weight: bold;">Boat Name:</span>
+                    <span style="font-weight: 600;">${escapeHtml(boatName)}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border);">
+                    <span style="font-weight: bold;">Boat ID:</span>
+                    <span style="font-size: 12px; color: var(--text-lt);">${escapeHtml(boatId)}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 10px 0;">
+                    <span style="font-weight: bold;">Passengers:</span>
+                    <span>👤 ${boat.adults || 0}A / 👶 ${boat.children || 0}C / 🍼 ${boat.infants || 0}I</span>
+                </div>
+                ${boat.capacity ? `<div style="display: flex; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--border);"><span style="font-weight: bold;">Capacity:</span><span>${boat.capacity} seats</span></div>` : ''}
+            </div>
         </div>
-        <div style="display: flex; justify-content: space-between; padding: 10px 0;">
-          <span style="font-weight: bold;">Passengers:</span>
-          <span>👤 ${boat.adults || 0}A / 👶 ${boat.children || 0}C / 🍼 ${boat.infants || 0}I</span>
-        </div>
-      </div>
-    </div>
-  `;
-  
-  document.getElementById('detailsModalContent').innerHTML = html;
-  document.getElementById('detailsModalTitle').innerHTML = '⛵ Boat Details';
-  openModal('detailsModal');
+    `;
+    
+    document.getElementById('detailsModalContent').innerHTML = html;
+    document.getElementById('detailsModalTitle').innerHTML = '⛵ Boat Details';
+    openModal('detailsModal');
 }
 function showInstructorDetails(voucherNo, instructorId) {
   const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
