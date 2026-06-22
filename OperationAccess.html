@@ -3636,77 +3636,83 @@ function attachVehicleTripEvents(index) {
 }
 
 async function saveAllVehicleTripRows() {
-  const saveBtn = document.querySelector('#vehiclesModal .btn-primary');
-  if (saveBtn && saveBtn.disabled) {
-    console.log('⚠️ Save already in progress, ignoring...');
-    return;
-  }
-  
-  const currentDate = getCurrentDateISO();
-  if (!currentDate) {
-    showToast('Please select a date first', 'error');
-    return;
-  }
-  
-  const rows = document.querySelectorAll('.vehicle-trip-row');
-  const records = [];
-  const selectedVehicleIds = [];
-  
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const vehicleSelect = row.querySelector('.vehicle-select');
-    const tripSelect = row.querySelector('.trip-select');
-    const goInput = row.querySelector('.go-count');
-    const returnInput = row.querySelector('.return-count');
-    
-    const vehicleId = vehicleSelect ? vehicleSelect.value : '';
-    const tripName = tripSelect ? tripSelect.value : '';
-    const goCount = parseInt(goInput ? goInput.value : 0) || 0;
-    const returnCount = parseInt(returnInput ? returnInput.value : 0) || 0;
-    
-    if (vehicleId && tripName && (goCount > 0 || returnCount > 0)) {
-      records.push({ vehicleId, tripName, goCount, returnCount });
-      if (!selectedVehicleIds.includes(vehicleId)) {
-        selectedVehicleIds.push(vehicleId);
-      }
+    const saveBtn = document.querySelector('#vehiclesModal .btn-primary');
+    if (saveBtn && saveBtn.disabled) {
+        console.log('⚠️ Save already in progress, ignoring...');
+        return;
     }
-  }
-  
-  if (records.length === 0) {
-    showToast('⚠️ Please select at least one vehicle and trip', 'error');
-    return;
-  }
-  
-  if (saveBtn) {
-    saveBtn.disabled = true;
-    saveBtn.textContent = '⏳ Saving...';
-  }
-  
-  showToast('Saving vehicle trips...', 'info');
-  
-  try {
-    const result = await gas('saveVehicleTripRecords', {
-      date: currentDate,
-      records: JSON.stringify(records),
-      centerName: currentUser?.centerName
-    });
     
-    if (result && result.success) {
-      selectedVehicles = selectedVehicleIds;
-      updateSelectionBadges();
-      showToast(`✅ Saved ${records.length} vehicle trips`, 'success');
-      closeModal('vehiclesModal');
-    } else {
-      showToast('❌ Failed to save: ' + (result.message || 'Unknown error'), 'error');
+    const currentDate = getCurrentDateISO();
+    if (!currentDate) {
+        showToast('Please select a date first', 'error');
+        return;
     }
-  } catch(e) {
-    showToast('Error: ' + e.message, 'error');
-  } finally {
+    
+    const rows = document.querySelectorAll('.vehicle-trip-row');
+    const records = [];
+    const selectedVehicleIds = [];
+    
+    for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const vehicleSelect = row.querySelector('.vehicle-select');
+        const tripSelect = row.querySelector('.trip-select');
+        const goInput = row.querySelector('.go-count');
+        const returnInput = row.querySelector('.return-count');
+        
+        const vehicleId = vehicleSelect ? vehicleSelect.value : '';
+        const tripName = tripSelect ? tripSelect.value : '';
+        const goCount = parseInt(goInput ? goInput.value : 0) || 0;
+        const returnCount = parseInt(returnInput ? returnInput.value : 0) || 0;
+        
+        if (vehicleId && tripName && (goCount > 0 || returnCount > 0)) {
+            records.push({ vehicleId, tripName, goCount, returnCount });
+            if (!selectedVehicleIds.includes(vehicleId)) {
+                selectedVehicleIds.push(vehicleId);
+            }
+        }
+    }
+    
+    if (records.length === 0) {
+        showToast('⚠️ Please select at least one vehicle and trip', 'error');
+        return;
+    }
+    
     if (saveBtn) {
-      saveBtn.disabled = false;
-      saveBtn.textContent = '✅ Save All';
+        saveBtn.disabled = true;
+        saveBtn.textContent = '⏳ Saving...';
     }
-  }
+    
+    showToast('Saving vehicle trips...', 'info');
+    
+    try {
+        const result = await gas('saveVehicleTripRecords', {
+            date: currentDate,
+            records: JSON.stringify(records),
+            centerName: currentUser?.centerName
+        });
+        
+        if (result && result.success) {
+            selectedVehicles = selectedVehicleIds;
+            updateSelectionBadges();
+            
+            // ✅ إعادة تحميل التعيينات
+            await loadAndPopulateAssignments(currentDate);
+            await loadLogisticsData(currentDate);
+            renderTable();
+            
+            showToast(`✅ Saved ${records.length} vehicle trips`, 'success');
+            closeModal('vehiclesModal');
+        } else {
+            showToast('❌ Failed to save: ' + (result.message || 'Unknown error'), 'error');
+        }
+    } catch(e) {
+        showToast('Error: ' + e.message, 'error');
+    } finally {
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = '✅ Save All';
+        }
+    }
 }
   function generateLogisticsRowHTML(index, selectedVehicleId, selectedTrip, goCount, returnCount, vehicles, trips) {
   const formatValue = (val) => {
@@ -4730,114 +4736,121 @@ async function openBeachInstructorsModal() {
   
 // ✅ دالة حفظ جديدة مع تحديث InstructorDailyAssignments
 async function saveBeachInstructorsV2() {
-  // ✅ منع الضغط المتكرر والاستدعاءات المتزامنة
-  if (isSavingBeach) {
-    console.log('⚠️ Save already in progress, ignoring...');
-    return;
-  }
-  
-  const saveBtn = document.querySelector('#beachInstructorsModal .btn-primary');
-  if (saveBtn && saveBtn.disabled) {
-    console.log('⚠️ Save button disabled, ignoring...');
-    return;
-  }
-  
-  const selected = [];
-  document.querySelectorAll('#beachInstructorsList .instructor-checkbox:checked').forEach(cb => {
-    selected.push(cb.value);
-  });
-  
-  const currentDate = getCurrentDateISO();
-  if (!currentDate) {
-    showToast('Please select a date first', 'error');
-    return;
-  }
-  
-  // ✅ التحقق من عدم وجود المدرب في المراكب
-  const allBoatInstructors = [];
-  for (const instructors of Object.values(boatInstructorsMap)) {
-    if (Array.isArray(instructors)) {
-      allBoatInstructors.push(...instructors);
-    } else if (instructors) {
-      allBoatInstructors.push(instructors);
-    }
-  }
-  
-  const duplicateInBoats = selected.filter(id => allBoatInstructors.includes(id));
-  if (duplicateInBoats.length > 0) {
-    const duplicateNames = duplicateInBoats.map(id => {
-      const inst = cachedInstructors.find(i => i.id === id);
-      return inst?.name || id;
-    }).join(', ');
-    showToast(`⚠️ Cannot assign same instructor to beach and boat: ${duplicateNames}`, 'error');
-    return;
-  }
-  
-  isSavingBeach = true;
-  
-  if (saveBtn) {
-    saveBtn.disabled = true;
-    saveBtn.textContent = '⏳ Saving...';
-  }
-  
-  showToast('Saving beach instructors...', 'info');
-  
-  const assignments = currentAssignments || {};
-  assignments.beachInstructors = selected;
-  
-  try {
-    // ✅ تنفيذ العمليات بالتوازي
-    const deletePromise = gas('deleteInstructorDailyLogsByType', {
-      date: currentDate,
-      assignmentType: 'Beach',
-      centerName: currentUser?.centerName
-    });
-    
-    const savePromise = gas('saveDailyAssignments', {
-      date: currentDate,
-      data: JSON.stringify(assignments),
-      centerName: currentUser?.centerName
-    });
-    
-    await Promise.all([deletePromise, savePromise]);
-    
-    selectedBeachInstructors = selected;
-    currentAssignments = assignments;
-    updateSelectionBadges();
-    
-    // ✅ تسجيل المدربين بالتوازي
-    const logPromises = selected.map(instructorId => {
-      const instructor = cachedInstructors.find(i => i.id === instructorId);
-      if (instructor) {
-        return gas('assignInstructorToDailyLog', {
-          date: currentDate,
-          instructorId: instructorId,
-          instructorName: instructor.name,
-          assignmentType: 'Beach',
-          boatId: '',
-          boatName: '',
-          centerName: currentUser?.centerName
-        });
-      }
-      return null;
-    }).filter(p => p !== null);
-    
-    if (logPromises.length > 0) {
-      await Promise.all(logPromises);
+    // ✅ منع الضغط المتكرر والاستدعاءات المتزامنة
+    if (isSavingBeach) {
+        console.log('⚠️ Save already in progress, ignoring...');
+        return;
     }
     
-    showToast(`✅ Saved ${selected.length} beach instructors`, 'success');
-    closeModal('beachInstructorsModal');
-  } catch(e) {
-    showToast('Error: ' + e.message, 'error');
-  } finally {
-    isSavingBeach = false;
+    const saveBtn = document.querySelector('#beachInstructorsModal .btn-primary');
+    if (saveBtn && saveBtn.disabled) {
+        console.log('⚠️ Save button disabled, ignoring...');
+        return;
+    }
+    
+    const selected = [];
+    document.querySelectorAll('#beachInstructorsList .instructor-checkbox:checked').forEach(cb => {
+        selected.push(cb.value);
+    });
+    
+    const currentDate = getCurrentDateISO();
+    if (!currentDate) {
+        showToast('Please select a date first', 'error');
+        return;
+    }
+    
+    // ✅ التحقق من عدم وجود المدرب في المراكب (يجب أن يكون هنا قبل الحفظ)
+    const allBoatInstructors = [];
+    for (const instructors of Object.values(boatInstructorsMap)) {
+        if (Array.isArray(instructors)) {
+            allBoatInstructors.push(...instructors);
+        } else if (instructors) {
+            allBoatInstructors.push(instructors);
+        }
+    }
+    
+    const duplicateInBoats = selected.filter(id => allBoatInstructors.includes(id));
+    if (duplicateInBoats.length > 0) {
+        const duplicateNames = duplicateInBoats.map(id => {
+            const inst = cachedInstructors.find(i => i.id === id);
+            return inst?.name || id;
+        }).join(', ');
+        showToast(`⚠️ Cannot assign same instructor to beach and boat: ${duplicateNames}`, 'error');
+        return;
+    }
+    
+    isSavingBeach = true;
+    
     if (saveBtn) {
-      saveBtn.disabled = false;
-      saveBtn.textContent = '✅ Save';
+        saveBtn.disabled = true;
+        saveBtn.textContent = '⏳ Saving...';
     }
-  }
+    
+    showToast('Saving beach instructors...', 'info');
+    
+    const assignments = currentAssignments || {};
+    assignments.beachInstructors = selected;
+    
+    try {
+        // ✅ تنفيذ العمليات بالتوازي
+        const deletePromise = gas('deleteInstructorDailyLogsByType', {
+            date: currentDate,
+            assignmentType: 'Beach',
+            centerName: currentUser?.centerName
+        });
+        
+        const savePromise = gas('saveDailyAssignments', {
+            date: currentDate,
+            data: JSON.stringify(assignments),
+            centerName: currentUser?.centerName
+        });
+        
+        await Promise.all([deletePromise, savePromise]);
+        
+        selectedBeachInstructors = selected;
+        currentAssignments = assignments;
+        updateSelectionBadges();
+        
+        // ✅ تسجيل المدربين بالتوازي
+        const logPromises = selected.map(instructorId => {
+            const instructor = cachedInstructors.find(i => i.id === instructorId);
+            if (instructor) {
+                return gas('assignInstructorToDailyLog', {
+                    date: currentDate,
+                    instructorId: instructorId,
+                    instructorName: instructor.name,
+                    assignmentType: 'Beach',
+                    boatId: '',
+                    boatName: '',
+                    centerName: currentUser?.centerName
+                });
+            }
+            return null;
+        }).filter(p => p !== null);
+        
+        if (logPromises.length > 0) {
+            await Promise.all(logPromises);
+        }
+        
+        // ✅ إعادة تحميل التعيينات
+        await loadAndPopulateAssignments(currentDate);
+        await loadLogisticsData(currentDate);
+        renderTable();
+        
+        showToast(`✅ Saved ${selected.length} beach instructors`, 'success');
+        closeModal('beachInstructorsModal');
+        
+    } catch(e) {
+        showToast('Error: ' + e.message, 'error');
+    } finally {
+        isSavingBeach = false;
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = '✅ Save';
+        }
+    }
 }
+  
 async function openBoatsModal() {
   const currentDate = getCurrentDateISO();
   if (!currentDate) {
@@ -5193,80 +5206,85 @@ function renderLogisticsModal(existingRecords, currentDate) {
   let tempLogisticsRows = [];
 
 async function saveAllLogisticsRows() {
-  // ✅ منع الضغط المتكرر على زر Save All
-  const saveBtn = document.querySelector('#logisticsVehiclesModal .btn-primary');
-  if (saveBtn && saveBtn.disabled) {
-    console.log('⚠️ Save already in progress, ignoring...');
-    return;
-  }
-  
-  const currentDate = getCurrentDateISO();
-  if (!currentDate) {
-    showToast('Please select a date first', 'error');
-    return;
-  }
-  
-  const rows = document.querySelectorAll('.logistics-row');
-  const records = [];
-  
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const vehicleSelect = row.querySelector('.logistics-vehicle-select');
-    const tripSelect = row.querySelector('.logistics-trip-select');
-    const goInput = row.querySelector('.logistics-go-count');
-    const returnInput = row.querySelector('.logistics-return-count');
-    
-    const vehicleId = vehicleSelect ? vehicleSelect.value : '';
-    const tripName = tripSelect ? tripSelect.value : '';
-    const goCount = parseInt(goInput ? goInput.value : 0) || 0;
-    const returnCount = parseInt(returnInput ? returnInput.value : 0) || 0;
-    
-    if (vehicleId && tripName && (goCount > 0 || returnCount > 0)) {
-      records.push({ vehicleId, tripName, goCount, returnCount });
+    // ✅ منع الضغط المتكرر على زر Save All
+    const saveBtn = document.querySelector('#logisticsVehiclesModal .btn-primary');
+    if (saveBtn && saveBtn.disabled) {
+        console.log('⚠️ Save already in progress, ignoring...');
+        return;
     }
-  }
-  
-  if (records.length === 0) {
-    showToast('⚠️ Please select at least one vehicle and trip', 'error');
-    return;
-  }
-  
-  // ✅ تعطيل الزر وتغيير النص
-  if (saveBtn) {
-    saveBtn.disabled = true;
-    saveBtn.textContent = '⏳ Saving...';
-  }
-  
-  showToast('Saving logistics records...', 'info');
-  
-  try {
-    const result = await gas('saveLogisticsRecords', {
-      date: currentDate,
-      records: JSON.stringify(records),
-      centerName: currentUser?.centerName
-    });
     
-    if (result && result.success) {
-      tempLogisticsRows = records;
-      preloadedData.logisticsRecords = records;
-      updateSelectionBadges();
-      updateLogisticsBadge();
-      showToast(`✅ Saved ${records.length} logistics records`, 'success');
-      closeModal('logisticsVehiclesModal');
-    } else {
-      showToast('❌ Failed to save: ' + (result.message || 'Unknown error'), 'error');
+    const currentDate = getCurrentDateISO();
+    if (!currentDate) {
+        showToast('Please select a date first', 'error');
+        return;
     }
-  } catch(e) {
-    showToast('Error: ' + e.message, 'error');
-  } finally {
-    // ✅ إعادة تمكين الزر
+    
+    const rows = document.querySelectorAll('.logistics-row');
+    const records = [];
+    
+    for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const vehicleSelect = row.querySelector('.logistics-vehicle-select');
+        const tripSelect = row.querySelector('.logistics-trip-select');
+        const goInput = row.querySelector('.logistics-go-count');
+        const returnInput = row.querySelector('.logistics-return-count');
+        
+        const vehicleId = vehicleSelect ? vehicleSelect.value : '';
+        const tripName = tripSelect ? tripSelect.value : '';
+        const goCount = parseInt(goInput ? goInput.value : 0) || 0;
+        const returnCount = parseInt(returnInput ? returnInput.value : 0) || 0;
+        
+        if (vehicleId && tripName && (goCount > 0 || returnCount > 0)) {
+            records.push({ vehicleId, tripName, goCount, returnCount });
+        }
+    }
+    
+    if (records.length === 0) {
+        showToast('⚠️ Please select at least one vehicle and trip', 'error');
+        return;
+    }
+    
+    // ✅ تعطيل الزر وتغيير النص
     if (saveBtn) {
-      saveBtn.disabled = false;
-      saveBtn.textContent = '✅ Save All';
+        saveBtn.disabled = true;
+        saveBtn.textContent = '⏳ Saving...';
     }
-  }
+    
+    showToast('Saving logistics records...', 'info');
+    
+    try {
+        const result = await gas('saveLogisticsRecords', {
+            date: currentDate,
+            records: JSON.stringify(records),
+            centerName: currentUser?.centerName
+        });
+        
+        if (result && result.success) {
+            tempLogisticsRows = records;
+            preloadedData.logisticsRecords = records;
+            updateSelectionBadges();
+            updateLogisticsBadge();
+            
+            // ✅ إعادة تحميل اللوجستيات
+            await loadLogisticsData(currentDate);
+            renderTable();
+            
+            showToast(`✅ Saved ${records.length} logistics records`, 'success');
+            closeModal('logisticsVehiclesModal');
+        } else {
+            showToast('❌ Failed to save: ' + (result.message || 'Unknown error'), 'error');
+        }
+    } catch(e) {
+        showToast('Error: ' + e.message, 'error');
+    } finally {
+        // ✅ إعادة تمكين الزر
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = '✅ Save All';
+        }
+    }
 }
-
+  
   function attachLogisticsRowEvents(index) {
   const vehicleSelect = document.querySelector(`.logistics-vehicle-select[data-row="${index}"]`);
   const tripSelect = document.querySelector(`.logistics-trip-select[data-row="${index}"]`);
@@ -5524,112 +5542,119 @@ async function saveLogisticsVehicles() {
   }
 }
 async function saveBoatsAndInstructorsV2() {
-  if (isSavingBoats) {
-    console.log('⚠️ Save already in progress, ignoring...');
-    return;
-  }
-  
-  const saveBtn = document.querySelector('#boatsModal .btn-primary');
-  if (saveBtn && saveBtn.disabled) {
-    console.log('⚠️ Save button disabled, ignoring...');
-    return;
-  }
-  
-  const selectedBoatsList = [];
-  const instructorsMap = {};
-  
-  document.querySelectorAll('#boatsModal .boat-checkbox:checked').forEach(cb => {
-    const boatId = cb.dataset.id;
-    selectedBoatsList.push(boatId);
-    
-    const instructors = [];
-    document.querySelectorAll(`.boat-instructor-cb[data-boat="${boatId}"]:checked`).forEach(cbInstructor => {
-      instructors.push(cbInstructor.dataset.instructor);
-    });
-    if (instructors.length > 0) {
-      instructorsMap[boatId] = instructors;
+    if (isSavingBoats) {
+        console.log('⚠️ Save already in progress, ignoring...');
+        return;
     }
-  });
-  
-  const currentDate = getCurrentDateISO();
-  if (!currentDate) {
-    showToast('Please select a date first', 'error');
-    return;
-  }
-  
-  isSavingBoats = true;
-  
-  if (saveBtn) {
-    saveBtn.disabled = true;
-    saveBtn.textContent = '⏳ Saving...';
-  }
-  
-  showToast('Saving boats and instructors...', 'info');
-  
-  const currentBeachInstructors = currentAssignments?.beachInstructors || selectedBeachInstructors || [];
-  
-  const assignments = {
-    beachInstructors: currentBeachInstructors,
-    boats: selectedBoatsList,
-    boatInstructorsMap: instructorsMap
-  };
-  
-  try {
-    const deletePromise = gas('deleteInstructorDailyLogsByType', {
-      date: currentDate,
-      assignmentType: 'Boat',
-      centerName: currentUser?.centerName
-    });
     
-    const savePromise = gas('saveDailyAssignments', {
-      date: currentDate,
-      data: JSON.stringify(assignments),
-      centerName: currentUser?.centerName
-    });
+    const saveBtn = document.querySelector('#boatsModal .btn-primary');
+    if (saveBtn && saveBtn.disabled) {
+        console.log('⚠️ Save button disabled, ignoring...');
+        return;
+    }
     
-    await Promise.all([deletePromise, savePromise]);
+    const currentDate = getCurrentDateISO();
+    if (!currentDate) {
+        showToast('Please select a date first', 'error');
+        return;
+    }
     
-    selectedBoats = selectedBoatsList;
-    boatInstructorsMap = instructorsMap;
-    currentAssignments = assignments;
+    const selectedBoatsList = [];
+    const instructorsMap = {};
     
-    const logPromises = [];
-    for (const [boatId, instructors] of Object.entries(instructorsMap)) {
-      const boat = cachedBoats.find(b => b.id === boatId);
-      const boatName = boat?.name || boatId;
-      for (const instructorId of instructors) {
-        const instructor = cachedInstructors.find(i => i.id === instructorId);
-        if (instructor) {
-          logPromises.push(gas('assignInstructorToDailyLog', {
-            date: currentDate,
-            instructorId: instructorId,
-            instructorName: instructor.name,
-            assignmentType: 'Boat',
-            boatId: boatId,
-            boatName: boatName,
-            centerName: currentUser?.centerName
-          }));
+    document.querySelectorAll('#boatsModal .boat-checkbox:checked').forEach(cb => {
+        const boatId = cb.dataset.id;
+        selectedBoatsList.push(boatId);
+        
+        const instructors = [];
+        document.querySelectorAll(`.boat-instructor-cb[data-boat="${boatId}"]:checked`).forEach(cbInstructor => {
+            instructors.push(cbInstructor.dataset.instructor);
+        });
+        if (instructors.length > 0) {
+            instructorsMap[boatId] = instructors;
         }
-      }
-    }
+    });
     
-    if (logPromises.length > 0) {
-      await Promise.all(logPromises);
-    }
+    isSavingBoats = true;
     
-    updateSelectionBadges();
-    showToast(`✅ Saved ${selectedBoatsList.length} boats with ${Object.values(instructorsMap).flat().length} instructors`, 'success');
-    closeModal('boatsModal');
-  } catch(e) {
-    showToast('Error: ' + e.message, 'error');
-  } finally {
-    isSavingBoats = false;
     if (saveBtn) {
-      saveBtn.disabled = false;
-      saveBtn.textContent = '✅ Save All';
+        saveBtn.disabled = true;
+        saveBtn.textContent = '⏳ Saving...';
     }
-  }
+    
+    showToast('Saving boats and instructors...', 'info');
+    
+    const currentBeachInstructors = currentAssignments?.beachInstructors || selectedBeachInstructors || [];
+    
+    const assignments = {
+        beachInstructors: currentBeachInstructors,
+        boats: selectedBoatsList,
+        boatInstructorsMap: instructorsMap
+    };
+    
+    try {
+        const deletePromise = gas('deleteInstructorDailyLogsByType', {
+            date: currentDate,
+            assignmentType: 'Boat',
+            centerName: currentUser?.centerName
+        });
+        
+        const savePromise = gas('saveDailyAssignments', {
+            date: currentDate,
+            data: JSON.stringify(assignments),
+            centerName: currentUser?.centerName
+        });
+        
+        await Promise.all([deletePromise, savePromise]);
+        
+        selectedBoats = selectedBoatsList;
+        boatInstructorsMap = instructorsMap;
+        currentAssignments = assignments;
+        
+        const logPromises = [];
+        for (const [boatId, instructors] of Object.entries(instructorsMap)) {
+            const boat = cachedBoats.find(b => b.id === boatId);
+            const boatName = boat?.name || boatId;
+            for (const instructorId of instructors) {
+                const instructor = cachedInstructors.find(i => i.id === instructorId);
+                if (instructor) {
+                    logPromises.push(gas('assignInstructorToDailyLog', {
+                        date: currentDate,
+                        instructorId: instructorId,
+                        instructorName: instructor.name,
+                        assignmentType: 'Boat',
+                        boatId: boatId,
+                        boatName: boatName,
+                        centerName: currentUser?.centerName
+                    }));
+                }
+            }
+        }
+        
+        if (logPromises.length > 0) {
+            await Promise.all(logPromises);
+        }
+        
+        // ✅ إعادة تحميل التعيينات
+        await loadAndPopulateAssignments(currentDate);
+        await loadLogisticsData(currentDate);
+        updateSelectionBadges();
+        renderTable();
+        
+        showToast(`✅ Saved ${selectedBoatsList.length} boats with ${Object.values(instructorsMap).flat().length} instructors`, 'success');
+        closeModal('boatsModal');
+        
+    } catch(e) {
+        showToast('Error: ' + e.message, 'error');
+    } finally {
+        isSavingBoats = false;
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = '✅ Save All';
+        }
+    }
 }
+  
   // ✅ حساب المقاعد المحجوزة من السيارات المختارة في فواتير أخرى (نفس التاريخ ونفس الرحلة)
 async function getTotalBookedSeatsForVehicle(vehicleId, currentDate, tripName, excludeVoucher) {
   let totalGo = 0;
