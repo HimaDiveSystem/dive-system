@@ -2114,18 +2114,25 @@ async function loadAndPopulateAssignments(dateISO) {
       centerName: currentUser?.centerName 
     });
    
-    if (assignments?.success && assignments.data) {
-      currentAssignments = assignments.data;
-      selectedBeachInstructors = assignments.data.beachInstructors || [];
-      selectedBoats = assignments.data.boats || [];
-      boatInstructorsMap = assignments.data.boatInstructorsMap || {};
-      selectedVehicles = assignments.data.vehicles || [];
-      
-      console.log('✅ Loaded from server:', {
-        beach: selectedBeachInstructors.length,
-        boats: selectedBoats.length,
-        vehicles: selectedVehicles.length
-      });
+   if (assignments?.success && assignments.data) {
+        currentAssignments = assignments.data;
+        selectedBeachInstructors = assignments.data.beachInstructors || [];
+        selectedBoats = assignments.data.boats || [];
+        boatInstructorsMap = assignments.data.boatInstructorsMap || {};
+        selectedVehicles = assignments.data.vehicles || [];
+        
+        // ✅ ✅ ✅ إضافة قراءة boatTripMap
+        if (assignments.data.boatTripMap) {
+            currentAssignments.boatTripMap = assignments.data.boatTripMap;
+        }
+        
+        console.log('✅ Loaded from server:', {
+            beach: selectedBeachInstructors.length,
+            boats: selectedBoats.length,
+            vehicles: selectedVehicles.length,
+            boatTripMap: currentAssignments.boatTripMap || {}
+        });
+    }
     } else {
       currentAssignments = null;
       selectedBeachInstructors = [];
@@ -2556,128 +2563,157 @@ async function saveVehicleAssignment() {
 }
 
 async function openAssignBoats(voucherNo) {
-  const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
-  if (!invoice) return;
-  
-  if (selectedBoats.length === 0) { 
-    showToast('Please select boats first from the Boats button', 'error'); 
-    return; 
-  }
-  
-  currentAssignVoucher = voucherNo;
-  const currentDate = getCurrentDateISO();
-  const tripName = invoice.trip || '';
-  
-  const adults = parseInt(invoice.sgl) || 0;
-  const children = parseInt(invoice.dbl) || 0;
-  const infants = parseInt(invoice.trpl) || 0;
-  const totalPassengers = adults + children + infants;
-  
-  let savedBoats = [];
-  try { savedBoats = JSON.parse(invoice.BoatsUsed || '[]'); } catch(e) {}
-  
-  document.getElementById('assignBoatsContent').innerHTML = '<div class="loader"><div class="spinner"></div>Loading boats data...</div>';
-  openModal('assignBoatsModal');
-  
-  const fetchPromises = [];
-  for (const boatId of selectedBoats) {
-    const boat = cachedBoats.find(b => b.id === boatId);
-    if (!boat) continue;
+    const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
+    if (!invoice) return;
     
-    const saved = savedBoats.find(b => b.boatId === boatId);
-    const savedAdult = saved?.adults || 0;
-    const savedChild = saved?.children || 0;
-    const savedInfant = saved?.infants || 0;
+    if (selectedBoats.length === 0) { 
+        showToast('Please select boats first from the Boats button', 'error'); 
+        return; 
+    }
     
-    fetchPromises.push(
-      gas('getBoatBookedSeatsForTrip', { 
-        date: currentDate, 
-        tripName, 
-        boatId, 
-        excludeVoucher: voucherNo, 
-        centerName: currentUser?.centerName 
-      }).then(bookedResult => ({
-        boat,
-        capacity: boat.capacity || 0,
-        savedAdult, savedChild, savedInfant,
-        bookedToday: bookedResult.totalSeats || 0
-      }))
-    );
-  }
-  
-  const results = await Promise.all(fetchPromises);
-  
-  let boatsHtml = `
-    <div class="summary-box" style="margin-bottom: 12px; background: var(--navy); color: white; padding: 12px; border-radius: 8px;">
-      <strong>📊 Invoice Summary:</strong><br>
-      Trip: ${escapeHtml(tripName)}<br>
-      👤 Adults: ${adults} | 👶 Children: ${children} | 🍼 Infants: ${infants}<br>
-      <span style="font-size: 11px; opacity: 0.8;">💡 Total Passengers: ${totalPassengers}</span>
-    </div>
-    <div style="overflow-x: auto; max-height: 400px;">
-      <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
-        <thead>
-          <tr style="background: var(--navy); color: var(--gold);">
-            <th style="padding: 8px;">⛵ Boat</th>
-            <th style="padding: 8px;">🎫 Capacity</th>
-            <th style="padding: 8px;">📊 Booked Today</th>
-            <th style="padding: 8px;">✅ Available</th>
-            <th style="padding: 8px;">👤 Adult</th>
-            <th style="padding: 8px;">👶 Child</th>
-            <th style="padding: 8px;">🍼 Infant</th>
-            <th style="padding: 8px;">☑️ Select</th>
-           </tr>
-        </thead>
-        <tbody>
-  `;
-  
-  for (const res of results) {
-    const { boat, capacity, savedAdult, savedChild, savedInfant, bookedToday } = res;
+    currentAssignVoucher = voucherNo;
+    const currentDate = getCurrentDateISO();
+    const tripName = invoice.trip || '';
     
-    // ✅ حساب المقاعد المتاحة بشكل صحيح
-    const available = Math.max(0, capacity - bookedToday);
+    const adults = parseInt(invoice.sgl) || 0;
+    const children = parseInt(invoice.dbl) || 0;
+    const infants = parseInt(invoice.trpl) || 0;
+    const totalPassengers = adults + children + infants;
     
-    // ✅ القيم الافتراضية
-    const defaultAdultQty = savedAdult > 0 ? savedAdult : adults;
-    const defaultChildQty = savedChild > 0 ? savedChild : children;
-    const defaultInfantQty = savedInfant > 0 ? savedInfant : infants;
+    let savedBoats = [];
+    try { savedBoats = JSON.parse(invoice.BoatsUsed || '[]'); } catch(e) {}
+    
+    document.getElementById('assignBoatsContent').innerHTML = '<div class="loader"><div class="spinner"></div>Loading boats data...</div>';
+    openModal('assignBoatsModal');
+    
+    // ✅ ✅ ✅ جلب تعيينات اليوم لمعرفة المراكب المرتبطة بالرحلة
+    let relevantBoats = [];
+    const boatTripMap = currentAssignments?.boatTripMap || {};
+    
+    // ✅ تصفية المراكب: فقط المراكب المرتبطة بنفس الرحلة
+    for (const boatId of selectedBoats) {
+        const assignedTrip = boatTripMap[boatId];
+        if (assignedTrip === tripName) {
+            relevantBoats.push(boatId);
+        }
+    }
+    
+    // ✅ إذا لم يتم العثور على مراكب مرتبطة، استخدم جميع المراكب المختارة مع تحذير
+    if (relevantBoats.length === 0) {
+        showToast(`⚠️ No boats assigned to trip: ${tripName}, showing all selected boats`, 'warning');
+        relevantBoats = selectedBoats;
+    }
+    
+    const fetchPromises = [];
+    for (const boatId of relevantBoats) {
+        const boat = cachedBoats.find(b => b.id === boatId);
+        if (!boat) continue;
+        
+        const saved = savedBoats.find(b => b.boatId === boatId);
+        const savedAdult = saved?.adults || 0;
+        const savedChild = saved?.children || 0;
+        const savedInfant = saved?.infants || 0;
+        
+        fetchPromises.push(
+            gas('getBoatBookedSeatsForTrip', { 
+                date: currentDate, 
+                tripName, 
+                boatId, 
+                excludeVoucher: voucherNo, 
+                centerName: currentUser?.centerName 
+            }).then(bookedResult => ({
+                boat,
+                capacity: boat.capacity || 0,
+                savedAdult, savedChild, savedInfant,
+                bookedToday: bookedResult.totalSeats || 0
+            }))
+        );
+    }
+    
+    const results = await Promise.all(fetchPromises);
+    
+    // ✅ بناء HTML (نفس الكود السابق ولكن مع إضافة معلومات الرحلة)
+    let boatsHtml = `
+        <div class="summary-box" style="margin-bottom: 12px; background: var(--navy); color: white; padding: 12px; border-radius: 8px;">
+            <strong>📊 Invoice Summary:</strong><br>
+            Trip: ${escapeHtml(tripName)}<br>
+            👤 Adults: ${adults} | 👶 Children: ${children} | 🍼 Infants: ${infants}<br>
+            <span style="font-size: 11px; opacity: 0.8;">💡 Total Passengers: ${totalPassengers}</span>
+            <br><span style="font-size: 10px; opacity: 0.6;">⛵ Boats for this trip: ${relevantBoats.length}</span>
+        </div>
+        <div style="overflow-x: auto; max-height: 400px;">
+            <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
+                <thead>
+                    <tr style="background: var(--navy); color: var(--gold);">
+                        <th style="padding: 8px;">⛵ Boat</th>
+                        <th style="padding: 8px;">🎫 Capacity</th>
+                        <th style="padding: 8px;">📊 Booked Today</th>
+                        <th style="padding: 8px;">✅ Available</th>
+                        <th style="padding: 8px;">👤 Adult</th>
+                        <th style="padding: 8px;">👶 Child</th>
+                        <th style="padding: 8px;">🍼 Infant</th>
+                        <th style="padding: 8px;">☑️ Select</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+    
+    for (const res of results) {
+        const { boat, capacity, savedAdult, savedChild, savedInfant, bookedToday } = res;
+        
+        const available = Math.max(0, capacity - bookedToday);
+        const defaultAdultQty = savedAdult > 0 ? savedAdult : adults;
+        const defaultChildQty = savedChild > 0 ? savedChild : children;
+        const defaultInfantQty = savedInfant > 0 ? savedInfant : infants;
+        
+        boatsHtml += `
+            <tr>
+                <td style="padding: 8px; background: var(--navy); color: var(--gold); font-weight: bold;">
+                    <strong>${escapeHtml(boat.name)}</strong><br>
+                    <span style="font-size: 9px;">ID: ${boat.id}</span>
+                    <div style="font-size: 8px; color: #aaa;">🚩 ${escapeHtml(tripName)}</div>
+                </td>
+                <td style="text-align: center; padding: 8px; background: var(--gray-50); font-weight: bold;">${capacity}</td>
+                <td style="text-align: center; padding: 8px; ${bookedToday > 0 ? 'color: var(--orange); font-weight: bold;' : ''}">${bookedToday}</td>
+                <td style="text-align: center; padding: 8px; ${available > 0 ? 'color: green; font-weight: bold;' : 'color: red;'}">${available}</td>
+                <td style="text-align: center; padding: 6px;">
+                    <input type="number" class="assign-adult" data-id="${boat.id}" value="${defaultAdultQty || ''}" min="0" style="width: 55px; text-align: center; padding: 4px; border: 1px solid var(--border); border-radius: 6px;">
+                </td>
+                <td style="text-align: center; padding: 6px;">
+                    <input type="number" class="assign-child" data-id="${boat.id}" value="${defaultChildQty || ''}" min="0" style="width: 55px; text-align: center; padding: 4px; border: 1px solid var(--border); border-radius: 6px;">
+                </td>
+                <td style="text-align: center; padding: 6px;">
+                    <input type="number" class="assign-infant" data-id="${boat.id}" value="${defaultInfantQty || ''}" min="0" style="width: 55px; text-align: center; padding: 4px; border: 1px solid var(--border); border-radius: 6px;">
+                </td>
+                <td style="text-align: center; padding: 6px;">
+                    <input type="checkbox" class="assign-select" data-id="${boat.id}" ${(savedAdult > 0 || savedChild > 0 || savedInfant > 0) ? 'checked' : ''} style="width: 18px; height: 18px;">
+                </td>
+            </tr>
+        `;
+    }
+    
+    if (results.length === 0) {
+        boatsHtml += `
+            <tr>
+                <td colspan="8" style="text-align: center; padding: 20px; color: var(--text-lt);">
+                    ⚠️ No boats available for this trip.<br>
+                    <span style="font-size: 10px;">Please select boats from the Boats button first.</span>
+                </td>
+            </tr>
+        `;
+    }
     
     boatsHtml += `
-      <tr>
-        <td style="padding: 8px; background: var(--navy); color: var(--gold); font-weight: bold;">
-          <strong>${escapeHtml(boat.name)}</strong><br>
-          <span style="font-size: 9px;">ID: ${boat.id}</span>
-         </td>
-        <td style="text-align: center; padding: 8px; background: var(--gray-50); font-weight: bold;">${capacity}</td>
-        <td style="text-align: center; padding: 8px; ${bookedToday > 0 ? 'color: var(--orange); font-weight: bold;' : ''}">${bookedToday}</td>
-        <td style="text-align: center; padding: 8px; ${available > 0 ? 'color: green; font-weight: bold;' : 'color: red;'}">${available}</td>
-        <td style="text-align: center; padding: 6px;">
-          <input type="number" class="assign-adult" data-id="${boat.id}" value="${defaultAdultQty || ''}" min="0" style="width: 55px; text-align: center; padding: 4px; border: 1px solid var(--border); border-radius: 6px;">
-        </td>
-        <td style="text-align: center; padding: 6px;">
-          <input type="number" class="assign-child" data-id="${boat.id}" value="${defaultChildQty || ''}" min="0" style="width: 55px; text-align: center; padding: 4px; border: 1px solid var(--border); border-radius: 6px;">
-        </td>
-        <td style="text-align: center; padding: 6px;">
-          <input type="number" class="assign-infant" data-id="${boat.id}" value="${defaultInfantQty || ''}" min="0" style="width: 55px; text-align: center; padding: 4px; border: 1px solid var(--border); border-radius: 6px;">
-        </td>
-        <td style="text-align: center; padding: 6px;">
-          <input type="checkbox" class="assign-select" data-id="${boat.id}" ${(savedAdult > 0 || savedChild > 0 || savedInfant > 0) ? 'checked' : ''} style="width: 18px; height: 18px;">
-        </td>
-       </tr>
+                </tbody>
+            </table>
+        </div>
+        <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
+            <button class="btn btn-secondary" onclick="closeModal('assignBoatsModal')">Cancel</button>
+            <button class="btn btn-primary" onclick="saveBoatAssignment()" ${results.length === 0 ? 'disabled' : ''}>✅ Assign</button>
+        </div>
     `;
-  }
-  
-  boatsHtml += `
-        </tbody>
-      </table>
-    </div>
-    <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;">
-      <button class="btn btn-secondary" onclick="closeModal('assignBoatsModal')">Cancel</button>
-      <button class="btn btn-primary" onclick="saveBoatAssignment()">✅ Assign</button>
-    </div>
-  `;
-  
-  document.getElementById('assignBoatsContent').innerHTML = boatsHtml;
+    
+    document.getElementById('assignBoatsContent').innerHTML = boatsHtml;
 }
   
 async function saveBoatAssignment() {
@@ -5559,12 +5595,22 @@ async function saveBoatsAndInstructorsV2() {
         return;
     }
     
+    // ✅ جلب الرحلات المتاحة في هذا اليوم
+    const tripsOnDate = [...new Set(filteredInvoices.map(inv => inv.trip).filter(t => t))];
+    
     const selectedBoatsList = [];
     const instructorsMap = {};
+    const boatTripMap = {};  // ✅ ✅ ✅ إضافة خريطة اتجاه المركب
     
     document.querySelectorAll('#boatsModal .boat-checkbox:checked').forEach(cb => {
         const boatId = cb.dataset.id;
         selectedBoatsList.push(boatId);
+        
+        // ✅ تحديد الرحلة للمركب (من أول رحلة متاحة، أو يمكن للمستخدم اختيارها)
+        // في الإصدار الحالي، نستخدم أول رحلة متاحة
+        if (tripsOnDate.length > 0) {
+            boatTripMap[boatId] = tripsOnDate[0];  // ✅ ربط المركب بأول رحلة
+        }
         
         const instructors = [];
         document.querySelectorAll(`.boat-instructor-cb[data-boat="${boatId}"]:checked`).forEach(cbInstructor => {
@@ -5574,6 +5620,10 @@ async function saveBoatsAndInstructorsV2() {
             instructorsMap[boatId] = instructors;
         }
     });
+    
+    // ✅ إذا كانت هناك مراكب متعددة، يمكن تعيين رحلات مختلفة لكل مركب
+    // (هذا يتطلب واجهة مستخدم لتحديد الرحلة لكل مركب)
+    // حالياً نستخدم أول رحلة لجميع المراكب
     
     isSavingBoats = true;
     
@@ -5589,7 +5639,8 @@ async function saveBoatsAndInstructorsV2() {
     const assignments = {
         beachInstructors: currentBeachInstructors,
         boats: selectedBoatsList,
-        boatInstructorsMap: instructorsMap
+        boatInstructorsMap: instructorsMap,
+        boatTripMap: boatTripMap  // ✅ ✅ ✅ إضافة اتجاه المركب
     };
     
     try {
