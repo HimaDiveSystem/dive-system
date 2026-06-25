@@ -2252,61 +2252,68 @@ async function loadAndPopulateAssignments(dateISO) {
   updateSelectionBadges();
 }
 async function openAssignVehicles(voucherNo) {
-  const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
-  if (!invoice) return;
+    const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
+    if (!invoice) return;
 
-  if (selectedVehicles.length === 0) {
-    showToast('⚠️ اختر السيارات أولاً من زر 🚗 Vehicles', 'error');
-    return;
-  }
-
-  currentAssignVoucher = voucherNo;
-  const currentDate = getCurrentDateISO();
-  const tripName = invoice.trip || '';
-
-  const adults = parseInt(invoice.sgl) || 0;
-  const children = parseInt(invoice.dbl) || 0;
-  const infants = parseInt(invoice.trpl) || 0;
-  const totalPass = adults + children;
-
-  // ✅ استخدام جميع السيارات المختارة
-  let relevantVehicleIds = [...selectedVehicles];
-
-  // ✅ إضافة السيارات من vehicleTripMap
-  const vehicleTripMap = currentAssignments?.vehicleTripMap || {};
-  for (const [vehicleId, assignedTrip] of Object.entries(vehicleTripMap)) {
-    if (assignedTrip === tripName && !relevantVehicleIds.includes(vehicleId)) {
-      relevantVehicleIds.push(vehicleId);
+    if (selectedVehicles.length === 0) {
+        showToast('⚠️ اختر السيارات أولاً من زر 🚗 Vehicles', 'error');
+        return;
     }
-  }
 
-  // ✅ إضافة السيارات المحفوظة في الفاتورة
-  let savedVehicles = [];
-  try { savedVehicles = JSON.parse(invoice.VehiclesUsed || '[]'); } catch(e) {}
-  for (const sv of savedVehicles) {
-    if (sv.vehicleId && !relevantVehicleIds.includes(sv.vehicleId)) relevantVehicleIds.push(sv.vehicleId);
-  }
+    currentAssignVoucher = voucherNo;
+    const currentDate = getCurrentDateISO();
+    const tripName = invoice.trip || '';
 
-  // ✅ إذا لم توجد سيارات، استخدم جميع السيارات المختارة
-  if (relevantVehicleIds.length === 0) relevantVehicleIds = selectedVehicles;
+    const adults = parseInt(invoice.sgl) || 0;
+    const children = parseInt(invoice.dbl) || 0;
+    const infants = parseInt(invoice.trpl) || 0;
+    const totalPass = adults + children;
 
-  // ✅ إزالة التكرارات
-  relevantVehicleIds = [...new Set(relevantVehicleIds)];
+    // ✅ تصفية السيارات حسب الرحلة فقط
+    const vehicleTripMap = currentAssignments?.vehicleTripMap || {};
+    
+    // ✅ السيارات المرتبطة بالرحلة الحالية
+    let relevantVehicleIds = selectedVehicles.filter(vId => {
+        const assignedTrip = vehicleTripMap[vId];
+        return !assignedTrip || assignedTrip === tripName;
+    });
 
-  document.getElementById('assignVehiclesContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري التحميل...</div>';
-  openModal('assignVehiclesModal');
+    // ✅ إذا لم يتم العثور على سيارات مرتبطة، استخدم جميع السيارات المختارة مع تحذير
+    if (relevantVehicleIds.length === 0) {
+        console.log(`⚠️ No vehicles assigned to trip: ${tripName}, showing all selected vehicles`);
+        relevantVehicleIds = selectedVehicles;
+        showToast(`⚠️ لا توجد سيارات مرتبطة برحلة: ${tripName}`, 'warning');
+    }
 
-  // حساب الأماكن
-  const rows = [];
-  for (const vehId of relevantVehicleIds) {
-    const vehicle = cachedVehicles.find(v => v.id === vehId);
-    if (!vehicle) continue;
-    const capacity = parseInt(vehicle.capacity) || 0;
-    const used = getVehicleUsedSeats(currentDate, vehId, tripName, voucherNo);
-    const saved = savedVehicles.find(v => v.vehicleId === vehId) || {};
-    rows.push({ vehicle, capacity, usedGo: used.go, usedRet: used.ret, saved });
-  }
+    // ✅ إزالة التكرارات
+    relevantVehicleIds = [...new Set(relevantVehicleIds)];
 
+    // ✅ جلب السيارات المحفوظة في الفاتورة
+    let savedVehicles = [];
+    try { savedVehicles = JSON.parse(invoice.VehiclesUsed || '[]'); } catch(e) {}
+
+    // ✅ إضافة السيارات المحفوظة في الفاتورة (إذا لم تكن موجودة)
+    for (const sv of savedVehicles) {
+        if (sv.vehicleId && !relevantVehicleIds.includes(sv.vehicleId)) {
+            relevantVehicleIds.push(sv.vehicleId);
+        }
+    }
+
+    document.getElementById('assignVehiclesContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري التحميل...</div>';
+    openModal('assignVehiclesModal');
+
+    // حساب الأماكن
+    const rows = [];
+    for (const vehId of relevantVehicleIds) {
+        const vehicle = cachedVehicles.find(v => v.id === vehId);
+        if (!vehicle) continue;
+        const capacity = parseInt(vehicle.capacity) || 0;
+        const used = getVehicleUsedSeats(currentDate, vehId, tripName, voucherNo);
+        const saved = savedVehicles.find(v => v.vehicleId === vehId) || {};
+        rows.push({ vehicle, capacity, usedGo: used.go, usedRet: used.ret, saved });
+    }
+
+   
   if (rows.length === 0) {
     document.getElementById('assignVehiclesContent').innerHTML = `
       <div style="padding:20px;text-align:center;color:var(--text-lt);">
@@ -2511,9 +2518,9 @@ async function saveVehicleAssignment() {
     return; 
   }
   
-  if (saveBtn) {
+   if (saveBtn) {
     saveBtn.disabled = true;
-    saveBtn.textContent = '⏳ Saving...';
+    saveBtn.textContent = '⏳ جاري الحفظ...';  // ✅ إضافة
   }
   
   try {
@@ -2536,66 +2543,72 @@ async function saveVehicleAssignment() {
   } finally {
     if (saveBtn) {
       saveBtn.disabled = false;
-      saveBtn.textContent = '✅ Assign';
+      saveBtn.textContent = '✅ Assign';  // ✅ إضافة
     }
   }
 }
 
 async function openAssignBoats(voucherNo) {
-  const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
-  if (!invoice) return;
+    const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
+    if (!invoice) return;
 
-  if (selectedBoats.length === 0) {
-    showToast('⚠️ اختر المراكب أولاً من زر ⛵ Boats', 'error');
-    return;
-  }
-
-  currentAssignVoucher = voucherNo;
-  const currentDate = getCurrentDateISO();
-  const tripName = invoice.trip || '';
-
-  const adults = parseInt(invoice.sgl) || 0;
-  const children = parseInt(invoice.dbl) || 0;
-  const infants = parseInt(invoice.trpl) || 0;
-  const totalPass = adults + children + infants;
-
-  // ✅ استخدام جميع المراكب المختارة
-  let relevantBoatIds = [...selectedBoats];
-
-  // ✅ إضافة المراكب من boatTripMap
-  const boatTripMap = currentAssignments?.boatTripMap || {};
-  for (const [boatId, assignedTrip] of Object.entries(boatTripMap)) {
-    if (assignedTrip === tripName && !relevantBoatIds.includes(boatId)) {
-      relevantBoatIds.push(boatId);
+    if (selectedBoats.length === 0) {
+        showToast('⚠️ اختر المراكب أولاً من زر ⛵ Boats', 'error');
+        return;
     }
-  }
 
-  // ✅ إضافة المراكب المحفوظة في الفاتورة
-  let savedBoats = [];
-  try { savedBoats = JSON.parse(invoice.BoatsUsed || '[]'); } catch(e) {}
-  for (const sb of savedBoats) {
-    if (sb.boatId && !relevantBoatIds.includes(sb.boatId)) relevantBoatIds.push(sb.boatId);
-  }
+    currentAssignVoucher = voucherNo;
+    const currentDate = getCurrentDateISO();
+    const tripName = invoice.trip || '';
 
-  // ✅ إذا لم توجد مراكب، استخدم جميع المراكب المختارة
-  if (relevantBoatIds.length === 0) relevantBoatIds = selectedBoats;
+    const adults = parseInt(invoice.sgl) || 0;
+    const children = parseInt(invoice.dbl) || 0;
+    const infants = parseInt(invoice.trpl) || 0;
+    const totalPass = adults + children + infants;
 
-  // ✅ إزالة التكرارات
-  relevantBoatIds = [...new Set(relevantBoatIds)];
+    // ✅ تصفية المراكب حسب الرحلة فقط
+    const boatTripMap = currentAssignments?.boatTripMap || {};
+    
+    // ✅ المراكب المرتبطة بالرحلة الحالية
+    let relevantBoatIds = selectedBoats.filter(bId => {
+        const assignedTrip = boatTripMap[bId];
+        return !assignedTrip || assignedTrip === tripName;
+    });
 
-  document.getElementById('assignBoatsContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري التحميل...</div>';
-  openModal('assignBoatsModal');
+    // ✅ إذا لم يتم العثور على مراكب مرتبطة، استخدم جميع المراكب المختارة مع تحذير
+    if (relevantBoatIds.length === 0) {
+        console.log(`⚠️ No boats assigned to trip: ${tripName}, showing all selected boats`);
+        relevantBoatIds = selectedBoats;
+        showToast(`⚠️ لا توجد مراكب مرتبطة برحلة: ${tripName}`, 'warning');
+    }
 
-  // حساب الأماكن
-  const rows = [];
-  for (const boatId of relevantBoatIds) {
-    const boat = cachedBoats.find(b => b.id === boatId);
-    if (!boat) continue;
-    const capacity = parseInt(boat.capacity) || 0;
-    const used = getBoatUsedSeats(currentDate, boatId, tripName, voucherNo);
-    const saved = savedBoats.find(b => b.boatId === boatId) || {};
-    rows.push({ boat, capacity, used, saved });
-  }
+    // ✅ إزالة التكرارات
+    relevantBoatIds = [...new Set(relevantBoatIds)];
+
+    // ✅ جلب المراكب المحفوظة في الفاتورة
+    let savedBoats = [];
+    try { savedBoats = JSON.parse(invoice.BoatsUsed || '[]'); } catch(e) {}
+
+    // ✅ إضافة المراكب المحفوظة في الفاتورة (إذا لم تكن موجودة)
+    for (const sb of savedBoats) {
+        if (sb.boatId && !relevantBoatIds.includes(sb.boatId)) {
+            relevantBoatIds.push(sb.boatId);
+        }
+    }
+
+    document.getElementById('assignBoatsContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري التحميل...</div>';
+    openModal('assignBoatsModal');
+
+    // حساب الأماكن
+    const rows = [];
+    for (const boatId of relevantBoatIds) {
+        const boat = cachedBoats.find(b => b.id === boatId);
+        if (!boat) continue;
+        const capacity = parseInt(boat.capacity) || 0;
+        const used = getBoatUsedSeats(currentDate, boatId, tripName, voucherNo);
+        const saved = savedBoats.find(b => b.boatId === boatId) || {};
+        rows.push({ boat, capacity, used, saved });
+    }
 
   if (rows.length === 0) {
     document.getElementById('assignBoatsContent').innerHTML = `
@@ -2673,12 +2686,30 @@ async function saveBoatAssignment() {
     if (adult+child+infant === 0) return;
     selectedBoatsData.push({ boatId, adults: adult, children: child, infants: infant, totalSeats: adult+child+infant });
   });
-  if (selectedBoatsData.length === 0) { showToast('⚠️ اختر مركب', 'error'); return; }
-  const result = await gas('assignBoatsToInvoice', { voucherNo: currentAssignVoucher, boatsData: JSON.stringify(selectedBoatsData), centerName: currentUser?.centerName });
-  if (result?.success) { updateLocalInvoice(currentAssignVoucher, 'BoatsUsed', JSON.stringify(selectedBoatsData)); 
-                        renderTable();             // ✅ تصحيح
-                        showToast('✅ تم حفظ المراكب', 'success'); closeModal('assignBoatsModal'); }
-  else showToast('❌ فشل الحفظ', 'error');
+ if (selectedBoatsData.length === 0) { showToast('⚠️ اختر مركب', 'error'); return; }
+  
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = '⏳ جاري الحفظ...';  // ✅ إضافة
+  }
+  
+  const result = await gas('assignBoatsToInvoice', { 
+    voucherNo: currentAssignVoucher, 
+    boatsData: JSON.stringify(selectedBoatsData), 
+    centerName: currentUser?.centerName 
+  });
+  
+  if (result?.success) { 
+    updateLocalInvoice(currentAssignVoucher, 'BoatsUsed', JSON.stringify(selectedBoatsData)); 
+    renderTable(); 
+    showToast('✅ تم حفظ المراكب', 'success'); 
+    closeModal('assignBoatsModal'); 
+  } else showToast('❌ فشل الحفظ', 'error');
+  
+  if (saveBtn) {
+    saveBtn.disabled = false;
+    saveBtn.textContent = '✅ حفظ';  // ✅ إضافة
+  }
 }
 
 // ✅ دالة تصنيف النشاط إلى نوع المدرب المناسب
@@ -3629,82 +3660,57 @@ function attachVehicleTripEvents(index) {
 
 async function saveAllVehicleTripRows() {
     const saveBtn = document.querySelector('#vehiclesModal .btn-primary');
-    if (saveBtn && saveBtn.disabled) {
-        console.log('⚠️ Save already in progress, ignoring...');
-        return;
-    }
-    
+    if (saveBtn?.disabled) return;
     const currentDate = getCurrentDateISO();
-    if (!currentDate) {
-        showToast('Please select a date first', 'error');
-        return;
-    }
-    
+    if (!currentDate) { showToast('اختر تاريخاً أولاً', 'error'); return; }
+
     const rows = document.querySelectorAll('.vehicle-trip-row');
     const records = [];
     const selectedVehicleIds = [];
-    
-    for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        const vehicleSelect = row.querySelector('.vehicle-select');
-        const tripSelect = row.querySelector('.trip-select');
-        const goInput = row.querySelector('.go-count');
-        const returnInput = row.querySelector('.return-count');
-        
-        const vehicleId = vehicleSelect ? vehicleSelect.value : '';
-        const tripName = tripSelect ? tripSelect.value : '';
-        const goCount = parseInt(goInput ? goInput.value : 0) || 0;
-        const returnCount = parseInt(returnInput ? returnInput.value : 0) || 0;
-        
+    const vehicleTripMapNew = {};
+
+    rows.forEach(row => {
+        const vehicleId = row.querySelector('.vehicle-select')?.value || '';
+        const tripName = row.querySelector('.trip-select')?.value || '';
+        const goCount = parseInt(row.querySelector('.go-count')?.value) || 0;
+        const returnCount = parseInt(row.querySelector('.return-count')?.value) || 0;
         if (vehicleId && tripName && (goCount > 0 || returnCount > 0)) {
             records.push({ vehicleId, tripName, goCount, returnCount });
-            if (!selectedVehicleIds.includes(vehicleId)) {
-                selectedVehicleIds.push(vehicleId);
-            }
+            if (!selectedVehicleIds.includes(vehicleId)) selectedVehicleIds.push(vehicleId);
+            vehicleTripMapNew[vehicleId] = tripName;  // ✅ حفظ الرحلة لكل سيارة
         }
-    }
-    
-    if (records.length === 0) {
-        showToast('⚠️ Please select at least one vehicle and trip', 'error');
-        return;
-    }
-    
-    if (saveBtn) {
-        saveBtn.disabled = true;
-        saveBtn.textContent = '⏳ Saving...';
-    }
-    
-    showToast('Saving vehicle trips...', 'info');
-    
+    });
+
+    if (records.length === 0) { showToast('⚠️ اختر سيارة ورحلة وأدخل أرقاماً', 'error'); return; }
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '⏳ جاري الحفظ...'; }
+
     try {
-        const result = await gas('saveVehicleTripRecords', {
-            date: currentDate,
-            records: JSON.stringify(records),
-            centerName: currentUser?.centerName
+        const result = await gas('saveVehicleTripRecords', { 
+            date: currentDate, 
+            records: JSON.stringify(records), 
+            centerName: currentUser?.centerName 
         });
         
-        if (result && result.success) {
+        if (result?.success) {
             selectedVehicles = selectedVehicleIds;
+            if (!currentAssignments) currentAssignments = {};
+            currentAssignments.vehicleTripMap = vehicleTripMapNew;  // ✅ حفظ الخريطة
+            currentAssignments.vehicles = selectedVehicles;
+            
+            // ✅ حفظ في DailyAssignments
+            await gas('saveDailyAssignments', {
+                date: currentDate,
+                data: JSON.stringify(currentAssignments),
+                centerName: currentUser?.centerName
+            });
+            
             updateSelectionBadges();
-            
-            // ✅ إعادة تحميل التعيينات
             await loadAndPopulateAssignments(currentDate);
-            await loadLogisticsData(currentDate);
-            renderTable();
-            
-            showToast(`✅ Saved ${records.length} vehicle trips`, 'success');
+            showToast(`✅ تم حفظ ${records.length} سيارة`, 'success');
             closeModal('vehiclesModal');
-        } else {
-            showToast('❌ Failed to save: ' + (result.message || 'Unknown error'), 'error');
-        }
-    } catch(e) {
-        showToast('Error: ' + e.message, 'error');
-    } finally {
-        if (saveBtn) {
-            saveBtn.disabled = false;
-            saveBtn.textContent = '✅ Save All';
-        }
-    }
+        } else showToast('❌ فشل الحفظ: ' + (result?.message || ''), 'error');
+    } catch(e) { showToast('خطأ: ' + e.message, 'error'); }
+    finally { if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '✅ حفظ الكل'; } }
 }
   function generateLogisticsRowHTML(index, selectedVehicleId, selectedTrip, goCount, returnCount, vehicles, trips) {
   const formatValue = (val) => {
