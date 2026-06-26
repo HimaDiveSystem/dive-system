@@ -277,6 +277,8 @@ let selectedBranch='';
 let canViewAllBranches=false;
 let systemTotals={invoices:{},revenues:{},income:{},expenses:{},balance:{},accumulatedBalance:{}};
 let previousDayBalance = {};      // رصيد الأمس
+let isLoadingData = false; // ✅ منع التحميل المتكرر
+let lastLoadedDate = '';   // ✅ تتبع آخر تاريخ تم تحميله
 let todayTotalBalance = {};       // رصيد الأمس + إيرادات اليوم
 let finalAccumulatedBalance = {}; // الرصيد التراكمي النهائي
 let previousDateISO = '';         // تاريخ الأمس
@@ -378,7 +380,9 @@ function spinDate(d) {
     currentDateISO = `${newDay}/${newMonth}/${newYear}`;
     document.getElementById('dateTxt').value = currentDateISO;
     
-    // ✅ التحقق من أن التاريخ ليس أكبر من آخر تاريخ مسجل
+    // ✅ إعادة تعيين lastLoadedDate لتشغيل التحميل
+    lastLoadedDate = '';
+    
     if (lastCashDateStr && isDateAfterLastCashDate(currentDateISO)) {
       showDateWarning(currentDateISO);
       return;
@@ -825,7 +829,6 @@ async function prefetchAll() {
   isLoading = true;
   
   try {
-    // تعيين التاريخ إلى اليوم الحالي
     const todayStr = getTodayDDMMMYYYY();
     currentDateISO = todayStr;
     document.getElementById('dateTxt').value = todayStr;
@@ -840,15 +843,14 @@ async function prefetchAll() {
     if (cashCheck?.success && cashCheck.found) {
       console.log('✅ البيانات موجودة في Cash_Sum، لا حاجة للتجميع');
       showToast('✅ البيانات جاهزة', 'success', 2000);
-      // تحميل البيانات مباشرة
-      await loadData();
+      // ✅ تحميل البيانات مباشرة (مرة واحدة فقط)
+      await loadData(true);
       return;
     }
     
     // ✅ إذا لم توجد بيانات، قم بتجميعها
     console.log('📦 لا توجد بيانات في Cash_Sum، جاري التجميع...');
     
-    // حساب نطاق التواريخ (10 أيام قبل + 10 أيام بعد)
     const dateObj = new Date();
     const startDate = new Date(dateObj);
     startDate.setDate(dateObj.getDate() - CACHE_DAYS_RANGE);
@@ -859,7 +861,6 @@ async function prefetchAll() {
     const endStr = formatDateForCache(endDate);
     
     console.log(`📅 نطاق التواريخ: ${startStr} → ${endStr}`);
-    
     showToast('⏳ جاري تجميع البيانات في الخلفية...', 'info', 5000);
     
     const result = await callGAS('fetchCashDataInRange', {
@@ -878,9 +879,8 @@ async function prefetchAll() {
       isDataLoaded = true;
       console.log('✅ تم تجميع البيانات بنجاح');
       
-      // ✅ تحديث Cash_Sum
+      // ✅ تحديث Cash_Sum (مرة واحدة)
       await updateCashSumAndReload();
-      
     } else {
       console.error('❌ فشل تجميع البيانات:', result?.message);
       showToast('❌ فشل تجميع البيانات: ' + (result?.message || ''), 'error');
@@ -892,6 +892,7 @@ async function prefetchAll() {
     isLoading = false;
   }
 }
+  
 function formatDateForCache(date) {
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const day = String(date.getDate()).padStart(2, '0');
@@ -1095,18 +1096,25 @@ function buildCounters() {
 // ✅ دالة جلب رصيد اليوم السابق
 // ============================================================
 async function getPreviousDayBalance() {
+  // ✅ استخدام Cache لتجنب الطلبات المتكررة
+  if (previousDayBalance && Object.keys(previousDayBalance).length > 0 && previousDateISO) {
+    console.log('📦 استخدام رصيد الأمس المخزن:', previousDateISO);
+    return previousDayBalance;
+  }
+  
   try {
-    // حساب تاريخ الأمس
     const currentDate = parseDateFromDDMMMYYYY(currentDateISO);
-    if (!currentDate) return {};
+    if (!currentDate) {
+      previousDayBalance = { USD: 0, EUR: 0, GBP: 0, LE: 0, VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0 };
+      return previousDayBalance;
+    }
     
     const prevDate = new Date(currentDate);
     prevDate.setDate(prevDate.getDate() - 1);
-    
     const prevDateStr = formatDateForCache(prevDate);
     previousDateISO = prevDateStr;
     
-    // جلب بيانات الأمس من Cash_Sum
+    // ✅ جلب بيانات الأمس من Cash_Sum
     const result = await callGAS('getCashSumData', {
       dateISO: prevDateStr,
       branchName: selectedBranch || currentUser?.branchName || '',
@@ -1115,11 +1123,10 @@ async function getPreviousDayBalance() {
     
     if (result?.success && result.found) {
       previousDayBalance = result.accumulatedBalance || {};
-      console.log('✅ تم جلب رصيد الأمس:', previousDayBalance);
+      console.log('✅ تم جلب رصيد الأمس:', previousDateISO, previousDayBalance);
       return previousDayBalance;
     }
     
-    // إذا لم توجد بيانات للأمس، استخدم أصفار
     console.log('⚠️ لا توجد بيانات للأمس، استخدام أصفار');
     previousDayBalance = {
       USD: 0, EUR: 0, GBP: 0, LE: 0,
@@ -1136,7 +1143,19 @@ async function getPreviousDayBalance() {
     return previousDayBalance;
   }
 }
-async function loadData() {
+async function loadData(force = false) {
+  // ✅ منع التحميل المتكرر
+  if (isLoadingData) {
+    console.log('⏳ جاري التحميل بالفعل، تخطي...');
+    return;
+  }
+  
+  // ✅ إذا كان نفس التاريخ ولم يتم فرض التحميل، تخطي
+  if (!force && lastLoadedDate === currentDateISO && Object.keys(systemTotals.invoices || {}).length > 0) {
+    console.log('📦 البيانات محملة مسبقاً لـ ' + currentDateISO);
+    return;
+  }
+  
   // ✅ تحقق بسيط
   if (!currentDateISO) {
     document.getElementById('mainContent').innerHTML = '<div class="load-state">Please select a date</div>';
@@ -1159,18 +1178,20 @@ async function loadData() {
     return;
   }
   
+  isLoadingData = true;
+  
   showToast('⏳ جاري تحميل بيانات ' + currentDateISO + '...', 'info', 2000);
   document.getElementById('mainContent').innerHTML = '<div class="load-state"><div class="spinner"></div><br>جاري تحميل بيانات ' + currentDateISO + '...</div>';
   
   try {
-    // ✅ جلب بيانات اليوم من Cash_Sum
+    // ✅ جلب بيانات اليوم من Cash_Sum (طلب واحد)
     const cashSumData = await callGAS('getCashSumData', { 
       dateISO: currentDateISO, 
       branchName: targetBranch,
       centerName: currentUser?.centerName || ''
     });
     
-    // ✅ جلب رصيد الأمس
+    // ✅ جلب رصيد الأمس (طلب واحد)
     await getPreviousDayBalance();
     
     if (cashSumData?.success && cashSumData.found) {
@@ -1206,13 +1227,10 @@ async function loadData() {
       };
       
       console.log('✅ تم تحميل بيانات الخزينة لـ ' + currentDateISO);
-      console.log('📊 رصيد الأمس:', previousDayBalance);
-      console.log('📊 إيرادات اليوم:', dailyIncome);
-      console.log('📊 إجمالي اليوم:', todayTotal);
-      console.log('📊 المصروفات:', expenses);
-      console.log('📊 الرصيد النهائي:', finalBalance);
       
-      // حساب عدد الفواتير والإيرادات والمصروفات
+      // ✅ تحديث آخر تاريخ تم تحميله
+      lastLoadedDate = currentDateISO;
+      
       const invCount = cashSumData.invoiceCount || 0;
       const revCount = cashSumData.revenueCount || 0;
       const expCount = cashSumData.expenseCount || 0;
@@ -1223,7 +1241,7 @@ async function loadData() {
       return;
     }
     
-    // ✅ إذا لم توجد بيانات في Cash_Sum، نعرض رسالة
+    // ✅ إذا لم توجد بيانات في Cash_Sum
     console.log('⚠️ لا توجد بيانات في Cash_Sum لـ ' + currentDateISO);
     document.getElementById('mainContent').innerHTML = `
       <div class="load-state">
@@ -1239,9 +1257,10 @@ async function loadData() {
     console.error('❌ loadData error:', e);
     document.getElementById('mainContent').innerHTML = `<div class="load-state">❌ خطأ في تحميل البيانات: ${e.message}</div>`;
     showToast('❌ خطأ في تحميل البيانات', 'error');
+  } finally {
+    isLoadingData = false;
   }
-}  // ✅ هذا القوس يجب أن يكون موجوداً
-
+}
   async function expandCacheAroundDate(targetDateStr, branchName) {
   // تحويل التاريخ إلى كائن Date
   const targetDate = parseDateFromDDMMMYYYY(targetDateStr);
