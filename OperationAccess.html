@@ -1435,6 +1435,7 @@ function updateSelectionBadges() {
   const vehiclesBadge = document.getElementById('selectedVehiclesBadge');
   const logisticsBadge = document.getElementById('selectedLogisticsBadge');
   
+  // ✅ ✅ ✅ لا نعيد تعيين selectedVehicles هنا، فقط نعرض العدد
   if (beachBadge) beachBadge.textContent = selectedBeachInstructors.length;
   if (boatsBadge) boatsBadge.textContent = selectedBoats.length;
   if (vehiclesBadge) vehiclesBadge.textContent = selectedVehicles.length;
@@ -1447,7 +1448,7 @@ function updateSelectionBadges() {
     logistics: preloadedData.logisticsRecords?.length || 0
   });
 }
-// أضف هذه الدوال بعد دالة updateSelectionBadges()
+  // أضف هذه الدوال بعد دالة updateSelectionBadges()
 
 function buildCumulativeSeats() {
   vehicleSeatsUsed = {};
@@ -1643,6 +1644,31 @@ async function loadInvoices() {
   } finally {
     isLoadingInvoices = false;
   }
+  // ============================================
+// داخل loadInvoices() - بعد تحميل الفواتير
+// ============================================
+
+// ✅ إضافة: تحميل السيارات إذا كانت فارغة
+if (!cachedVehicles || cachedVehicles.length === 0) {
+    try {
+        const vehiclesResult = await gas('getVehicles', { centerName: currentUser?.centerName });
+        let vehiclesList = [];
+        if (Array.isArray(vehiclesResult)) {
+            vehiclesList = vehiclesResult;
+        } else if (vehiclesResult?.success && Array.isArray(vehiclesResult.data)) {
+            vehiclesList = vehiclesResult.data;
+        } else if (vehiclesResult?.data && Array.isArray(vehiclesResult.data)) {
+            vehiclesList = vehiclesResult.data;
+        }
+        if (vehiclesList.length > 0) {
+            window.cachedVehicles = vehiclesList;
+            cachedVehicles = vehiclesList;
+            console.log('✅ Vehicles loaded in loadInvoices:', cachedVehicles.map(v => v.id));
+        }
+    } catch(e) {
+        console.warn('Failed to load vehicles in loadInvoices:', e);
+    }
+}
 }
 function initTripFilter() {
   const select = document.getElementById('filterTrip');
@@ -2166,7 +2192,6 @@ async function loadAndPopulateAssignments(dateISO) {
         return;
     }
     
-    // ✅ إذا كان dateISO بصيغة YYYY-MM-DD، حوله إلى dd/MMM/yyyy
     let formattedDate = dateISO;
     if (dateISO && dateISO.match(/^\d{4}-\d{2}-\d{2}$/)) {
         const parts = dateISO.split('-');
@@ -2195,19 +2220,45 @@ async function loadAndPopulateAssignments(dateISO) {
             boatInstructorsMap = assignments.data.boatInstructorsMap || {};
             selectedVehicles = assignments.data.vehicles || [];
             
-            // ✅ إضافة قراءة boatTripMap
             if (assignments.data.boatTripMap) {
                 currentAssignments.boatTripMap = assignments.data.boatTripMap;
+            }
+            
+            // ✅ ✅ ✅ إضافة: جلب vehicleTripMap من VehicleTripRecords
+            if (!currentAssignments.vehicleTripMap) {
+                try {
+                    const vehicleRecords = await gas('getVehicleTripRecords', { 
+                        date: formattedDate,
+                        centerName: currentUser?.centerName 
+                    });
+                    const vehicleTripMap = {};
+                    if (vehicleRecords?.success && Array.isArray(vehicleRecords.data)) {
+                        vehicleRecords.data.forEach(record => {
+                            if (record.VehicleID && record.TripName) {
+                                vehicleTripMap[record.VehicleID] = record.TripName;
+                            }
+                        });
+                    }
+                    currentAssignments.vehicleTripMap = vehicleTripMap;
+                    // تحديث selectedVehicles إذا كانت فارغة
+                    if (selectedVehicles.length === 0) {
+                        selectedVehicles = Object.keys(vehicleTripMap);
+                    }
+                    console.log('✅ vehicleTripMap loaded from records:', vehicleTripMap);
+                } catch(e) {
+                    console.warn('Failed to load vehicleTripMap:', e);
+                    currentAssignments.vehicleTripMap = {};
+                }
             }
             
             console.log('✅ Loaded from server:', {
                 beach: selectedBeachInstructors.length,
                 boats: selectedBoats.length,
                 vehicles: selectedVehicles.length,
-                boatTripMap: currentAssignments.boatTripMap || {}
+                boatTripMap: currentAssignments.boatTripMap || {},
+                vehicleTripMap: currentAssignments.vehicleTripMap || {}
             });
         } else {
-            // ✅ هذا هو المكان الصحيح لـ else
             currentAssignments = null;
             selectedBeachInstructors = [];
             selectedBoats = [];
@@ -2255,9 +2306,42 @@ async function openAssignVehicles(voucherNo) {
     const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
     if (!invoice) return;
 
+    // ✅ التحقق من وجود cachedVehicles
+    if (!cachedVehicles || cachedVehicles.length === 0) {
+        showToast('⚠️ جاري تحميل السيارات...', 'info');
+        try {
+            const vehiclesResult = await gas('getVehicles', { centerName: currentUser?.centerName });
+            let vehiclesList = [];
+            if (Array.isArray(vehiclesResult)) {
+                vehiclesList = vehiclesResult;
+            } else if (vehiclesResult?.success && Array.isArray(vehiclesResult.data)) {
+                vehiclesList = vehiclesResult.data;
+            } else if (vehiclesResult?.data && Array.isArray(vehiclesResult.data)) {
+                vehiclesList = vehiclesResult.data;
+            }
+            if (vehiclesList.length > 0) {
+                window.cachedVehicles = vehiclesList;
+                cachedVehicles = vehiclesList;
+                console.log('✅ Vehicles loaded on demand:', cachedVehicles.map(v => v.id));
+            } else {
+                showToast('⚠️ لا توجد سيارات متاحة', 'error');
+                return;
+            }
+        } catch(e) {
+            showToast('❌ فشل تحميل السيارات', 'error');
+            return;
+        }
+    }
+
+    // ✅ إذا كانت selectedVehicles فارغة، استخدم vehicleTripMap
     if (selectedVehicles.length === 0) {
-        showToast('⚠️ اختر السيارات أولاً من زر 🚗 Vehicles', 'error');
-        return;
+        if (currentAssignments?.vehicleTripMap) {
+            selectedVehicles = Object.keys(currentAssignments.vehicleTripMap);
+            console.log('✅ selectedVehicles populated from vehicleTripMap:', selectedVehicles);
+        } else {
+            showToast('⚠️ اختر السيارات أولاً من زر 🚗 Vehicles', 'error');
+            return;
+        }
     }
 
     currentAssignVoucher = voucherNo;
@@ -2269,40 +2353,49 @@ async function openAssignVehicles(voucherNo) {
     const infants = parseInt(invoice.trpl) || 0;
     const totalPass = adults + children;
 
-    // ✅ تصفية السيارات حسب الرحلة فقط
     const vehicleTripMap = currentAssignments?.vehicleTripMap || {};
     
-    // ✅ السيارات المرتبطة بالرحلة الحالية
+    // ✅ تصفية السيارات: فقط السيارات المرتبطة بالرحلة الحالية أو غير المخصصة
     let relevantVehicleIds = selectedVehicles.filter(vId => {
         const assignedTrip = vehicleTripMap[vId];
         return !assignedTrip || assignedTrip === tripName;
     });
 
-    // ✅ إذا لم يتم العثور على سيارات مرتبطة، استخدم جميع السيارات المختارة مع تحذير
+    // ✅ إذا لم يتم العثور على سيارات، استخدم جميع السيارات المختارة
     if (relevantVehicleIds.length === 0) {
         console.log(`⚠️ No vehicles assigned to trip: ${tripName}, showing all selected vehicles`);
         relevantVehicleIds = selectedVehicles;
-        showToast(`⚠️ لا توجد سيارات مرتبطة برحلة: ${tripName}`, 'warning');
     }
 
-    // ✅ إزالة التكرارات
     relevantVehicleIds = [...new Set(relevantVehicleIds)];
 
     // ✅ جلب السيارات المحفوظة في الفاتورة
     let savedVehicles = [];
     try { savedVehicles = JSON.parse(invoice.VehiclesUsed || '[]'); } catch(e) {}
 
-    // ✅ إضافة السيارات المحفوظة في الفاتورة (إذا لم تكن موجودة)
     for (const sv of savedVehicles) {
         if (sv.vehicleId && !relevantVehicleIds.includes(sv.vehicleId)) {
             relevantVehicleIds.push(sv.vehicleId);
         }
     }
 
+    // ✅ إذا لم توجد سيارات، اعرض رسالة
+    if (relevantVehicleIds.length === 0) {
+        document.getElementById('assignVehiclesContent').innerHTML = `
+            <div style="padding:20px;text-align:center;color:var(--text-lt);">
+                ⚠️ لا توجد سيارات مرتبطة برحلة: ${escapeHtml(tripName)}<br>
+                <span style="font-size:10px;">يرجى تخصيص السيارات أولاً من زر 🚗 Vehicles</span>
+                <br><br>
+                <button class="btn btn-secondary" onclick="closeModal('assignVehiclesModal')">إغلاق</button>
+            </div>`;
+        openModal('assignVehiclesModal');
+        return;
+    }
+
     document.getElementById('assignVehiclesContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري التحميل...</div>';
     openModal('assignVehiclesModal');
 
-    // حساب الأماكن
+    // ✅ بناء الجدول
     const rows = [];
     for (const vehId of relevantVehicleIds) {
         const vehicle = cachedVehicles.find(v => v.id === vehId);
@@ -2313,7 +2406,7 @@ async function openAssignVehicles(voucherNo) {
         rows.push({ vehicle, capacity, usedGo: used.go, usedRet: used.ret, saved });
     }
 
-   
+  
   if (rows.length === 0) {
     document.getElementById('assignVehiclesContent').innerHTML = `
       <div style="padding:20px;text-align:center;color:var(--text-lt);">
@@ -3691,24 +3784,28 @@ async function saveAllVehicleTripRows() {
             centerName: currentUser?.centerName 
         });
         
-        if (result?.success) {
-            selectedVehicles = selectedVehicleIds;
-            if (!currentAssignments) currentAssignments = {};
-            currentAssignments.vehicleTripMap = vehicleTripMapNew;  // ✅ حفظ الخريطة
-            currentAssignments.vehicles = selectedVehicles;
-            
-            // ✅ حفظ في DailyAssignments
-            await gas('saveDailyAssignments', {
-                date: currentDate,
-                data: JSON.stringify(currentAssignments),
-                centerName: currentUser?.centerName
-            });
-            
-            updateSelectionBadges();
-            await loadAndPopulateAssignments(currentDate);
-            showToast(`✅ تم حفظ ${records.length} سيارة`, 'success');
-            closeModal('vehiclesModal');
-        } else showToast('❌ فشل الحفظ: ' + (result?.message || ''), 'error');
+        // داخل saveAllVehicleTripRows() - بعد result?.success
+if (result?.success) {
+    selectedVehicles = selectedVehicleIds;
+    if (!currentAssignments) currentAssignments = {};
+    currentAssignments.vehicleTripMap = vehicleTripMapNew;
+    currentAssignments.vehicles = selectedVehicles;
+    
+    // ✅ ✅ ✅ إضافة: تحديث currentAssignments في النطاق العام
+    window.currentAssignments = currentAssignments;
+    
+    // ✅ حفظ في DailyAssignments
+    await gas('saveDailyAssignments', {
+        date: currentDate,
+        data: JSON.stringify(currentAssignments),
+        centerName: currentUser?.centerName
+    });
+    
+    updateSelectionBadges();
+    await loadAndPopulateAssignments(currentDate);
+    showToast(`✅ تم حفظ ${records.length} سيارة`, 'success');
+    closeModal('vehiclesModal');
+} else showToast('❌ فشل الحفظ: ' + (result?.message || ''), 'error');
     } catch(e) { showToast('خطأ: ' + e.message, 'error'); }
     finally { if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '✅ حفظ الكل'; } }
 }
@@ -5972,25 +6069,89 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (fromDateInput && !fromDateInput.value) fromDateInput.value = todayISO;
     if (toDateInput && !toDateInput.value) toDateInput.value = todayISO;
     
+    // ✅ ✅ ✅ تحميل جميع البيانات الأساسية معاً (السيارات، المراكب، المدربين)
+    console.log('🔄 Loading all master data (vehicles, boats, instructors)...');
+    
+    // تحميل السيارات
+    try {
+      const vehiclesResult = await gas('getVehicles', { centerName: currentUser?.centerName });
+      let vehiclesList = [];
+      if (Array.isArray(vehiclesResult)) {
+        vehiclesList = vehiclesResult;
+      } else if (vehiclesResult?.success && Array.isArray(vehiclesResult.data)) {
+        vehiclesList = vehiclesResult.data;
+      } else if (vehiclesResult?.data && Array.isArray(vehiclesResult.data)) {
+        vehiclesList = vehiclesResult.data;
+      }
+      if (vehiclesList.length > 0) {
+        window.cachedVehicles = vehiclesList;
+        cachedVehicles = vehiclesList;
+        console.log('✅ Vehicles loaded during init:', cachedVehicles.map(v => v.id));
+      }
+    } catch(e) {
+      console.warn('⚠️ Failed to load vehicles during init:', e);
+    }
+    
+    // تحميل المراكب
+    try {
+      const boatsResult = await gas('getBoats', { centerName: currentUser?.centerName });
+      let boatsList = [];
+      if (Array.isArray(boatsResult)) {
+        boatsList = boatsResult;
+      } else if (boatsResult?.success && Array.isArray(boatsResult.data)) {
+        boatsList = boatsResult.data;
+      } else if (boatsResult?.data && Array.isArray(boatsResult.data)) {
+        boatsList = boatsResult.data;
+      }
+      if (boatsList.length > 0) {
+        window.cachedBoats = boatsList;
+        cachedBoats = boatsList;
+        console.log('✅ Boats loaded during init:', cachedBoats.map(b => b.id));
+      }
+    } catch(e) {
+      console.warn('⚠️ Failed to load boats during init:', e);
+    }
+    
+    // تحميل المدربين
+    try {
+      const instructorsResult = await gas('getInstructors', { centerName: currentUser?.centerName });
+      let instructorsList = [];
+      if (Array.isArray(instructorsResult)) {
+        instructorsList = instructorsResult;
+      } else if (instructorsResult?.success && Array.isArray(instructorsResult.data)) {
+        instructorsList = instructorsResult.data;
+      } else if (instructorsResult?.data && Array.isArray(instructorsResult.data)) {
+        instructorsList = instructorsResult.data;
+      }
+      if (instructorsList.length > 0) {
+        window.cachedInstructors = instructorsList;
+        cachedInstructors = instructorsList;
+        console.log('✅ Instructors loaded during init:', cachedInstructors.map(i => i.id));
+      }
+    } catch(e) {
+      console.warn('⚠️ Failed to load instructors during init:', e);
+    }
+    
+    console.log('✅ All master data loaded successfully');
+    
     showToast('جاري تحميل الفواتير...', 'info');
     await loadInvoices();
     renderTable(); 
     
     // ✅ تحميل التعيينات لليوم الحالي (مرة واحدة فقط)
-   // في DOMContentLoaded
-const currentDate = getCurrentDateISO();
-if (currentDate) {
-    await loadAndPopulateAssignments(currentDate);
-    await loadLogisticsData(currentDate); // ✅ تحميل اللوجستيات
-    console.log('✅ Assignments loaded for date:', currentDate);
-    updateSelectionBadges();
-}
+    const currentDate = getCurrentDateISO();
+    if (currentDate) {
+        await loadAndPopulateAssignments(currentDate);
+        await loadLogisticsData(currentDate); // ✅ تحميل اللوجستيات
+        console.log('✅ Assignments loaded for date:', currentDate);
+        updateSelectionBadges();
+    }
     
   } catch(e) { 
     console.error('❌ Initialization error:', e); 
     window.location.href = 'index.html'; 
   }
 });
-</script>
+  </script>
 </body>
 </html>
