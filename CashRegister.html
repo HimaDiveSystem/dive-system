@@ -964,8 +964,9 @@ function buildCounters() {
   }).join('');
 }
 
+// ✅ تعديل دالة loadData() - استخدم IssueDate بدلاً من ActiveDate
+// ✅ تعديل دالة loadData() - استخدم IssueDate بدلاً من ActiveDate
 async function loadData() {
-  // ✅ تحقق بسيط - لا تمنع التحميل إذا كان التجميع قد انتهى
   if (!currentDateISO) {
     document.getElementById('mainContent').innerHTML = '<div class="load-state">Please select a date</div>';
     return;
@@ -981,53 +982,76 @@ async function loadData() {
   
   const targetBranch = selectedBranch;
   
-  // ✅ التحقق من أن التاريخ ليس أكبر من آخر تاريخ مسجل
   if (lastCashDateStr && isDateAfterLastCashDate(currentDateISO)) {
     showDateWarning(currentDateISO);
     return;
   }
   
-  // ✅ إزالة شرط isLoading - نسمح بالتحميل
   showToast('⏳ جاري تحميل بيانات ' + currentDateISO + '...', 'info', 2000);
   document.getElementById('mainContent').innerHTML = '<div class="load-state"><div class="spinner"></div><br>جاري تحميل بيانات ' + currentDateISO + '...</div>';
   
   try {
-    // ✅ محاولة قراءة البيانات من Cash_Sum أولاً
-    const cashSumData = await callGAS('getCashSumData', { 
-      dateISO: currentDateISO, 
-      branchName: targetBranch,
-      centerName: currentUser?.centerName || ''
+    // ✅ ✅ ✅ التغيير الرئيسي: استخدام IssueDate بدلاً من ActiveDate
+    const invoicesResult = await callGAS('getInvoicesByIssueDate', { 
+      dateStr: currentDateISO,
+      centerName: currentUser?.centerName || '',
+      branchName: targetBranch
     });
     
-    if (cashSumData?.success && cashSumData.found) {
-      console.log('✅ تم جلب البيانات من Cash_Sum لـ ' + currentDateISO);
-      
-     systemTotals = {
-  invoices: cashSumData.invoices || {},
-  revenues: cashSumData.revenues || {},
-  income: cashSumData.income || {},
-  expenses: cashSumData.expenses || {},
-  balance: cashSumData.accumulatedBalance || {},     // ✅ هذا يعرض Accumulated
-  accumulatedBalance: cashSumData.accumulatedBalance || {}
-};
-      
-      renderPage(0, 0, 0);
-      loadSavedCount();
-      showToast('✅ تم تحميل بيانات الخزينة', 'success', 1500);
-      
+    // ✅ إذا كانت الدالة غير موجودة، استخدم getInvoicesByDate مع تعديل
+    let invoices = [];
+    if (invoicesResult?.success && Array.isArray(invoicesResult.data)) {
+      invoices = invoicesResult.data;
+    } else if (Array.isArray(invoicesResult)) {
+      invoices = invoicesResult;
     } else {
-      // ✅ إذا لم توجد بيانات، نعرض زر التحديث
-      console.log('⚠️ لا توجد بيانات في Cash_Sum لـ ' + currentDateISO);
-      document.getElementById('mainContent').innerHTML = `
-        <div class="load-state">
-          <div style="font-size:48px; margin-bottom:16px;">📭</div>
-          <div style="font-size:16px; font-weight:600; margin-bottom:8px;">لا توجد بيانات للتاريخ ${currentDateISO}</div>
-          <div style="font-size:12px; color:#64748b; margin-bottom:16px;">الرجاء تحديث الخزينة أولاً</div>
-          <button class="btn btn-primary" onclick="updateCashSumAndReload()" style="padding:8px 20px;">🔄 تحديث الخزينة</button>
-        </div>
-      `;
-      showToast('⚠️ لا توجد بيانات، اضغط تحديث الخزينة', 'info', 3000);
+      // ✅ Fallback: جلب جميع الفواتير وتصفيتها يدوياً حسب IssueDate
+      const allInvoices = await callGAS('getAllInvoices', { 
+        centerName: currentUser?.centerName || ''
+      });
+      if (Array.isArray(allInvoices)) {
+        invoices = allInvoices.filter(inv => {
+          const issueDate = inv.issueDate || '';
+          return issueDate === currentDateISO;
+        });
+      }
     }
+    
+    // ✅ حساب الإجماليات من الفواتير المجلوبة
+    const invoiceTotals = {
+      USD: 0, EUR: 0, GBP: 0, LE: 0,
+      VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0
+    };
+    
+    invoices.forEach(inv => {
+      invoiceTotals.USD += parseFloat(inv.cashUSD) || 0;
+      invoiceTotals.EUR += parseFloat(inv.cashEUR) || 0;
+      invoiceTotals.GBP += parseFloat(inv.cashGBP) || 0;
+      invoiceTotals.LE += parseFloat(inv.cashLE) || 0;
+      invoiceTotals.VUSD += parseFloat(inv.visaUSD) || 0;
+      invoiceTotals.VEUR += parseFloat(inv.visaEUR) || 0;
+      invoiceTotals.VGBP += parseFloat(inv.visaGBP) || 0;
+      invoiceTotals.VLE += parseFloat(inv.visaLE) || 0;
+    });
+    
+    // ✅ تحديث systemTotals
+    systemTotals.invoices = invoiceTotals;
+    systemTotals.income = invoiceTotals; // الإيرادات = الفواتير حالياً
+    
+    // ✅ حساب الرصيد (الإيرادات - المصروفات)
+    const balance = {};
+    Object.keys(invoiceTotals).forEach(key => {
+      balance[key] = roundTwo((invoiceTotals[key] || 0) - (systemTotals.expenses[key] || 0));
+    });
+    systemTotals.balance = balance;
+    systemTotals.accumulatedBalance = balance;
+    
+    console.log('✅ تم حساب الإجماليات من الفواتير:', invoiceTotals);
+    console.log(`📊 عدد الفواتير: ${invoices.length}`);
+    
+    renderPage(invoices.length, 0, 0);
+    loadSavedCount();
+    showToast(`✅ تم تحميل ${invoices.length} فاتورة`, 'success', 1500);
     
   } catch(e) {
     console.error('❌ loadData error:', e);
