@@ -276,10 +276,13 @@ let allBranches=[];
 let selectedBranch='';
 let canViewAllBranches=false;
 let systemTotals={invoices:{},revenues:{},income:{},expenses:{},balance:{},accumulatedBalance:{}};
+let previousDayBalance = {};      // رصيد الأمس
+let todayTotalBalance = {};       // رصيد الأمس + إيرادات اليوم
+let finalAccumulatedBalance = {}; // الرصيد التراكمي النهائي
+let previousDateISO = '';         // تاريخ الأمس
 let savedCountData=null;
 let hasChanges=false;
 let lastCashDateStr = '';  // آخر تاريخ في شيت Cash_Sum
-  // إعدادات التخزين المؤقت
 let dataCache = {
   invoices: {},   // { "dd/MMM/yyyy": [...] }
   revenues: {},   // { "dd/MMM/yyyy": [...] }
@@ -287,7 +290,7 @@ let dataCache = {
   range: { startDate: null, endDate: null }
 };
 let isDataLoaded = false;
-  let isLoading = false;  // ✅ لمنع التحميل المتكرر
+let isLoading = false;  // ✅ لمنع التحميل المتكرر
 const CACHE_DAYS_RANGE = 10; // 10 أيام قبل و 10 أيام بعد
   
 function toDDMMMYYYY(dateStr) {
@@ -922,15 +925,116 @@ function renderPage(invCnt, revCnt, expCnt) {
   const dt = currentDateISO;
   const ch = () => CURRENCIES.map(c => `<div class="cur-header-cell"><span class="flag">${c.flag}</span><span class="code">${c.label}</span></div>`).join('');
   
-  // ✅ استخدام systemTotals المحدثة
+  // ✅ الحصول على البيانات من systemTotals
+  const invoices = systemTotals.invoices || {};
+  const revenues = systemTotals.revenues || {};
+  const dailyIncome = systemTotals.dailyIncome || {};
+  const expenses = systemTotals.expenses || {};
+  const previousBalance = systemTotals.previousBalance || {};
+  const todayTotal = systemTotals.todayTotal || {};
+  const finalBalance = systemTotals.finalBalance || {};
+  
   document.getElementById('mainContent').innerHTML = `
     <div class="cur-headers">${ch()}</div>
-    <div class="section-card"><div class="section-head sh-inv"><h3>🧾 Invoices <small style="font-size:11px;opacity:.7">(${dt})</small></h3><span class="sh-badge">${invCnt} invoices</span></div><div class="section-body"><div class="cur-grid">${curRow('invoices')}</div></div></div>
-    <div class="section-card"><div class="section-head sh-rev"><h3>💵 Other Revenues</h3><span class="sh-badge">${revCnt} entries</span></div><div class="section-body"><div class="cur-grid">${curRow('revenues')}</div></div></div>
-    <div class="section-card"><div class="section-head sh-tin"><h3>📈 Total Income</h3><span class="sh-badge">Invoices + Revenue</span></div><div class="section-body"><div class="cur-grid">${curRow('income')}</div></div></div>
-    <div class="section-card"><div class="section-head sh-exp"><h3>📉 Expenses</h3><span class="sh-badge">${expCnt} entries</span></div><div class="section-body"><div class="cur-grid">${curRow('expenses')}</div></div></div>
-    <div class="section-card"><div class="section-head sh-bal"><h3>💰 Daily Cash Balance</h3><span class="sh-badge">Income − Expenses</span></div><div class="section-body"><div class="cur-grid">${curRow('balance')}</div><div class="balance-note">※ Net daily movement</div></div></div>
-    <div class="section-card"><div class="section-head sh-cnt"><h3>🏧 Physical Cash Count & Verification</h3><span class="sh-badge" id="lastSaveLabel">Not saved yet</span></div><div class="section-body"><div class="counter-grid" id="counterGrid"></div><div class="counter-footer"><textarea class="counter-notes" id="countNotes" rows="2" placeholder="Notes about cash count..."></textarea><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end"><button class="save-count-btn" id="saveCountBtn" onclick="saveCashCount()">💾 Save Count to Sheet</button><button class="save-count-btn" id="clearCountBtn" onclick="resetCounters()" style="background:#7c3aed;">🗑️ مسح الحقول</button></div><div class="save-info" id="saveInfo"></div></div></div></div>
+    
+    <!-- 1️⃣ Invoices -->
+    <div class="section-card">
+      <div class="section-head sh-inv">
+        <h3>🧾 Invoices <small style="font-size:11px;opacity:.7">(${dt})</small></h3>
+        <span class="sh-badge">${invCnt} invoices</span>
+      </div>
+      <div class="section-body">
+        <div class="cur-grid">${curRowWithData(invoices)}</div>
+      </div>
+    </div>
+    
+    <!-- 2️⃣ Other Revenues -->
+    <div class="section-card">
+      <div class="section-head sh-rev">
+        <h3>💵 Other Revenues</h3>
+        <span class="sh-badge">${revCnt} entries</span>
+      </div>
+      <div class="section-body">
+        <div class="cur-grid">${curRowWithData(revenues)}</div>
+      </div>
+    </div>
+    
+    <!-- 3️⃣ Daily Income (Invoices + Revenues) -->
+    <div class="section-card">
+      <div class="section-head sh-tin">
+        <h3>📈 Total Income</h3>
+        <span class="sh-badge">Invoices + Revenue</span>
+      </div>
+      <div class="section-body">
+        <div class="cur-grid">${curRowWithData(dailyIncome)}</div>
+      </div>
+    </div>
+    
+    <!-- 4️⃣ Carry Over (رصيد مرحل من الأمس) -->
+    <div class="section-card">
+      <div class="section-head" style="background:linear-gradient(90deg,#0f1f3d,#1a3260);">
+        <h3 style="color:#cbd5e1;">📤 Carry Over <small style="font-size:11px;opacity:.7">(Previous Day: ${previousDateISO || '—'})</small></h3>
+        <span class="sh-badge" style="background:rgba(255,255,255,.1);color:white;">Previous</span>
+      </div>
+      <div class="section-body">
+        <div class="cur-grid">${curRowWithData(previousBalance)}</div>
+      </div>
+    </div>
+    
+    <!-- 5️⃣ Today Total (رصيد الأمس + إيرادات اليوم) -->
+    <div class="section-card">
+      <div class="section-head" style="background:linear-gradient(90deg,#1a3260,#2563eb);">
+        <h3 style="color:#bfdbfe;">📊 Today Total <small style="font-size:11px;opacity:.7">(Carry Over + Income)</small></h3>
+        <span class="sh-badge" style="background:rgba(255,255,255,.1);color:white;">Subtotal</span>
+      </div>
+      <div class="section-body">
+        <div class="cur-grid">${curRowWithData(todayTotal)}</div>
+      </div>
+    </div>
+    
+    <!-- 6️⃣ Expenses -->
+    <div class="section-card">
+      <div class="section-head sh-exp">
+        <h3>📉 Expenses</h3>
+        <span class="sh-badge">${expCnt} entries</span>
+      </div>
+      <div class="section-body">
+        <div class="cur-grid">${curRowWithData(expenses)}</div>
+      </div>
+    </div>
+    
+    <!-- 7️⃣ Final Accumulated Balance -->
+    <div class="section-card">
+      <div class="section-head sh-bal">
+        <h3>💰 Daily Cash Balance <small style="font-size:11px;opacity:.7">(Accumulated)</small></h3>
+        <span class="sh-badge">End of Day</span>
+      </div>
+      <div class="section-body">
+        <div class="cur-grid">${curRowWithData(finalBalance)}</div>
+        <div class="balance-note">※ Accumulated balance after today's transactions</div>
+      </div>
+    </div>
+    
+    <!-- 8️⃣ Physical Cash Count & Verification -->
+    <div class="section-card">
+      <div class="section-head sh-cnt">
+        <h3>🏧 Physical Cash Count & Verification</h3>
+        <span class="sh-badge" id="lastSaveLabel">Not saved yet</span>
+      </div>
+      <div class="section-body">
+        <div class="counter-grid" id="counterGrid"></div>
+        <div class="counter-footer">
+          <textarea class="counter-notes" id="countNotes" rows="2" placeholder="Notes about cash count..."></textarea>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+            <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end">
+              <button class="save-count-btn" id="saveCountBtn" onclick="saveCashCount()">💾 Save Count to Sheet</button>
+              <button class="save-count-btn" id="clearCountBtn" onclick="resetCounters()" style="background:#7c3aed;">🗑️ مسح الحقول</button>
+            </div>
+            <div class="save-info" id="saveInfo"></div>
+          </div>
+        </div>
+      </div>
+    </div>
   `;
   
   buildCounters();
@@ -945,13 +1049,23 @@ function curRow(section) {
     return `<div class="cur-col"><div class="cur-val ${cls}">${v !== 0 ? fmtN(v) : '—'}</div></div>`;
   }).join('');
 }
-
+// ✅ دالة عرض صف مع بيانات مخصصة
+function curRowWithData(data) {
+  return CURRENCIES.map(c => {
+    const v = data[c.key] || 0;
+    const cls = v > 0 ? 'pos' : v < 0 ? 'neg' : 'zer';
+    return `<div class="cur-col"><div class="cur-val ${cls}">${v !== 0 ? fmtN(v) : '—'}</div></div>`;
+  }).join('');
+}
 function buildCounters() {
   const grid = document.getElementById('counterGrid');
   if (!grid) return;
   
+  // ✅ استخدام finalBalance للمقارنة مع العدد الفعلي
+  const sysVal = systemTotals.finalBalance || {};
+  
   grid.innerHTML = CASH_CURS.map(cur => {
-    const sysVal = systemTotals.balance[cur.key] || 0;
+    const sysValue = sysVal[cur.key] || 0;
     const denomHtml = cur.denoms.map(d => d ? `
       <div class="denom-cell">
         <div class="d-label">${d}</div>
@@ -966,7 +1080,7 @@ function buildCounters() {
           <span class="cur-flag-big">${cur.flag}</span>
           <span class="cur-name" style="color:${cur.color}">${cur.name}</span>
           <div class="cr-summary">
-            <div class="sum-box sys"><label>System Balance</label><div class="sv" id="${cur.key}_sys">${sysVal ? fmtN(sysVal) : '—'}</div></div>
+            <div class="sum-box sys"><label>System Balance</label><div class="sv" id="${cur.key}_sys">${sysValue ? fmtN(sysValue) : '—'}</div></div>
             <div class="sum-box act"><label>Actual Count</label><div class="sv" id="${cur.key}_act">—</div></div>
             <div class="sum-box dif zero" id="${cur.key}_difBox"><label>Difference</label><div class="sv" id="${cur.key}_dif">—</div></div>
           </div>
@@ -1004,31 +1118,67 @@ async function loadData() {
   document.getElementById('mainContent').innerHTML = '<div class="load-state"><div class="spinner"></div><br>جاري تحميل بيانات ' + currentDateISO + '...</div>';
   
   try {
-    // ✅ ✅ ✅ جلب البيانات من Cash_Sum مباشرة
-   try {
+    // ✅ جلب بيانات اليوم من Cash_Sum
     const cashSumData = await callGAS('getCashSumData', { 
       dateISO: currentDateISO, 
       branchName: targetBranch,
       centerName: currentUser?.centerName || ''
     });
     
+    // ✅ جلب رصيد الأمس
+    await getPreviousDayBalance();
+    
     if (cashSumData?.success && cashSumData.found) {
-      // ✅ ✅ ✅ التغيير المطلوب
+      // ✅ بيانات اليوم
+      const invoices = cashSumData.invoices || {};
+      const revenues = cashSumData.revenues || {};
+      const expenses = cashSumData.expenses || {};
+      const dailyIncome = cashSumData.dailyIncome || {};
+      const accumulatedBalance = cashSumData.accumulatedBalance || {};
+      
+      // ✅ حساب Today Total = رصيد الأمس + Daily Income
+      const todayTotal = {};
+      Object.keys(previousDayBalance).forEach(key => {
+        todayTotal[key] = roundTwo((previousDayBalance[key] || 0) + (dailyIncome[key] || 0));
+      });
+      
+      // ✅ الرصيد النهائي = Today Total - Expenses
+      const finalBalance = {};
+      Object.keys(todayTotal).forEach(key => {
+        finalBalance[key] = roundTwo((todayTotal[key] || 0) - (expenses[key] || 0));
+      });
+      
+      // ✅ تحديث systemTotals
       systemTotals = {
-        invoices: cashSumData.invoices || {},
-        revenues: cashSumData.revenues || {},
-        income: cashSumData.income || {},
-        expenses: cashSumData.expenses || {},
-        balance: cashSumData.accumulatedBalance || {},        // ✅ Accumulated
-        accumulatedBalance: cashSumData.accumulatedBalance || {}
+        invoices: invoices,
+        revenues: revenues,
+        dailyIncome: dailyIncome,
+        expenses: expenses,
+        previousBalance: previousDayBalance,
+        todayTotal: todayTotal,
+        finalBalance: finalBalance,
+        accumulatedBalance: accumulatedBalance
       };
       
-      console.log('✅ تم جلب البيانات من Cash_Sum لـ ' + currentDateISO);
-      renderPage(0, 0, 0);
+      console.log('✅ تم تحميل بيانات الخزينة لـ ' + currentDateISO);
+      console.log('📊 رصيد الأمس:', previousDayBalance);
+      console.log('📊 إيرادات اليوم:', dailyIncome);
+      console.log('📊 إجمالي اليوم:', todayTotal);
+      console.log('📊 المصروفات:', expenses);
+      console.log('📊 الرصيد النهائي:', finalBalance);
+      
+      // حساب عدد الفواتير والإيرادات والمصروفات
+      // (سيتم حسابها من البيانات إذا كانت متوفرة)
+      const invCount = cashSumData.invoiceCount || 0;
+      const revCount = cashSumData.revenueCount || 0;
+      const expCount = cashSumData.expenseCount || 0;
+      
+      renderPage(invCount, revCount, expCount);
       loadSavedCount();
-      showToast('✅ تم تحميل بيانات الخزينة', 'success', 1500);
+      showToast(`✅ تم تحميل بيانات الخزينة`, 'success', 1500);
       return;
-    }    
+    }
+    
     // ✅ إذا لم توجد بيانات في Cash_Sum، نعرض رسالة
     console.log('⚠️ لا توجد بيانات في Cash_Sum لـ ' + currentDateISO);
     document.getElementById('mainContent').innerHTML = `
@@ -1045,6 +1195,51 @@ async function loadData() {
     console.error('❌ loadData error:', e);
     document.getElementById('mainContent').innerHTML = `<div class="load-state">❌ خطأ في تحميل البيانات: ${e.message}</div>`;
     showToast('❌ خطأ في تحميل البيانات', 'error');
+  }
+}
+  // ============================================================
+// ✅ دالة جلب رصيد اليوم السابق
+// ============================================================
+async function getPreviousDayBalance() {
+  try {
+    // حساب تاريخ الأمس
+    const currentDate = parseDateFromDDMMMYYYY(currentDateISO);
+    if (!currentDate) return {};
+    
+    const prevDate = new Date(currentDate);
+    prevDate.setDate(prevDate.getDate() - 1);
+    
+    const prevDateStr = formatDateForCache(prevDate);
+    previousDateISO = prevDateStr;
+    
+    // جلب بيانات الأمس من Cash_Sum
+    const result = await callGAS('getCashSumData', {
+      dateISO: prevDateStr,
+      branchName: selectedBranch || currentUser?.branchName || '',
+      centerName: currentUser?.centerName || ''
+    });
+    
+    if (result?.success && result.found) {
+      previousDayBalance = result.accumulatedBalance || {};
+      console.log('✅ تم جلب رصيد الأمس:', previousDayBalance);
+      return previousDayBalance;
+    }
+    
+    // إذا لم توجد بيانات للأمس، استخدم أصفار
+    console.log('⚠️ لا توجد بيانات للأمس، استخدام أصفار');
+    previousDayBalance = {
+      USD: 0, EUR: 0, GBP: 0, LE: 0,
+      VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0
+    };
+    return previousDayBalance;
+    
+  } catch(e) {
+    console.error('❌ getPreviousDayBalance error:', e);
+    previousDayBalance = {
+      USD: 0, EUR: 0, GBP: 0, LE: 0,
+      VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0
+    };
+    return previousDayBalance;
   }
 }
   // ✅ توسيع نطاق Cache حول تاريخ معين
@@ -1160,30 +1355,50 @@ function isDateInRange(dateStr, startStr, endStr) {
 }
 
 function calcCur(curKey){
-  const cur=CASH_CURS.find(c=>c.key===curKey);if(!cur)return;
-  let total=0;
-  cur.denoms.forEach(d=>{
-    if(!d)return;
-    const inp=document.getElementById(`${cur.key}_d${d}`);
-    const qty=parseFloat(inp?.value)||0;
-    const sub=qty*d;total+=sub;
-    inp?.classList.toggle('has-val',qty>0);
-    const sel=document.getElementById(`${cur.key}_s${d}`);
-    if(sel)sel.textContent=sub>0?'= '+sub.toLocaleString('en'):'';
+  const cur = CASH_CURS.find(c => c.key === curKey);
+  if (!cur) return;
+  
+  let total = 0;
+  cur.denoms.forEach(d => {
+    if (!d) return;
+    const inp = document.getElementById(`${cur.key}_d${d}`);
+    const qty = parseFloat(inp?.value) || 0;
+    const sub = qty * d;
+    total += sub;
+    inp?.classList.toggle('has-val', qty > 0);
+    const sel = document.getElementById(`${cur.key}_s${d}`);
+    if (sel) sel.textContent = sub > 0 ? '= '+ sub.toLocaleString('en') : '';
   });
-  total=roundTwo(total);
-  const actEl=document.getElementById(`${curKey}_act`);
-  if(actEl)actEl.textContent=total>0?fmtN(total):'—';
-  const sysVal=systemTotals.balance?.[curKey]||0;
-  const diff=roundTwo(total-sysVal);
-  const dEl=document.getElementById(`${curKey}_dif`);
-  const dBox=document.getElementById(`${curKey}_difBox`);
-  if(!total){if(dEl)dEl.textContent='—';if(dBox)dBox.className='sum-box dif zero';return;}
-  if(diff===0){if(dEl)dEl.textContent='✓ Balanced';if(dBox)dBox.className='sum-box dif zero';}
-  else if(diff>0){if(dEl)dEl.textContent=`+${fmtN(diff)} Surplus`;if(dBox)dBox.className='sum-box dif surp';}
-  else{if(dEl)dEl.textContent=`−${fmtN(Math.abs(diff))} Deficit`;if(dBox)dBox.className='sum-box dif defi';}
+  
+  total = roundTwo(total);
+  const actEl = document.getElementById(`${curKey}_act`);
+  if (actEl) actEl.textContent = total > 0 ? fmtN(total) : '—';
+  
+  // ✅ استخدام finalBalance للمقارنة
+  const sysVal = systemTotals.finalBalance?.[curKey] || 0;
+  const diff = roundTwo(total - sysVal);
+  const dEl = document.getElementById(`${curKey}_dif`);
+  const dBox = document.getElementById(`${curKey}_difBox`);
+  
+  if (!total && !sysVal) {
+    if (dEl) dEl.textContent = '—';
+    if (dBox) dBox.className = 'sum-box dif zero';
+    return;
+  }
+  
+  if (diff === 0) {
+    if (dEl) dEl.textContent = '✓ Balanced';
+    if (dBox) dBox.className = 'sum-box dif zero';
+  }
+  else if (diff > 0) {
+    if (dEl) dEl.textContent = `+${fmtN(diff)} Surplus`;
+    if (dBox) dBox.className = 'sum-box dif surp';
+  }
+  else {
+    if (dEl) dEl.textContent = `−${fmtN(Math.abs(diff))} Deficit`;
+    if (dBox) dBox.className = 'sum-box dif defi';
+  }
 }
-
 function resetCounters(){
   // ✅ هذه الدالة تُستخدم فقط لمسح الحقول يدوياً
   CASH_CURS.forEach(function(cur) {
