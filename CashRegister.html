@@ -964,9 +964,8 @@ function buildCounters() {
   }).join('');
 }
 
-// ✅ تعديل دالة loadData() - استخدم IssueDate بدلاً من ActiveDate
-// ✅ تعديل دالة loadData() - استخدم IssueDate بدلاً من ActiveDate
 async function loadData() {
+  // ✅ تحقق بسيط - لا تمنع التحميل إذا كان التجميع قد انتهى
   if (!currentDateISO) {
     document.getElementById('mainContent').innerHTML = '<div class="load-state">Please select a date</div>';
     return;
@@ -982,6 +981,7 @@ async function loadData() {
   
   const targetBranch = selectedBranch;
   
+  // ✅ التحقق من أن التاريخ ليس أكبر من آخر تاريخ مسجل
   if (lastCashDateStr && isDateAfterLastCashDate(currentDateISO)) {
     showDateWarning(currentDateISO);
     return;
@@ -992,36 +992,24 @@ async function loadData() {
   
   try {
     // ✅ ✅ ✅ التغيير الرئيسي: استخدام IssueDate بدلاً من ActiveDate
-    const invoicesResult = await callGAS('getInvoicesByIssueDate', { 
+    const invoicesResult = await callGAS('getInvoicesByIssueDate', {
       dateStr: currentDateISO,
-      centerName: currentUser?.centerName || '',
-      branchName: targetBranch
+      branchName: targetBranch,
+      centerName: currentUser?.centerName || ''
     });
     
-    // ✅ إذا كانت الدالة غير موجودة، استخدم getInvoicesByDate مع تعديل
-    let invoices = [];
-    if (invoicesResult?.success && Array.isArray(invoicesResult.data)) {
-      invoices = invoicesResult.data;
-    } else if (Array.isArray(invoicesResult)) {
-      invoices = invoicesResult;
-    } else {
-      // ✅ Fallback: جلب جميع الفواتير وتصفيتها يدوياً حسب IssueDate
-      const allInvoices = await callGAS('getAllInvoices', { 
-        centerName: currentUser?.centerName || ''
-      });
-      if (Array.isArray(allInvoices)) {
-        invoices = allInvoices.filter(inv => {
-          const issueDate = inv.issueDate || '';
-          return issueDate === currentDateISO;
-        });
-      }
-    }
+    console.log('📊 getInvoicesByIssueDate result:', invoicesResult);
     
     // ✅ حساب الإجماليات من الفواتير المجلوبة
     const invoiceTotals = {
       USD: 0, EUR: 0, GBP: 0, LE: 0,
       VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0
     };
+    
+    let invoices = [];
+    if (invoicesResult?.success && Array.isArray(invoicesResult.data)) {
+      invoices = invoicesResult.data;
+    }
     
     invoices.forEach(inv => {
       invoiceTotals.USD += parseFloat(inv.cashUSD) || 0;
@@ -1036,17 +1024,18 @@ async function loadData() {
     
     // ✅ تحديث systemTotals
     systemTotals.invoices = invoiceTotals;
-    systemTotals.income = invoiceTotals; // الإيرادات = الفواتير حالياً
+    systemTotals.income = { ...invoiceTotals };
     
     // ✅ حساب الرصيد (الإيرادات - المصروفات)
     const balance = {};
     Object.keys(invoiceTotals).forEach(key => {
-      balance[key] = roundTwo((invoiceTotals[key] || 0) - (systemTotals.expenses[key] || 0));
+      const expense = (systemTotals.expenses && systemTotals.expenses[key]) || 0;
+      balance[key] = roundTwo((invoiceTotals[key] || 0) - expense);
     });
     systemTotals.balance = balance;
     systemTotals.accumulatedBalance = balance;
     
-    console.log('✅ تم حساب الإجماليات من الفواتير:', invoiceTotals);
+    console.log('✅ تم حساب الإجماليات من الفواتير (حسب IssueDate):', invoiceTotals);
     console.log(`📊 عدد الفواتير: ${invoices.length}`);
     
     renderPage(invoices.length, 0, 0);
