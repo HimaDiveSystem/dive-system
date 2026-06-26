@@ -1091,6 +1091,51 @@ function buildCounters() {
   }).join('');
 }
 
+    // ============================================================
+// ✅ دالة جلب رصيد اليوم السابق
+// ============================================================
+async function getPreviousDayBalance() {
+  try {
+    // حساب تاريخ الأمس
+    const currentDate = parseDateFromDDMMMYYYY(currentDateISO);
+    if (!currentDate) return {};
+    
+    const prevDate = new Date(currentDate);
+    prevDate.setDate(prevDate.getDate() - 1);
+    
+    const prevDateStr = formatDateForCache(prevDate);
+    previousDateISO = prevDateStr;
+    
+    // جلب بيانات الأمس من Cash_Sum
+    const result = await callGAS('getCashSumData', {
+      dateISO: prevDateStr,
+      branchName: selectedBranch || currentUser?.branchName || '',
+      centerName: currentUser?.centerName || ''
+    });
+    
+    if (result?.success && result.found) {
+      previousDayBalance = result.accumulatedBalance || {};
+      console.log('✅ تم جلب رصيد الأمس:', previousDayBalance);
+      return previousDayBalance;
+    }
+    
+    // إذا لم توجد بيانات للأمس، استخدم أصفار
+    console.log('⚠️ لا توجد بيانات للأمس، استخدام أصفار');
+    previousDayBalance = {
+      USD: 0, EUR: 0, GBP: 0, LE: 0,
+      VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0
+    };
+    return previousDayBalance;
+    
+  } catch(e) {
+    console.error('❌ getPreviousDayBalance error:', e);
+    previousDayBalance = {
+      USD: 0, EUR: 0, GBP: 0, LE: 0,
+      VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0
+    };
+    return previousDayBalance;
+  }
+}
 async function loadData() {
   // ✅ تحقق بسيط
   if (!currentDateISO) {
@@ -1168,7 +1213,6 @@ async function loadData() {
       console.log('📊 الرصيد النهائي:', finalBalance);
       
       // حساب عدد الفواتير والإيرادات والمصروفات
-      // (سيتم حسابها من البيانات إذا كانت متوفرة)
       const invCount = cashSumData.invoiceCount || 0;
       const revCount = cashSumData.revenueCount || 0;
       const expCount = cashSumData.expenseCount || 0;
@@ -1196,64 +1240,19 @@ async function loadData() {
     document.getElementById('mainContent').innerHTML = `<div class="load-state">❌ خطأ في تحميل البيانات: ${e.message}</div>`;
     showToast('❌ خطأ في تحميل البيانات', 'error');
   }
-}
-  // ============================================================
-// ✅ دالة جلب رصيد اليوم السابق
-// ============================================================
-async function getPreviousDayBalance() {
-  try {
-    // حساب تاريخ الأمس
-    const currentDate = parseDateFromDDMMMYYYY(currentDateISO);
-    if (!currentDate) return {};
-    
-    const prevDate = new Date(currentDate);
-    prevDate.setDate(prevDate.getDate() - 1);
-    
-    const prevDateStr = formatDateForCache(prevDate);
-    previousDateISO = prevDateStr;
-    
-    // جلب بيانات الأمس من Cash_Sum
-    const result = await callGAS('getCashSumData', {
-      dateISO: prevDateStr,
-      branchName: selectedBranch || currentUser?.branchName || '',
-      centerName: currentUser?.centerName || ''
-    });
-    
-    if (result?.success && result.found) {
-      previousDayBalance = result.accumulatedBalance || {};
-      console.log('✅ تم جلب رصيد الأمس:', previousDayBalance);
-      return previousDayBalance;
-    }
-    
-    // إذا لم توجد بيانات للأمس، استخدم أصفار
-    console.log('⚠️ لا توجد بيانات للأمس، استخدام أصفار');
-    previousDayBalance = {
-      USD: 0, EUR: 0, GBP: 0, LE: 0,
-      VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0
-    };
-    return previousDayBalance;
-    
-  } catch(e) {
-    console.error('❌ getPreviousDayBalance error:', e);
-    previousDayBalance = {
-      USD: 0, EUR: 0, GBP: 0, LE: 0,
-      VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0
-    };
-    return previousDayBalance;
-  }
-}
-  // ✅ توسيع نطاق Cache حول تاريخ معين
-async function expandCacheAroundDate(targetDateStr, branchName) {
+}  // ✅ هذا القوس يجب أن يكون موجوداً
+
+  async function expandCacheAroundDate(targetDateStr, branchName) {
   // تحويل التاريخ إلى كائن Date
   const targetDate = parseDateFromDDMMMYYYY(targetDateStr);
   if (!targetDate) return;
   
-  // حساب النطاق الجديد (5 أيام قبل + 5 أيام بعد)
+  // حساب النطاق الجديد (5 أيام قبل + 5 أيام بعد) ✅ التصحيح هنا
   const newStartDate = new Date(targetDate);
-  newStartDate.setDate(targetDate.getDate() - 5);
+  newStartDate.setDate(targetDate.getDate() - 5);  // ✅ 5 أيام قبل
   
   const newEndDate = new Date(targetDate);
-  newEndDate.setDate(targetDate.getDate() + 5);
+  newEndDate.setDate(targetDate.getDate() + 5);   // ✅ 5 أيام بعد
   
   const newStartStr = formatDateForCache(newStartDate);
   const newEndStr = formatDateForCache(newEndDate);
@@ -1293,7 +1292,6 @@ async function expandCacheAroundDate(targetDateStr, branchName) {
     console.error('❌ فشل توسيع Cache:', e);
   }
 }
-
 // ✅ تحديث نطاق Cache عند إضافة تاريخ جديد
 function updateCacheRange(newDateStr) {
   if (!dataCache.range.startDate && !dataCache.range.endDate) {
