@@ -1621,6 +1621,9 @@ function collectCountData() {
     difference: {},
   };
   
+  // ✅ التأكد من وجود systemTotals.finalBalance
+  const finalBalance = systemTotals.finalBalance || {};
+  
   for (var c = 0; c < CASH_CURS.length; c++) {
     var cur = CASH_CURS[c];
     var denData = {};
@@ -1640,17 +1643,18 @@ function collectCountData() {
       total += qty * denomValue;
     }
     
-    out.denominations[cur.key] = denData;
-    out.totals[cur.key] = roundTwo(total);
-    
-    // ✅ ✅ ✅ إصلاح: استخدام finalBalance بدلاً من balance
-    // systemTotals.finalBalance هو الرصيد التراكمي النهائي
-    out.systemBalance[cur.key] = systemTotals.finalBalance?.[cur.key] || 0;
-    out.difference[cur.key] = roundTwo(total - (systemTotals.finalBalance?.[cur.key] || 0));
+    // ✅ التأكد من أن كل العملات موجودة
+    out.denominations[cur.key] = denData || {};
+    out.totals[cur.key] = roundTwo(total) || 0;
+    out.systemBalance[cur.key] = finalBalance[cur.key] || 0;
+    out.difference[cur.key] = roundTwo(total - (finalBalance[cur.key] || 0)) || 0;
   }
   
   console.log('📊 collectCountData - denominations:', out.denominations);
+  console.log('📊 collectCountData - totals:', out.totals);
   console.log('📊 collectCountData - systemBalance:', out.systemBalance);
+  console.log('📊 collectCountData - difference:', out.difference);
+  
   return out;
 }
   
@@ -1668,32 +1672,44 @@ function collectCountData() {
   return false;
 }
 
-async function saveCashCount(){
-  const btn=document.getElementById('saveCountBtn');if(btn)btn.disabled=true;
-  const currentData=collectCountData();
-  if(!hasCountChanges(savedCountData,currentData)){
-    showToast('⚠️ No changes detected. Nothing to save.','info');
-    if(btn)btn.disabled=false;
+async function saveCashCount() {
+  const btn = document.getElementById('saveCountBtn');
+  if (btn) btn.disabled = true;
+  
+  const currentData = collectCountData();
+  
+  // ✅ التحقق من وجود بيانات
+  if (!currentData || !currentData.totals) {
+    showToast('⚠️ لا توجد بيانات للحفظ', 'error');
+    if (btn) btn.disabled = false;
     return;
   }
-  showToast('💾 Saving to Cash_Count sheet...','info',10000);
-  try{
+  
+  if (!hasCountChanges(savedCountData, currentData)) {
+    showToast('⚠️ No changes detected. Nothing to save.', 'info');
+    if (btn) btn.disabled = false;
+    return;
+  }
+  
+  showToast('💾 Saving to Cash_Count sheet...', 'info', 10000);
+  
+  try {
     const result = await callGAS('saveCashCount', currentData);
-    if(result?.success){
-      savedCountData=currentData;
-      hasChanges=false;
+    if (result?.success) {
+      savedCountData = currentData;
+      hasChanges = false;
       markSavedStatus();
-      showToast('✅ Cash count saved successfully!','success');
-    }else{
-      showToast('❌ Save failed: '+(result?.message||''),'error');
+      showToast('✅ Cash count saved successfully!', 'success');
+    } else {
+      showToast('❌ Save failed: ' + (result?.message || ''), 'error');
     }
-  }catch(e){
-    showToast('❌ Error: '+e.message,'error');
-  }finally{
-    if(btn)btn.disabled=false;
+  } catch(e) {
+    console.error('❌ saveCashCount error:', e);
+    showToast('❌ Error: ' + e.message, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
-
 async function loadSavedCount(){
   try {
     var branchToUse = selectedBranch || currentUser?.branchName || '';
