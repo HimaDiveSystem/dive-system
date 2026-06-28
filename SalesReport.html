@@ -6,7 +6,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes">
   <title>تقارير المبيعات</title>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+ <script src="ui.js"></script>
+<script src="config.js"></script>
+<script src="session.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
   <style>
     :root{--navy:#0f1f3d;--navy2:#1a3260;--gold:#f5c842;--gold2:#e6b800;--blue:#2563eb;--green:#16a34a;--red:#dc2626;--orange:#ea580c;--purple:#7c3aed;--bg:#f0f4f8;--card:#fff;--border:#dde4f0;--text:#1a2540;--text-lt:#5a6a8a;--radius:16px;--shadow:0 4px 24px rgba(15,31,61,.10);}
     *{margin:0;padding:0;box-sizing:border-box;}
@@ -116,7 +119,6 @@
   <div id="reportContent"><div class="loader-big"><div class="spinner"></div>جاري تحميل البيانات...</div></div>
 </div>
 <script>
-const GAS_URL='https://script.google.com/macros/s/AKfycbwC1BRoLAJthZqxWTYyMUSjPNNGfCI0BjTfhE7ZiVx67rUP__OKAj0vlwD1-RUCOMSE/exec';
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 let currentUser=null, allInvoices=[], filteredInvoices=[], exchangeRatesMap=new Map();
 let activeChart=null, realMode=false, currentTab='currency';
@@ -171,18 +173,32 @@ function fmtNum(n){ if(!n||isNaN(n)) return '0'; if(realMode) return Math.round(
 function formatDateForInput(date){ const y=date.getFullYear(); const m=String(date.getMonth()+1).padStart(2,'0'); const d=String(date.getDate()).padStart(2,'0'); return `${y}-${m}-${d}`; }
 async function loadAllExchangeRates(){
   try{ 
-    const res=await fetch(`${GAS_URL}?action=getAllExchangeRatesNew`); 
-    const rates=await res.json(); 
-    if(Array.isArray(rates)){ 
+    // ✅ استخدام gas() من config.js
+    const result = await gas('getAllExchangeRatesNew', {
+      centerName: currentUser?.centerName || ''
+    });
+    
+    const rates = Array.isArray(result) ? result : (result?.data || []);
+    
+    if(rates.length > 0){ 
       exchangeRatesMap.clear();
+      
       // تخزين الأسعار الأصلية لكل يوم
-      rates.forEach(rate=>{ 
+      rates.forEach(rate => { 
         if(rate.date){ 
-          const isoDate=convertToISO(rate.date); 
+          const isoDate = convertToISO(rate.date); 
           if(isoDate){ 
             exchangeRatesMap.set(isoDate,{
-              cash:{USD:parseFloat(rate.bUSD)||0,EUR:parseFloat(rate.bEUR)||0,GBP:parseFloat(rate.bGBP)||0},
-              visa:{USD:parseFloat(rate.bVUSD)||0,EUR:parseFloat(rate.bVEUR)||0,GBP:parseFloat(rate.bVGBP)||0}
+              cash: {
+                USD: parseFloat(rate.bUSD) || 0,
+                EUR: parseFloat(rate.bEUR) || 0,
+                GBP: parseFloat(rate.bGBP) || 0
+              },
+              visa: {
+                USD: parseFloat(rate.bVUSD) || 0,
+                EUR: parseFloat(rate.bVEUR) || 0,
+                GBP: parseFloat(rate.bVGBP) || 0
+              }
             }); 
           } 
         } 
@@ -190,9 +206,12 @@ async function loadAllExchangeRates(){
       
       // حساب متوسطات الشهر
       monthlyAvgRates = calculateMonthlyAverageRates(rates);
+      console.log(`✅ تم تحميل ${rates.length} سعر صرف`);
       return true; 
     } 
-  }catch(e){ console.error(e); } 
+  }catch(e){ 
+    console.error('❌ loadAllExchangeRates error:', e); 
+  } 
   return false; 
 }
 function drawCurrencyChart(labels, values) {
@@ -493,31 +512,47 @@ async function loadData() {
   try {
     await loadAllExchangeRates();
     
-    let targetCenter = null;
-    let targetBranch = null;
+    let targetCenter = currentUser?.centerName || '';
+    let targetBranch = currentUser?.branchName || '';
     
-    if (currentUser?.type === 'Owner' && currentUser.centerName) {
-      targetCenter = currentUser.centerName;
-    } else if (currentUser?.type === 'Accountant' && currentUser.centerName) {
-      targetCenter = currentUser.centerName;
-      targetBranch = currentUser.branchName;
-    } else if (currentUser?.type === 'Sales' && currentUser.centerName) {
-      targetCenter = currentUser.centerName;
+    console.log('📡 جلب الفواتير من ملف المركز:', targetCenter);
+    
+    // ✅ استخدام gas() من config.js
+    let invoices = [];
+    try {
+      // ✅ جلب البيانات من ملف المركز المنفصل
+      const result = await gas('getAllInvoices', {
+        centerName: targetCenter,
+        includeCollection: true
+      });
+      
+      // التعامل مع هيكل البيانات
+      if (Array.isArray(result)) {
+        invoices = result;
+      } else if (result?.success && Array.isArray(result.data)) {
+        invoices = result.data;
+      } else if (result?.data && Array.isArray(result.data)) {
+        invoices = result.data;
+      }
+      
+      console.log(`📊 تم جلب ${invoices.length} فاتورة من ملف المركز`);
+      
+    } catch(e) {
+      console.error('❌ فشل جلب البيانات:', e);
+      // ✅ Fallback: محاولة من الملف الرئيسي
+      console.log('🔄 محاولة من الملف الرئيسي...');
+      try {
+        const fallbackResult = await fetch(`${CONFIG.GAS_URL}?action=getAllInvoices&centerName=${encodeURIComponent(targetCenter)}&includeCollection=true`);
+        const fallbackData = await fallbackResult.json();
+        invoices = Array.isArray(fallbackData) ? fallbackData : [];
+        console.log(`📊 تم جلب ${invoices.length} فاتورة من الملف الرئيسي`);
+      } catch(e2) {
+        console.error('❌ فشل الجلب من الملف الرئيسي:', e2);
+        invoices = [];
+      }
     }
     
-    let url = `${GAS_URL}?action=getAllInvoices`;
-    if (targetCenter) {
-      url += `&centerName=${encodeURIComponent(targetCenter)}`;
-    }
-    url += `&includeCollection=true`;
-    
-    console.log('📡 جلب الفواتير من:', url);
-    const res = await fetch(url);
-    const data = await res.json();
-    let invoices = Array.isArray(data) ? data : [];
-    
-    console.log(`📊 تم جلب ${invoices.length} فاتورة`);
-    
+    // ✅ تصفية حسب صلاحيات المستخدم
     if (currentUser?.type === 'Admin') {
       console.log('👑 Admin: عرض جميع الفواتير');
     } else if (currentUser?.type === 'Owner') {
@@ -528,9 +563,11 @@ async function loadData() {
         invoices = invoices.filter(i => i.branchName === targetBranch);
         console.log('📊 Accountant: تصفية حسب الفرع', targetBranch);
         
+        // إخفاء فلتر الفرع
         const branchFilterWrap = document.getElementById('branchFilterWrap');
         if (branchFilterWrap) branchFilterWrap.style.display = 'none';
         
+        // عرض الفرع في الشريط العلوي
         const branchDisplay = document.getElementById('branchDisplay');
         if (branchDisplay) {
           branchDisplay.textContent = `📍 ${targetBranch}`;
@@ -549,58 +586,69 @@ async function loadData() {
     
     setDefaultDates();
     
-    const branchSet = new Set();
-    const salesSet = new Set();
-    const tripSet = new Set();
-    const hotelSet = new Set();
-    const natSet = new Set();
-    
-    allInvoices.forEach(inv => {
-      if (inv.branchName) branchSet.add(inv.branchName);
-      if (inv.salesName) salesSet.add(inv.salesName);
-      if (inv.trip) tripSet.add(inv.trip);
-      if (inv.hotel) hotelSet.add(inv.hotel);
-      if (inv.nationality) natSet.add(inv.nationality);
-    });
-    
-    const branchSelect = document.getElementById('fBranch');
-    if (branchSelect && branchSelect.disabled !== true) {
-      branchSelect.innerHTML = '<option value="">جميع الفروع</option>' + 
-        Array.from(branchSet).sort().map(v => `<option value="${v}">${v}</option>`).join('');
-      if (targetBranch && branchSelect.disabled !== true) {
-        branchSelect.value = targetBranch;
-      }
-    }
-    
-    const salesSelect = document.getElementById('fSales');
-    if (salesSelect) {
-      salesSelect.innerHTML = '<option value="">الكل</option>' + 
-        Array.from(salesSet).sort().map(v => `<option value="${v}">${v}</option>`).join('');
-    }
-    
-    const tripSelect = document.getElementById('fTrip');
-    if (tripSelect) {
-      tripSelect.innerHTML = '<option value="">جميع الرحلات</option>' + 
-        Array.from(tripSet).sort().map(v => `<option value="${v}">${v}</option>`).join('');
-    }
-    
-    const hotelSelect = document.getElementById('fHotel');
-    if (hotelSelect) {
-      hotelSelect.innerHTML = '<option value="">جميع الفنادق</option>' + 
-        Array.from(hotelSet).sort().map(v => `<option value="${v}">${v}</option>`).join('');
-    }
-    
-    const natSelect = document.getElementById('fNat');
-    if (natSelect) {
-      natSelect.innerHTML = '<option value="">الكل</option>' + 
-        Array.from(natSet).sort().map(v => `<option value="${v}">${v}</option>`).join('');
-    }
+    // ✅ تعبئة القوائم المنسدلة
+    populateFilterOptions();
     
     runReport();
     
   } catch(e) {
     console.error('❌ loadData error:', e);
     document.getElementById('reportContent').innerHTML = `<div class="no-data">خطأ: ${e.message}</div>`;
+  }
+}
+
+// ✅ دالة مساعدة لتعبئة القوائم المنسدلة
+function populateFilterOptions() {
+  const branchSet = new Set();
+  const salesSet = new Set();
+  const tripSet = new Set();
+  const hotelSet = new Set();
+  const natSet = new Set();
+  
+  allInvoices.forEach(inv => {
+    if (inv.branchName) branchSet.add(inv.branchName);
+    if (inv.salesName) salesSet.add(inv.salesName);
+    if (inv.trip) tripSet.add(inv.trip);
+    if (inv.hotel) hotelSet.add(inv.hotel);
+    if (inv.nationality) natSet.add(inv.nationality);
+  });
+  
+  // تعبئة قائمة الفروع
+  const branchSelect = document.getElementById('fBranch');
+  if (branchSelect && branchSelect.disabled !== true) {
+    branchSelect.innerHTML = '<option value="">جميع الفروع</option>' + 
+      Array.from(branchSet).sort().map(v => `<option value="${v}">${v}</option>`).join('');
+    if (currentUser?.branchName && branchSelect.disabled !== true) {
+      branchSelect.value = currentUser.branchName;
+    }
+  }
+  
+  // تعبئة قائمة المندوبين
+  const salesSelect = document.getElementById('fSales');
+  if (salesSelect) {
+    salesSelect.innerHTML = '<option value="">الكل</option>' + 
+      Array.from(salesSet).sort().map(v => `<option value="${v}">${v}</option>`).join('');
+  }
+  
+  // تعبئة قائمة الرحلات
+  const tripSelect = document.getElementById('fTrip');
+  if (tripSelect) {
+    tripSelect.innerHTML = '<option value="">جميع الرحلات</option>' + 
+      Array.from(tripSet).sort().map(v => `<option value="${v}">${v}</option>`).join('');
+  }
+  
+  // تعبئة قائمة الفنادق
+  const hotelSelect = document.getElementById('fHotel');
+  if (hotelSelect) {
+    hotelSelect.innerHTML = '<option value="">جميع الفنادق</option>' + 
+      Array.from(hotelSet).sort().map(v => `<option value="${v}">${v}</option>`).join('');
+  }
+  
+  // تعبئة قائمة الجنسيات
+  const natSelect = document.getElementById('fNat');
+  if (natSelect) {
+    natSelect.innerHTML = '<option value="">الكل</option>' + 
+      Array.from(natSet).sort().map(v => `<option value="${v}">${v}</option>`).join('');
   }
 }
   function setDefaultDates(){ if(allInvoices&&allInvoices.length>0){ let minDate=null,maxDate=null; allInvoices.forEach(inv=>{ let dt=parseDate(inv.activeDate); if(!dt) dt=parseDate(inv.issueDate); if(dt){ if(!minDate||dt<minDate) minDate=dt; if(!maxDate||dt>maxDate) maxDate=dt; } }); if(minDate&&maxDate){ document.getElementById('filterDateFrom').value=formatDateForInput(minDate); document.getElementById('filterDateTo').value=formatDateForInput(maxDate); return; } } const today=new Date(); document.getElementById('filterDateFrom').value=formatDateForInput(today); document.getElementById('filterDateTo').value=formatDateForInput(today); }
@@ -655,15 +703,64 @@ async function runReport(){
 }
 function switchTab(tab){ currentTab = tab; document.querySelectorAll('.analytics-tab').forEach(t=>t.classList.remove('active')); document.querySelector(`.analytics-tab[data-tab="${tab}"]`).classList.add('active'); runReport(); }
 function goBack() {
-  if (document.referrer && document.referrer !== '') {
-    window.location.href = document.referrer;
-  } else {
-    const dashboards = { 'Admin': 'Dashboard.html', 'Owner': 'OwnerDashboard.html', 'Sales': 'SalesDashboard.html', 'Accountant': 'AccountantDashboard.html' };
-    window.location.href = dashboards[currentUser?.type] || 'AccountantDashboard.html';
+  // ✅ استخدام Session.save لتحديث الجلسة
+  if (currentUser) {
+    Session.save(currentUser);
   }
+  
+  const dashboards = CONFIG.DASHBOARD_PAGES || { 
+    Admin: 'Dashboard.html', 
+    Owner: 'OwnerDashboard.html', 
+    Sales: 'SalesDashboard.html', 
+    Accountant: 'AccountantDashboard.html' 
+  };
+  window.location.href = dashboards[currentUser?.type] || 'AccountantDashboard.html';
 }
-document.addEventListener('DOMContentLoaded',async()=>{ let ud=sessionStorage.getItem('currentUser'); if(!ud){ const p=new URLSearchParams(location.search).get('user'); if(p){ud=decodeURIComponent(p);sessionStorage.setItem('currentUser',ud);} } if(!ud){location.href='index.html';return;} try{currentUser=JSON.parse(ud);}catch{location.href='index.html';return;} document.getElementById('userNameDisplay').textContent=currentUser.name||'User'; document.querySelectorAll('.analytics-tab').forEach(tab=>{tab.addEventListener('click',()=>switchTab(tab.dataset.tab));}); document.getElementById('globalToggleBtn').addEventListener('click', (e) => { e.stopPropagation(); toggleDisplayMode(); }); await loadData(); });
-window.runReport=runReport; window.setFullYear=setFullYear; window.resetFilters=resetFilters; window.goBack=goBack; window.toggleDisplayMode=toggleDisplayMode;
+document.addEventListener('DOMContentLoaded', async () => {
+  // ✅ تطبيق الثيم الموحد
+  if (typeof Theme !== 'undefined' && Theme.applyToPage) {
+    Theme.applyToPage();
+    Theme.setPageTitle('تقارير المبيعات');
+  }
+  
+  // ✅ استخدام Session.checkValidity() من session.js
+  if (!Session.checkValidity()) {
+    location.href = 'index.html';
+    return;
+  }
+  
+  // ✅ استخدام Session.getUser() من session.js
+  currentUser = Session.getUser();
+  if (!currentUser) {
+    location.href = 'index.html';
+    return;
+  }
+  
+  document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
+  
+  // ✅ إظهار الفرع إذا كان موجوداً
+  if (currentUser.branchName) {
+    const branchDisplay = document.getElementById('branchDisplay');
+    if (branchDisplay) {
+      branchDisplay.textContent = `📍 ${currentUser.branchName}`;
+      branchDisplay.style.display = 'inline-flex';
+    }
+  }
+  
+  // ✅ إضافة مستمعي الأحداث
+  document.querySelectorAll('.analytics-tab').forEach(tab => {
+    tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+  });
+  
+  document.getElementById('globalToggleBtn').addEventListener('click', (e) => { 
+    e.stopPropagation(); 
+    toggleDisplayMode(); 
+  });
+  
+  // ✅ تحميل البيانات
+  await loadData();
+});
+  window.runReport=runReport; window.setFullYear=setFullYear; window.resetFilters=resetFilters; window.goBack=goBack; window.toggleDisplayMode=toggleDisplayMode;
 </script>
 </body>
 </html>
