@@ -120,11 +120,50 @@
 </div>
 <script>
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-let currentUser=null, allInvoices=[], filteredInvoices=[], exchangeRatesMap=new Map();
-let activeChart=null, realMode=false, currentTab='currency';
-let cachedCurrencyData = { labels:[], values:[] };
-let cachedBookingData = { labels:[], revData:[], cntData:[], totalRevenue:0, coll:0, rest:0, total:0, confirmed:0, highestRevenue:0, bestMonthName:'', avgMonthly:0, avgBooking:0, topTrips:[], topSales:[], topBranches:[], topNats:[] };
-
+  // ============================================================
+// ✅ دالة الاتصال الموحدة (مثل الملفات الأخرى)
+// ============================================================
+async function gas(action, params = {}) {
+  try {
+    const url = new URL(CONFIG.GAS_URL);
+    url.searchParams.set('action', action);
+    
+    // إضافة centerId و centerName من المستخدم الحالي
+    if (currentUser) {
+      if (!params.centerId && currentUser.centerId) params.centerId = currentUser.centerId;
+      if (!params.centerName && currentUser.centerName) params.centerName = currentUser.centerName;
+    }
+    
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v ?? '')));
+    
+    const response = await fetch(url.toString(), { mode: 'cors' });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    
+    const result = await response.json();
+    console.log(`📡 gas("${action}") ->`, result);
+    return result;
+    
+  } catch(e) {
+    console.error(`❌ gas("${action}") error:`, e);
+    throw e;
+  }
+}
+// ✅ تعريف المتغيرات العامة
+let currentUser = null;
+let allInvoices = [];
+let filteredInvoices = [];
+let exchangeRatesMap = new Map();
+let monthlyAvgRates = {};  // ✅ إضافة هذا السطر
+let activeChart = null;
+let realMode = false;
+let currentTab = 'currency';
+let cachedCurrencyData = { labels: [], values: [] };
+let cachedBookingData = { 
+  labels: [], revData: [], cntData: [], totalRevenue: 0, coll: 0, 
+  rest: 0, total: 0, confirmed: 0, highestRevenue: 0, bestMonthName: '', 
+  avgMonthly: 0, avgBooking: 0, topTrips: [], topSales: [], 
+  topBranches: [], topNats: [] 
+};
 function convertToISO(dateStr){ if(!dateStr) return null; const match=dateStr.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/); if(!match) return null; const months={Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'}; const day=match[1].padStart(2,'0'); const month=months[match[2]]; const year=match[3]; return `${year}-${month}-${day}`; }
 function calculateMonthlyAverageRates(rates) {
   const monthlyData = {};
@@ -166,6 +205,13 @@ function getAverageRateForDate(dateStr) {
   if (!date) return null;
   const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const monthKey = `${date.getFullYear()}-${monthNames[date.getMonth()]}`;
+  
+  // ✅ التحقق من وجود monthlyAvgRates
+  if (!monthlyAvgRates || Object.keys(monthlyAvgRates).length === 0) {
+    console.warn('⚠️ monthlyAvgRates غير متاحة');
+    return null;
+  }
+  
   return monthlyAvgRates[monthKey] || null;
 }
 function parseDate(str){ if(!str) return null; const match=str.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/); if(match){ const day=parseInt(match[1]); const monthStr=match[2]; const year=parseInt(match[3]); const monthIndex=MONTHS.findIndex(m=>m.toLowerCase()===monthStr.toLowerCase()); if(monthIndex!==-1) return new Date(year,monthIndex,day); } const d=new Date(str); return isNaN(d)?null:d; }
@@ -178,7 +224,17 @@ async function loadAllExchangeRates(){
       centerName: currentUser?.centerName || ''
     });
     
-    const rates = Array.isArray(result) ? result : (result?.data || []);
+    // التعامل مع هيكل البيانات
+    let rates = [];
+    if (Array.isArray(result)) {
+      rates = result;
+    } else if (result?.success && Array.isArray(result.data)) {
+      rates = result.data;
+    } else if (result?.data && Array.isArray(result.data)) {
+      rates = result.data;
+    }
+    
+    console.log(`📊 تم جلب ${rates.length} سعر صرف`);
     
     if(rates.length > 0){ 
       exchangeRatesMap.clear();
@@ -206,7 +262,7 @@ async function loadAllExchangeRates(){
       
       // حساب متوسطات الشهر
       monthlyAvgRates = calculateMonthlyAverageRates(rates);
-      console.log(`✅ تم تحميل ${rates.length} سعر صرف`);
+      console.log('✅ monthlyAvgRates:', Object.keys(monthlyAvgRates).length, 'شهر');
       return true; 
     } 
   }catch(e){ 
@@ -510,6 +566,7 @@ function toggleDisplayMode() {
  
 async function loadData() {
   try {
+    // ✅ تحميل أسعار الصرف أولاً
     await loadAllExchangeRates();
     
     let targetCenter = currentUser?.centerName || '';
@@ -520,7 +577,6 @@ async function loadData() {
     // ✅ استخدام gas() من config.js
     let invoices = [];
     try {
-      // ✅ جلب البيانات من ملف المركز المنفصل
       const result = await gas('getAllInvoices', {
         centerName: targetCenter,
         includeCollection: true
@@ -538,7 +594,8 @@ async function loadData() {
       console.log(`📊 تم جلب ${invoices.length} فاتورة من ملف المركز`);
       
     } catch(e) {
-      console.error('❌ فشل جلب البيانات:', e);
+      console.error('❌ فشل جلب البيانات من ملف المركز:', e);
+      
       // ✅ Fallback: محاولة من الملف الرئيسي
       console.log('🔄 محاولة من الملف الرئيسي...');
       try {
@@ -723,8 +780,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     Theme.setPageTitle('تقارير المبيعات');
   }
   
+  // ✅ التحقق من وجود CONFIG
+  if (typeof CONFIG === 'undefined') {
+    console.error('❌ CONFIG غير موجود، تأكد من تحميل config.js');
+    location.href = 'index.html';
+    return;
+  }
+  
   // ✅ استخدام Session.checkValidity() من session.js
-  if (!Session.checkValidity()) {
+  if (typeof Session === 'undefined' || !Session.checkValidity()) {
     location.href = 'index.html';
     return;
   }
