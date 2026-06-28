@@ -1621,14 +1621,18 @@ function collectCountData() {
     difference: {},
   };
   
-  // ✅ التأكد من وجود systemTotals.finalBalance
+  // ✅ التأكد من وجود finalBalance
   const finalBalance = systemTotals.finalBalance || {};
+  
+  // ✅ العملات المطلوبة
+  const currencies = ['USD', 'EUR', 'GBP', 'LE'];
   
   for (var c = 0; c < CASH_CURS.length; c++) {
     var cur = CASH_CURS[c];
     var denData = {};
     var total = 0;
     
+    // جمع الفئات
     for (var d = 0; d < cur.denoms.length; d++) {
       var denomValue = cur.denoms[d];
       if (denomValue === null) continue;
@@ -1643,11 +1647,27 @@ function collectCountData() {
       total += qty * denomValue;
     }
     
-    // ✅ التأكد من أن كل العملات موجودة
+    // ✅ التأكد من وجود جميع العملات
     out.denominations[cur.key] = denData || {};
     out.totals[cur.key] = roundTwo(total) || 0;
     out.systemBalance[cur.key] = finalBalance[cur.key] || 0;
     out.difference[cur.key] = roundTwo(total - (finalBalance[cur.key] || 0)) || 0;
+  }
+  
+  // ✅ ✅ ✅ تأكد من أن systemBalance يحتوي على جميع العملات
+  for (const cur of currencies) {
+    if (out.systemBalance[cur] === undefined || out.systemBalance[cur] === null) {
+      out.systemBalance[cur] = 0;
+    }
+    if (out.totals[cur] === undefined || out.totals[cur] === null) {
+      out.totals[cur] = 0;
+    }
+    if (out.difference[cur] === undefined || out.difference[cur] === null) {
+      out.difference[cur] = 0;
+    }
+    if (out.denominations[cur] === undefined || out.denominations[cur] === null) {
+      out.denominations[cur] = {};
+    }
   }
   
   console.log('📊 collectCountData - denominations:', out.denominations);
@@ -1676,25 +1696,56 @@ async function saveCashCount() {
   const btn = document.getElementById('saveCountBtn');
   if (btn) btn.disabled = true;
   
-  const currentData = collectCountData();
-  
-  // ✅ التحقق من وجود بيانات
-  if (!currentData || !currentData.totals) {
-    showToast('⚠️ لا توجد بيانات للحفظ', 'error');
-    if (btn) btn.disabled = false;
-    return;
-  }
-  
-  if (!hasCountChanges(savedCountData, currentData)) {
-    showToast('⚠️ No changes detected. Nothing to save.', 'info');
-    if (btn) btn.disabled = false;
-    return;
-  }
-  
-  showToast('💾 Saving to Cash_Count sheet...', 'info', 10000);
-  
   try {
+    const currentData = collectCountData();
+    
+    // ✅ التحقق من وجود البيانات المطلوبة
+    if (!currentData) {
+      showToast('⚠️ لا توجد بيانات للحفظ', 'error');
+      if (btn) btn.disabled = false;
+      return;
+    }
+    
+    // ✅ ✅ ✅ تحقق من وجود systemBalance و difference
+    if (!currentData.systemBalance || typeof currentData.systemBalance !== 'object') {
+      console.error('❌ systemBalance غير موجود:', currentData.systemBalance);
+      showToast('⚠️ بيانات رصيد النظام غير مكتملة', 'error');
+      if (btn) btn.disabled = false;
+      return;
+    }
+    
+    if (!currentData.difference || typeof currentData.difference !== 'object') {
+      console.error('❌ difference غير موجود:', currentData.difference);
+      showToast('⚠️ بيانات الفروقات غير مكتملة', 'error');
+      if (btn) btn.disabled = false;
+      return;
+    }
+    
+    // ✅ التأكد من وجود جميع العملات في systemBalance و difference
+    const currencies = ['USD', 'EUR', 'GBP', 'LE'];
+    let allCurrenciesExist = true;
+    for (const cur of currencies) {
+      if (currentData.systemBalance[cur] === undefined || currentData.systemBalance[cur] === null) {
+        currentData.systemBalance[cur] = 0;
+      }
+      if (currentData.difference[cur] === undefined || currentData.difference[cur] === null) {
+        currentData.difference[cur] = 0;
+      }
+      if (currentData.totals[cur] === undefined || currentData.totals[cur] === null) {
+        currentData.totals[cur] = 0;
+      }
+    }
+    
+    if (!hasCountChanges(savedCountData, currentData)) {
+      showToast('⚠️ No changes detected. Nothing to save.', 'info');
+      if (btn) btn.disabled = false;
+      return;
+    }
+    
+    showToast('💾 Saving to Cash_Count sheet...', 'info', 10000);
+    
     const result = await callGAS('saveCashCount', currentData);
+    
     if (result?.success) {
       savedCountData = currentData;
       hasChanges = false;
@@ -1710,7 +1761,8 @@ async function saveCashCount() {
     if (btn) btn.disabled = false;
   }
 }
-async function loadSavedCount(){
+  
+  async function loadSavedCount(){
   try {
     var branchToUse = selectedBranch || currentUser?.branchName || '';
     if (!branchToUse) return;
