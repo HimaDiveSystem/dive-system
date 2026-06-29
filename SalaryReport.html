@@ -102,7 +102,7 @@ let currentUser = null;
 let tableData = [];
 
 // ──────────────────────────────────────────────
-// JSONP helper
+// JSONP helper - متوافق مع session.js
 // ──────────────────────────────────────────────
 function jsonp(action, params={}) {
   return new Promise((resolve, reject) => {
@@ -110,10 +110,11 @@ function jsonp(action, params={}) {
     params.action = action;
     params.callback = cb;
     
-    // ✅ إضافة الـ Session ID تلقائياً
-    const sessionId = getSessionId();
-    if (sessionId) {
-      params.sessionId = sessionId;
+    // ✅ إضافة centerId و centerName من Session
+    const user = Session.getUser();
+    if (user) {
+      if (user.centerId && !params.centerId) params.centerId = user.centerId;
+      if (user.centerName && !params.centerName) params.centerName = user.centerName;
     }
     
     const qs = Object.entries(params).map(([k,v]) => k+'='+encodeURIComponent(String(v??''))).join('&');
@@ -121,7 +122,7 @@ function jsonp(action, params={}) {
     const timeout = setTimeout(() => { delete window[cb]; script.remove(); reject(new Error('انتهى الوقت')); }, 30000);
     window[cb] = (data) => { clearTimeout(timeout); delete window[cb]; script.remove(); resolve(data); };
     script.onerror = () => { clearTimeout(timeout); delete window[cb]; script.remove(); reject(new Error('خطأ في الاتصال')); };
-    script.src = CONFIG.GAS_URL + '?' + qs;  // ✅ تستخدم CONFIG.GAS_URL من config.js
+    script.src = CONFIG.GAS_URL + '?' + qs;  // ✅ استخدام CONFIG.GAS_URL من config.js
     document.head.appendChild(script);
   });
 }
@@ -143,8 +144,15 @@ function formatValue(value, isCurrency = false) {
 // Init
 // ──────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  // ✅ استخدام session-manager للحصول على بيانات المستخدم
-  currentUser = getCurrentUser();
+  // ✅ استخدام Session.getUser() مثل CashRegister.html
+  currentUser = Session.getUser();
+  
+  // ✅ التحقق من صحة الجلسة
+  if (!currentUser) {
+    window.location.href = 'index.html';
+    return;
+  }
+  
   document.getElementById('userBadge').textContent = currentUser?.name || '—';
 
   const selYear = document.getElementById('selYear');
@@ -177,31 +185,28 @@ async function loadReport() {
   document.getElementById('infoBar').style.display = 'none';
 
   try {
-    // ✅ جلب اسم المركز من session
-    const centerName = getCenterName();
-    
+    // ✅ استخدام currentUser مباشرة (مثل CashRegister.html)
     const [salResult, invoicesResult, expResult, ratesResult] = await Promise.all([
       jsonp('getSalaryReportData', { 
         month: month, 
         year: year,
-        currentUser: JSON.stringify(currentUser),
-        centerName: centerName  // ✅ إضافة اسم المركز
+        currentUser: JSON.stringify(currentUser)
+        // centerName يتم إضافته تلقائياً في jsonp
       }),
       jsonp('getAllInvoices', { 
-        includeCollection: 'false',
-        centerName: centerName  // ✅ إضافة اسم المركز
+        includeCollection: 'false'
+        // centerName يتم إضافته تلقائياً في jsonp
       }),
       jsonp('getExpenseRevenueRows', { 
         sheet: 'Expenses', 
         dateFrom: '', 
-        dateTo: '',
-        centerName: centerName  // ✅ إضافة اسم المركز
+        dateTo: ''
+        // centerName يتم إضافته تلقائياً في jsonp
       }),
-      jsonp('getLatestExchangeRates', {
-        centerName: centerName  // ✅ إضافة اسم المركز
-      })
+      jsonp('getLatestExchangeRates', {})
+      // centerName يتم إضافته تلقائياً في jsonp
     ]);
-
+    
     if (!ratesResult || !ratesResult.bUSD || !ratesResult.bEUR || !ratesResult.bGBP) {
       console.log('⚠️ لا توجد أسعار صرف في شيت Exchange_Rates');
       document.getElementById('reportArea').innerHTML = 
@@ -522,13 +527,26 @@ function showToast(msg, type) {
 }
 
 function goBack() {
-  if (document.referrer && document.referrer !== '') {
-    window.location.href = document.referrer;
-  } else {
-    // ✅ استخدام CONFIG.DASHBOARDS من config.js
-    const userType = currentUser?.type || 'Sales';
-    window.location.href = CONFIG.DASHBOARDS[userType] || 'Dashboard.html';
+  // ✅ استخدام Session.save مثل CashRegister.html
+  if (currentUser) {
+    Session.save(currentUser);
   }
+  
+  // ✅ استخدام CONFIG.DASHBOARD_PAGES مع fallback آمن
+  const dashboards = CONFIG.DASHBOARD_PAGES || {
+    'Admin': 'Dashboard.html',
+    'Owner': 'OwnerDashboard.html', 
+    'Sales': 'SalesDashboard.html',
+    'Accountant': 'AccountantDashboard.html',
+    'OperationManager': 'OperationManager.html',
+    'OperationSupervisor': 'OperationSupervisor.html'
+  };
+  
+  const userType = currentUser?.type || 'Sales';
+  const targetPage = dashboards[userType] || 'Dashboard.html';
+  
+  // ✅ إضافة return للعودة
+  window.location.href = targetPage;
 }
 </script>
 </body>
