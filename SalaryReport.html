@@ -5,6 +5,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes">
   <title>تقرير المرتبات الشهري</title>
+  
+  <!-- ====== IMPORT CONFIG & SESSION MANAGER ====== -->
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <script src="config.js"></script>
+  <script src="session-manager.js"></script>
+  
   <style>
     *{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;}
     body{background:linear-gradient(135deg,#1e2b4f,#152238);min-height:100vh;padding:20px;}
@@ -93,7 +99,6 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbwC1BRoLAJthZqxWTYyMUSjPNNGfCI0BjTfhE7ZiVx67rUP__OKAj0vlwD1-RUCOMSE/exec';
 let currentUser = null;
 let tableData = [];
 
@@ -105,12 +110,19 @@ function jsonp(action, params={}) {
     const cb = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
     params.action = action;
     params.callback = cb;
+    
+    // ✅ إضافة الـ Session ID تلقائياً
+    const sessionId = getSessionId();
+    if (sessionId) {
+      params.sessionId = sessionId;
+    }
+    
     const qs = Object.entries(params).map(([k,v]) => k+'='+encodeURIComponent(String(v??''))).join('&');
     const script = document.createElement('script');
     const timeout = setTimeout(() => { delete window[cb]; script.remove(); reject(new Error('انتهى الوقت')); }, 30000);
     window[cb] = (data) => { clearTimeout(timeout); delete window[cb]; script.remove(); resolve(data); };
     script.onerror = () => { clearTimeout(timeout); delete window[cb]; script.remove(); reject(new Error('خطأ في الاتصال')); };
-    script.src = GAS_URL + '?' + qs;
+    script.src = CONFIG.GAS_URL + '?' + qs;  // ✅ تستخدم CONFIG.GAS_URL من config.js
     document.head.appendChild(script);
   });
 }
@@ -132,10 +144,8 @@ function formatValue(value, isCurrency = false) {
 // Init
 // ──────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  const ud = sessionStorage.getItem('currentUser');
-  if (ud) {
-    try { currentUser = JSON.parse(ud); } catch(e) {}
-  }
+  // ✅ استخدام session-manager للحصول على بيانات المستخدم
+  currentUser = getCurrentUser();
   document.getElementById('userBadge').textContent = currentUser?.name || '—';
 
   const selYear = document.getElementById('selYear');
@@ -168,15 +178,29 @@ async function loadReport() {
   document.getElementById('infoBar').style.display = 'none';
 
   try {
+    // ✅ جلب اسم المركز من session
+    const centerName = getCenterName();
+    
     const [salResult, invoicesResult, expResult, ratesResult] = await Promise.all([
       jsonp('getSalaryReportData', { 
         month: month, 
         year: year,
-        currentUser: JSON.stringify(currentUser) 
+        currentUser: JSON.stringify(currentUser),
+        centerName: centerName  // ✅ إضافة اسم المركز
       }),
-      jsonp('getAllInvoices', { includeCollection: 'false' }),
-      jsonp('getExpenseRevenueRows', { sheet: 'Expenses', dateFrom: '', dateTo: '' }),
-      jsonp('getLatestExchangeRates', {})
+      jsonp('getAllInvoices', { 
+        includeCollection: 'false',
+        centerName: centerName  // ✅ إضافة اسم المركز
+      }),
+      jsonp('getExpenseRevenueRows', { 
+        sheet: 'Expenses', 
+        dateFrom: '', 
+        dateTo: '',
+        centerName: centerName  // ✅ إضافة اسم المركز
+      }),
+      jsonp('getLatestExchangeRates', {
+        centerName: centerName  // ✅ إضافة اسم المركز
+      })
     ]);
 
     if (!ratesResult || !ratesResult.bUSD || !ratesResult.bEUR || !ratesResult.bGBP) {
@@ -499,18 +523,12 @@ function showToast(msg, type) {
 }
 
 function goBack() {
-  // التحقق من وجود مرجع (referrer) للعودة إلى الصفحة السابقة
   if (document.referrer && document.referrer !== '') {
     window.location.href = document.referrer;
   } else {
-    // إذا لم يوجد مرجع، نعود إلى اللوحة حسب نوع المستخدم
-    const dashboards = {
-      'Admin': 'Dashboard.html',
-      'Owner': 'OwnerDashboard.html',
-      'Sales': 'SalesDashboard.html',
-      'Accountant': 'AccountantDashboard.html'
-    };
-    window.location.href = dashboards[currentUser?.type] || 'Dashboard.html';
+    // ✅ استخدام CONFIG.DASHBOARDS من config.js
+    const userType = currentUser?.type || 'Sales';
+    window.location.href = CONFIG.DASHBOARDS[userType] || 'Dashboard.html';
   }
 }
 </script>
