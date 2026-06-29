@@ -958,13 +958,7 @@ async function prefetchAll() {
   }
 }
   
-function formatDateForCache(date) {
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const day = String(date.getDate()).padStart(2, '0');
-  const month = months[date.getMonth()];
-  const year = date.getFullYear();
-  return `${day}/${month}/${year}`;
-}
+
 
 function sumCur(rows,type){
   const r={USD:0,EUR:0,GBP:0,LE:0,VUSD:0,VEUR:0,VGBP:0,VLE:0};
@@ -1229,12 +1223,12 @@ async function loadData(force = false) {
     console.log('⏳ جاري التحميل بالفعل، تخطي...');
     return;
   }
-  
+
   if (!currentDateISO) {
     document.getElementById('mainContent').innerHTML = '<div class="load-state">Please select a date</div>';
     return;
   }
-  
+
   if (!selectedBranch && canViewAllBranches) {
     document.getElementById('mainContent').innerHTML = '<div class="load-state">الرجاء اختيار فرع أولاً</div>';
     return;
@@ -1242,123 +1236,130 @@ async function loadData(force = false) {
   if (!selectedBranch && !canViewAllBranches) {
     selectedBranch = currentUser.branchName;
   }
-  
+
   const targetBranch = selectedBranch;
-  
+
   // ✅ التحقق من أن التاريخ ليس أكبر من آخر تاريخ مسجل
   if (lastCashDateStr && isDateAfterLastCashDate(currentDateISO)) {
     showDateWarning(currentDateISO);
     return;
   }
-  
+
   isLoadingData = true;
-  
+
   showToast('⏳ جاري تحميل بيانات ' + currentDateISO + '...', 'info', 2000);
   document.getElementById('mainContent').innerHTML = '<div class="load-state"><div class="spinner"></div><br>جاري تحميل بيانات ' + currentDateISO + '...</div>';
-  
+
   try {
-    // ✅ جلب بيانات اليوم من Cash_Sum
-    const cashSumData = await callGAS('getCashSumData', {
-      dateISO: currentDateISO,
+    // ✅ ✅ ✅ الخطوة 1: جلب الفواتير حسب التاريخ
+    console.log(`📡 جلب الفواتير لـ ${currentDateISO} في فرع ${targetBranch}`);
+    
+    const invoicesResult = await callGAS('getInvoicesByDateRange', {
+      startDate: currentDateISO,
+      endDate: currentDateISO,
       branchName: targetBranch,
       centerName: currentUser?.centerName || ''
     });
-    
-    // ✅ جلب رصيد الأمس
-    await getPreviousDayBalance();
-    
-    if (cashSumData?.success && cashSumData.found) {
-      // ✅ بيانات اليوم
-      const invoices = cashSumData.invoices || {};
-      const revenues = cashSumData.revenues || {};
-      const expenses = cashSumData.expenses || {};
-      const dailyIncome = cashSumData.dailyIncome || {};
-      const accumulatedBalance = cashSumData.accumulatedBalance || {};
-      
-      // ✅ حساب Today Total = رصيد الأمس + Daily Income
-      const todayTotal = {};
-      Object.keys(previousDayBalance).forEach(key => {
-        todayTotal[key] = roundTwo((previousDayBalance[key] || 0) + (dailyIncome[key] || 0));
-      });
-      
-      // ✅ الرصيد النهائي = Today Total - Expenses
-      const finalBalance = {};
-      Object.keys(todayTotal).forEach(key => {
-        finalBalance[key] = roundTwo((todayTotal[key] || 0) - (expenses[key] || 0));
-      });
-      
-      // ✅ تحديث systemTotals
-      systemTotals = {
-        invoices: invoices,
-        revenues: revenues,
-        dailyIncome: dailyIncome,
-        expenses: expenses,
-        previousBalance: previousDayBalance,
-        todayTotal: todayTotal,
-        finalBalance: finalBalance,
-        accumulatedBalance: accumulatedBalance
-      };
-      
-      // ✅ تأكد من أن finalBalance يحتوي على LE
-      console.log('📊 finalBalance:', systemTotals.finalBalance);
-      console.log('✅ تم تحميل بيانات الخزينة لـ ' + currentDateISO);
-      
-      // ✅ تحديث آخر تاريخ تم تحميله
-      lastLoadedDate = currentDateISO;
-      
-      const invCount = cashSumData.invoiceCount || 0;
-      const revCount = cashSumData.revenueCount || 0;
-      const expCount = cashSumData.expenseCount || 0;
-      
-      renderPage(invCount, revCount, expCount);
-      loadSavedCount();
-      showToast(`✅ تم تحميل بيانات الخزينة`, 'success', 1500);
-      return;
-    }
-    
-    // ✅ إذا لم توجد بيانات في Cash_Sum، جرب الحساب المباشر
-    console.log('⚠️ لا توجد بيانات في Cash_Sum لـ ' + currentDateISO);
-    
-    // ✅ محاولة جلب البيانات مباشرة من الفواتير
-    const invoicesResult = await callGAS('getInvoicesByIssueDate', {
-      dateStr: currentDateISO,
-      branchName: targetBranch,
-      centerName: currentUser?.centerName || ''
-    });
-    
+
+    // ✅ ✅ ✅ الخطوة 2: تحويل بيانات الفواتير إلى مجاميع
+    let invoiceTotals = { USD: 0, EUR: 0, GBP: 0, LE: 0, VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0 };
+    let invoiceCount = 0;
+
     if (invoicesResult?.success && Array.isArray(invoicesResult.data)) {
-      const invoiceTotals = { USD: 0, EUR: 0, GBP: 0, LE: 0, VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0 };
+      console.log(`✅ تم جلب ${invoicesResult.data.length} فاتورة`);
+      
       invoicesResult.data.forEach(inv => {
-        invoiceTotals.USD += parseFloat(inv.cashUSD) || 0;
-        invoiceTotals.EUR += parseFloat(inv.cashEUR) || 0;
-        invoiceTotals.GBP += parseFloat(inv.cashGBP) || 0;
-        invoiceTotals.LE += parseFloat(inv.cashLE) || 0;
-        invoiceTotals.VUSD += parseFloat(inv.visaUSD) || 0;
-        invoiceTotals.VEUR += parseFloat(inv.visaEUR) || 0;
-        invoiceTotals.VGBP += parseFloat(inv.visaGBP) || 0;
-        invoiceTotals.VLE += parseFloat(inv.visaLE) || 0;
+        // ✅ استخدام أسماء الحقول الصحيحة من شيت الفواتير
+        const usd = parseFloat(inv['$']) || 0;
+        const eur = parseFloat(inv['€']) || 0;
+        const gbp = parseFloat(inv['£']) || 0;
+        const le = parseFloat(inv['LE']) || 0;
+        
+        const visaUSD = parseFloat(inv['Visa$']) || 0;
+        const visaEUR = parseFloat(inv['Visa€']) || 0;
+        const visaGBP = parseFloat(inv['Visa£']) || 0;
+        const visaLE = parseFloat(inv['VisaLE']) || 0;
+
+        invoiceTotals.USD += usd;
+        invoiceTotals.EUR += eur;
+        invoiceTotals.GBP += gbp;
+        invoiceTotals.LE += le;
+        invoiceTotals.VUSD += visaUSD;
+        invoiceTotals.VEUR += visaEUR;
+        invoiceTotals.VGBP += visaGBP;
+        invoiceTotals.VLE += visaLE;
+        
+        invoiceCount++;
       });
-      
-      systemTotals.invoices = invoiceTotals;
-      systemTotals.dailyIncome = invoiceTotals;
-      systemTotals.finalBalance = invoiceTotals;
-      
-      console.log('✅ تم حساب البيانات من الفواتير مباشرة');
-      renderPage(invoicesResult.data.length, 0, 0);
-      showToast(`✅ تم تحميل ${invoicesResult.data.length} فاتورة`, 'success', 1500);
-      return;
+
+      // تقريب المجاميع
+      Object.keys(invoiceTotals).forEach(k => invoiceTotals[k] = roundTwo(invoiceTotals[k]));
     }
-    
-    document.getElementById('mainContent').innerHTML = `
-      <div class="load-state">
-        <div style="font-size:48px; margin-bottom:16px;">📭</div>
-        <div style="font-size:16px; font-weight:600; margin-bottom:8px;">لا توجد بيانات للتاريخ ${currentDateISO}</div>
-        <div style="font-size:12px; color:#64748b; margin-bottom:16px;">الرجاء تحديث الخزينة أولاً</div>
-        <button class="btn btn-primary" onclick="updateCashSumAndReload()" style="padding:8px 20px;">🔄 تحديث الخزينة</button>
-      </div>
-    `;
-    showToast('⚠️ لا توجد بيانات، اضغط تحديث الخزينة', 'info', 3000);
-    
+
+    console.log('📊 مجاميع الفواتير:', invoiceTotals);
+
+    // ✅ ✅ ✅ الخطوة 3: جلب رصيد الأمس
+    await getPreviousDayBalance();
+
+    // ✅ ✅ ✅ الخطوة 4: حساب Today Total = رصيد الأمس + فواتير اليوم
+    const todayTotal = {};
+    Object.keys(previousDayBalance).forEach(key => {
+      const prev = previousDayBalance[key] || 0;
+      const inv = invoiceTotals[key] || 0;
+      todayTotal[key] = roundTwo(prev + inv);
+    });
+
+    // ✅ ✅ ✅ الخطوة 5: جلب المصروفات (إذا وجدت)
+    let expenseTotals = { USD: 0, EUR: 0, GBP: 0, LE: 0, VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0 };
+    let expenseCount = 0;
+
+    try {
+      const expensesResult = await callGAS('getExpensesByDate', {
+        dateStr: currentDateISO,
+        branchName: targetBranch,
+        centerName: currentUser?.centerName || ''
+      });
+
+      if (expensesResult?.success && Array.isArray(expensesResult.data)) {
+        expensesResult.data.forEach(exp => {
+          expenseTotals.USD += parseFloat(exp.USD) || 0;
+          expenseTotals.EUR += parseFloat(exp.EUR) || 0;
+          expenseTotals.GBP += parseFloat(exp.GBP) || 0;
+          expenseTotals.LE += parseFloat(exp.LE) || 0;
+          expenseCount++;
+        });
+        Object.keys(expenseTotals).forEach(k => expenseTotals[k] = roundTwo(expenseTotals[k]));
+      }
+    } catch(e) {
+      console.warn('⚠️ لا توجد بيانات مصروفات:', e);
+    }
+
+    // ✅ ✅ ✅ الخطوة 6: الرصيد النهائي = Today Total - Expenses
+    const finalBalance = {};
+    Object.keys(todayTotal).forEach(key => {
+      finalBalance[key] = roundTwo((todayTotal[key] || 0) - (expenseTotals[key] || 0));
+    });
+
+    // ✅ ✅ ✅ الخطوة 7: تحديث systemTotals
+    systemTotals = {
+      invoices: invoiceTotals,
+      revenues: {}, // يمكن إضافة الإيرادات الأخرى لاحقاً
+      dailyIncome: invoiceTotals,
+      expenses: expenseTotals,
+      previousBalance: previousDayBalance,
+      todayTotal: todayTotal,
+      finalBalance: finalBalance,
+      accumulatedBalance: finalBalance
+    };
+
+    console.log('📊 systemTotals:', systemTotals);
+    console.log('✅ تم تحميل البيانات بنجاح لـ ' + currentDateISO);
+
+    // ✅ ✅ ✅ الخطوة 8: عرض الصفحة
+    renderPage(invoiceCount, 0, expenseCount);
+    loadSavedCount();
+    showToast(`✅ تم تحميل ${invoiceCount} فاتورة`, 'success', 1500);
+
   } catch(e) {
     console.error('❌ loadData error:', e);
     document.getElementById('mainContent').innerHTML = `<div class="load-state">❌ خطأ في تحميل البيانات: ${e.message}</div>`;
@@ -1456,6 +1457,14 @@ function parseDateFromDDMMMYYYY(dateStr) {
   const m = dateStr.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
   if (!m) return null;
   return new Date(parseInt(m[3]), monthMap[m[2]], parseInt(m[1]));
+}
+
+function formatDateForCache(date) {
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = months[date.getMonth()];
+  const year = date.getFullYear();
+  return `${day}/${month}/${year}`;
 }
 function isDateInRange(dateStr, startStr, endStr) {
   if (!startStr || !endStr) return false;
