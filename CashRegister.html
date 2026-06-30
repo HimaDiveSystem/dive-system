@@ -1251,7 +1251,7 @@ async function loadData(force = false) {
   document.getElementById('mainContent').innerHTML = '<div class="load-state"><div class="spinner"></div><br>جاري تحميل بيانات ' + currentDateISO + '...</div>';
 
   try {
-    // ✅ ✅ ✅ التعديل هنا: استخدم getInvoicesByIssueDate بدلاً من getInvoicesByDateRange
+    // ✅ ✅ ✅ جلب الفواتير حسب تاريخ الإصدار
     console.log(`📡 جلب الفواتير لـ ${currentDateISO} في فرع ${targetBranch}`);
     
     const invoicesResult = await callGAS('getInvoicesByIssueDate', {
@@ -1268,16 +1268,19 @@ async function loadData(force = false) {
       console.log(`✅ تم جلب ${invoicesResult.data.length} فاتورة`);
       
       invoicesResult.data.forEach(inv => {
-        // ✅ استخدام أسماء الحقول الصحيحة من شيت الفواتير
-        const usd = parseFloat(inv['$']) || 0;
-        const eur = parseFloat(inv['€']) || 0;
-        const gbp = parseFloat(inv['£']) || 0;
-        const le = parseFloat(inv['LE']) || 0;
+        // ✅ ✅ ✅ استخدم cashUSD و cashEUR و cashGBP و cashLE (من buildInvoiceObjectFromRow)
+        // وليس $ و € و £ و LE
+        const usd = parseFloat(inv.cashUSD || 0);
+        const eur = parseFloat(inv.cashEUR || 0);
+        const gbp = parseFloat(inv.cashGBP || 0);
+        const le = parseFloat(inv.cashLE || 0);
         
-        const visaUSD = parseFloat(inv['Visa$']) || 0;
-        const visaEUR = parseFloat(inv['Visa€']) || 0;
-        const visaGBP = parseFloat(inv['Visa£']) || 0;
-        const visaLE = parseFloat(inv['VisaLE']) || 0;
+        const visaUSD = parseFloat(inv.visaUSD || 0);
+        const visaEUR = parseFloat(inv.visaEUR || 0);
+        const visaGBP = parseFloat(inv.visaGBP || 0);
+        const visaLE = parseFloat(inv.visaLE || 0);
+
+        console.log(`📊 فاتورة ${inv.voucherNo}: $${usd} | €${eur} | £${gbp} | LE${le} | Visa$${visaUSD}`);
 
         invoiceTotals.USD += usd;
         invoiceTotals.EUR += eur;
@@ -1293,16 +1296,14 @@ async function loadData(force = false) {
 
       // تقريب المجاميع
       Object.keys(invoiceTotals).forEach(k => invoiceTotals[k] = roundTwo(invoiceTotals[k]));
-    } else {
-      console.warn('⚠️ No invoices found or error:', invoicesResult?.message);
     }
 
     console.log('📊 مجاميع الفواتير:', invoiceTotals);
 
-    // ✅ ✅ ✅ الخطوة 3: جلب رصيد الأمس
+    // ✅ ✅ ✅ جلب رصيد الأمس
     await getPreviousDayBalance();
 
-    // ✅ ✅ ✅ الخطوة 4: حساب Today Total = رصيد الأمس + فواتير اليوم
+    // ✅ ✅ ✅ حساب Today Total = رصيد الأمس + فواتير اليوم
     const todayTotal = {};
     Object.keys(previousDayBalance).forEach(key => {
       const prev = previousDayBalance[key] || 0;
@@ -1310,7 +1311,7 @@ async function loadData(force = false) {
       todayTotal[key] = roundTwo(prev + inv);
     });
 
-    // ✅ ✅ ✅ الخطوة 5: جلب المصروفات (إذا وجدت)
+    // ✅ ✅ ✅ جلب المصروفات
     let expenseTotals = { USD: 0, EUR: 0, GBP: 0, LE: 0, VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0 };
     let expenseCount = 0;
 
@@ -1335,16 +1336,16 @@ async function loadData(force = false) {
       console.warn('⚠️ لا توجد بيانات مصروفات:', e);
     }
 
-    // ✅ ✅ ✅ الخطوة 6: الرصيد النهائي = Today Total - Expenses
+    // ✅ ✅ ✅ الرصيد النهائي = Today Total - Expenses
     const finalBalance = {};
     Object.keys(todayTotal).forEach(key => {
       finalBalance[key] = roundTwo((todayTotal[key] || 0) - (expenseTotals[key] || 0));
     });
 
-    // ✅ ✅ ✅ الخطوة 7: تحديث systemTotals
+    // ✅ ✅ ✅ تحديث systemTotals
     systemTotals = {
       invoices: invoiceTotals,
-      revenues: {}, // يمكن إضافة الإيرادات الأخرى لاحقاً
+      revenues: {},
       dailyIncome: invoiceTotals,
       expenses: expenseTotals,
       previousBalance: previousDayBalance,
@@ -1356,7 +1357,7 @@ async function loadData(force = false) {
     console.log('📊 systemTotals:', systemTotals);
     console.log('✅ تم تحميل البيانات بنجاح لـ ' + currentDateISO);
 
-    // ✅ ✅ ✅ الخطوة 8: عرض الصفحة
+    // ✅ ✅ ✅ عرض الصفحة
     renderPage(invoiceCount, 0, expenseCount);
     loadSavedCount();
     showToast(`✅ تم تحميل ${invoiceCount} فاتورة`, 'success', 1500);
