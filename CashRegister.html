@@ -913,7 +913,6 @@ async function prefetchAll() {
     currentDateISO = todayStr;
     document.getElementById('dateTxt').value = todayStr;
     
-    // ✅ ✅ ✅ لا تتحقق من وجود البيانات، قم بالتجميع دائماً
     console.log('📦 جاري تجميع البيانات للنطاق...');
     
     const dateObj = new Date();
@@ -926,7 +925,7 @@ async function prefetchAll() {
     const endStr = formatDateForCache(endDate);
     
     console.log(`📅 نطاق التواريخ: ${startStr} → ${endStr}`);
-    showToast('⏳ جاري تجميع البيانات في الخلفية...', 'info', 5000);
+    showToast('⏳ جاري تحميل البيانات...', 'info', 3000);
     
     const result = await callGAS('fetchCashDataInRange', {
       startDate: startStr,
@@ -944,15 +943,21 @@ async function prefetchAll() {
       isDataLoaded = true;
       console.log('✅ تم تجميع البيانات بنجاح');
       
-      // ✅ ✅ ✅ تحديث Cash_Sum فوراً
-      await updateCashSumAndReload();
+      // ✅ ✅ ✅ لا تستدعي updateCashSumAndReload() هنا!
+      // فقط حمّل بيانات اليوم مباشرة
+      await loadData();
+      
     } else {
       console.error('❌ فشل تجميع البيانات:', result?.message);
       showToast('❌ فشل تجميع البيانات: ' + (result?.message || ''), 'error');
+      // ✅ حتى في حالة الفشل، حاول تحميل البيانات مباشرة
+      await loadData();
     }
   } catch(e) {
     console.error('❌ prefetchAll error:', e);
     showToast('❌ خطأ في تجميع البيانات: ' + e.message, 'error');
+    // ✅ حتى في حالة الخطأ، حاول تحميل البيانات مباشرة
+    await loadData();
   } finally {
     isLoading = false;
   }
@@ -1260,7 +1265,7 @@ async function loadData(force = false) {
       centerName: currentUser?.centerName || ''
     });
 
-    // ✅ ✅ ✅ تحويل بيانات الفواتير إلى مجاميع - استخدام cashUSD و cashEUR و cashGBP و cashLE
+    // ✅ ✅ ✅ تحويل بيانات الفواتير إلى مجاميع
     let invoiceTotals = { USD: 0, EUR: 0, GBP: 0, LE: 0, VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0 };
     let invoiceCount = 0;
 
@@ -1268,7 +1273,6 @@ async function loadData(force = false) {
       console.log(`✅ تم جلب ${invoicesResult.data.length} فاتورة`);
       
       invoicesResult.data.forEach(inv => {
-        // ✅ ✅ ✅ استخدام cashUSD و cashEUR و cashGBP و cashLE (من buildInvoiceObjectFromRow)
         const usd = parseFloat(inv.cashUSD || 0);
         const eur = parseFloat(inv.cashEUR || 0);
         const gbp = parseFloat(inv.cashGBP || 0);
@@ -1293,7 +1297,6 @@ async function loadData(force = false) {
         invoiceCount++;
       });
 
-      // تقريب المجاميع
       Object.keys(invoiceTotals).forEach(k => invoiceTotals[k] = roundTwo(invoiceTotals[k]));
     } else {
       console.warn('⚠️ لا توجد فواتير أو خطأ:', invoicesResult?.message);
@@ -1304,21 +1307,45 @@ async function loadData(force = false) {
     // ✅ ✅ ✅ جلب رصيد الأمس
     await getPreviousDayBalance();
 
-    // ✅ ✅ ✅ حساب Today Total = رصيد الأمس + فواتير اليوم
-    const todayTotal = {};
-    Object.keys(previousDayBalance).forEach(key => {
-      const prev = previousDayBalance[key] || 0;
-      const inv = invoiceTotals[key] || 0;
-      todayTotal[key] = roundTwo(prev + inv);
-    });
+    // ✅ ✅ ✅ جلب الإيرادات الأخرى (Other Revenues)
+    let revenueTotals = { USD: 0, EUR: 0, GBP: 0, LE: 0, VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0 };
+    let revenueCount = 0;
 
-    console.log('📊 Today Total:', todayTotal);
+    try {
+      console.log(`📡 جلب الإيرادات لـ ${currentDateISO} في فرع ${targetBranch}`);
+      const revenuesResult = await callGAS('getRevenuesByDateOnly', {
+        dateStr: currentDateISO,
+        branchName: targetBranch,
+        centerName: currentUser?.centerName || ''
+      });
+
+      if (revenuesResult?.success && Array.isArray(revenuesResult.data)) {
+        console.log(`✅ تم جلب ${revenuesResult.data.length} إيراد`);
+        revenuesResult.data.forEach(rev => {
+          revenueTotals.USD += parseFloat(rev.USD) || 0;
+          revenueTotals.EUR += parseFloat(rev.EUR) || 0;
+          revenueTotals.GBP += parseFloat(rev.GBP) || 0;
+          revenueTotals.LE += parseFloat(rev.LE) || 0;
+          revenueTotals.VUSD += parseFloat(rev.VisaUSD) || 0;
+          revenueTotals.VEUR += parseFloat(rev.VisaEUR) || 0;
+          revenueTotals.VGBP += parseFloat(rev.VisaGBP) || 0;
+          revenueTotals.VLE += parseFloat(rev.VisaLE) || 0;
+          revenueCount++;
+        });
+        Object.keys(revenueTotals).forEach(k => revenueTotals[k] = roundTwo(revenueTotals[k]));
+      }
+    } catch(e) {
+      console.warn('⚠️ لا توجد بيانات إيرادات:', e);
+    }
+
+    console.log('📊 مجاميع الإيرادات:', revenueTotals);
 
     // ✅ ✅ ✅ جلب المصروفات
     let expenseTotals = { USD: 0, EUR: 0, GBP: 0, LE: 0, VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0 };
     let expenseCount = 0;
 
     try {
+      console.log(`📡 جلب المصروفات لـ ${currentDateISO} في فرع ${targetBranch}`);
       const expensesResult = await callGAS('getExpensesByDateOnly', {
         dateStr: currentDateISO,
         branchName: targetBranch,
@@ -1326,11 +1353,16 @@ async function loadData(force = false) {
       });
 
       if (expensesResult?.success && Array.isArray(expensesResult.data)) {
+        console.log(`✅ تم جلب ${expensesResult.data.length} مصروف`);
         expensesResult.data.forEach(exp => {
           expenseTotals.USD += parseFloat(exp.USD) || 0;
           expenseTotals.EUR += parseFloat(exp.EUR) || 0;
           expenseTotals.GBP += parseFloat(exp.GBP) || 0;
           expenseTotals.LE += parseFloat(exp.LE) || 0;
+          expenseTotals.VUSD += parseFloat(exp.VisaUSD) || 0;
+          expenseTotals.VEUR += parseFloat(exp.VisaEUR) || 0;
+          expenseTotals.VGBP += parseFloat(exp.VisaGBP) || 0;
+          expenseTotals.VLE += parseFloat(exp.VisaLE) || 0;
           expenseCount++;
         });
         Object.keys(expenseTotals).forEach(k => expenseTotals[k] = roundTwo(expenseTotals[k]));
@@ -1338,6 +1370,26 @@ async function loadData(force = false) {
     } catch(e) {
       console.warn('⚠️ لا توجد بيانات مصروفات:', e);
     }
+
+    console.log('📊 مجاميع المصروفات:', expenseTotals);
+
+    // ✅ ✅ ✅ حساب Daily Income = Invoices + Revenues
+    const dailyIncome = {};
+    Object.keys(invoiceTotals).forEach(key => {
+      dailyIncome[key] = roundTwo((invoiceTotals[key] || 0) + (revenueTotals[key] || 0));
+    });
+
+    console.log('📊 Daily Income:', dailyIncome);
+
+    // ✅ ✅ ✅ حساب Today Total = Previous Balance + Daily Income
+    const todayTotal = {};
+    Object.keys(previousDayBalance).forEach(key => {
+      const prev = previousDayBalance[key] || 0;
+      const inc = dailyIncome[key] || 0;
+      todayTotal[key] = roundTwo(prev + inc);
+    });
+
+    console.log('📊 Today Total:', todayTotal);
 
     // ✅ ✅ ✅ الرصيد النهائي = Today Total - Expenses
     const finalBalance = {};
@@ -1350,8 +1402,8 @@ async function loadData(force = false) {
     // ✅ ✅ ✅ تحديث systemTotals
     systemTotals = {
       invoices: invoiceTotals,
-      revenues: {},
-      dailyIncome: invoiceTotals,
+      revenues: revenueTotals,
+      dailyIncome: dailyIncome,
       expenses: expenseTotals,
       previousBalance: previousDayBalance,
       todayTotal: todayTotal,
@@ -1363,9 +1415,9 @@ async function loadData(force = false) {
     console.log('✅ تم تحميل البيانات بنجاح لـ ' + currentDateISO);
 
     // ✅ ✅ ✅ عرض الصفحة
-    renderPage(invoiceCount, 0, expenseCount);
+    renderPage(invoiceCount, revenueCount, expenseCount);
     loadSavedCount();
-    showToast(`✅ تم تحميل ${invoiceCount} فاتورة`, 'success', 1500);
+    showToast(`✅ تم تحميل ${invoiceCount} فاتورة, ${revenueCount} إيراد, ${expenseCount} مصروف`, 'success', 2500);
 
   } catch(e) {
     console.error('❌ loadData error:', e);
