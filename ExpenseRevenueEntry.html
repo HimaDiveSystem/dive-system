@@ -502,7 +502,7 @@ document.addEventListener('click', function(e){ if(!e.target.closest('.cbw')){ [
 function loadList(iso){
   const sheet = currentType==='expense' ? 'Expenses' : 'Other_Revenues';
   
-  // ✅ تحديد التاريخ المستهدف من المعلمة أو استخدام اليوم
+  // ✅ تحديد التاريخ المستهدف
   let targetDate;
   if (iso) {
     const parts = iso.split('-');
@@ -514,12 +514,21 @@ function loadList(iso){
     targetDate = new Date();
   }
   
-  // ✅ جلب أول وآخر يوم في الشهر المستهدف (وليس الشهر الحالي)
+  // ✅ جلب أول وآخر يوم في الشهر المستهدف
   const firstDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
   const lastDay = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0);
   
-  const fromDate = isoToDD(firstDay.toISOString().split('T')[0]);
-  const toDate = isoToDD(lastDay.toISOString().split('T')[0]);
+  let fromDate = isoToDD(firstDay.toISOString().split('T')[0]);
+  let toDate = isoToDD(lastDay.toISOString().split('T')[0]);
+  
+  // ✅ ترتيب التواريخ (الأصغر أولاً)
+  const date1 = new Date(ddToISO(fromDate));
+  const date2 = new Date(ddToISO(toDate));
+  if (date1 > date2) {
+    const temp = fromDate;
+    fromDate = toDate;
+    toDate = temp;
+  }
   
   console.log(`📅 جلب بيانات ${sheet} من ${fromDate} إلى ${toDate}`);
   
@@ -534,7 +543,7 @@ function loadList(iso){
       renderTable();
       renderTotals();
       
-      // ✅ فقط إذا كانت حقول الفلتر فارغة، ضع التاريخ الحالي
+      // ✅ فقط إذا كانت حقول الفلتر فارغة
       const fromInput = document.getElementById('fFromDate');
       const toInput = document.getElementById('fToDate');
       
@@ -558,28 +567,40 @@ function applyDateFilter() {
   const searchText = document.getElementById('fSearch').value;
   const sheet = currentType === 'expense' ? 'Expenses' : 'Other_Revenues';
   
-  // ✅ إذا لم يدخل المستخدم أي تاريخ، استخدم اليوم
+  // ✅ تحويل التواريخ من ISO إلى DD/MMM/YYYY
   let fromDD = fromDate ? isoToDD(fromDate) : '';
   let toDD = toDate ? isoToDD(toDate) : '';
   
-  // ✅ فقط إذا كان كلا الحقلين فارغين، استخدم اليوم
+  // ✅ إذا كان كلا الحقلين فارغين، استخدم اليوم
   if (!fromDD && !toDD) {
     const today = todayISO();
     fromDD = isoToDD(today);
     toDD = isoToDD(today);
   }
-  // ✅ إذا كان هناك تاريخ واحد فقط، استخدمه كنطاق (من = إلى)
+  // ✅ إذا كان هناك تاريخ واحد فقط، استخدمه كنطاق
   else if (!fromDD && toDD) {
     fromDD = toDD;
   } else if (fromDD && !toDD) {
     toDD = fromDD;
   }
-  // ✅ إذا كان هناك تاريخان، استخدمهما كما هما (لا تعدل)
+  // ✅ إذا كان هناك تاريخان، قم بترتيبهما (الأصغر أولاً)
+  else {
+    // ترتيب التواريخ
+    const date1 = new Date(ddToISO(fromDD));
+    const date2 = new Date(ddToISO(toDD));
+    if (date1 > date2) {
+      // تبديل إذا كان الترتيب عكسياً
+      const temp = fromDD;
+      fromDD = toDD;
+      toDD = temp;
+    }
+  }
   
   console.log(`🔍 البحث في ${sheet} من ${fromDD} إلى ${toDD}`);
   
   document.getElementById('tableWrap').innerHTML = '<div class="loader"><div class="spinner"></div>جاري البحث...</div>';
   
+  // ✅ جلب البيانات من الخادم
   gasGet({action: 'getExpenseRevenueRows', sheet, dateFrom: fromDD, dateTo: toDD})
     .then(data => {
       if (Array.isArray(data)) {
@@ -600,10 +621,11 @@ function applyDateFilter() {
         showAlert('فشل جلب البيانات', '❌');
       }
     }).catch(err => {
+      console.error('❌ applyDateFilter error:', err);
       showAlert('خطأ: ' + err.message, '❌');
     });
 }
-function showAlert(msg, icon='ℹ️'){ 
+  function showAlert(msg, icon='ℹ️'){ 
   if (typeof showAlertDialog === 'function') {
     showAlertDialog(msg, icon);
   } else {
