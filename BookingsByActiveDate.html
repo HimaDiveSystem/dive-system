@@ -328,6 +328,46 @@
     @keyframes fadeInUp{from{opacity:0;transform:translateX(-50%) translateY(20px);}to{opacity:1;transform:translateX(-50%) translateY(0);}}
     @keyframes fadeOutDown{from{opacity:1;transform:translateX(-50%) translateY(0);}to{opacity:0;transform:translateX(-50%) translateY(20px);}}
     @media(max-width:640px){.filter-row{flex-direction:column;}.fbtns{width:100%;}}
+     /* ====== تحسين مربع البحث ====== */
+.search-fc {
+  min-width: 200px;
+  padding: 8px 14px !important;
+  border-radius: 20px !important;
+  background: #f8fafc url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E") no-repeat 12px center;
+  background-size: 16px;
+  padding-left: 36px !important;
+  transition: all 0.3s ease;
+  font-size: 13px;
+}
+
+.search-fc:focus {
+  background-color: white;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+  outline: none;
+  width: 260px;
+}
+
+.search-fc::placeholder {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+/* عداد النتائج */
+.search-counter {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--text-lt);
+  background: #f1f5f9;
+  padding: 2px 10px;
+  border-radius: 30px;
+  margin-right: 8px;
+  font-weight: 600;
+}
+
+.search-counter strong {
+  color: var(--navy);
+}
   </style>
 </head>
 <body>
@@ -375,9 +415,13 @@
       <div class="err-msg" id="errTo"></div>
     </div>
     <div class="fg">
-      <label>Search</label>
-      <input type="text" class="fc search-fc" id="fSearch" placeholder="Voucher, Guest, Trip..." oninput="debounce()">
-    </div>
+     <div class="fg" style="display:flex; align-items:center; gap:6px;">
+  <label>Search</label>
+  <div style="display:flex; align-items:center; gap:6px; width:100%;">
+    <input type="text" class="fc search-fc" id="fSearch" placeholder="🔍 بحث: فاتورة، عميل، رحلة، هاتف، غرفة..." oninput="applyInstantSearch()" style="flex:1;">
+    <span class="search-counter" id="searchCounter">📊 <strong id="resultCount">0</strong></span>
+  </div>
+</div>
     <div class="fg">
       <label>Status</label>
       <select class="fc" id="fState" onchange="apply()" style="min-width:110px">
@@ -1270,9 +1314,14 @@ function setSort(col) {
   renderTable();
 }
 
-let ftimer2=null;
-function debounce(){clearTimeout(ftimer2);ftimer2=setTimeout(apply,300);}
-
+// ✅ البحث الفوري - بدون تأخير
+let searchTimer = null;
+function applyInstantSearch() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    apply();
+  }, 150);
+}
 function apply(){
   if(!valDates())return;
   const fISO=document.getElementById('fFromNat').value,tISO=document.getElementById('fToNat').value;
@@ -1286,9 +1335,39 @@ function apply(){
     if(fTs!==null&&(ts===null||ts<fTs))return false;
     if(tTs!==null&&(ts===null||ts>tTs))return false;
     if(st){const invState=(inv.State||inv.state||'').trim().toLowerCase();if(invState!==st)return false;}
-    if(q){const s=[inv.VoucherNo,inv.GuestName,inv.Trip,inv.SalesName,inv.ContactNo,inv.Hotel].map(x=>x||'').join(' ').toLowerCase();if(!s.includes(q))return false;}
+    if(q){
+      // ✅ بحث شامل في جميع الحقول المهمة
+      const searchFields = [
+        inv.VoucherNo, inv.voucherNo,
+        inv.GuestName, inv.guestName,
+        inv.Trip, inv.trip,
+        inv.SalesName, inv.salesName,
+        inv.ContactNo, inv.contactNo,
+        inv.Hotel, inv.hotel,
+        inv.RoomNo, inv.roomNo,
+        inv.Nationality, inv.nationality,
+        inv.Supplier, inv.supplier,
+        inv.Customer, inv.customer,
+        inv.IssueDate, inv.issueDate,
+        inv.ActiveDate, inv.activeDate,
+        inv.InvoiceCurrency, inv.invoiceCurrency,
+        inv.Notes, inv.notes,
+        inv.ActivitiesText, inv.activitiesText,
+        // ✅ إضافة الحقول الرقمية للبحث
+        inv.Rest, inv.rest,
+        inv.cashUSD, inv.cashEUR, inv.cashGBP, inv.cashLE,
+        inv.visaUSD, inv.visaEUR, inv.visaGBP, inv.visaLE,
+        inv.ActualPrice, inv.actualPrice,
+        inv.PaymentPrice, inv.paymentPrice,
+        inv.Discount, inv.discount
+      ];
+      
+      const searchStr = searchFields.map(x => x !== undefined && x !== null ? String(x) : '').join(' ').toLowerCase();
+      if(!searchStr.includes(q)) return false;
+    }
     return true;
   });
+  
   if(selectedCustomerFilter){
     const{type,name}=selectedCustomerFilter;
     filtInv=filtInv.filter(inv=>{if(type==='Customer')return(inv.Customer||inv.customer)===name;else return(inv.Supplier||inv.supplier)===name;});
@@ -1303,9 +1382,16 @@ function apply(){
   }
   pg=1;
   if(PS===-1)PS=filtInv.length||9999;
-  doSort();renderAll();
+  
+  // ✅ تحديث عداد النتائج
+  const resultCount = document.getElementById('resultCount');
+  if (resultCount) {
+    resultCount.textContent = filtInv.length;
+  }
+  
+  doSort();
+  renderAll();
 }
-
 function reset(){
   document.getElementById('fState').value='';
   ['fFromTxt','fToTxt','fSearch'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
@@ -1316,7 +1402,15 @@ function reset(){
   if(selectedCategoryFilter){filtInv=filtInv.filter(inv=>{const custName=(inv.Customer||inv.customer||'').trim();const suppName=(inv.Supplier||inv.supplier||'').trim();const foundCust=allCustomers.find(c=>(c.customerType==='Customer'&&c.customerName===custName)||(c.customerType==='Supplier'&&c.customerName===suppName));return foundCust&&foundCust.category===selectedCategoryFilter;});}
   pg=1;
   if(PS===-1)PS=filtInv.length||9999;
-  doSort();renderAll();
+  
+  // ✅ تحديث عداد النتائج
+  const resultCount = document.getElementById('resultCount');
+  if (resultCount) {
+    resultCount.textContent = filtInv.length;
+  }
+  
+  doSort();
+  renderAll();
 }
 
 function renderAll(){renderTable();buildSummary(filtInv);}
