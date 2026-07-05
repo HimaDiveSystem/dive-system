@@ -10,7 +10,7 @@
 <meta name="description" content="نظام إدارة مراكز الغوص - مدير الحركة">
 <meta name="author" content="Dive System">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes">
-  <title>مدير الحركة - إدارة المدربين والمراكب والسيارات</title>
+  <title>🌊 إدارة المدربين والمراكب والسيارات</title>
   <script src="ui.js"></script>
 <script src="config.js"></script>
 <script src="session.js"></script>
@@ -368,7 +368,10 @@
 </div>
 
 <div class="toast" id="toast"></div>
-
+<!-- ====== FOOTER ====== -->
+<div style="text-align:center;padding:10px 0 2px 0;color:#94a3b8;font-size:10px;border-top:1px solid #e2e8f0;margin-top:8px;">
+  <span>© 2025 <strong style="color:#1e2b4f;">🌊 Dive System</strong> — جميع الحقوق محفوظة</span>
+</div>
 <!-- مودال تأكيد الحذف -->
 <div id="confirmDeleteModal" class="modal">
   <div class="modal-content" style="max-width:400px; text-align:center;">
@@ -415,27 +418,63 @@ let pendingBoatImages = { licensePhoto: null, insurancePhoto: null };
   throw new Error('جلسة غير صالحة');
 }
 // ============================================================
-// JSONP
+// JSONP - متوافق مع Session
 // ============================================================
 function jsonpRequest(action, params = {}) {
   return new Promise((resolve, reject) => {
+    // ✅ استخدام Session.getUser() للحصول على بيانات المستخدم
+    const user = typeof Session !== 'undefined' ? Session.getUser() : null;
+    if (user && user.centerName && !params.centerName) {
+      params.centerName = user.centerName;
+    }
+    
     const cbName = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 99999);
-    if (currentUser && currentUser.centerId) params.centerId = currentUser.centerId;
-    if (currentUser && currentUser.centerName) params.centerName = currentUser.centerName;
+    if (user && user.centerId) params.centerId = user.centerId;
+    if (user && user.centerName) params.centerName = user.centerName;
     params.action = action;
     params.callback = cbName;
+    params._t = Date.now();
 
-    const qs = Object.entries(params).map(([k, v]) => k + '=' + encodeURIComponent(String(v ?? ''))).join('&');
+    const qs = Object.entries(params)
+      .filter(([k, v]) => v !== undefined && v !== null && v !== '')
+      .map(([k, v]) => {
+        if (typeof v === 'object') {
+          return k + '=' + encodeURIComponent(JSON.stringify(v));
+        }
+        return k + '=' + encodeURIComponent(String(v));
+      })
+      .join('&');
+      
     const script = document.createElement('script');
-    const timeout = setTimeout(() => { cleanup(); reject(new Error('timeout')); }, 60000);
-    const cleanup = () => { clearTimeout(timeout); delete window[cbName]; script.remove(); };
-    window[cbName] = data => { cleanup(); resolve(data); };
-    script.onerror = () => { cleanup(); reject(new Error('network error')); };
-    script.src = CONFIG.GAS_URL + '?' + qs;  // ✅ استخدام CONFIG.GAS_URL
+    const timeout = setTimeout(() => { 
+      cleanup(); 
+      reject(new Error('timeout')); 
+    }, 60000);
+    
+    const cleanup = () => { 
+      clearTimeout(timeout); 
+      delete window[cbName]; 
+      if (script.parentNode) script.remove(); 
+    };
+    
+    window[cbName] = data => { 
+      cleanup(); 
+      resolve(data); 
+    };
+    
+    script.onerror = function() {
+      cleanup();
+      reject(new Error('Network error for action: ' + action));
+    };
+    
+    script.src = CONFIG.GAS_URL + '?' + qs;
     document.head.appendChild(script);
   });
 }
-
+// ✅ مرادف لـ jsonpRequest للتوافق مع ملفات أخرى
+function gas(action, params = {}) {
+  return jsonpRequest(action, params);
+}
 // ============================================================
 // INIT
 // ============================================================
@@ -489,7 +528,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadInstructors();
     await loadVehicles();
     await loadBoats();
-    
+    setupAutoRefresh();
     if (!canEdit) {
       hideEditAndAddButtons();
     }
@@ -498,6 +537,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.error('Init error:', e);
   }
 });
+  // ✅ الحفاظ على الجلسة نشطة
+function setupAutoRefresh() {
+  // تجديد الجلسة كل 5 دقائق
+  setInterval(() => {
+    if (typeof Session !== 'undefined' && Session.getUser()) {
+      Session.save(Session.getUser());
+    }
+  }, 300000); // 5 دقائق
+}
+
+// استدعاؤها في DOMContentLoaded
+
 function hideEditAndAddButtons() {
   const style = document.createElement('style');
   style.textContent = `
@@ -565,25 +616,29 @@ function showCustomConfirm(title, message, onConfirm) {
 }
 
 function goToDashboard() {
-  showCustomConfirm('back', 'هل تريد العودة إلى الصفحة السابقة؟', () => {
-    const userType = currentUser?.type || 'OperationsManager';
-    const dashboardPage = CONFIG.DASHBOARD_PAGES?.[userType] || 'Dashboard.html';
-    const userParam = encodeURIComponent(JSON.stringify(currentUser));
-    location.href = `${dashboardPage}?centerName=${currentUser?.centerName || ''}&user=${userParam}`;
-  });
+  // ✅ التحقق من وجود Session
+  if (typeof Session !== 'undefined' && currentUser) {
+    Session.save(currentUser);
+  }
+  
+  const userType = currentUser?.type || 'OperationsManager';
+  const dashboardPage = CONFIG.DASHBOARD_PAGES?.[userType] || 'Dashboard.html';
+  
+  // ✅ حفظ حالة الجلسة في sessionStorage للرجوع إليها
+  sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
+  sessionStorage.setItem('sourcePage', 'OperationManager');
+  
+  window.location.href = dashboardPage;
 }
 
 function goBack() {
-  showCustomConfirm('exit', '⚠️ تحذير: سيتم تسجيل خروجك من النظام.\nهل أنت متأكد؟', () => {
-    // ✅ استخدام Session.logout() من session.js
-    if (typeof Session !== 'undefined' && Session.logout) {
-      Session.logout();
-    } else {
-      localStorage.removeItem('currentUser');
-      sessionStorage.clear();
-      window.location.href = 'index.html';
-    }
-  });
+  if (typeof Session !== 'undefined' && Session.logout) {
+    Session.logout();
+  } else {
+    localStorage.removeItem('currentUser');
+    sessionStorage.clear();
+    window.location.href = 'index.html';
+  }
 }
 // ============================================================
 // دوال مساعدة للصور
@@ -616,7 +671,8 @@ async function compressImageToBase64(file, maxWidth = 300, maxHeight = 300, qual
 async function uploadSingleImage(b64, label, imageType) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    const url = GAS;
+    // ✅ استخدام CONFIG.GAS_URL بدلاً من GAS
+    const url = CONFIG.GAS_URL;
     xhr.open('POST', url, true);
     xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
     xhr.onload = function() {
@@ -640,13 +696,28 @@ async function uploadSingleImage(b64, label, imageType) {
     };
     xhr.timeout = 60000;
     const params = new URLSearchParams();
-    params.append('action', imageType === 'vehicle' ? 'uploadVehicleImage' : 'uploadBoatImage');
+    
+    // ✅ تحديد الإجراء المناسب حسب نوع الصورة
+    if (imageType === 'vehicle') {
+      params.append('action', 'uploadVehicleImage');
+    } else if (imageType === 'boat') {
+      params.append('action', 'uploadBoatImage');
+    } else if (imageType === 'instructor') {
+      params.append('action', 'uploadInstructorImage');
+    } else {
+      params.append('action', 'uploadEmployeeImage');
+    }
+    
     params.append('b64', b64);
     params.append('mimeType', 'image/jpeg');
     params.append('label', label);
     params.append('imageType', imageType);
-    if (currentUser?.centerId) params.append('centerId', currentUser.centerId);
-    if (currentUser?.centerName) params.append('centerName', currentUser.centerName);
+    
+    // ✅ إضافة بيانات المركز من Session
+    const user = typeof Session !== 'undefined' ? Session.getUser() : currentUser;
+    if (user?.centerId) params.append('centerId', user.centerId);
+    if (user?.centerName) params.append('centerName', user.centerName);
+    
     xhr.send(params.toString());
   });
 }
@@ -685,6 +756,39 @@ function formatDateToInput(dateStr) {
   } catch(e) {
     return '';
   }
+}
+  function escHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str).replace(/[&<>"']/g, m => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[m]);
+}
+  function showToast(msg, type) {
+  const toast = document.getElementById('toast');
+  if (!toast) {
+    // إنشاء toast إذا لم يكن موجوداً
+    const newToast = document.createElement('div');
+    newToast.id = 'toast';
+    newToast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1e2b4f;color:white;padding:12px 24px;border-radius:40px;font-weight:600;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.2);font-family:"Cairo",sans-serif;display:none;';
+    document.body.appendChild(newToast);
+    return showToast(msg, type);
+  }
+  
+  const bg = type === 'success' ? '#16a34a' : type === 'error' ? '#dc2626' : '#3b82f6';
+  toast.style.background = bg;
+  toast.textContent = msg;
+  toast.style.display = 'block';
+  toast.style.animation = 'fadeInUp 0.3s ease';
+  
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => {
+    toast.style.animation = 'fadeOutDown 0.3s ease';
+    setTimeout(() => { toast.style.display = 'none'; }, 300);
+  }, 3000);
 }
 
 function getDriveDirectUrl(url) {
@@ -803,12 +907,6 @@ function showInfo(htmlContent) {
   };
 }
 
-function showToast(msg, type) {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.className = 'toast toast-' + (type || 'success') + ' show';
-  setTimeout(() => t.className = 'toast', 3500);
-}
 
 // ============================================================
 // INSTRUCTORS
@@ -860,23 +958,23 @@ function displayInstructorsTable() {
     html += `
       <tr>
         <td>${idx + 1}</td>
-        <td style="font-weight:bold;">${ins.name || '—'}</td>
-        <td>${ins.role || '—'}</td>
+        <td style="font-weight:bold;">${escHtml(ins.name || '—')}</td>
+        <td>${escHtml(ins.role || '—')}</td>
         <td>${ins.employmentType === 'freelance' ? 'فريلانسر' : (ins.employmentType === 'fulltime' ? 'دوام كامل' : 'دوام جزئي')}</td>
-        <td>${ins.licenseNumber || '—'}</td>
-        <td class="${licenseColor}">${licenseValid}<br><small>${formatDateDMY(ins.licenseExpiry)}</small></td>
-        <td>${ins.cdwsCard || '—'}</td>
-        <td class="${cdwsColor}">${cdwsValid}<br><small>${formatDateDMY(ins.cdwsExpiry)}</small></td>
+        <td>${escHtml(ins.licenseNumber || '—')}</td>
+        <td class="${licenseColor}">${licenseValid}<br><small>${escHtml(formatDateDMY(ins.licenseExpiry))}</small></td>
+        <td>${escHtml(ins.cdwsCard || '—')}</td>
+        <td class="${cdwsColor}">${cdwsValid}<br><small>${escHtml(formatDateDMY(ins.cdwsExpiry))}</small></td>
         <td>${(ins.dailyGuarantee || 0).toLocaleString()} LE</td>
-        <td>${ins.language || '—'}</td>
+        <td>${escHtml(ins.language || '—')}</td>
         <td>${ins.isActive ? '<span class="badge-green" style="background:#27ae60;color:white;padding:4px 8px;border-radius:12px;">نشط</span>' : '<span style="background:#f39c12;color:#333;padding:4px 8px;border-radius:12px;">غير نشط</span>'}</td>
         <td>
-          <button class="btn-info btn-sm" onclick="viewInstructorRecord('${ins.id}')">📋 سجل</button>
+          <button class="btn-info btn-sm" onclick="viewInstructorRecord('${escHtml(ins.id)}')">📋 سجل</button>
     `;
     
     if (canEdit) {
-      html += '<button class="btn-warning btn-sm" onclick="openEditInstructorModal(\'' + ins.id + '\')">✏️ تعديل</button> ';
-      html += '<button class="btn-danger btn-sm" onclick="deleteInstructor(\'' + ins.id + '\')">🗑️ حذف</button>';
+      html += '<button class="btn-warning btn-sm" onclick="openEditInstructorModal(\'' + escHtml(ins.id) + '\')">✏️ تعديل</button> ';
+      html += '<button class="btn-danger btn-sm" onclick="deleteInstructor(\'' + escHtml(ins.id) + '\')">🗑️ حذف</button>';
     }
     
     html += `
@@ -1027,15 +1125,14 @@ function renderStats() {
   const activeBoats = boats.filter(b => b.isActive).length;
   
   document.getElementById('statsRow').innerHTML = `
-    <div class="stat-card"><div class="stat-num">${instructors.length}</div><div class="stat-lbl">المدربين</div></div>
-    <div class="stat-card" style="border-color:#27ae60"><div class="stat-num" style="color:#27ae60">${activeInstructors}</div><div class="stat-lbl">مدربين نشطين</div></div>
-    <div class="stat-card"><div class="stat-num">${vehicles.length}</div><div class="stat-lbl">السيارات</div></div>
-    <div class="stat-card" style="border-color:#27ae60"><div class="stat-num" style="color:#27ae60">${activeVehicles}</div><div class="stat-lbl">سيارات نشطة</div></div>
-    <div class="stat-card"><div class="stat-num">${boats.length}</div><div class="stat-lbl">المراكب</div></div>
-    <div class="stat-card" style="border-color:#27ae60"><div class="stat-num" style="color:#27ae60">${activeBoats}</div><div class="stat-lbl">مراكب نشطة</div></div>
+    <div class="stat-card"><div class="stat-num">${escHtml(instructors.length)}</div><div class="stat-lbl">المدربين</div></div>
+    <div class="stat-card" style="border-color:#27ae60"><div class="stat-num" style="color:#27ae60">${escHtml(activeInstructors)}</div><div class="stat-lbl">مدربين نشطين</div></div>
+    <div class="stat-card"><div class="stat-num">${escHtml(vehicles.length)}</div><div class="stat-lbl">السيارات</div></div>
+    <div class="stat-card" style="border-color:#27ae60"><div class="stat-num" style="color:#27ae60">${escHtml(activeVehicles)}</div><div class="stat-lbl">سيارات نشطة</div></div>
+    <div class="stat-card"><div class="stat-num">${escHtml(boats.length)}</div><div class="stat-lbl">المراكب</div></div>
+    <div class="stat-card" style="border-color:#27ae60"><div class="stat-num" style="color:#27ae60">${escHtml(activeBoats)}</div><div class="stat-lbl">مراكب نشطة</div></div>
   `;
 }
-
 let deleteTarget = { type: null, id: null };
 
 function showConfirmModal(message, type, id) {
