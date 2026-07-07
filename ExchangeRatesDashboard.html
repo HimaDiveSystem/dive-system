@@ -3,8 +3,21 @@
 <head>
   <base target="_top">
   <meta charset="UTF-8">
+  <!-- ✅ توحيد مظهر المتصفح -->
+  <meta name="theme-color" content="#1e2b4f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <meta name="description" content="نظام إدارة مراكز الغوص - إدارة أسعار الصرف">
+  <meta name="author" content="Dive System">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes">
-  <title>إدارة أسعار الصرف - نظام إدارة مراكز الغوص</title>
+  <title>💱 إدارة أسعار الصرف</title>
+  
+  <!-- ====== IMPORT CONFIG & SESSION & UI ====== -->
+  <script src="config.js"></script>
+  <script src="session.js"></script>
+  <script src="ui.js"></script>
+  
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
     body { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
@@ -12,7 +25,7 @@
     .header { background: linear-gradient(135deg, #1e2b4f 0%, #152238 100%); color: white; padding: 18px 28px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
     .header h2 { color: #ffd966; font-size: 22px; display: flex; align-items: center; gap: 10px; }
     .header-right { display: flex; align-items: center; gap: 10px; }
-    .user-badge { background: rgba(255,255,255,0.1); padding: 7px 16px; border-radius: 40px; border: 1px solid #ffd966; font-size: 13px; }
+    .user-badge { background: rgba(255,255,255,0.1); padding: 7px 16px; border-radius: 40px; border: 1px solid #ffd966; font-size: 13px; color: white; }
     .back-btn { background: #ffd966; color: #1e2b4f; border: none; padding: 7px 18px; border-radius: 40px; cursor: pointer; font-weight: 700; font-size: 13px; }
     .back-btn:hover { background: #f0c020; }
     .nav-tabs { display: flex; background: #f8f9fa; padding: 0 20px; border-bottom: 2px solid #dee2e6; overflow-x: auto; white-space: nowrap; }
@@ -118,69 +131,134 @@
   </div>
 </div>
 
+<!-- ====== FOOTER ====== -->
+<div style="text-align:center;padding:10px 0 2px 0;color:#94a3b8;font-size:10px;border-top:1px solid #e2e8f0;margin-top:8px;">
+  <span>© 2025 <strong style="color:#1e2b4f;">🌊 Dive System</strong> — جميع الحقوق محفوظة</span>
+</div>
+
 <script>
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec';
-const DASH = { Admin:'Dashboard.html', Owner:'OwnerDashboard.html', Sales:'SalesDashboard.html', Accountant:'AccountantDashboard.html' };
+// ============================================================
+// CONFIG & STATE
+// ============================================================
+console.log('🚀 ExchangeRatesDashboard loaded');
+console.log('CONFIG.GAS_URL:', CONFIG.GAS_URL);
 
 let currentUser = null;
-let lastDateDisplay = '...'; // للعرض فقط
+let lastDateDisplay = '...';
+const MN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-// ── Alert ──
+// ============================================================
+// SESSION CHECK
+// ============================================================
+if (!Session.checkValidity()) {
+  throw new Error('جلسة غير صالحة');
+}
+
+// ============================================================
+// JSONP REQUEST - متوافق مع Session
+// ============================================================
+function jsonp(action, params = {}) {
+  return new Promise((resolve, reject) => {
+    // ✅ استخدام Session.getUser()
+    const user = Session.getUser();
+    if (user && user.centerName && !params.centerName) {
+      params.centerName = user.centerName;
+    }
+    if (user && user.centerId && !params.centerId) {
+      params.centerId = user.centerId;
+    }
+    
+    const cb = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 99999);
+    params.action = action;
+    params.callback = cb;
+    params._t = Date.now();
+    
+    const qs = Object.entries(params)
+      .filter(([k, v]) => v !== undefined && v !== null && v !== '')
+      .map(([k, v]) => k + '=' + encodeURIComponent(String(v)))
+      .join('&');
+    
+    const url = CONFIG.GAS_URL + '?' + qs;
+    const script = document.createElement('script');
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error('انتهت مهلة الاتصال'));
+    }, 30000);
+    
+    const cleanup = () => {
+      clearTimeout(timeout);
+      delete window[cb];
+      if (script.parentNode) script.remove();
+    };
+    
+    window[cb] = (data) => {
+      cleanup();
+      resolve(data);
+    };
+    
+    script.onerror = () => {
+      cleanup();
+      reject(new Error('خطأ في الاتصال'));
+    };
+    
+    script.src = url;
+    document.head.appendChild(script);
+  });
+}
+
+// ✅ مرادف للتوافق
+function gas(action, params = {}) {
+  return jsonp(action, params);
+}
+
+// ============================================================
+// UTILITIES
+// ============================================================
 function showAlert(msg) {
   const m = document.getElementById('alertModal');
   document.getElementById('alertMsg').textContent = msg;
   m.style.display = 'flex';
   const ok = document.getElementById('alertOk');
-  const h  = () => { m.style.display='none'; ok.removeEventListener('click',h); };
+  const h = () => { m.style.display = 'none'; ok.removeEventListener('click', h); };
   ok.addEventListener('click', h);
 }
 
-// ── JSONP ──
-function jsonp(action, params = {}) {
-  return new Promise((res, rej) => {
-    const cb = 'cb_' + Date.now() + '_' + Math.floor(Math.random()*99999);
-    // ✅ إضافة centerName تلقائياً
-    if (currentUser && currentUser.centerName && !params.centerName) {
-      params.centerName = currentUser.centerName;
-    }
-    params.action = action; params.callback = cb;
-    const qs = Object.entries(params).map(([k,v]) => k+'='+encodeURIComponent(String(v??''))).join('&');
-    const sc = document.createElement('script');
-    const to = setTimeout(() => { delete window[cb]; sc.remove(); rej(new Error('انتهت مهلة الاتصال')); }, 30000);
-    window[cb] = d => { clearTimeout(to); delete window[cb]; sc.remove(); res(d); };
-    sc.onerror = () => { clearTimeout(to); delete window[cb]; sc.remove(); rej(new Error('خطأ في الاتصال')); };
-    sc.src = GAS_URL + '?' + qs;
-    document.head.appendChild(sc);
-  });
+function formatDateToDisplay(date) {
+  return `${String(date.getDate()).padStart(2, '0')}/${MN[date.getMonth()]}/${date.getFullYear()}`;
 }
 
-// ── تحويل YYYY-MM-DD → D/Mon/YYYY للإرسال للـ GAS ──
-const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-function fmtDisplayDate(ymd) {   // "01 Mar 2026"
-  if (!ymd) return '';
-  const [y,m,d] = ymd.split('-');
-  return d + '/' + MN[parseInt(m)-1] + '/' + y;
-}
-// ══════════════════════════════════════════════════════════
-// دوال التحقق من التاريخ وإضافة التواريخ المفقودة
-// ══════════════════════════════════════════════════════════
-// الحصول على تاريخ اليوم بصيغة dd/MMM/yyyy
 function getTodayFormatted() {
   const today = new Date();
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const day = String(today.getDate()).padStart(2, '0');
-  const month = months[today.getMonth()];
-  const year = today.getFullYear();
-  return `${day}/${month}/${year}`;
+  return formatDateToDisplay(today);
 }
+
+function parseDateFromDisplay(dateStr) {
+  if (!dateStr) return new Date();
+  const match = dateStr.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
+  if (!match) return new Date();
+  const months = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
+  const day = parseInt(match[1]);
+  const month = months[match[2]];
+  const year = parseInt(match[3]);
+  return new Date(year, month, day);
+}
+
+function formatRate(value) {
+  if (value === undefined || value === null || value === '') return '—';
+  const num = parseFloat(value);
+  if (isNaN(num)) return value;
+  const rounded = Math.round(num * 100) / 100;
+  if (rounded === Math.floor(rounded)) return rounded.toString();
+  return rounded.toFixed(2);
+}
+
 function isDateAfterLastDate(dateToCheck, lastDateStr) {
   if (!lastDateStr || !dateToCheck) return false;
   
-  // تحويل التاريخ من dd/MMM/yyyy إلى Date للمقارنة
   function parseDateForCompare(dateStr) {
     const match = dateStr.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
     if (!match) return null;
-    const months = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+    const months = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
     const day = parseInt(match[1]);
     const month = months[match[2]];
     const year = parseInt(match[3]);
@@ -189,216 +267,76 @@ function isDateAfterLastDate(dateToCheck, lastDateStr) {
   
   const checkDate = parseDateForCompare(dateToCheck);
   const lastDate = parseDateForCompare(lastDateStr);
-  
   if (!checkDate || !lastDate) return false;
   return checkDate > lastDate;
 }
 
-async function checkDateAndPrompt(targetDateStr, lastDateStr) {
-  if (!isDateAfterLastDate(targetDateStr, lastDateStr)) return false;
-  
-  return new Promise((resolve) => {
-    // إنشاء modal التحذير
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:20000;font-family:"Cairo",sans-serif;';
-    
-    overlay.innerHTML = `
-      <div style="background:white;width:90%;max-width:450px;border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3);overflow:hidden;animation:modalFadeIn 0.25s ease-out;direction:rtl;">
-        <div style="background:#fef3c7;padding:20px 24px;border-bottom:3px solid #f59e0b;">
-          <div style="display:flex;align-items:center;gap:10px;">
-            <span style="font-size:28px;">⚠️</span>
-            <h2 style="margin:0;font-size:1.4rem;color:#92400e;">تنبيه</h2>
-          </div>
-        </div>
-        <div style="padding:24px;">
-          <p style="margin:0 0 15px 0;font-weight:bold;color:#7c2d12;font-size:15px;">
-            📅 التاريخ المطلوب (${targetDateStr}) يتجاوز آخر تاريخ مسجل في أسعار الصرف (${lastDateStr || '—'})
-          </p>
-          <p style="margin:0 0 20px 0;font-size:13px;color:#475569;">
-            هل تريد إضافة التواريخ المفقودة إلى شيت أسعار الصرف؟
-          </p>
-          <div style="display:flex;gap:12px;justify-content:center;">
-            <button id="addDatesBtn" style="background:#16a34a;color:white;border:none;padding:10px 24px;border-radius:40px;font-size:14px;font-weight:bold;cursor:pointer;">➕ إضافة تواريخ</button>
-            <button id="cancelBtn" style="background:#e5e7eb;color:#374151;border:none;padding:10px 24px;border-radius:40px;font-size:14px;font-weight:bold;cursor:pointer;">✖️ إلغاء</button>
-          </div>
-        </div>
-      </div>
-      <style>
-        @keyframes modalFadeIn {
-          from { opacity: 0; transform: scale(0.95) translateY(-10px); }
-          to { opacity: 1; transform: scale(1) translateY(0); }
-        }
-      </style>
-    `;
-    
-    document.body.appendChild(overlay);
-    document.body.style.overflow = 'hidden';
-    
-    const addBtn = document.getElementById('addDatesBtn');
-    const cancelBtn = document.getElementById('cancelBtn');
-    
-    const closeModal = () => {
-      overlay.remove();
-      document.body.style.overflow = '';
-    };
-    
-    addBtn.onclick = () => {
-      closeModal();
-      openDateRangeModal(targetDateStr, lastDateStr).then(resolve);
-    };
-    
-    cancelBtn.onclick = () => {
-      closeModal();
-      resolve(false);
-    };
-    
-    overlay.onclick = (e) => {
-      if (e.target === overlay) {
-        closeModal();
-        resolve(false);
-      }
-    };
-  });
+function setVal(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.value = (v !== undefined && v !== null && v !== '') ? parseFloat(v) : '';
 }
 
-async function openDateRangeModal(targetDateStr, lastDateStr) {
-  return new Promise((resolve) => {
-    // تحويل التاريخ من dd/MMM/yyyy إلى yyyy-mm-dd للإدخال
-    function convertToDateInputFormat(dateStr) {
-      if (!dateStr) return '';
-      const match = dateStr.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
-      if (!match) return '';
-      const day = parseInt(match[1]).toString().padStart(2, '0');
-      const months = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
-      const month = months[match[2]];
-      const year = match[3];
-      return `${year}-${month}-${day}`;
-    }
-    
-   function convertFromInputFormat(inputStr) {
-  if (!inputStr) return '';
-  const [year, month, day] = inputStr.split('-');
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  return `${parseInt(day)}/${months[parseInt(month)-1]}/${year}`;
-}
-    
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:20001;font-family:"Cairo",sans-serif;';
-    
-    overlay.innerHTML = `
-      <div style="background:white;width:90%;max-width:400px;border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3);overflow:hidden;animation:modalFadeIn 0.25s ease-out;direction:rtl;">
-        <div style="background:linear-gradient(135deg,#0f1f3d,#1a3260);padding:18px 24px;">
-          <h3 style="margin:0;color:#f5c842;font-size:1.2rem;">📅 إضافة تواريخ مفقودة</h3>
-        </div>
-        <div style="padding:24px;">
-          <p style="margin:0 0 15px 0;font-size:13px;color:#475569;">
-            آخر تاريخ مسجل: <strong style="color:#1e2b4f;">${lastDateStr || '—'}</strong>
-          </p>
-          <div style="margin-bottom:20px;">
-            <label style="display:block;font-size:12px;font-weight:700;color:#6c757d;margin-bottom:5px;">📅 التاريخ المستهدف</label>
-            <input type="date" id="targetDateInput" style="width:100%;padding:10px;border:2px solid #d0ddeb;border-radius:12px;font-size:14px;font-family:inherit;" value="${convertToDateInputFormat(targetDateStr)}">
-          </div>
-          <div style="display:flex;gap:12px;justify-content:center;">
-            <button id="confirmAddBtn" style="background:#0f1f3d;color:#f5c842;border:none;padding:10px 24px;border-radius:40px;font-size:14px;font-weight:bold;cursor:pointer;">✅ إضافة</button>
-            <button id="cancelAddBtn" style="background:#e5e7eb;color:#374151;border:none;padding:10px 24px;border-radius:40px;font-size:14px;font-weight:bold;cursor:pointer;">✖️ إلغاء</button>
-          </div>
-        </div>
-      </div>
-    `;
-    
-    document.body.appendChild(overlay);
-    document.body.style.overflow = 'hidden';
-    
-    const confirmBtn = document.getElementById('confirmAddBtn');
-    const cancelBtn = document.getElementById('cancelAddBtn');
-    
-    const closeModal = () => {
-      overlay.remove();
-      document.body.style.overflow = '';
-    };
-    
-  confirmBtn.onclick = async () => {
-  const targetDateInput = document.getElementById('targetDateInput').value;
-  if (!targetDateInput) {
-    showAlert('الرجاء إدخال تاريخ صحيح');
-    return;
-  }
-  
-  const newTargetDateStr = convertFromInputFormat(targetDateInput);
-  const [year, month, day] = targetDateInput.split('-');
-  const targetDateObj = new Date(parseInt(year), parseInt(month)-1, parseInt(day));
-  const lastDateObj = (() => {
-    const match = lastDateStr.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
-    if (!match) return null;
-    const months = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
-    return new Date(parseInt(match[3]), months[match[2]], parseInt(match[1]));
-  })();
-  
-  if (lastDateObj && targetDateObj <= lastDateObj) {
-    showAlert('⚠️ التاريخ المستهدف يجب أن يكون أكبر من آخر تاريخ مسجل');
-    return;
-  }
-  
-  closeModal();
-  showMsg('info', '⏳ جاري إضافة التواريخ المفقودة...');
-  
-  try {
-    const result = await jsonp('addMissingExchangeDates', {
-      lastDate: lastDateStr,
-      targetDate: newTargetDateStr,
-      centerName: currentUser?.centerName || ''
-    });
-    
-    if (result?.success) {
-      showMsg('success', `✅ تم إضافة ${result.addedDays || 0} يوم بنجاح`);
-      await loadLastDate();
-      // ✅ التصحيح: استخدم rateDateText بدلاً من rateDate
-      const displayDate = document.getElementById('rateDateText')?.value;
-      if (displayDate) await onDateTextChange();
-      resolve(true);
-    } else {
-      showMsg('error', result?.message || '❌ فشل إضافة التواريخ');
-      resolve(false);
-    }
-  } catch(e) {
-    showMsg('error', '❌ خطأ: ' + e.message);
-    resolve(false);
-  }
-};    
-    cancelBtn.onclick = () => {
-      closeModal();
-      resolve(false);
-    };
-    
-    overlay.onclick = (e) => {
-      if (e.target === overlay) {
-        closeModal();
-        resolve(false);
-      }
-    };
+function clearFields() {
+  ['bUSD', 'bEUR', 'bGBP', 'bVUSD', 'bVEUR', 'bVGBP', 'bVLE',
+   'sUSD', 'sEUR', 'sGBP', 'sVUSD', 'sVEUR', 'sVGBP', 'sVLE'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
   });
+  setVal('bLE', 1);
+  setVal('sLE', 1);
 }
-// ── goBack ──
-function goBack() { 
-  const returnUrl = sessionStorage.getItem('returnUrl');
-  if (returnUrl) {
-    location.href = returnUrl;
-  } else {
-    const dashboardPage = DASH[currentUser?.type] || 'AccountantDashboard.html';
-    const userParam = encodeURIComponent(JSON.stringify(currentUser));
-    location.href = `${dashboardPage}?centerName=${currentUser?.centerName || ''}&user=${userParam}`;
-  }
+
+function showMsg(type, text) {
+  const el = document.getElementById('msgArea');
+  if (!el) return;
+  el.innerHTML = `<div class="msg ${type}">${text}</div>`;
+  setTimeout(() => { if (el) el.innerHTML = ''; }, 6000);
 }
-// ── Tabs ──
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/[&<>"']/g, m => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[m]);
+}
+
+// ============================================================
+// NAVIGATION
+// ============================================================
+function goBack() {
+  if (currentUser) Session.save(currentUser);
+  const dashboards = CONFIG.DASHBOARD_PAGES || {
+    'Admin': 'Dashboard.html',
+    'Owner': 'OwnerDashboard.html',
+    'Sales': 'SalesDashboard.html',
+    'Accountant': 'AccountantDashboard.html',
+    'OperationsManager': 'OperationManager.html',
+    'OperationsSupervisor': 'OperationSupervisor.html'
+  };
+  const userType = currentUser?.type || 'Accountant';
+  window.location.href = dashboards[userType] || 'Dashboard.html';
+}
+
+// ============================================================
+// TABS
+// ============================================================
 function showTab(tab, el) {
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
   if (el) el.classList.add('active');
-  tab === 'add' ? showAddForm() : showAllRates();
+  if (tab === 'add') {
+    showAddForm();
+  } else {
+    showAllRates();
+  }
 }
 
-// ════════════════════════════════════
-// نموذج الإضافة / التعديل
-// ════════════════════════════════════
+// ============================================================
+// ADD / EDIT FORM
+// ============================================================
 function showAddForm() {
   const todayFormatted = getTodayFormatted();
   lastDateDisplay = lastDateDisplay || todayFormatted;
@@ -419,7 +357,8 @@ function showAddForm() {
         <button onclick="refreshData()" style="background: #27ae60; color: white; border: none; padding: 10px 14px; border-radius: 12px; cursor: pointer;">🔄 تحديث</button>
       </div>
     </div>
-       <!-- أسعار البنك (B:E) -->
+       
+    <!-- أسعار البنك (B:E) -->
     <div class="rates-section">
       <div class="section-title title-bank" id="bankTitle">🏦 أسعار البنك</div>
       <div class="rates-grid">
@@ -492,18 +431,19 @@ function showAddForm() {
 
     <div class="action-buttons">
       <button class="btn-primary" id="btnSave" onclick="saveRates()">💾 حفظ</button>
-      <button class="btn-secondary"            onclick="clearForm()">🔄 إعادة تعيين</button>
+      <button class="btn-secondary" onclick="clearForm()">🔄 إعادة تعيين</button>
     </div>
-    <div id="msgArea"></div>`;
-   setTimeout(() => {
+    <div id="msgArea"></div>
+  `;
+  
+  setTimeout(() => {
     onDateTextChange();
   }, 100);
-
 }
-// ══════════════════════════════════════════════════════════
-// Date Picker مخصص بصيغة dd/MMM/yyyy
-// ══════════════════════════════════════════════════════════
 
+// ============================================================
+// DATE PICKER
+// ============================================================
 let currentPickerYear = null;
 let currentPickerMonth = null;
 
@@ -514,52 +454,17 @@ function openDatePicker() {
   renderDatePickerModal();
 }
 
-function parseDateFromDisplay(dateStr) {
-  if (!dateStr) return new Date();
-  const match = dateStr.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
-  if (!match) return new Date();
-  const months = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
-  const day = parseInt(match[1]);
-  const month = months[match[2]];
-  const year = parseInt(match[3]);
-  return new Date(year, month, day);
-}
-// دالة تنسيق الأرقام (تقريب إلى منزلتين عشريتين)
-function formatRate(value) {
-  if (value === undefined || value === null || value === '') return '—';
-  const num = parseFloat(value);
-  if (isNaN(num)) return value;
-  // تقريب إلى منزلتين عشريتين
-  const rounded = Math.round(num * 100) / 100;
-  // إذا كان الرقم صحيحاً، اعرضه بدون كسور
-  if (rounded === Math.floor(rounded)) {
-    return rounded.toString();
-  }
-  return rounded.toFixed(2);
-}
-function formatDateToDisplay(date) {
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  return `${String(date.getDate()).padStart(2, '0')}/${months[date.getMonth()]}/${date.getFullYear()}`;
-}
-
-function formatDateToYYYYMMDD(date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
 function renderDatePickerModal() {
-  // إزالة أي modal موجود مسبقاً
   const existingModal = document.getElementById('customDatePickerModal');
   if (existingModal) existingModal.remove();
   
   const months = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 
                   'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
-  const monthNamesAr = months;
   
   const firstDay = new Date(currentPickerYear, currentPickerMonth, 1);
-  const startWeekday = firstDay.getDay(); // 0 = الأحد
+  const startWeekday = firstDay.getDay();
   const daysInMonth = new Date(currentPickerYear, currentPickerMonth + 1, 0).getDate();
   
-  // بناء أيام الشهر
   let daysHtml = '';
   for (let i = 0; i < startWeekday; i++) {
     daysHtml += '<div style="padding:8px; text-align:center; color:#ccc;"> </div>';
@@ -578,7 +483,7 @@ function renderDatePickerModal() {
     <div style="background:white;width:90%;max-width:380px;border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3);overflow:hidden;direction:rtl;">
       <div style="background:linear-gradient(135deg,#0f1f3d,#1a3260);padding:15px 20px;display:flex;justify-content:space-between;align-items:center;">
         <button onclick="changePickerMonth(-1)" style="background:transparent;border:none;color:#ffd966;font-size:20px;cursor:pointer;">◀</button>
-        <h3 style="margin:0;color:#ffd966;font-size:1.2rem;">${monthNamesAr[currentPickerMonth]} ${currentPickerYear}</h3>
+        <h3 style="margin:0;color:#ffd966;font-size:1.2rem;">${months[currentPickerMonth]} ${currentPickerYear}</h3>
         <button onclick="changePickerMonth(1)" style="background:transparent;border:none;color:#ffd966;font-size:20px;cursor:pointer;">▶</button>
       </div>
       <div style="padding:16px;">
@@ -633,84 +538,108 @@ function closeDatePickerModal() {
   if (modal) modal.remove();
   document.body.style.overflow = '';
 }
-// ── عند تغيير التاريخ ──
+
+// ============================================================
+// DATE CHANGE
+// ============================================================
 async function onDateTextChange() {
   const displayDate = document.getElementById('rateDateText')?.value;
   if (!displayDate) return;
   
-  // التحقق من صيغة التاريخ
   const datePattern = /^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/;
   if (!datePattern.test(displayDate)) {
     showAlert('صيغة التاريخ غير صحيحة. استخدم الصيغة: dd/MMM/yyyy (مثال: 15/Jun/2026)');
     return;
   }
   
-  const gasDate = displayDate; // الصيغة متطابقة
   const st = document.getElementById('dateStatus');
 
-  // ✅ التحقق من أن التاريخ ليس أكبر من آخر تاريخ
-  if (lastDateDisplay && isDateAfterLastDate(gasDate, lastDateDisplay)) {
-    const shouldAdd = await checkDateAndPrompt(gasDate, lastDateDisplay);
+  if (lastDateDisplay && isDateAfterLastDate(displayDate, lastDateDisplay)) {
+    const shouldAdd = await checkDateAndPrompt(displayDate, lastDateDisplay);
     if (!shouldAdd) {
-      // إعادة تعيين حقل التاريخ إلى آخر تاريخ صالح
       document.getElementById('rateDateText').value = lastDateDisplay;
       return;
     }
   }
 
   try {
-    const r = await jsonp('getExchangeRateByDateStr', { 
-      dateStr: gasDate,
+    const r = await jsonp('getExchangeRateByDateStr', {
+      dateStr: displayDate,
       centerName: currentUser?.centerName || ''
     });
     
     if (r && r.found) {
-      setVal('bUSD', r.bankUSD);  setVal('bEUR', r.bankEUR);
-      setVal('bGBP', r.bankGBP);  setVal('bLE',  r.bankLE || 1);
-      setVal('bVUSD',r.bankVUSD); setVal('bVEUR',r.bankVEUR);
-      setVal('bVGBP',r.bankVGBP); setVal('bVLE', r.bankVLE);
-      setVal('sUSD', r.salesUSD); setVal('sEUR', r.salesEUR);
-      setVal('sGBP', r.salesGBP); setVal('sLE',  r.salesLE || 1);
-      setVal('sVUSD',r.salesVUSD);setVal('sVEUR',r.salesVEUR);
-      setVal('sVGBP',r.salesVGBP);setVal('sVLE', r.salesVLE);
-      if (st) { st.className='date-status found'; st.textContent='✅ تاريخ موجود — سيتم التحديث'; }
+      setVal('bUSD', r.bankUSD);
+      setVal('bEUR', r.bankEUR);
+      setVal('bGBP', r.bankGBP);
+      setVal('bLE', r.bankLE || 1);
+      setVal('bVUSD', r.bankVUSD);
+      setVal('bVEUR', r.bankVEUR);
+      setVal('bVGBP', r.bankVGBP);
+      setVal('bVLE', r.bankVLE);
+      setVal('sUSD', r.salesUSD);
+      setVal('sEUR', r.salesEUR);
+      setVal('sGBP', r.salesGBP);
+      setVal('sLE', r.salesLE || 1);
+      setVal('sVUSD', r.salesVUSD);
+      setVal('sVEUR', r.salesVEUR);
+      setVal('sVGBP', r.salesVGBP);
+      setVal('sVLE', r.salesVLE);
+      if (st) {
+        st.className = 'date-status found';
+        st.textContent = '✅ تاريخ موجود — سيتم التحديث';
+      }
     } else {
       clearFields();
-      if (st) { st.className='date-status not-found'; st.textContent='🆕 تاريخ جديد'; }
+      if (st) {
+        st.className = 'date-status not-found';
+        st.textContent = '🆕 تاريخ جديد';
+      }
     }
   } catch(e) {
-    if (st) { st.className='date-status not-found'; st.textContent='⚠️ خطأ في الاتصال'; }
+    if (st) {
+      st.className = 'date-status not-found';
+      st.textContent = '⚠️ خطأ في الاتصال';
+    }
   }
 }
-function setVal(id, v) {
-  const el = document.getElementById(id);
-  if (el) el.value = (v !== undefined && v !== null && v !== '') ? parseFloat(v) : '';
-}
 
-// حساب فيزا البنك تلقائياً
+// ============================================================
+// AUTO CALCULATE
+// ============================================================
 function autoCalcBankVisa() {
-  const u = parseFloat(document.getElementById('bUSD')?.value)||0;
-  const e = parseFloat(document.getElementById('bEUR')?.value)||0;
-  const g = parseFloat(document.getElementById('bGBP')?.value)||0;
-  const p = parseFloat(document.getElementById('bankPct')?.value)||0;
-  const f = 1 - p/100;
-  setVal('bVUSD', u*f); setVal('bVEUR', e*f); setVal('bVGBP', g*f); setVal('bVLE', f);
+  const u = parseFloat(document.getElementById('bUSD')?.value) || 0;
+  const e = parseFloat(document.getElementById('bEUR')?.value) || 0;
+  const g = parseFloat(document.getElementById('bGBP')?.value) || 0;
+  const p = parseFloat(document.getElementById('bankPct')?.value) || 0;
+  const f = 1 - p / 100;
+  setVal('bVUSD', u * f);
+  setVal('bVEUR', e * f);
+  setVal('bVGBP', g * f);
+  setVal('bVLE', f);
 }
 
-// حساب فيزا العمولة تلقائياً
 function autoCalcSalesVisa() {
-  const u = parseFloat(document.getElementById('sUSD')?.value)||0;
-  const e = parseFloat(document.getElementById('sEUR')?.value)||0;
-  const g = parseFloat(document.getElementById('sGBP')?.value)||0;
-  const p = parseFloat(document.getElementById('bankPct')?.value)||0;
-  const f = 1 - p/100;
-  setVal('sVUSD', u*f); setVal('sVEUR', e*f); setVal('sVGBP', g*f); setVal('sVLE', f);
+  const u = parseFloat(document.getElementById('sUSD')?.value) || 0;
+  const e = parseFloat(document.getElementById('sEUR')?.value) || 0;
+  const g = parseFloat(document.getElementById('sGBP')?.value) || 0;
+  const p = parseFloat(document.getElementById('bankPct')?.value) || 0;
+  const f = 1 - p / 100;
+  setVal('sVUSD', u * f);
+  setVal('sVEUR', e * f);
+  setVal('sVGBP', g * f);
+  setVal('sVLE', f);
 }
 
-// ── حفظ ──
+// ============================================================
+// SAVE RATES
+// ============================================================
 async function saveRates() {
   const displayDate = document.getElementById('rateDateText')?.value;
-  if (!displayDate) { showAlert('الرجاء اختيار التاريخ'); return; }
+  if (!displayDate) {
+    showAlert('الرجاء اختيار التاريخ');
+    return;
+  }
   
   const datePattern = /^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/;
   if (!datePattern.test(displayDate)) {
@@ -725,8 +654,14 @@ async function saveRates() {
   const sE = parseFloat(document.getElementById('sEUR').value) || 0;
   const sG = parseFloat(document.getElementById('sGBP').value) || 0;
 
-  if (isNaN(bU) || isNaN(bE) || isNaN(bG)) { showAlert('الرجاء إدخال أسعار البنك كاملة'); return; }
-  if (isNaN(sU) || isNaN(sE) || isNaN(sG)) { showAlert('الرجاء إدخال أسعار العمولة كاملة'); return; }
+  if (isNaN(bU) || isNaN(bE) || isNaN(bG)) {
+    showAlert('الرجاء إدخال أسعار البنك كاملة');
+    return;
+  }
+  if (isNaN(sU) || isNaN(sE) || isNaN(sG)) {
+    showAlert('الرجاء إدخال أسعار العمولة كاملة');
+    return;
+  }
 
   const pct = parseFloat(document.getElementById('bankPct').value) || 0;
   const f = 1 - pct / 100;
@@ -738,10 +673,22 @@ async function saveRates() {
   try {
     const r = await jsonp('saveExchangeRatesNew', {
       dateStr: displayDate,
-      bankUSD: bU, bankEUR: bE, bankGBP: bG, bankLE: 1,
-      bankVUSD: bU * f, bankVEUR: bE * f, bankVGBP: bG * f, bankVLE: f,
-      salesUSD: sU, salesEUR: sE, salesGBP: sG, salesLE: 1,
-      salesVUSD: sU * f, salesVEUR: sE * f, salesVGBP: sG * f, salesVLE: f,
+      bankUSD: bU,
+      bankEUR: bE,
+      bankGBP: bG,
+      bankLE: 1,
+      bankVUSD: bU * f,
+      bankVEUR: bE * f,
+      bankVGBP: bG * f,
+      bankVLE: f,
+      salesUSD: sU,
+      salesEUR: sE,
+      salesGBP: sG,
+      salesLE: 1,
+      salesVUSD: sU * f,
+      salesVEUR: sE * f,
+      salesVGBP: sG * f,
+      salesVLE: f,
       bankPct: pct,
       centerName: currentUser?.centerName || ''
     });
@@ -750,57 +697,270 @@ async function saveRates() {
       showMsg('success', r.message || 'تم الحفظ بنجاح ✅');
       await loadLastDate();
       const st = document.getElementById('dateStatus');
-      if (st) { 
-        st.className = 'date-status found'; 
-        st.textContent = '✅ تم الحفظ بنجاح'; 
+      if (st) {
+        st.className = 'date-status found';
+        st.textContent = '✅ تم الحفظ بنجاح';
       }
-      setTimeout(() => { 
-        if(st) st.className = 'date-status'; 
+      setTimeout(() => {
+        if (st) st.className = 'date-status';
       }, 3000);
     } else {
       showMsg('error', r?.message || 'فشل الحفظ');
     }
-  } catch(e) { 
-    showMsg('error', 'خطأ: ' + e.message); 
+  } catch(e) {
+    showMsg('error', 'خطأ: ' + e.message);
   }
 
   btn.disabled = false;
   btn.innerHTML = '💾 حفظ';
 }
 
-function clearFields() {
-  ['bUSD','bEUR','bGBP','bVUSD','bVEUR','bVGBP','bVLE',
-   'sUSD','sEUR','sGBP','sVUSD','sVEUR','sVGBP','sVLE'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.value = '';
-  });
-  setVal('bLE', 1); setVal('sLE', 1);
-}
-
 function clearForm() {
   document.getElementById('rateDateText').value = '';
-  const st = document.getElementById('dateStatus'); if(st) st.className='date-status';
+  const st = document.getElementById('dateStatus');
+  if (st) st.className = 'date-status';
   clearFields();
   document.getElementById('msgArea').innerHTML = '';
 }
 
-function showMsg(type, text) {
-  const el = document.getElementById('msgArea');
-  if (!el) return;
-  el.innerHTML = `<div class="msg ${type}">${text}</div>`;
-  setTimeout(() => { if(el) el.innerHTML=''; }, 6000);
+async function refreshData() {
+  const displayDate = document.getElementById('rateDateText')?.value;
+  if (displayDate) {
+    await onDateTextChange();
+  } else {
+    const todayFormatted = getTodayFormatted();
+    document.getElementById('rateDateText').value = todayFormatted;
+    await onDateTextChange();
+  }
 }
 
-// ════════════════════════════════════
-// تبويب العرض
-// ════════════════════════════════════
+// ============================================================
+// CHECK DATE AND PROMPT
+// ============================================================
+async function checkDateAndPrompt(targetDateStr, lastDateStr) {
+  if (!isDateAfterLastDate(targetDateStr, lastDateStr)) return false;
+  
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:20000;font-family:"Cairo",sans-serif;';
+    
+    overlay.innerHTML = `
+      <div style="background:white;width:90%;max-width:450px;border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3);overflow:hidden;animation:modalFadeIn 0.25s ease-out;direction:rtl;">
+        <div style="background:#fef3c7;padding:20px 24px;border-bottom:3px solid #f59e0b;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span style="font-size:28px;">⚠️</span>
+            <h2 style="margin:0;font-size:1.4rem;color:#92400e;">تنبيه</h2>
+          </div>
+        </div>
+        <div style="padding:24px;">
+          <p style="margin:0 0 15px 0;font-weight:bold;color:#7c2d12;font-size:15px;">
+            📅 التاريخ المطلوب (${targetDateStr}) يتجاوز آخر تاريخ مسجل في أسعار الصرف (${lastDateStr || '—'})
+          </p>
+          <p style="margin:0 0 20px 0;font-size:13px;color:#475569;">
+            هل تريد إضافة التواريخ المفقودة إلى شيت أسعار الصرف؟
+          </p>
+          <div style="display:flex;gap:12px;justify-content:center;">
+            <button id="addDatesBtn" style="background:#16a34a;color:white;border:none;padding:10px 24px;border-radius:40px;font-size:14px;font-weight:bold;cursor:pointer;">➕ إضافة تواريخ</button>
+            <button id="cancelBtn" style="background:#e5e7eb;color:#374151;border:none;padding:10px 24px;border-radius:40px;font-size:14px;font-weight:bold;cursor:pointer;">✖️ إلغاء</button>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    document.body.style.overflow = 'hidden';
+    
+    const addBtn = document.getElementById('addDatesBtn');
+    const cancelBtn = document.getElementById('cancelBtn');
+    
+    const closeModal = () => {
+      overlay.remove();
+      document.body.style.overflow = '';
+    };
+    
+    addBtn.onclick = async () => {
+      closeModal();
+      const result = await addMissingDates(targetDateStr, lastDateStr);
+      resolve(result);
+    };
+    
+    cancelBtn.onclick = () => {
+      closeModal();
+      resolve(false);
+    };
+    
+    overlay.onclick = (e) => {
+      if (e.target === overlay) {
+        closeModal();
+        resolve(false);
+      }
+    };
+  });
+}
+
+// ============================================================
+// ADD MISSING DATES
+// ============================================================
+async function addMissingDates(targetDateStr, lastDateStr) {
+  return new Promise((resolve) => {
+    // تحويل التاريخ من dd/MMM/yyyy إلى yyyy-mm-dd للإدخال
+    function convertToDateInputFormat(dateStr) {
+      if (!dateStr) return '';
+      const match = dateStr.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
+      if (!match) return '';
+      const day = parseInt(match[1]).toString().padStart(2, '0');
+      const months = { Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06', Jul: '07', Aug: '08', Sep: '09', Oct: '10', Nov: '11', Dec: '12' };
+      const month = months[match[2]];
+      const year = match[3];
+      return `${year}-${month}-${day}`;
+    }
+    
+    function convertFromInputFormat(inputStr) {
+      if (!inputStr) return '';
+      const [year, month, day] = inputStr.split('-');
+      return `${parseInt(day)}/${MN[parseInt(month) - 1]}/${year}`;
+    }
+    
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:20001;font-family:"Cairo",sans-serif;';
+    
+    overlay.innerHTML = `
+      <div style="background:white;width:90%;max-width:400px;border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3);overflow:hidden;animation:modalFadeIn 0.25s ease-out;direction:rtl;">
+        <div style="background:linear-gradient(135deg,#0f1f3d,#1a3260);padding:18px 24px;">
+          <h3 style="margin:0;color:#f5c842;font-size:1.2rem;">📅 إضافة تواريخ مفقودة</h3>
+        </div>
+        <div style="padding:24px;">
+          <p style="margin:0 0 15px 0;font-size:13px;color:#475569;">
+            آخر تاريخ مسجل: <strong style="color:#1e2b4f;">${lastDateStr || '—'}</strong>
+          </p>
+          <div style="margin-bottom:20px;">
+            <label style="display:block;font-size:12px;font-weight:700;color:#6c757d;margin-bottom:5px;">📅 التاريخ المستهدف</label>
+            <input type="date" id="targetDateInput" style="width:100%;padding:10px;border:2px solid #d0ddeb;border-radius:12px;font-size:14px;font-family:inherit;" value="${convertToDateInputFormat(targetDateStr)}">
+          </div>
+          <div style="display:flex;gap:12px;justify-content:center;">
+            <button id="confirmAddBtn" style="background:#0f1f3d;color:#f5c842;border:none;padding:10px 24px;border-radius:40px;font-size:14px;font-weight:bold;cursor:pointer;">✅ إضافة</button>
+            <button id="cancelAddBtn" style="background:#e5e7eb;color:#374151;border:none;padding:10px 24px;border-radius:40px;font-size:14px;font-weight:bold;cursor:pointer;">✖️ إلغاء</button>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    document.body.style.overflow = 'hidden';
+    
+    const confirmBtn = document.getElementById('confirmAddBtn');
+    const cancelBtn = document.getElementById('cancelAddBtn');
+    
+    const closeModal = () => {
+      overlay.remove();
+      document.body.style.overflow = '';
+    };
+    
+    confirmBtn.onclick = async () => {
+      const targetDateInput = document.getElementById('targetDateInput').value;
+      if (!targetDateInput) {
+        showAlert('الرجاء إدخال تاريخ صحيح');
+        return;
+      }
+      
+      const newTargetDateStr = convertFromInputFormat(targetDateInput);
+      const [year, month, day] = targetDateInput.split('-');
+      const targetDateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+      const lastDateObj = (() => {
+        const match = lastDateStr.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
+        if (!match) return null;
+        const months = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
+        return new Date(parseInt(match[3]), months[match[2]], parseInt(match[1]));
+      })();
+      
+      if (lastDateObj && targetDateObj <= lastDateObj) {
+        showAlert('⚠️ التاريخ المستهدف يجب أن يكون أكبر من آخر تاريخ مسجل');
+        return;
+      }
+      
+      closeModal();
+      showMsg('info', '⏳ جاري إضافة التواريخ المفقودة...');
+      
+      try {
+        const result = await jsonp('addMissingExchangeDates', {
+          lastDate: lastDateStr,
+          targetDate: newTargetDateStr,
+          centerName: currentUser?.centerName || ''
+        });
+        
+        if (result?.success) {
+          showMsg('success', `✅ تم إضافة ${result.addedDays || 0} يوم بنجاح`);
+          await loadLastDate();
+          const displayDate = document.getElementById('rateDateText')?.value;
+          if (displayDate) await onDateTextChange();
+          resolve(true);
+        } else {
+          showMsg('error', result?.message || '❌ فشل إضافة التواريخ');
+          resolve(false);
+        }
+      } catch(e) {
+        showMsg('error', '❌ خطأ: ' + e.message);
+        resolve(false);
+      }
+    };
+    
+    cancelBtn.onclick = () => {
+      closeModal();
+      resolve(false);
+    };
+    
+    overlay.onclick = (e) => {
+      if (e.target === overlay) {
+        closeModal();
+        resolve(false);
+      }
+    };
+  });
+}
+
+// ============================================================
+// LOAD LAST DATE
+// ============================================================
+async function loadLastDate() {
+  try {
+    const r = await jsonp('getLastExchangeDate', {
+      centerName: currentUser?.centerName || ''
+    });
+    const raw = r?.date || r || null;
+    lastDateDisplay = raw || getTodayFormatted();
+    const el = document.getElementById('lastDateLbl');
+    if (el) el.textContent = lastDateDisplay;
+    
+    const dateInput = document.getElementById('rateDateText');
+    if (dateInput && !dateInput.value) {
+      dateInput.value = getTodayFormatted();
+      setTimeout(() => onDateTextChange(), 100);
+    }
+  } catch(e) {
+    console.error('loadLastDate error:', e);
+    lastDateDisplay = getTodayFormatted();
+    const el = document.getElementById('lastDateLbl');
+    if (el) el.textContent = lastDateDisplay;
+  }
+}
+
+// ============================================================
+// SHOW ALL RATES (FIXED - pageData is not defined)
+// ============================================================
 async function showAllRates() {
   const content = document.getElementById('mainContent');
   content.innerHTML = '<div class="loader"></div>';
+  
   try {
-    const rates = await jsonp('getAllExchangeRatesNew', { 
-      centerName: currentUser?.centerName || '' 
+    const rates = await jsonp('getAllExchangeRatesNew', {
+      centerName: currentUser?.centerName || ''
     });
-    if (!rates || !rates.length) { content.innerHTML='<div class="empty">لا توجد بيانات</div>'; return; }
+    
+    if (!rates || !rates.length) {
+      content.innerHTML = '<div class="empty">لا توجد بيانات</div>';
+      return;
+    }
+    
     let html = `<div class="table-outer"><div class="table-scroll">
       <table class="rates-table">
         <thead>
@@ -821,76 +981,60 @@ async function showAllRates() {
           </tr>
         </thead>
         <tbody>`;
-    pageData.forEach(r => {
-  html += `<tr>
-    <td class="date-td">${r.date}</td>
-    <td>${formatRate(r.bUSD)}</td><td>${formatRate(r.bEUR)}</td><td>${formatRate(r.bGBP)}</td><td>${formatRate(r.bLE)}</td>
-    <td>${formatRate(r.bVUSD)}</td><td>${formatRate(r.bVEUR)}</td><td>${formatRate(r.bVGBP)}</td><td>${formatRate(r.bVLE)}</td>
-    <td class="sep-td">—</td>
-    <td>${formatRate(r.sUSD)}</td><td>${formatRate(r.sEUR)}</td><td>${formatRate(r.sGBP)}</td><td>${formatRate(r.sLE)}</td>
-    <td>${formatRate(r.sVUSD)}</td><td>${formatRate(r.sVEUR)}</td><td>${formatRate(r.sVGBP)}</td><td>${formatRate(r.sVLE)}</td>
-  </tr>`;
-});
+    
+    // ✅ التصحيح: استخدام المتغير rates مباشرة (وليس pageData)
+    for (const r of rates) {
+      html += `<tr>
+        <td class="date-td">${escapeHtml(r.date)}</td>
+        <td>${formatRate(r.bUSD)}</td>
+        <td>${formatRate(r.bEUR)}</td>
+        <td>${formatRate(r.bGBP)}</td>
+        <td>${formatRate(r.bLE)}</td>
+        <td>${formatRate(r.bVUSD)}</td>
+        <td>${formatRate(r.bVEUR)}</td>
+        <td>${formatRate(r.bVGBP)}</td>
+        <td>${formatRate(r.bVLE)}</td>
+        <td class="sep-td">—</td>
+        <td>${formatRate(r.sUSD)}</td>
+        <td>${formatRate(r.sEUR)}</td>
+        <td>${formatRate(r.sGBP)}</td>
+        <td>${formatRate(r.sLE)}</td>
+        <td>${formatRate(r.sVUSD)}</td>
+        <td>${formatRate(r.sVEUR)}</td>
+        <td>${formatRate(r.sVGBP)}</td>
+        <td>${formatRate(r.sVLE)}</td>
+      </tr>`;
+    }
+    
     html += '</tbody></table></div></div>';
     content.innerHTML = html;
-  } catch(e) { content.innerHTML = `<div class="empty">خطأ: ${e.message}</div>`; }
-}
-// ── آخر تاريخ ──
-async function loadLastDate() {
-  try {
-    const r = await jsonp('getLastExchangeDate', { 
-      centerName: currentUser?.centerName || '' 
-    });
-    const raw = r?.date || r || null;
-    lastDateDisplay = raw || getTodayFormatted();
-    const el = document.getElementById('lastDateLbl');
-    if (el) el.textContent = lastDateDisplay;
     
-    // ✅ إذا كان حقل التاريخ فارغاً، قم بتعيينه إلى تاريخ اليوم
-    const dateInput = document.getElementById('rateDateText');
-    if (dateInput && !dateInput.value) {
-      dateInput.value = getTodayFormatted();
-      // تحميل البيانات بعد تعيين التاريخ
-      setTimeout(() => onDateTextChange(), 100);
-    }
   } catch(e) {
-    console.error('loadLastDate error:', e);
-    lastDateDisplay = getTodayFormatted();
-    const el = document.getElementById('lastDateLbl');
-    if (el) el.textContent = lastDateDisplay;
-  }
-}
-  async function refreshData() {
-  const displayDate = document.getElementById('rateDateText')?.value;
-  if (displayDate) {
-    await onDateTextChange();
-  } else {
-    const todayFormatted = getTodayFormatted();
-    document.getElementById('rateDateText').value = todayFormatted;
-    await onDateTextChange();
+    content.innerHTML = `<div class="empty">خطأ: ${escapeHtml(e.message)}</div>`;
   }
 }
 
-// أضف زر تحديث في الواجهة إذا أردت
-// ── Init ──
+// ============================================================
+// INITIALIZATION
+// ============================================================
 document.addEventListener('DOMContentLoaded', async () => {
-  let ud = sessionStorage.getItem('currentUser');
-  if (!ud) {
-    try { 
-      const p = new URLSearchParams(location.search);
-      const u = p.get('user'); 
-      if (u) {
-        ud = decodeURIComponent(u);
-        sessionStorage.setItem('currentUser', ud);
-      } 
-    } catch(e) {}
+  // ✅ تطبيق الثيم الموحد
+  if (typeof Theme !== 'undefined' && Theme.applyToPage) {
+    Theme.applyToPage();
   }
-  if (!ud) { location.href = 'index.html'; return; }
-  try { 
-    currentUser = JSON.parse(ud); 
-  } catch(e) { 
-    location.href = 'index.html'; 
-    return; 
+  Theme.setPageTitle('إدارة أسعار الصرف');
+  
+  // ✅ التحقق من الجلسة
+  if (!Session.checkValidity()) {
+    location.href = 'index.html';
+    return;
+  }
+  
+  // ✅ استخدام Session.getUser()
+  currentUser = Session.getUser();
+  if (!currentUser) {
+    location.href = 'index.html';
+    return;
   }
   
   document.getElementById('userNameDisplay').textContent = currentUser.name || '—';
@@ -898,7 +1042,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ✅ تحميل آخر تاريخ أولاً
   await loadLastDate();
   
-  // ✅ عرض تبويب الإضافة (سيقوم تلقائياً بتعيين التاريخ والتحميل)
+  // ✅ عرض تبويب الإضافة
   showTab('add', document.getElementById('tab-add'));
 });
 </script>
