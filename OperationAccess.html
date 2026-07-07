@@ -1373,24 +1373,6 @@ function goBack() {
   }
 }
 // ✅ تصفية الرحلات لعرض Diving فقط (إلا لبعض الصلاحيات)
-function filterTripsByUserType(trips) {
-  if (!currentUser) return trips;
-  
-  // ✅ الصلاحيات التي ترى كل الرحلات
-  const fullAccessTypes = ['Admin', 'Owner', 'Accountant', 'FinancialManager'];
-  
-  if (fullAccessTypes.includes(currentUser.type)) {
-    return trips; // كل الرحلات
-  }
-  
-  // ✅ باقي الصلاحيات (OperationsManager, OperationsSupervisor, Sales) تشوف Diving فقط
-  return trips.filter(trip => 
-    trip.toLowerCase().includes('diving') || 
-    trip.toLowerCase().includes('dive') ||
-    trip === 'Diving Boat' ||
-    trip === 'Diving Trip'
-  );
-}
 
 
 
@@ -1520,157 +1502,40 @@ function getBoatUsedSeats(date, boatId, tripName, excludeVoucher) {
   return { adults, children, infants, total: adults + children + infants };
 }
 // ============================================================
-// LOAD INVOICES
+// LOAD INVOICES - LAZY LOADING
 // ============================================================
-async function loadInvoices() {
-  // ✅ منع التكرار
-  if (isLoadingInvoices) {
-    console.log('⚠️ loadInvoices already in progress, skipping...');
-    return;
-  }
-  
-  console.log('🟢 loadInvoices started');
-  console.log('📊 divingTripNames length:', divingTripNames.length);
-  
-  if (invoicesLoaded && allInvoices.length > 0) {
-    console.log(`📦 استخدام البيانات المخزنة (${allInvoices.length} فاتورة)`);
-    applyFilters();
-    return;
-  }
-  
-  isLoadingInvoices = true;
-  
-  try {
-    showToast('جاري تحميل البيانات...', 'info');
-    
-    // ✅ ✅ ✅ التأكد من تحميل أسماء رحلات Diving أولاً
-    if (divingTripNames.length === 0) {
-      console.log('🟡 Loading diving trip names...');
-      await loadDivingTripNames();
-      console.log('🟢 divingTripNames after load:', divingTripNames);
-    }
-    
-    // ✅ استخدام الحقول الجديدة
-    const fromDate = document.getElementById('filterFromDateHidden')?.value || '';
-    const toDate = document.getElementById('filterToDateHidden')?.value || '';   
-    const isSingleDate = fromDate && fromDate === toDate;    
-    const selectedBranchId = document.getElementById('branchSelect')?.value || '';
-    let selectedBranchName = '';
-    if (selectedBranchId && window.branchesList) {
-      const branch = window.branchesList.find(b => b.id === selectedBranchId);
-      if (branch) selectedBranchName = branch.name;
-    }
-    
-    let result = null;
-    
-    const fetchWithRetry = async (retryCount = 0) => {
-      try {
-        if (isSingleDate) {
-          const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-          const parts = fromDate.split('-');
-          const formattedDate = `${parts[2]}/${months[parseInt(parts[1]) - 1]}/${parts[0]}`;
-          return await gas('getInvoicesByDate', { 
-            dateStr: formattedDate,
-            centerName: currentUser?.centerName
-          });
-        } else {
-          return await gas('getAllInvoices', { 
-            includeCollection: 'true',
-            centerName: currentUser?.centerName
-          });
-        }
-      } catch(e) {
-        if (retryCount < 2) {
-          console.log(`⚠️ محاولة إعادة التحميل (${retryCount + 1}/2)...`);
-          await new Promise(r => setTimeout(r, 2000));
-          return fetchWithRetry(retryCount + 1);
-        }
-        throw e;
-      }
-    };
-    
-    result = await fetchWithRetry();
-    
-    // ✅ ✅ ✅ التصحيح: تعريف المتغير invoices هنا
-    let invoices = [];
-    
-    if (Array.isArray(result)) {
-      invoices = result.filter(inv => {
-        const state = (inv.State || inv.state || '').toLowerCase();
-        return state === 'confirmed' || state === 'pending';
-      });
-      
-      if (selectedBranchName) {
-        invoices = invoices.filter(inv => inv.branchName === selectedBranchName);
-      }
-      
-      console.log('📊 Before Diving filter - invoices count:', invoices.length);
-      console.log('📊 Sample trip names:', invoices.slice(0, 5).map(inv => inv.Trip || inv.trip));
-      console.log('📊 divingTripNames:', divingTripNames);
-      console.log('📊 User type:', currentUser?.type);
-      
-      // ✅ التصفية حسب رحلات Diving
-      invoices = invoices.filter(inv => {
-        const tripName = inv.Trip || inv.trip || '';
-        return isDivingTrip(tripName);
-      });
-      
-      console.log('📊 After Diving filter - invoices count:', invoices.length);
-      
-     allInvoices = invoices;
-    buildCumulativeSeats(); // ✅ إضافة هذا السطر
-    invoicesLoaded = true;
-      
-      const tripSet = new Set();
-      allInvoices.forEach(inv => { 
-        const trip = inv.Trip || inv.trip;
-        if (trip) tripSet.add(trip); 
-      });
-      uniqueTrips = Array.from(tripSet).sort();
-      
-      console.log('📊 Unique trips after filter:', uniqueTrips);
-      
-      initTripFilter();
-      applyFilters();
-      showToast(`تم تحميل ${allInvoices.length} فاتورة`, 'success');
-    } else {
-      console.error('Result is not an array:', result);
-      allInvoices = [];
-    }
-   } catch(e) {
-    console.error('loadInvoices error:', e);
-    showToast('خطأ في التحميل: ' + e.message, 'error');
-    allInvoices = [];
-  } finally {
-    isLoadingInvoices = false;
-  }
-  // ============================================
-// داخل loadInvoices() - بعد تحميل الفواتير
-// ============================================
+let initialLoadDone = false;
 
-// ✅ إضافة: تحميل السيارات إذا كانت فارغة
-if (!cachedVehicles || cachedVehicles.length === 0) {
+async function loadInvoices() {
+    // ✅ إذا كانت البيانات محملة بالفعل، لا تفعل شيئاً
+    if (initialLoadDone && allInvoices.length > 0) {
+        console.log('📦 Using cached data:', allInvoices.length, 'invoices');
+        applyFilters();
+        return;
+    }
+    
+    // ✅ منع التحميل المتكرر
+    if (isLoadingInvoices) {
+        console.log('⚠️ Already loading, skipping...');
+        return;
+    }
+    
+    console.log('🟢 loadInvoices - LAZY LOADING');
+    isLoadingInvoices = true;
+    
     try {
-        const vehiclesResult = await gas('getVehicles', { centerName: currentUser?.centerName });
-        let vehiclesList = [];
-        if (Array.isArray(vehiclesResult)) {
-            vehiclesList = vehiclesResult;
-        } else if (vehiclesResult?.success && Array.isArray(vehiclesResult.data)) {
-            vehiclesList = vehiclesResult.data;
-        } else if (vehiclesResult?.data && Array.isArray(vehiclesResult.data)) {
-            vehiclesList = vehiclesResult.data;
-        }
-        if (vehiclesList.length > 0) {
-            window.cachedVehicles = vehiclesList;
-            cachedVehicles = vehiclesList;
-            console.log('✅ Vehicles loaded in loadInvoices:', cachedVehicles.map(v => v.id));
-        }
+        showToast('📅 اختر تاريخاً ثم اضغط Apply', 'info');
+        
+        // ✅ لا نقوم بتحميل أي شيء هنا - ننتظر المستخدم
+        initialLoadDone = true;
+        
     } catch(e) {
-        console.warn('Failed to load vehicles in loadInvoices:', e);
+        console.error('loadInvoices error:', e);
+    } finally {
+        isLoadingInvoices = false;
     }
 }
-}
-function initTripFilter() {
+  function initTripFilter() {
   const select = document.getElementById('filterTrip');
   select.innerHTML = '<option value="">All Trips</option>';
   
@@ -1695,142 +1560,197 @@ function getSelectedTrips() {
   const hasAllTrips = Array.from(select.options).some(opt => opt.selected && opt.value === '');
   return hasAllTrips || selected.length === 0 ? [] : selected;
 }
-
 function applyFilters() {
-  // ✅ الحصول على التواريخ من الحقول النصية (dd/MMM/yyyy)
-  const fromDateStr = document.getElementById('filterFromDateTxt')?.value || '';
-  const toDateStr = document.getElementById('filterToDateTxt')?.value || '';
-  
-  // ✅ الحصول على التواريخ من الحقول المخفية (ISO)
-  const fromHidden = document.getElementById('filterFromDateHidden')?.value || '';
-  const toHidden = document.getElementById('filterToDateHidden')?.value || '';
-  
-  // ✅ تحويل التواريخ إلى كائنات Date للمقارنة
-  let fromDateObj = null;
-  let toDateObj = null;
-  
-  if (fromHidden) {
-    const parts = fromHidden.split('-');
-    if (parts.length === 3) {
-      fromDateObj = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
-      fromDateObj.setHours(0, 0, 0, 0);
-    }
-  }
-  
-  if (toHidden) {
-    const parts = toHidden.split('-');
-    if (parts.length === 3) {
-      toDateObj = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
-      toDateObj.setHours(23, 59, 59, 999);
-    }
-  }
-  
-  console.log('🔍 Filter dates:', { fromDateStr, toDateStr, fromDateObj, toDateObj });
-  
-  // ✅ باقي المتغيرات
-  const search = document.getElementById('filterSearch').value.toLowerCase();
-  const state = document.getElementById('filterState').value;
-  const selectedTrips = getSelectedTrips();
-  
-  // ✅ الحصول على الفرع المختار
-  const selectedBranchId = document.getElementById('branchSelect')?.value || '';
-  let selectedBranchName = '';
-  if (selectedBranchId && window.branchesList) {
-    const branch = window.branchesList.find(b => b.id === selectedBranchId);
-    if (branch) selectedBranchName = branch.name;
-  }
-  
-  // ✅ منع إعادة التصفية إذا لم تتغير المعاملات
-  const currentParams = JSON.stringify({ 
-    fromDate: fromDateStr, 
-    toDate: toDateStr, 
-    search, 
-    state, 
-    selectedTrips, 
-    selectedBranchId 
-  });
-  
-  if (currentParams === lastFilterParams && filteredInvoices.length > 0) {
-    console.log('⏭️ Skipping duplicate filter');
-    return;
-  }
-  lastFilterParams = currentParams;
-  
-  // ✅ تصفية الفواتير
-  filteredInvoices = [];
-  
-  for (const inv of allInvoices) {
-    // ✅ الحصول على التاريخ النشط وتحويله إلى كائن Date
-    const activeDateStr = inv.activeDate || '';
-    let activeDateObj = null;
+    const fromDateStr = document.getElementById('filterFromDateTxt')?.value || '';
+    const toDateStr = document.getElementById('filterToDateTxt')?.value || '';
     
-    if (activeDateStr) {
-      activeDateObj = parseDateFromString(activeDateStr);
-      if (activeDateObj) {
-        activeDateObj.setHours(0, 0, 0, 0);
-      }
+    // ✅ إذا لم يتم اختيار تاريخ، اعرض رسالة ولا تفعل شيئاً
+    if (!fromDateStr || !toDateStr) {
+        document.getElementById('tblCont').innerHTML = `
+            <div style="text-align:center;padding:60px;color:var(--text-lt);">
+                <div style="font-size:48px;margin-bottom:16px;">📅</div>
+                <h3>اختر تاريخاً للبدء</h3>
+                <p style="font-size:13px;margin-top:8px;">حدد نطاق تاريخ ثم اضغط Apply لعرض الفواتير</p>
+            </div>
+        `;
+        return;
     }
     
-    // ✅ ✅ ✅ مقارنة التواريخ كـ timestamps (أرقام) بدلاً من النصوص
-    if (fromDateObj && activeDateObj) {
-      if (activeDateObj.getTime() < fromDateObj.getTime()) continue;
-    }
-    if (toDateObj && activeDateObj) {
-      if (activeDateObj.getTime() > toDateObj.getTime()) continue;
-    }
+    // ✅ تأكد من أن الفلاتر تحدد نطاقاً زمنياً
+    const fromDateObj = parseDateFromString(fromDateStr);
+    const toDateObj = parseDateFromString(toDateStr);
     
-    // ✅ تصفية حسب الحالة
-    if (state) {
-      const invState = (inv.state || '').toLowerCase();
-      if (invState !== state) continue;
+    if (!fromDateObj || !toDateObj) {
+        showToast('⚠️ صيغة تاريخ غير صحيحة', 'error');
+        return;
     }
     
-    // ✅ تصفية حسب الرحلات المختارة
-    if (selectedTrips.length > 0) {
-      const tripName = inv.trip || '';
-      if (!selectedTrips.includes(tripName)) continue;
+    // ✅ إذا كان allInvoices فارغاً، قم بتحميل البيانات لهذا النطاق
+    if (allInvoices.length === 0 || !initialLoadDone) {
+        loadInvoicesForDateRange(fromDateStr, toDateStr);
+        return;
     }
     
-    // ✅ تصفية حسب الفرع
-    if (selectedBranchName && inv.branchName !== selectedBranchName) continue;
-    
-    // ✅ تصفية حسب النص (رقم الفاتورة أو اسم العميل)
-    if (search) {
-      const voucher = (inv.voucherNo || '').toLowerCase();
-      const guest = (inv.guestName || '').toLowerCase();
-      if (!voucher.includes(search) && !guest.includes(search)) continue;
-    }
-    
-    filteredInvoices.push(inv);
-  }
-  
-  console.log(`📊 Filtered: ${filteredInvoices.length} invoices out of ${allInvoices.length}`);
-  console.log('📊 Date range:', { fromDateStr, toDateStr });
-  
-  // ✅ عرض عينة من الفواتير المُصفاة (للتأكد من النتائج)
-  if (filteredInvoices.length > 0) {
-    console.log('📊 Sample filtered invoices:', filteredInvoices.slice(0, 3).map(inv => ({
-      voucher: inv.voucherNo,
-      activeDate: inv.activeDate,
-      trip: inv.trip
-    })));
-  } else {
-    console.log('📊 No invoices matched the filters');
-  }
-  
-  // ✅ ترتيب النتائج
-  doSort();
-  currentPage = 1;
-  renderTable();
-  renderPagination();
-  updateSelectionButtonsState();
-  
-  // ✅ تحميل التعيينات إذا كان التاريخ مفرداً
-  const currentDate = getCurrentDateISO();
-  if (currentDate) {
-    loadAndPopulateAssignments(currentDate);
-  }
+    // ✅ إذا كانت البيانات موجودة، طبق الفلاتر
+    applyFiltersToExistingData(fromDateStr, toDateStr);
 }
+// ============================================================
+// LOAD INVOICES FOR DATE RANGE
+// ============================================================
+async function loadInvoicesForDateRange(fromDateStr, toDateStr) {
+    if (isLoadingInvoices) {
+        console.log('⚠️ Already loading, skipping...');
+        return;
+    }
+    
+    isLoadingInvoices = true;
+    showToast('جاري تحميل الفواتير...', 'info');
+    
+    try {
+        const fromDateObj = parseDateFromString(fromDateStr);
+        const toDateObj = parseDateFromString(toDateStr);
+        
+        let invoices = [];
+        
+        // ✅ إذا كان التاريخ مفرداً، استخدم getInvoicesByDate (أسرع)
+        if (fromDateObj && toDateObj && fromDateObj.getTime() === toDateObj.getTime()) {
+            const result = await gas('getInvoicesByDate', {
+                dateStr: fromDateStr,
+                centerName: currentUser?.centerName
+            });
+            if (Array.isArray(result)) {
+                invoices = result;
+            }
+        } else {
+            // ✅ نطاق زمني: جلب كل الفواتير ثم التصفية (مرة واحدة فقط)
+            const result = await gas('getAllInvoices', {
+                includeCollection: 'true',
+                centerName: currentUser?.centerName
+            });
+            if (Array.isArray(result)) {
+                invoices = result;
+            }
+        }
+        
+        // ✅ تصفية الفواتير حسب رحلات Diving
+        if (currentUser && !['Admin', 'Owner', 'Accountant', 'FinancialManager'].includes(currentUser.type)) {
+            invoices = invoices.filter(inv => {
+                const tripName = inv.Trip || inv.trip || '';
+                return isDivingTrip(tripName);
+            });
+        }
+        
+        // ✅ تخزين البيانات في allInvoices
+        allInvoices = invoices;
+        invoicesLoaded = true;
+        initialLoadDone = true;
+        
+        console.log(`✅ Loaded ${allInvoices.length} invoices for date range`);
+        
+        // ✅ بناء خريطة المقاعد
+        buildCumulativeSeats();
+        
+        // ✅ تحديث قائمة الرحلات
+        const tripSet = new Set();
+        allInvoices.forEach(inv => {
+            const trip = inv.Trip || inv.trip;
+            if (trip) tripSet.add(trip);
+        });
+        uniqueTrips = Array.from(tripSet).sort();
+        initTripFilter();
+        
+        // ✅ تطبيق الفلاتر على البيانات المحملة
+        applyFiltersToExistingData(fromDateStr, toDateStr);
+        
+        // ✅ تحميل التعيينات واللوجستيات للتاريخ
+        const currentDate = getCurrentDateISO();
+        if (currentDate) {
+            await loadAndPopulateAssignments(currentDate);
+            await loadLogisticsData(currentDate);
+        }
+        
+        showToast(`✅ تم تحميل ${allInvoices.length} فاتورة`, 'success');
+        
+    } catch(e) {
+        console.error('loadInvoicesForDateRange error:', e);
+        showToast('❌ خطأ في التحميل: ' + e.message, 'error');
+    } finally {
+        isLoadingInvoices = false;
+    }
+}
+
+  function applyFiltersToExistingData(fromDateStr, toDateStr) {
+    if (allInvoices.length === 0) {
+        document.getElementById('tblCont').innerHTML = `
+            <div style="text-align:center;padding:40px;color:var(--text-lt);">
+                <div style="font-size:32px;margin-bottom:12px;">📭</div>
+                <h3>لا توجد فواتير</h3>
+                <p style="font-size:12px;margin-top:4px;">حاول تغيير نطاق التاريخ</p>
+            </div>
+        `;
+        return;
+    }
+    
+    const fromDateObj = parseDateFromString(fromDateStr);
+    const toDateObj = parseDateFromString(toDateStr);
+    
+    // ✅ تصفية الفواتير حسب التاريخ
+    filteredInvoices = allInvoices.filter(inv => {
+        const activeDateStr = inv.activeDate || '';
+        const activeDateObj = parseDateFromString(activeDateStr);
+        
+        if (!activeDateObj) return false;
+        activeDateObj.setHours(0, 0, 0, 0);
+        
+        if (fromDateObj && activeDateObj.getTime() < fromDateObj.getTime()) return false;
+        if (toDateObj && activeDateObj.getTime() > toDateObj.getTime()) return false;
+        
+        return true;
+    });
+    
+    // ✅ تطبيق باقي الفلاتر (بحث، حالة، رحلة)
+    const search = document.getElementById('filterSearch').value.toLowerCase();
+    const state = document.getElementById('filterState').value;
+    const selectedTrips = getSelectedTrips();
+    
+    if (search) {
+        filteredInvoices = filteredInvoices.filter(inv => {
+            const voucher = (inv.voucherNo || '').toLowerCase();
+            const guest = (inv.guestName || '').toLowerCase();
+            return voucher.includes(search) || guest.includes(search);
+        });
+    }
+    
+    if (state) {
+        filteredInvoices = filteredInvoices.filter(inv => {
+            const invState = (inv.state || '').toLowerCase();
+            return invState === state;
+        });
+    }
+    
+    if (selectedTrips.length > 0) {
+        filteredInvoices = filteredInvoices.filter(inv => {
+            const trip = inv.trip || '';
+            return selectedTrips.includes(trip);
+        });
+    }
+    
+    // ✅ ترتيب وعرض النتائج
+    doSort();
+    currentPage = 1;
+    renderTable();
+    renderPagination();
+    updateSelectionButtonsState();
+    
+    // ✅ تحميل التعيينات إذا كان التاريخ مفرداً
+    const currentDate = getCurrentDateISO();
+    if (currentDate) {
+        loadAndPopulateAssignments(currentDate);
+    }
+    
+    console.log(`📊 Filtered: ${filteredInvoices.length} out of ${allInvoices.length}`);
+}
+  
 function doSort() {
   filteredInvoices.sort((a,b) => {
     let aVal = a[sortColumn], bVal = b[sortColumn];
@@ -3099,21 +3019,8 @@ async function saveInstructorAssignmentV3(activityItems, activityMapping) {
     }
   }
 }
-  async function saveInstructorAssignment() {
-  let selectedRows = [];
-  document.querySelectorAll('#assignInstructorsModal .assign-select:checked').forEach(cb => {
-    const instId = cb.getAttribute('data-id');
-    const diver = parseInt(document.querySelector(`.assign-diver[data-id="${instId}"]`).value) || 0;
-    const course = parseInt(document.querySelector(`.assign-course[data-id="${instId}"]`).value) || 0;
-    const intro = parseInt(document.querySelector(`.assign-intro[data-id="${instId}"]`).value) || 0;
-    if (diver+course+intro === 0) return;
-    selectedRows.push({ instructorId: instId, diver, course, intro });
-  });
-  if (selectedRows.length === 0) { showToast('⚠️ اختر مدرب', 'error'); return; }
-  const result = await gas('assignInstructorsToInvoice', { voucherNo: currentAssignVoucher, instructorsData: JSON.stringify(selectedRows), centerName: currentUser?.centerName });
-  if (result?.success) { updateLocalInvoice(currentAssignVoucher, 'InstructorsExecution', JSON.stringify(selectedRows)); renderTable(); }
-  else showToast('❌ فشل الحفظ', 'error');
-}
+ 
+  
 
 
 function updateLocalInvoice(voucherNo, field, value) {
@@ -3382,38 +3289,42 @@ async function forceRefresh() {
 }
   
 function resetFilters() {
-  const today = new Date();
-  const todayISO = today.toISOString().split('T')[0];
-  const todayTxt = isoToTxt(todayISO);
-  
-  document.getElementById('filterFromDateTxt').value = todayTxt;
-  document.getElementById('filterToDateTxt').value = todayTxt;
-  document.getElementById('filterFromDateHidden').value = todayISO;
-  document.getElementById('filterToDateHidden').value = todayISO;
-  
-  document.getElementById('filterSearch').value = '';
-  document.getElementById('filterState').value = '';
-  
-  const select = document.getElementById('filterTrip');
-  for (let i = 0; i < select.options.length; i++) {
-    select.options[i].selected = false;
-  }
-  
-  filteredInvoices = [...allInvoices];
-  doSort();
-  currentPage = 1;
-  renderTable();
-  renderPagination();
-  updateSelectionButtonsState();
-  
-  const currentDate = getCurrentDateISO();
-  if (currentDate) {
-    loadAndPopulateAssignments(currentDate);
-  }
-  
-  showToast('تم إعادة تعيين الفلاتر', 'success');
-}
- 
+    const today = new Date();
+    const todayISO = today.toISOString().split('T')[0];
+    const todayTxt = isoToTxt(todayISO);
+    
+    document.getElementById('filterFromDateTxt').value = todayTxt;
+    document.getElementById('filterToDateTxt').value = todayTxt;
+    document.getElementById('filterFromDateHidden').value = todayISO;
+    document.getElementById('filterToDateHidden').value = todayISO;
+    
+    document.getElementById('filterSearch').value = '';
+    document.getElementById('filterState').value = '';
+    
+    const select = document.getElementById('filterTrip');
+    for (let i = 0; i < select.options.length; i++) {
+        select.options[i].selected = false;
+    }
+    
+    // ✅ إعادة تعيين البيانات - تحميلها من جديد
+    allInvoices = [];
+    filteredInvoices = [];
+    initialLoadDone = false;
+    invoicesLoaded = false;
+    
+    // ✅ إظهار رسالة اختيار التاريخ
+    document.getElementById('tblCont').innerHTML = `
+        <div style="text-align:center;padding:60px;color:var(--text-lt);">
+            <div style="font-size:48px;margin-bottom:16px;">📅</div>
+            <h3>اختر تاريخاً للبدء</h3>
+            <p style="font-size:13px;margin-top:8px;">حدد نطاق تاريخ ثم اضغط Apply لعرض الفواتير</p>
+        </div>
+    `;
+    
+    document.getElementById('pagination').innerHTML = '';
+    updateSelectionButtonsState();
+    showToast('تم إعادة تعيين الفلاتر', 'success');
+} 
   function renderSummary() {
   const trips = {};
   
@@ -4640,37 +4551,7 @@ async function saveUpsellV2() {
 }
  
 
- async function saveUpsell(voucherNo) {
-  const amount = parseFloat(document.getElementById('upsellAmount').value);
-  const description = document.getElementById('upsellDescription').value;
-  const currency = document.getElementById('upsellCurrency').value;
-  
-  if (!amount || amount <= 0) {
-    showToast('الرجاء إدخال مبلغ صحيح', 'error');
-    return;
-  }
-  
-  showToast('جاري حفظ الـ UpSell...', 'info');
-  
-  try {
-    const result = await gas('saveUpsell', {
-      voucherNo: voucherNo,
-      amount: amount,
-      description: description,
-      currency: currency,
-      centerName: currentUser?.centerName
-    });
-    
-    if (result?.success) {
-      showToast('✅ تم إضافة UpSell بنجاح', 'success');
-      closeModal('upsellModal');
-    } else {
-      showToast('❌ فشل إضافة UpSell', 'error');
-    }
-  } catch(e) {
-    showToast('خطأ: ' + e.message, 'error');
-  }
-}
+
   
 function openModal(id) { 
   console.log('📂 Opening modal:', id);
@@ -5497,174 +5378,10 @@ function updateLogisticsBadge() {
   if (badge) badge.textContent = count;
   console.log('📊 Logistics badge updated to:', count);
 }
-// دوال الحفظ المطلوبة
-async function saveBeachInstructors() {
-  const selected = [];
-  document.querySelectorAll('#beachInstructorsList .instructor-checkbox:checked').forEach(cb => {
-    selected.push(cb.value);
-  });
-  
-  const currentDate = getCurrentDateISO();
-  if (!currentDate) {
-    showToast('الرجاء اختيار تاريخ أولاً', 'error');
-    return;
-  }
-  
-  // ✅ التحقق من عدم وجود المدرب في المراكب
-  const allBoatInstructors = [];
-  for (const instructors of Object.values(boatInstructorsMap)) {
-    if (Array.isArray(instructors)) {
-      allBoatInstructors.push(...instructors);
-    } else if (instructors) {
-      allBoatInstructors.push(instructors);
-    }
-  }
-  
-  const duplicateInBoats = selected.filter(id => allBoatInstructors.includes(id));
-  if (duplicateInBoats.length > 0) {
-    const duplicateNames = duplicateInBoats.map(id => {
-      const inst = cachedInstructors.find(i => i.id === id);
-      return inst?.name || id;
-    }).join(', ');
-    showToast(`⚠️ لا يمكن تعيين نفس المدرب في الشاطئ والمركب: ${duplicateNames}`, 'error');
-    return;
-  }
-  
-  selectedBeachInstructors = selected;
-  updateSelectionBadges();
-  
-  // ✅ حفظ في الخادم
-  const assignments = currentAssignments || {};
-  assignments.beachInstructors = selectedBeachInstructors;
-  
-  try {
-    const result = await gas('saveDailyAssignments', {
-      date: currentDate,
-      data: JSON.stringify(assignments),
-      centerName: currentUser?.centerName
-    });
-    
-    if (result && result.success !== false) {
-      currentAssignments = assignments;
-      showToast(`✅ تم حفظ ${selected.length} مدرب شاطئ`, 'success');
-    } else {
-      showToast('⚠️ تم الحفظ محلياً فقط (خطأ في الخادم)', 'warning');
-    }
-  } catch(e) {
-    console.warn('saveBeachInstructors error:', e);
-    showToast('تم الحفظ محلياً فقط', 'info');
-  }
-  
-  closeModal('beachInstructorsModal');
-}
-async function saveVehiclesSelection() {
-  const selected = [];
-  document.querySelectorAll('#vehiclesList .vehicle-checkbox:checked').forEach(cb => {
-    selected.push(cb.value);
-  });
-  
-  const currentDate = getCurrentDateISO();
-  if (!currentDate) {
-    showToast('الرجاء اختيار تاريخ أولاً', 'error');
-    return;
-  }
-  
-  selectedVehicles = selected;
-  updateSelectionBadges();
-  
-  // ✅ حفظ في الخادم
-  const assignments = currentAssignments || {};
-  assignments.vehicles = selectedVehicles;
-  
-  try {
-    const result = await gas('saveDailyAssignments', {
-      date: currentDate,
-      data: JSON.stringify(assignments),
-      centerName: currentUser?.centerName
-    });
-    
-    if (result && result.success !== false) {
-      currentAssignments = assignments;
-      showToast(`✅ تم حفظ ${selected.length} سيارة`, 'success');
-    } else {
-      showToast('⚠️ تم الحفظ محلياً فقط (خطأ في الخادم)', 'warning');
-    }
-  } catch(e) {
-    console.warn('saveVehiclesSelection error:', e);
-    showToast('تم الحفظ محلياً فقط', 'info');
-  }
-  
-  closeModal('vehiclesModal');
-}
 
-async function saveLogisticsVehicles() {
-  const records = [];
-  document.querySelectorAll('#logisticsVehiclesModal .logistics-checkbox:checked').forEach(cb => {
-    const vehicleId = cb.dataset.id;
-    const trip = document.querySelector(`.logistics-trip[data-id="${vehicleId}"]`).value;
-    const goCount = parseInt(document.querySelector(`.logistics-go[data-id="${vehicleId}"]`).value) || 0;
-    const returnCount = parseInt(document.querySelector(`.logistics-return[data-id="${vehicleId}"]`).value) || 0;
-    
-    if (trip && (goCount > 0 || returnCount > 0)) {
-      records.push({ vehicleId, tripName: trip, goCount, returnCount });
-    }
-  });
-  
-  const currentDate = getCurrentDateISO();
-  if (!currentDate) {
-    showToast('الرجاء اختيار تاريخ أولاً', 'error');
-    return;
-  }
-  
-  if (records.length === 0) {
-    showToast('⚠️ الرجاء اختيار سيارة ورحلة وإدخال أرقام', 'error');
-    return;
-  }
-  
-  showToast('جاري حفظ البيانات...', 'info');
-  
-  try {
-    const result = await gas('saveLogisticsRecords', { 
-      date: currentDate, 
-      records: JSON.stringify(records),
-      centerName: currentUser?.centerName
-    });
-    
-    if (result?.success) {
-      preloadedData.logisticsRecords = records;
-      tempLogisticsRows = records;
-      updateSelectionBadges();
-      updateLogisticsBadge();
-      
-      const luggageVehicles = cachedVehicles.filter(v => 
-        v.isActive === true && v.usageType === 'luggage'
-      );
-      const tripsOnDate = [...new Set(filteredInvoices.map(inv => inv.trip).filter(t => t))];
-      const container = document.getElementById('logisticsRowsContainer');
-      
-      if (container) {
-        let html = '';
-        for (let i = 0; i < records.length; i++) {
-          const record = records[i];
-          html += generateLogisticsRowHTML(i, record.vehicleId, record.tripName, record.goCount, record.returnCount, luggageVehicles, tripsOnDate);
-        }
-        if (records.length === 0) {
-          html += generateLogisticsRowHTML(0, '', '', 0, 0, luggageVehicles, tripsOnDate);
-        }
-        container.innerHTML = html;
-        for (let i = 0; i < records.length; i++) attachLogisticsRowEvents(i);
-        if (records.length === 0) attachLogisticsRowEvents(0);
-      }
-      
-      closeModal('logisticsVehiclesModal');
-      showToast(`✅ تم حفظ ${records.length} تشغيل`, 'success');
-    } else {
-      showToast('❌ فشل حفظ البيانات: ' + (result?.message || 'خطأ غير معروف'), 'error');
-    }
-  } catch(e) {
-    showToast('خطأ: ' + e.message, 'error');
-  }
-}
+
+
+
 async function saveBoatsAndInstructorsV2() {
     if (isSavingBoats) {
         console.log('⚠️ Save already in progress, ignoring...');
@@ -5851,63 +5568,7 @@ async function getTotalBookedSeatsForVehicle(vehicleId, currentDate, tripName, e
   
   return data;
 }
-async function saveBoatsAndInstructors() {
-  const selectedBoatsList = [];
-  const instructorsMap = {};
-  
-  document.querySelectorAll('#boatsModal .boat-checkbox:checked').forEach(cb => {
-    const boatId = cb.dataset.id;
-    selectedBoatsList.push(boatId);
-    
-    const instructorSelect = document.querySelector(`.boat-instructor-select[data-id="${boatId}"]`);
-    if (instructorSelect && instructorSelect.value) {
-      // ✅ دعم اختيار متعدد (إذا كان select يسمح بـ multiple)
-      if (instructorSelect.multiple) {
-        instructorsMap[boatId] = Array.from(instructorSelect.selectedOptions).map(opt => opt.value);
-      } else {
-        instructorsMap[boatId] = [instructorSelect.value];
-      }
-    } else {
-      // احتفظ بالمدربين السابقين إذا لم يتم تغييرهم
-      instructorsMap[boatId] = boatInstructorsMap[boatId] || [];
-    }
-  });
-  
-  const currentDate = getCurrentDateISO();
-  if (!currentDate) {
-    showToast('الرجاء اختيار تاريخ أولاً', 'error');
-    return;
-  }
-  
-  selectedBoats = selectedBoatsList;
-  boatInstructorsMap = instructorsMap;
-  updateSelectionBadges();
-  
-  // ✅ حفظ في الخادم
-  const assignments = currentAssignments || {};
-  assignments.boats = selectedBoats;
-  assignments.boatInstructorsMap = boatInstructorsMap;
-  
-  try {
-    const result = await gas('saveDailyAssignments', {
-      date: currentDate,
-      data: JSON.stringify(assignments),
-      centerName: currentUser?.centerName
-    });
-    
-    if (result && result.success !== false) {
-      currentAssignments = assignments;
-      showToast(`✅ تم حفظ ${selectedBoatsList.length} مركب`, 'success');
-    } else {
-      showToast('⚠️ تم الحفظ محلياً فقط (خطأ في الخادم)', 'warning');
-    }
-  } catch(e) {
-    console.warn('saveBoatsAndInstructors error:', e);
-    showToast('تم الحفظ محلياً فقط', 'info');
-  }
-  
-  closeModal('boatsModal');
-}
+
 // دوال إزالة الصفوف
 function removeVehicleRow(index) {
   const row = document.querySelector(`.vehicle-row[data-row-index="${index}"]`);
@@ -5950,42 +5611,7 @@ function removeLogisticsRow(index) {
         console.log('📅 To Date:', toDateInput.value);
     }
 }
-async function onDateChange() {
-    const fromDate = document.getElementById('filterFromDateTxt')?.value || '';
-    const toDate = document.getElementById('filterToDateTxt')?.value || '';    
-    // ✅ تحديث عرض التاريخ
-    updateDateDisplay();
-    
-    if (!fromDate && !toDate) return;
-    
-    // مسح التخزين المؤقت
-    clearVehicleSeatsCache();
-    
-    lastFilterParams = '';
-    invoicesLoaded = false;
-    
-    showToast('جاري تحميل الفواتير...', 'info');
-    
-    await loadInvoices();
-    
-    if (fromDate && toDate && fromDate === toDate) {
-        await loadAndPopulateAssignments(fromDate);
-        await loadLogisticsData(fromDate);
-        await refreshLogisticsBadge();
-        await loadLogisticsData(fromDate); // ✅ تحميل اللوجستيات أيضاً
-    } else {
-        selectedBeachInstructors = [];
-        selectedBoats = [];
-        selectedVehicles = [];
-        preloadedData.logisticsRecords = [];
-        updateSelectionBadges();
-    }
-    
-    applyFilters();
-    renderTable();
-    renderPagination();
-    updateSelectionButtonsState();
-}
+
   // ✅ تحديث عداد Logistics Vehicles
 function clearVehicleSeatsCache() {
   cachedVehicleSeats = {};
@@ -6032,125 +5658,81 @@ async function refreshLogisticsBadge() {
 // INITIALIZATION
 // ============================================================
 document.addEventListener('DOMContentLoaded', async () => {
-  // ✅ تطبيق الثيم الموحد
-  if (typeof Theme !== 'undefined' && Theme.applyToPage) {
-    Theme.applyToPage();
-  }
-  Theme.setPageTitle('مدير الحركة');
-  
-  // ✅ استخدام Session.checkValidity() من session.js
-  if (!Session.checkValidity()) {
-    return;
-  }
-  
-  // ✅ استخدام Session.getUser() من session.js
-  currentUser = Session.getUser();
-  if (!currentUser) {
-    location.href = 'index.html';
-    return;
-  }
+    // ✅ تطبيق الثيم الموحد
+    if (typeof Theme !== 'undefined' && Theme.applyToPage) {
+        Theme.applyToPage();
+    }
+    Theme.setPageTitle('مدير الحركة');
+    
+    // ✅ التحقق من الجلسة
+    if (!Session.checkValidity()) {
+        return;
+    }
+    
+    currentUser = Session.getUser();
+    if (!currentUser) {
+        location.href = 'index.html';
+        return;
+    }
 
-  // ✅ التصحيح: استخدام currentUser مباشرة (لا حاجة لـ sessionStorage)
-  try {
-    console.log('✅ Current user loaded:', currentUser.name, 'Type:', currentUser.type);
-    
-    // ✅ تحميل أسماء رحلات Diving أولاً
-    await loadDivingTripNames();
-    console.log('✅ Diving trips loaded:', divingTripNames);
-    
-    await loadBranches();
-    document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
-    clearVehicleSeatsCache();
-
-    const today = new Date();
-    const todayISO = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
-    const fromDateInput = document.getElementById('filterFromDate');
-    const toDateInput = document.getElementById('filterToDate');
-    if (fromDateInput && !fromDateInput.value) fromDateInput.value = todayISO;
-    if (toDateInput && !toDateInput.value) toDateInput.value = todayISO;
-    
-    // ✅ ✅ ✅ تحميل جميع البيانات الأساسية معاً (السيارات، المراكب، المدربين)
-    console.log('🔄 Loading all master data (vehicles, boats, instructors)...');
-    
-    // تحميل السيارات
     try {
-      const vehiclesResult = await gas('getVehicles', { centerName: currentUser?.centerName });
-      let vehiclesList = [];
-      if (Array.isArray(vehiclesResult)) {
-        vehiclesList = vehiclesResult;
-      } else if (vehiclesResult?.success && Array.isArray(vehiclesResult.data)) {
-        vehiclesList = vehiclesResult.data;
-      } else if (vehiclesResult?.data && Array.isArray(vehiclesResult.data)) {
-        vehiclesList = vehiclesResult.data;
-      }
-      if (vehiclesList.length > 0) {
-        window.cachedVehicles = vehiclesList;
-        cachedVehicles = vehiclesList;
-        console.log('✅ Vehicles loaded during init:', cachedVehicles.map(v => v.id));
-      }
-    } catch(e) {
-      console.warn('⚠️ Failed to load vehicles during init:', e);
+        console.log('✅ Current user loaded:', currentUser.name);
+        
+        // ✅ تحميل بيانات أساسية فقط (السيارات، المراكب، المدربين) - هذه خفيفة
+        await loadBranches();
+        document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
+        
+        // ✅ تحميل أسماء رحلات Diving
+        await loadDivingTripNames();
+        
+        // ✅ تحميل السيارات (خفيفة)
+        try {
+            const vehiclesResult = await gas('getVehicles', { centerName: currentUser?.centerName });
+            if (Array.isArray(vehiclesResult)) {
+                cachedVehicles = vehiclesResult;
+            }
+        } catch(e) { /* تجاهل */ }
+        
+        // ✅ تحميل المراكب (خفيفة)
+        try {
+            const boatsResult = await gas('getBoats', { centerName: currentUser?.centerName });
+            if (Array.isArray(boatsResult)) {
+                cachedBoats = boatsResult;
+            }
+        } catch(e) { /* تجاهل */ }
+        
+        // ✅ تحميل المدربين (خفيفة)
+        try {
+            const instructorsResult = await gas('getInstructors', { centerName: currentUser?.centerName });
+            if (Array.isArray(instructorsResult)) {
+                cachedInstructors = instructorsResult;
+            }
+        } catch(e) { /* تجاهل */ }
+        
+        // ✅ عرض رسالة الترحيب
+        const today = new Date();
+        const todayISO = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+        const todayTxt = isoToTxt(todayISO);
+        
+        document.getElementById('filterFromDateTxt').value = todayTxt;
+        document.getElementById('filterToDateTxt').value = todayTxt;
+        document.getElementById('filterFromDateHidden').value = todayISO;
+        document.getElementById('filterToDateHidden').value = todayISO;
+        
+        // ✅ عرض رسالة اختيار التاريخ
+        document.getElementById('tblCont').innerHTML = `
+            <div style="text-align:center;padding:60px;color:var(--text-lt);">
+                <div style="font-size:48px;margin-bottom:16px;">📅</div>
+                <h3>مرحباً ${escapeHtml(currentUser.name)}</h3>
+                <p style="font-size:13px;margin-top:8px;">اختر تاريخاً ثم اضغط <strong>Apply</strong> لعرض الفواتير</p>
+            </div>
+        `;
+        
+        console.log('✅ Page loaded successfully - waiting for user to select date');
+        
+    } catch(e) { 
+        console.error('❌ Initialization error:', e); 
     }
-    
-    // تحميل المراكب
-    try {
-      const boatsResult = await gas('getBoats', { centerName: currentUser?.centerName });
-      let boatsList = [];
-      if (Array.isArray(boatsResult)) {
-        boatsList = boatsResult;
-      } else if (boatsResult?.success && Array.isArray(boatsResult.data)) {
-        boatsList = boatsResult.data;
-      } else if (boatsResult?.data && Array.isArray(boatsResult.data)) {
-        boatsList = boatsResult.data;
-      }
-      if (boatsList.length > 0) {
-        window.cachedBoats = boatsList;
-        cachedBoats = boatsList;
-        console.log('✅ Boats loaded during init:', cachedBoats.map(b => b.id));
-      }
-    } catch(e) {
-      console.warn('⚠️ Failed to load boats during init:', e);
-    }
-    
-    // تحميل المدربين
-    try {
-      const instructorsResult = await gas('getInstructors', { centerName: currentUser?.centerName });
-      let instructorsList = [];
-      if (Array.isArray(instructorsResult)) {
-        instructorsList = instructorsResult;
-      } else if (instructorsResult?.success && Array.isArray(instructorsResult.data)) {
-        instructorsList = instructorsResult.data;
-      } else if (instructorsResult?.data && Array.isArray(instructorsResult.data)) {
-        instructorsList = instructorsResult.data;
-      }
-      if (instructorsList.length > 0) {
-        window.cachedInstructors = instructorsList;
-        cachedInstructors = instructorsList;
-        console.log('✅ Instructors loaded during init:', cachedInstructors.map(i => i.id));
-      }
-    } catch(e) {
-      console.warn('⚠️ Failed to load instructors during init:', e);
-    }
-    
-    console.log('✅ All master data loaded successfully');
-    
-    showToast('جاري تحميل الفواتير...', 'info');
-    await loadInvoices();
-    renderTable(); 
-    
-    // ✅ تحميل التعيينات لليوم الحالي (مرة واحدة فقط)
-    const currentDate = getCurrentDateISO();
-    if (currentDate) {
-        await loadAndPopulateAssignments(currentDate);
-        await loadLogisticsData(currentDate); // ✅ تحميل اللوجستيات
-        console.log('✅ Assignments loaded for date:', currentDate);
-        updateSelectionBadges();
-    }
-    
-  } catch(e) { 
-    console.error('❌ Initialization error:', e); 
-    window.location.href = 'index.html'; 
-  }
 });
   </script>
 </body>
