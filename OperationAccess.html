@@ -896,7 +896,9 @@ th:hover {
 <div id="cardsContainer" class="cards-container"></div>
 
 <div class="pagination" id="pagination"></div>
-
+<div style="text-align:center;padding:10px 0 2px 0;color:#94a3b8;font-size:10px;border-top:1px solid #e2e8f0;margin-top:8px;">
+  <span>© 2025 <strong style="color:#1e2b4f;">🌊 Dive System</strong> — جميع الحقوق محفوظة</span>
+</div>
 <!-- Modals -->
 <div id="assignVehiclesModal" class="modal"><div class="modal-content"><div class="modal-header"><h3>🚗 Assign Vehicles</h3><button class="close-modal" onclick="closeModal('assignVehiclesModal')">×</button></div><div id="assignVehiclesContent"></div></div></div>
 <div id="assignBoatsModal" class="modal"><div class="modal-content"><div class="modal-header"><h3>⛵ Assign Boats</h3><button class="close-modal" onclick="closeModal('assignBoatsModal')">×</button></div><div id="assignBoatsContent"></div></div></div>
@@ -1590,7 +1592,11 @@ function applyFilters() {
         loadInvoicesForDateRange(fromDateStr, toDateStr);
         return;
     }
-    
+     const currentDate = getCurrentDateISO();
+    if (currentDate) {
+        loadAndPopulateAssignments(currentDate);
+        loadLogisticsData(currentDate);  // ✅ هذه الدالة ستحدث العداد تلقائياً
+    }
     // ✅ إذا كانت البيانات موجودة، طبق الفلاتر
     applyFiltersToExistingData(fromDateStr, toDateStr);
 }
@@ -2201,27 +2207,34 @@ async function loadAndPopulateAssignments(dateISO) {
     }
 }
   async function loadLogisticsData(dateISO) {
-  if (!dateISO) return;
-  
-  try {
-    const result = await gas('getLogisticsRecords', { 
-      date: dateISO,
-      centerName: currentUser?.centerName 
-    });
+    if (!dateISO) return;
     
-    if (result?.success && Array.isArray(result.data)) {
-      preloadedData.logisticsRecords = result.data;
-      console.log('✅ Logistics data loaded:', result.data.length, 'records');
-    } else {
-      preloadedData.logisticsRecords = [];
+    try {
+        const result = await gas('getLogisticsRecords', { 
+            date: dateISO,
+            centerName: currentUser?.centerName 
+        });
+        
+        if (result?.success && Array.isArray(result.data)) {
+            preloadedData.logisticsRecords = result.data;
+            console.log('✅ Logistics data loaded:', result.data.length, 'records');
+            
+            // ✅ تحديث العداد فوراً بعد تحميل البيانات
+            updateLogisticsBadge();
+            updateSelectionBadges();
+        } else {
+            preloadedData.logisticsRecords = [];
+            updateLogisticsBadge();
+            updateSelectionBadges();
+        }
+    } catch(e) {
+        console.warn('Failed to load logistics records:', e);
+        preloadedData.logisticsRecords = [];
+        updateLogisticsBadge();
+        updateSelectionBadges();
     }
-  } catch(e) {
-    console.warn('Failed to load logistics records:', e);
-    preloadedData.logisticsRecords = [];
-  }
-  
-  updateSelectionBadges();
 }
+  
 async function openAssignVehicles(voucherNo) {
     const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
     if (!invoice) return;
@@ -3312,6 +3325,11 @@ function resetFilters() {
     initialLoadDone = false;
     invoicesLoaded = false;
     
+     preloadedData.logisticsRecords = [];
+    tempLogisticsRows = [];
+    updateLogisticsBadge();
+    updateSelectionBadges();
+    
     // ✅ إظهار رسالة اختيار التاريخ
     document.getElementById('tblCont').innerHTML = `
         <div style="text-align:center;padding:60px;color:var(--text-lt);">
@@ -3324,7 +3342,7 @@ function resetFilters() {
     document.getElementById('pagination').innerHTML = '';
     updateSelectionButtonsState();
     showToast('تم إعادة تعيين الفلاتر', 'success');
-} 
+}
   function renderSummary() {
   const trips = {};
   
@@ -5110,6 +5128,10 @@ async function openLogisticsVehicles() {
         return;
     }
     
+    // ✅ تحديث العداد فوراً عند الفتح
+    updateLogisticsBadge();
+    updateSelectionBadges();
+    
     // ✅ استخدام البيانات المخزنة مؤقتاً إذا كانت موجودة
     let existingRecords = preloadedData.logisticsRecords || [];
     
@@ -5136,6 +5158,10 @@ async function openLogisticsVehicles() {
     }
     
     renderLogisticsModal(existingRecords, currentDate);
+    
+    // ✅ تحديث العداد بعد التحميل
+    updateLogisticsBadge();
+    updateSelectionBadges();
 }
 
 // ✅ دالة منفصلة لعرض المودال
@@ -5207,6 +5233,7 @@ function renderLogisticsModal(existingRecords, currentDate) {
     if (tempLogisticsRows.length === 0) attachLogisticsRowEvents(0);
     
     updateLogisticsBadge();
+   updateSelectionBadges();
 }
   let tempLogisticsRows = [];
 
@@ -5264,19 +5291,21 @@ async function saveAllLogisticsRows() {
             centerName: currentUser?.centerName
         });
         
-        if (result && result.success) {
-            tempLogisticsRows = records;
-            preloadedData.logisticsRecords = records;
-            updateSelectionBadges();
-            updateLogisticsBadge();
-            
-            // ✅ إعادة تحميل اللوجستيات
-            await loadLogisticsData(currentDate);
-            renderTable();
-            
-            showToast(`✅ Saved ${records.length} logistics records`, 'success');
-            closeModal('logisticsVehiclesModal');
-        } else {
+         if (result && result.success) {
+        tempLogisticsRows = records;
+        preloadedData.logisticsRecords = records;
+        
+        // ✅ تحديث العداد فوراً بعد الحفظ
+        updateLogisticsBadge();
+        updateSelectionBadges();
+        
+        // ✅ إعادة تحميل اللوجستيات
+        await loadLogisticsData(currentDate);
+        renderTable();
+        
+        showToast(`✅ Saved ${records.length} logistics records`, 'success');
+        closeModal('logisticsVehiclesModal');
+    } else {
             showToast('❌ Failed to save: ' + (result.message || 'Unknown error'), 'error');
         }
     } catch(e) {
@@ -5360,23 +5389,40 @@ async function saveAllLogisticsRows() {
   container.insertAdjacentHTML('beforeend', newRowHTML);
   attachLogisticsRowEvents(newIndex);
 }
-function updateLogisticsBadge() {
-  const currentDate = getCurrentDateISO();
-  let count = 0;
-  
-  if (currentDate && preloadedData.logisticsRecords) {
-    if (Array.isArray(preloadedData.logisticsRecords)) {
-      count = preloadedData.logisticsRecords.length;
-    } else if (typeof preloadedData.logisticsRecords === 'object') {
-      count = Object.keys(preloadedData.logisticsRecords).length;
+
+  function updateLogisticsBadge() {
+    const currentDate = getCurrentDateISO();
+    let count = 0;
+    
+    // ✅ التحقق من preloadedData.logisticsRecords
+    if (preloadedData && preloadedData.logisticsRecords) {
+        if (Array.isArray(preloadedData.logisticsRecords)) {
+            // ✅ فقط السجلات التي لها VehicleID و TripName و (GoCount > 0 أو ReturnCount > 0)
+            count = preloadedData.logisticsRecords.filter(r => 
+                (r.VehicleID || r.vehicleId) && 
+                (r.TripName || r.tripName) && 
+                ((r.GoCount || r.goCount || 0) > 0 || (r.ReturnCount || r.returnCount || 0) > 0)
+            ).length;
+        } else if (typeof preloadedData.logisticsRecords === 'object') {
+            count = Object.keys(preloadedData.logisticsRecords).length;
+        }
+    } else if (currentDate && tempLogisticsRows && tempLogisticsRows.length > 0) {
+        count = tempLogisticsRows.filter(r => 
+            r.vehicleId && r.tripName && (r.goCount > 0 || r.returnCount > 0)
+        ).length;
     }
-  } else if (currentDate && tempLogisticsRows && tempLogisticsRows.length > 0) {
-    count = tempLogisticsRows.filter(r => r.vehicleId && r.tripName && (r.goCount > 0 || r.returnCount > 0)).length;
-  }
-  
-  const badge = document.getElementById('selectedLogisticsBadge');
-  if (badge) badge.textContent = count;
-  console.log('📊 Logistics badge updated to:', count);
+    
+    const badge = document.getElementById('selectedLogisticsBadge');
+    if (badge) {
+        badge.textContent = count;
+        // ✅ إضافة تأثير بسيط عند التحديث
+        badge.style.transition = 'transform 0.2s';
+        badge.style.transform = 'scale(1.3)';
+        setTimeout(() => {
+            badge.style.transform = 'scale(1)';
+        }, 200);
+    }
+    console.log('📊 Logistics badge updated to:', count);
 }
 
 
