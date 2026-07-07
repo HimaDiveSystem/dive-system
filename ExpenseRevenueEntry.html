@@ -311,7 +311,7 @@ let optionsCache = {};
 // ═══════════════════════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════
-function gasGet(params) {
+function gasGet(params, retryCount = 0) {
   return new Promise((resolve, reject) => {
     if (currentUser && currentUser.centerName) {
       params.centerName = currentUser.centerName;
@@ -322,10 +322,35 @@ function gasGet(params) {
       reject(new Error('CONFIG.GAS_URL غير معرف في config.js'));
       return;
     }
-    fetch(url).then(r => r.json()).then(resolve).catch(reject);
+    
+    // ✅ إضافة مهلة (timeout) 30 ثانية
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    
+    fetch(url, { 
+      signal: controller.signal,
+      headers: { 'Accept': 'application/json' }
+    })
+      .then(r => {
+        clearTimeout(timeoutId);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then(resolve)
+      .catch(err => {
+        clearTimeout(timeoutId);
+        // ✅ إعادة المحاولة تلقائياً (مرتين)
+        if (retryCount < 2) {
+          console.log(`⚠️ محاولة إعادة الاتصال (${retryCount + 1}/2)...`);
+          setTimeout(() => {
+            gasGet(params, retryCount + 1).then(resolve).catch(reject);
+          }, 2000);
+        } else {
+          reject(err);
+        }
+      });
   });
 }
-
 // ✅ صيغة التاريخ الموحدة DD/MMM/YYYY
 function isoToDD(iso) { 
   if(!iso) return ''; 
@@ -502,7 +527,6 @@ document.addEventListener('click', function(e){ if(!e.target.closest('.cbw')){ [
 function loadList(iso){
   const sheet = currentType==='expense' ? 'Expenses' : 'Other_Revenues';
   
-  // ✅ تحديد التاريخ المستهدف
   let targetDate;
   if (iso) {
     const parts = iso.split('-');
@@ -514,14 +538,12 @@ function loadList(iso){
     targetDate = new Date();
   }
   
-  // ✅ جلب أول وآخر يوم في الشهر المستهدف
   const firstDay = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
   const lastDay = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0);
   
   let fromDate = isoToDD(firstDay.toISOString().split('T')[0]);
   let toDate = isoToDD(lastDay.toISOString().split('T')[0]);
   
-  // ✅ ترتيب التواريخ (الأصغر أولاً)
   const date1 = new Date(ddToISO(fromDate));
   const date2 = new Date(ddToISO(toDate));
   if (date1 > date2) {
@@ -534,6 +556,7 @@ function loadList(iso){
   
   document.getElementById('tableWrap').innerHTML = '<div class="loader"><div class="spinner"></div>جاري التحميل...</div>';
   
+  // ✅ استخدام gasGet مع إعادة المحاولة
   gasGet({action:'getExpenseRevenueRows', sheet, dateFrom: fromDate, dateTo: toDate})
     .then(data => { 
       console.log(`✅ تم جلب ${data?.length || 0} سجل من ${sheet}`);
@@ -543,7 +566,6 @@ function loadList(iso){
       renderTable();
       renderTotals();
       
-      // ✅ فقط إذا كانت حقول الفلتر فارغة
       const fromInput = document.getElementById('fFromDate');
       const toInput = document.getElementById('fToDate');
       
@@ -555,8 +577,22 @@ function loadList(iso){
     })
     .catch(err => { 
       console.log(`❌ loadList error:`, err);
-      document.getElementById('tableWrap').innerHTML = `<div class="no-data">خطأ: ${err.message}</div>`; 
+      // ✅ عرض رسالة خطأ أكثر وضوحاً
+      document.getElementById('tableWrap').innerHTML = `
+        <div class="no-data" style="color:#dc2626;padding:30px;">
+          <div style="font-size:24px;margin-bottom:10px;">⚠️</div>
+          <div style="font-weight:700;">فشل الاتصال بالخادم</div>
+          <div style="font-size:11px;margin-top:6px;color:#666;">${err.message}</div>
+          <button onclick="retryLoad()" style="margin-top:12px;padding:6px 20px;background:var(--navy);color:var(--gold);border:none;border-radius:30px;cursor:pointer;font-weight:700;">🔄 إعادة المحاولة</button>
+        </div>
+      `; 
     });
+}
+
+// ✅ دالة إعادة المحاولة
+function retryLoad() {
+  const iso = document.getElementById('fDate').value;
+  if (iso) loadList(iso);
 }
 // ═══════════════════════════════════════════════════════════════════
 // APPLY DATE FILTER
@@ -567,29 +603,23 @@ function applyDateFilter() {
   const searchText = document.getElementById('fSearch').value;
   const sheet = currentType === 'expense' ? 'Expenses' : 'Other_Revenues';
   
-  // ✅ تحويل التواريخ من ISO إلى DD/MMM/YYYY
   let fromDD = fromDate ? isoToDD(fromDate) : '';
   let toDD = toDate ? isoToDD(toDate) : '';
   
-  // ✅ إذا كان كلا الحقلين فارغين، استخدم اليوم
   if (!fromDD && !toDD) {
     const today = todayISO();
     fromDD = isoToDD(today);
     toDD = isoToDD(today);
   }
-  // ✅ إذا كان هناك تاريخ واحد فقط، استخدمه كنطاق
   else if (!fromDD && toDD) {
     fromDD = toDD;
   } else if (fromDD && !toDD) {
     toDD = fromDD;
   }
-  // ✅ إذا كان هناك تاريخان، قم بترتيبهما (الأصغر أولاً)
   else {
-    // ترتيب التواريخ
     const date1 = new Date(ddToISO(fromDD));
     const date2 = new Date(ddToISO(toDD));
     if (date1 > date2) {
-      // تبديل إذا كان الترتيب عكسياً
       const temp = fromDD;
       fromDD = toDD;
       toDD = temp;
@@ -600,7 +630,7 @@ function applyDateFilter() {
   
   document.getElementById('tableWrap').innerHTML = '<div class="loader"><div class="spinner"></div>جاري البحث...</div>';
   
-  // ✅ جلب البيانات من الخادم
+  // ✅ استخدام gasGet مع إعادة المحاولة
   gasGet({action: 'getExpenseRevenueRows', sheet, dateFrom: fromDD, dateTo: toDD})
     .then(data => {
       if (Array.isArray(data)) {
@@ -622,7 +652,16 @@ function applyDateFilter() {
       }
     }).catch(err => {
       console.error('❌ applyDateFilter error:', err);
-      showAlert('خطأ: ' + err.message, '❌');
+      // ✅ عرض رسالة خطأ واضحة مع زر إعادة المحاولة
+      document.getElementById('tableWrap').innerHTML = `
+        <div class="no-data" style="color:#dc2626;padding:30px;">
+          <div style="font-size:24px;margin-bottom:10px;">⚠️</div>
+          <div style="font-weight:700;">فشل الاتصال بالخادم</div>
+          <div style="font-size:11px;margin-top:6px;color:#666;">${err.message}</div>
+          <button onclick="applyDateFilter()" style="margin-top:12px;padding:6px 20px;background:var(--navy);color:var(--gold);border:none;border-radius:30px;cursor:pointer;font-weight:700;">🔄 إعادة المحاولة</button>
+        </div>
+      `;
+      showAlert('خطأ في الاتصال: ' + err.message, '❌');
     });
 }
   function showAlert(msg, icon='ℹ️'){ 
