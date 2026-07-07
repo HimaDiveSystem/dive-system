@@ -3,8 +3,21 @@
 <head>
   <base target="_top">
   <meta charset="UTF-8">
+  <!-- ✅ توحيد مظهر المتصفح -->
+  <meta name="theme-color" content="#1e2b4f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <meta name="description" content=" إدارة أسعار الرحلات">
+  <meta name="author" content="Dive System">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes">
-  <title>🏝️ إدارة أسعار الرحلات | نظام متكامل</title>
+  <title>🏝️ إدارة أسعار الرحلات</title>
+  
+  <!-- ====== IMPORT CONFIG & SESSION & UI ====== -->
+  <script src="config.js"></script>
+  <script src="session.js"></script>
+  <script src="ui.js"></script>
+  
   <style>
     * {
       margin: 0;
@@ -703,6 +716,34 @@
       outline: none;
     }
 
+    /* Loading spinner */
+    .loading {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid #fff;
+      border-top: 2px solid #ffd700;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-right: 8px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    @keyframes slideUp {
+      from {
+        transform: translateX(-50%) translateY(20px);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(-50%) translateY(0);
+        opacity: 1;
+      }
+    }
+
     /* Responsive */
     @media (max-width: 768px) {
       body {
@@ -741,35 +782,6 @@
         justify-content: center;
       }
     }
-
-    /* Loading spinner */
-   .loading {
-  display: inline-block;
-  width: 16px;
-  height: 16px;
-  border: 2px solid #fff;
-  border-top: 2px solid #ffd700;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin-right: 8px;
-}
-
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-@keyframes slideUp {
-  from {
-    transform: translateX(-50%) translateY(20px);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(-50%) translateY(0);
-    opacity: 1;
-  }
-}
-   
   </style>
 </head>
 <body>
@@ -781,16 +793,16 @@
     </h1>
     <div class="user-section">
       <span class="user-badge" id="userNameDisplay"></span>
-      <button class="btn-back" onclick="window.goBack()">
+      <button class="btn-back" onclick="goBack()">
         <span>🔙</span> رجوع
       </button>
     </div>
   </div>
 
   <div class="tabs">
-    <button class="tab active" onclick="window.showTab('add')">➕ إضافة رحلة جديدة</button>
-    <button class="tab" onclick="window.showTab('edit')">✏️ تعديل رحلة</button>
-    <button class="tab" onclick="window.showTab('list')">📋 قائمة الرحلات</button>
+    <button class="tab active" onclick="showTab('add')">➕ إضافة رحلة جديدة</button>
+    <button class="tab" onclick="showTab('edit')">✏️ تعديل رحلة</button>
+    <button class="tab" onclick="showTab('list')">📋 قائمة الرحلات</button>
   </div>
 
   <div id="mainContent"></div>
@@ -832,46 +844,69 @@
   </div>
 </div>
 
+<!-- ====== FOOTER ====== -->
+<div style="text-align:center;padding:10px 0 2px 0;color:#94a3b8;font-size:10px;border-top:1px solid #e2e8f0;margin-top:8px;">
+  <span>© 2025 <strong style="color:#1e2b4f;">🌊 Dive System</strong> — جميع الحقوق محفوظة</span>
+</div>
+
 <script>
-  // ============================================================
-  // CONFIGURATION
-  // ============================================================
-  const GAS_URL = 'https://script.google.com/macros/s/AKfycbwC1BRoLAJthZqxWTYyMUSjPNNGfCI0BjTfhE7ZiVx67rUP__OKAj0vlwD1-RUCOMSE/exec';
-
-  let currentUser = null;
-  let allCategories = [];
-  let allTrips = [];
-  let currentTrip = {
-    id: null,
-    name: '',
-    category: '',
-    items: [],
-    prices: {},
-    hasCost: false
-  };
-  let selectedCurrency = '$';
-  let isEditMode = false;
-  let pendingTripData = null; // For saving after currency entry
-
-  // ============================================================
-  // API HELPER (JSONP)
-  // ============================================================
- // ============================================================
-// JSONP WITH RETRY AND BETTER ERROR HANDLING
 // ============================================================
-async function jsonp(action, params = {}, retryCount = 0) {
+// CONFIG & STATE
+// ============================================================
+console.log('🚀 TripsPriceListManager loaded');
+console.log('CONFIG.GAS_URL:', CONFIG.GAS_URL);
+
+let currentUser = null;
+let allCategories = [];
+let allTrips = [];
+let currentTrip = {
+  id: null,
+  name: '',
+  category: '',
+  items: [],
+  prices: {},
+  hasCost: false
+};
+let selectedCurrency = '$';
+let isEditMode = false;
+let pendingTripData = null;
+let isLoadingTrip = false;
+
+// ============================================================
+// SESSION CHECK
+// ============================================================
+if (!Session.checkValidity()) {
+  throw new Error('جلسة غير صالحة');
+}
+
+// ============================================================
+// JSONP REQUEST - متوافق مع Session
+// ============================================================
+function jsonp(action, params = {}, retryCount = 0) {
   const MAX_RETRIES = 3;
-  const TIMEOUT = 45000; // 45 seconds
+  const TIMEOUT = 45000;
   
   return new Promise((resolve, reject) => {
+    // ✅ استخدام Session.getUser()
+    const user = Session.getUser();
+    if (user && user.centerName && !params.centerName) {
+      params.centerName = user.centerName;
+    }
+    if (user && user.centerId && !params.centerId) {
+      params.centerId = user.centerId;
+    }
+    
     const callbackName = '_cb_' + Date.now() + '_' + Math.floor(Math.random() * 99999);
     params.action = action;
     params.callback = callbackName;
+    params._t = Date.now();
     
     const queryString = Object.entries(params)
-      .map(([k, v]) => k + '=' + encodeURIComponent(v === undefined ? '' : String(v)))
+      .filter(([k, v]) => v !== undefined && v !== null && v !== '')
+      .map(([k, v]) => k + '=' + encodeURIComponent(String(v)))
       .join('&');
     
+    const url = CONFIG.GAS_URL + '?' + queryString;
     const script = document.createElement('script');
     let timeoutId;
     let isCompleted = false;
@@ -914,232 +949,300 @@ async function jsonp(action, params = {}, retryCount = 0) {
       handleError(new Error('فشل تحميل السكريبت'));
     };
     
-    script.src = GAS_URL + '?' + queryString;
+    script.src = url;
     document.head.appendChild(script);
   });
 }
-  // ============================================================
-  // INITIALIZATION
-  // ============================================================
-  document.addEventListener('DOMContentLoaded', async () => {
-    // Get current user
-    let userData = sessionStorage.getItem('currentUser');
-    if (!userData) userData = localStorage.getItem('currentUser');
-    
-    if (!userData) {
-      showAlert('الرجاء تسجيل الدخول أولاً');
-      setTimeout(() => window.top.location.href = '?page=Login', 2000);
-      return;
-    }
-    
-    try {
-      currentUser = JSON.parse(userData);
-      document.getElementById('userNameDisplay').textContent = currentUser.name || 'مدير النظام';
-      
-      const allowedTypes = ['Admin', 'Owner', 'FinancialManager', 'Sales', 'Accountant', 'Employee'];
-      if (!allowedTypes.includes(currentUser.type)) {
-        showAlert('ليس لديك صلاحية للوصول إلى هذه الصفحة');
-        setTimeout(() => window.location.href = '?page=Dashboard', 2000);
-        return;
-      }
-    } catch(e) {
-      showAlert('خطأ في بيانات المستخدم');
-      setTimeout(() => window.top.location.href = '?page=Login', 2000);
-      return;
-    }
-    
-    await loadAllCategories();
-    await loadAllTrips();
-    showTab('add');
-  });
 
-  async function loadAllCategories() {
-    try {
-      allCategories = await jsonp('getAllCategories') || [];
-    } catch(e) { console.error(e); }
+// ✅ مرادف للتوافق
+function gas(action, params = {}) {
+  return jsonp(action, params);
+}
+
+// ============================================================
+// UTILITIES
+// ============================================================
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function showAlert(message) {
+  document.getElementById('alertMessage').innerText = message;
+  document.getElementById('alertModal').style.display = 'flex';
+  document.getElementById('alertOk').onclick = () => {
+    document.getElementById('alertModal').style.display = 'none';
+  };
+}
+
+function showConfirm(message, onConfirm, onCancel) {
+  document.getElementById('confirmMessage').innerText = message;
+  document.getElementById('confirmModal').style.display = 'flex';
+  document.getElementById('confirmYes').onclick = () => {
+    document.getElementById('confirmModal').style.display = 'none';
+    if (onConfirm) onConfirm();
+  };
+  document.getElementById('confirmNo').onclick = () => {
+    document.getElementById('confirmModal').style.display = 'none';
+    if (onCancel) onCancel();
+  };
+}
+
+function showTemporaryAlert(message, duration = 3000) {
+  const existingAlert = document.getElementById('tempAlert');
+  if (existingAlert) existingAlert.remove();
+  
+  const alertDiv = document.createElement('div');
+  alertDiv.id = 'tempAlert';
+  alertDiv.style.cssText = `
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #27ae60;
+    color: white;
+    padding: 12px 25px;
+    border-radius: 50px;
+    font-weight: bold;
+    z-index: 10001;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    animation: slideUp 0.3s ease;
+  `;
+  alertDiv.innerHTML = message;
+  document.body.appendChild(alertDiv);
+  
+  setTimeout(() => {
+    if (alertDiv) alertDiv.remove();
+  }, duration);
+}
+
+// ============================================================
+// NAVIGATION
+// ============================================================
+function goBack() {
+  if (currentUser) Session.save(currentUser);
+  const dashboards = CONFIG.DASHBOARD_PAGES || {
+    'Admin': 'Dashboard.html',
+    'Owner': 'OwnerDashboard.html',
+    'Sales': 'SalesDashboard.html',
+    'Accountant': 'AccountantDashboard.html',
+    'OperationsManager': 'OperationManager.html',
+    'OperationsSupervisor': 'OperationSupervisor.html'
+  };
+  const userType = currentUser?.type || 'Accountant';
+  window.location.href = dashboards[userType] || 'Dashboard.html';
+}
+
+// ============================================================
+// INITIALIZATION
+// ============================================================
+document.addEventListener('DOMContentLoaded', async () => {
+  // ✅ تطبيق الثيم الموحد
+  if (typeof Theme !== 'undefined' && Theme.applyToPage) {
+    Theme.applyToPage();
   }
-
-  async function loadAllTrips() {
-    try {
-      allTrips = await jsonp('getAllTrips') || [];
-      allTrips.sort((a,b) => a.name.localeCompare(b.name, 'ar'));
-    } catch(e) { console.error(e); }
+  Theme.setPageTitle('إدارة أسعار الرحلات');
+  
+  // ✅ التحقق من الجلسة
+  if (!Session.checkValidity()) {
+    location.href = 'index.html';
+    return;
   }
-
-  // ============================================================
-  // MODAL FUNCTIONS
-  // ============================================================
-  function showAlert(message) {
-    document.getElementById('alertMessage').innerText = message;
-    document.getElementById('alertModal').style.display = 'flex';
-    document.getElementById('alertOk').onclick = () => {
-      document.getElementById('alertModal').style.display = 'none';
-    };
+  
+  // ✅ استخدام Session.getUser()
+  currentUser = Session.getUser();
+  if (!currentUser) {
+    location.href = 'index.html';
+    return;
   }
+  
+  document.getElementById('userNameDisplay').textContent = currentUser.name || 'مدير النظام';
+  
+  // ✅ تحميل البيانات الأساسية
+  await loadAllCategories();
+  await loadAllTrips();
+  showTab('add');
+});
 
-  function showConfirm(message, onConfirm, onCancel) {
-    document.getElementById('confirmMessage').innerText = message;
-    document.getElementById('confirmModal').style.display = 'flex';
-    document.getElementById('confirmYes').onclick = () => {
-      document.getElementById('confirmModal').style.display = 'none';
-      if (onConfirm) onConfirm();
-    };
-    document.getElementById('confirmNo').onclick = () => {
-      document.getElementById('confirmModal').style.display = 'none';
-      if (onCancel) onCancel();
-    };
+// ============================================================
+// LOAD DATA
+// ============================================================
+async function loadAllCategories() {
+  try {
+    allCategories = await jsonp('getAllCategories') || [];
+  } catch(e) { 
+    console.error('loadAllCategories error:', e);
   }
+}
 
-  // ============================================================
-  // TAB MANAGEMENT
-  // ============================================================
-  function showTab(tab) {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    const activeTab = Array.from(document.querySelectorAll('.tab')).find(
-      t => t.textContent.includes(tab === 'add' ? 'إضافة' : tab === 'edit' ? 'تعديل' : 'قائمة')
-    );
-    if (activeTab) activeTab.classList.add('active');
-    
-    if (tab === 'add') {
-      isEditMode = false;
-      newTrip();
-    } else if (tab === 'edit') {
-      isEditMode = true;
-      showEditForm();
-    } else if (tab === 'list') {
-      showTripsList();
-    }
+async function loadAllTrips() {
+  try {
+    const result = await jsonp('getAllTrips', { 
+      includeItems: 'true',
+      centerName: currentUser?.centerName || '' 
+    });
+    allTrips = Array.isArray(result) ? result : [];
+    allTrips.sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+  } catch(e) { 
+    console.error('loadAllTrips error:', e);
   }
+}
 
-  function newTrip() {
-    currentTrip = {
-      id: null,
-      name: '',
-      category: '',
-      items: [],
-      prices: {},
-      hasCost: false
-    };
-    selectedCurrency = '$';
-    renderAddEditForm();
+// ============================================================
+// TAB MANAGEMENT
+// ============================================================
+function showTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  const activeTab = Array.from(document.querySelectorAll('.tab')).find(
+    t => t.textContent.includes(tab === 'add' ? 'إضافة' : tab === 'edit' ? 'تعديل' : 'قائمة')
+  );
+  if (activeTab) activeTab.classList.add('active');
+  
+  if (tab === 'add') {
+    isEditMode = false;
+    newTrip();
+  } else if (tab === 'edit') {
+    isEditMode = true;
+    showEditForm();
+  } else if (tab === 'list') {
+    showTripsList();
   }
+}
 
-  function showEditForm() {
-    currentTrip = {
-      id: null,
-      name: '',
-      category: '',
-      items: [],
-      prices: {},
-      hasCost: false
-    };
-    selectedCurrency = '$';
-    renderAddEditForm();
-  }
+function newTrip() {
+  currentTrip = {
+    id: null,
+    name: '',
+    category: '',
+    items: [],
+    prices: {},
+    hasCost: false
+  };
+  selectedCurrency = '$';
+  renderAddEditForm();
+}
 
-  // ============================================================
-  // RENDER FORM
-  // ============================================================
-  function renderAddEditForm() {
-    const content = document.getElementById('mainContent');
-    const title = isEditMode ? '✏️ تعديل رحلة موجودة' : '➕ إضافة رحلة جديدة';
-    
-    const tripNameField = isEditMode ? `
-      <div class="trip-input-group">
-        <input type="text" id="tripName" class="form-control" list="tripsList" placeholder="اختر أو اكتب اسم الرحلة" value="${escapeHtml(currentTrip.name)}" style="direction: ltr; text-align: left;">
-        <button class="btn-load" onclick="window.loadTrip()"><span>📥</span> تحميل</button>
-        <datalist id="tripsList">
-          ${allTrips.map(t => `<option value="${escapeHtml(t.name)}">`).join('')}
-        </datalist>
-      </div>
-    ` : `
-      <input type="text" id="tripName" class="form-control" list="tripsList" placeholder="أدخل اسم الرحلة الجديدة" value="${escapeHtml(currentTrip.name)}" style="direction: ltr; text-align: left;">
+function showEditForm() {
+  currentTrip = {
+    id: null,
+    name: '',
+    category: '',
+    items: [],
+    prices: {},
+    hasCost: false
+  };
+  selectedCurrency = '$';
+  renderAddEditForm();
+}
+
+// ============================================================
+// RENDER FORM
+// ============================================================
+function renderAddEditForm() {
+  const content = document.getElementById('mainContent');
+  const title = isEditMode ? '✏️ تعديل رحلة موجودة' : '➕ إضافة رحلة جديدة';
+  
+  const tripNameField = isEditMode ? `
+    <div class="trip-input-group">
+      <input type="text" id="tripName" class="form-control" list="tripsList" placeholder="اختر أو اكتب اسم الرحلة" value="${escapeHtml(currentTrip.name)}" style="direction: ltr; text-align: left;">
+      <button class="btn-load" onclick="loadTrip()"><span>📥</span> تحميل</button>
       <datalist id="tripsList">
         ${allTrips.map(t => `<option value="${escapeHtml(t.name)}">`).join('')}
       </datalist>
-    `;
+    </div>
+  ` : `
+    <input type="text" id="tripName" class="form-control" list="tripsList" placeholder="أدخل اسم الرحلة الجديدة" value="${escapeHtml(currentTrip.name)}" style="direction: ltr; text-align: left;">
+    <datalist id="tripsList">
+      ${allTrips.map(t => `<option value="${escapeHtml(t.name)}">`).join('')}
+    </datalist>
+  `;
+  
+  content.innerHTML = `
+    <div class="card">
+      <div class="card-title">${title}</div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="required">الفئة</label>
+          <input type="text" id="tripCategory" class="form-control" list="categoriesList" placeholder="اختر أو اكتب فئة جديدة" value="${escapeHtml(currentTrip.category)}" style="direction: ltr; text-align: left;">
+          <datalist id="categoriesList">
+            ${allCategories.map(c => `<option value="${escapeHtml(c)}">`).join('')}
+          </datalist>
+        </div>
+        <div class="form-group">
+          <label class="required">اسم الرحلة</label>
+          ${tripNameField}
+        </div>
+      </div>
+    </div>
     
-    content.innerHTML = `
-      <div class="card">
-        <div class="card-title">${title}</div>
-        <div class="form-grid">
-          <div class="form-group">
-            <label class="required">الفئة</label>
-            <input type="text" id="tripCategory" class="form-control" list="categoriesList" placeholder="اختر أو اكتب فئة جديدة" value="${escapeHtml(currentTrip.category)}" style="direction: ltr; text-align: left;">
-            <datalist id="categoriesList">
-              ${allCategories.map(c => `<option value="${escapeHtml(c)}">`).join('')}
-            </datalist>
-          </div>
-          <div class="form-group">
-            <label class="required">اسم الرحلة</label>
-            ${tripNameField}
-          </div>
-        </div>
+    <div class="card">
+      <div class="card-title">📝 بنود الرحلة</div>
+      <div class="items-header">
+        <button class="btn-add-item" onclick="addItem()"><span>➕</span> إضافة بند جديد</button>
+        <span style="font-size: 13px; color: #666;">عدد البنود: ${currentTrip.items.length}</span>
       </div>
-      
-      <div class="card">
-        <div class="card-title">📝 بنود الرحلة</div>
-        <div class="items-header">
-          <button class="btn-add-item" onclick="window.addItem()"><span>➕</span> إضافة بند جديد</button>
-          <span style="font-size: 13px; color: #666;">عدد البنود: ${currentTrip.items.length}</span>
-        </div>
-        <div id="itemsContainer"></div>
-      </div>
-      
-      <div class="card">
-        <div class="card-title">💰 الأسعار</div>
-        
-        <div class="currency-section">
-          <div class="currency-options">
-            <label class="currency-option ${selectedCurrency === '$' ? 'selected' : ''}" onclick="window.selectCurrency('$')">
-              <input type="radio" name="currency" value="$" ${selectedCurrency === '$' ? 'checked' : ''}> 💵 دولار (USD)
-            </label>
-            <label class="currency-option ${selectedCurrency === '€' ? 'selected' : ''}" onclick="window.selectCurrency('€')">
-              <input type="radio" name="currency" value="€" ${selectedCurrency === '€' ? 'checked' : ''}> 💶 يورو (EUR)
-            </label>
-            <label class="currency-option ${selectedCurrency === '£' ? 'selected' : ''}" onclick="window.selectCurrency('£')">
-              <input type="radio" name="currency" value="£" ${selectedCurrency === '£' ? 'checked' : ''}> 💷 استرليني (GBP)
-            </label>
-            <label class="currency-option ${selectedCurrency === 'LE' ? 'selected' : ''}" onclick="window.selectCurrency('LE')">
-              <input type="radio" name="currency" value="LE" ${selectedCurrency === 'LE' ? 'checked' : ''}> 🇪🇬 جنيه مصري (EGP)
-            </label>
-          </div>
-          <div class="bank-percent">
-            <label>نسبة البنك للتكلفة (Visa):</label>
-            <input type="number" id="bankPercentage" value="2.5" step="0.1" min="0" max="100">
-          </div>
-        </div>
-
-        <div class="cost-section">
-          <div class="cost-checkbox">
-            <input type="checkbox" id="hasCost" ${currentTrip.hasCost ? 'checked' : ''}>
-            <label for="hasCost">💰 هذه الرحلة لها تكلفة (Cost)</label>
-          </div>
-          <div class="cost-note">
-            ⚠️ إذا كان محدداً سيتم التأثير على عمولة المندوب (Sales Commission)
-          </div>
-        </div>
-
-        <div id="pricesContainer"></div>
-      </div>
-      
-      <div class="action-buttons">
-        ${isEditMode ? `
-          <button class="btn-primary" onclick="window.updateTrip()"><span>✏️</span> تحديث الأسعار</button>
-          <button class="btn-danger" onclick="window.deleteCurrentTrip()"><span>🗑️</span> حذف الرحلة</button>
-        ` : `
-          <button class="btn-primary" onclick="window.saveTrip()"><span>💾</span> حفظ الرحلة</button>
-        `}
-        <button class="btn-secondary" onclick="window.resetForm()"><span>🔄</span> إعادة تعيين</button>
-      </div>
-    `;
+      <div id="itemsContainer"></div>
+    </div>
     
-    updateItemsUI();
-    updatePricesUI();
-  }
+    <div class="card">
+      <div class="card-title">💰 الأسعار</div>
+      
+      <div class="currency-section">
+        <div class="currency-options">
+          <label class="currency-option ${selectedCurrency === '$' ? 'selected' : ''}" onclick="selectCurrency('$')">
+            <input type="radio" name="currency" value="$" ${selectedCurrency === '$' ? 'checked' : ''}> 💵 دولار (USD)
+          </label>
+          <label class="currency-option ${selectedCurrency === '€' ? 'selected' : ''}" onclick="selectCurrency('€')">
+            <input type="radio" name="currency" value="€" ${selectedCurrency === '€' ? 'checked' : ''}> 💶 يورو (EUR)
+          </label>
+          <label class="currency-option ${selectedCurrency === '£' ? 'selected' : ''}" onclick="selectCurrency('£')">
+            <input type="radio" name="currency" value="£" ${selectedCurrency === '£' ? 'checked' : ''}> 💷 استرليني (GBP)
+          </label>
+          <label class="currency-option ${selectedCurrency === 'LE' ? 'selected' : ''}" onclick="selectCurrency('LE')">
+            <input type="radio" name="currency" value="LE" ${selectedCurrency === 'LE' ? 'checked' : ''}> 🇪🇬 جنيه مصري (EGP)
+          </label>
+        </div>
+        <div class="bank-percent">
+          <label>نسبة البنك للتكلفة (Visa):</label>
+          <input type="number" id="bankPercentage" value="2.5" step="0.1" min="0" max="100">
+        </div>
+      </div>
+
+      <div class="cost-section">
+        <div class="cost-checkbox">
+          <input type="checkbox" id="hasCost" ${currentTrip.hasCost ? 'checked' : ''}>
+          <label for="hasCost">💰 هذه الرحلة لها تكلفة (Cost)</label>
+        </div>
+        <div class="cost-note">
+          ⚠️ إذا كان محدداً سيتم التأثير على عمولة المندوب (Sales Commission)
+        </div>
+      </div>
+
+      <div id="pricesContainer"></div>
+    </div>
+    
+    <div class="action-buttons">
+      ${isEditMode ? `
+        <button class="btn-primary" onclick="updateTrip()"><span>✏️</span> تحديث الأسعار</button>
+        <button class="btn-danger" onclick="deleteCurrentTrip()"><span>🗑️</span> حذف الرحلة</button>
+      ` : `
+        <button class="btn-primary" onclick="saveTrip()"><span>💾</span> حفظ الرحلة</button>
+      `}
+      <button class="btn-secondary" onclick="resetForm()"><span>🔄</span> إعادة تعيين</button>
+    </div>
+  `;
+  
+  updateItemsUI();
+  updatePricesUI();
+}
 
 // ============================================================
-// تحديث واجهة البنود (محسّن)
+// UPDATE UI FUNCTIONS
 // ============================================================
 function updateItemsUI() {
   const container = document.getElementById('itemsContainer');
@@ -1155,18 +1258,15 @@ function updateItemsUI() {
     html += `
       <div class="item-card" data-item-index="${i}">
         <span class="item-number">${i + 1}</span>
-        <input type="text" class="item-name-input" id="item_${i}" value="${escapeHtml(currentTrip.items[i] || '')}" placeholder="اسم البند" oninput="window.updateItemName(${i})" onchange="window.updateItemName(${i})">
-        <button class="item-delete-btn" onclick="window.removeItem(${i})">✕</button>
+        <input type="text" class="item-name-input" id="item_${i}" value="${escapeHtml(currentTrip.items[i] || '')}" placeholder="اسم البند" oninput="updateItemName(${i})" onchange="updateItemName(${i})">
+        <button class="item-delete-btn" onclick="removeItem(${i})">✕</button>
       </div>
     `;
   }
   html += '</div>';
   container.innerHTML = html;
 }
-  
-// ============================================================
-// UPDATE PRICES UI - محسّن
-// ============================================================
+
 function updatePricesUI() {
   const container = document.getElementById('pricesContainer');
   if (!container) return;
@@ -1200,8 +1300,8 @@ function updatePricesUI() {
         <div class="price-input-group">
           <span class="currency-symbol">${selectedCurrency}</span>
           <input type="number" id="price_${i}" value="${displayValue}" step="0.01" min="0" placeholder="0" 
-                 onchange="window.updatePrice(${i})" 
-                 oninput="window.updatePrice(${i})" 
+                 onchange="updatePrice(${i})" 
+                 oninput="updatePrice(${i})" 
                  style="${isZero ? 'color: #aaa;' : 'color: #000;'}">
         </div>
       </div>
@@ -1210,82 +1310,23 @@ function updatePricesUI() {
   html += '</div>';
   container.innerHTML = html;
 }
-  
-  // ============================================================
-// RETRY FUNCTION FOR FAILED REQUESTS
-// ============================================================
-async function fetchWithRetry(action, params, maxRetries = 3) {
-  let lastError = null;
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const result = await jsonp(action, params);
-      return result;
-    } catch (error) {
-      lastError = error;
-      console.warn(`⚠️ محاولة ${attempt}/${maxRetries} فشلت: ${error.message}`);
-      
-      if (attempt < maxRetries) {
-        // انتظر قبل إعادة المحاولة (تأخير متزايد)
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-      }
-    }
-  }
-  
-  throw lastError;
-}
 
-// استخدم fetchWithRetry بدلاً من jsonp مباشرة في الدوال المهمة
-async function loadTripPricesForCurrency(tripName, category, currencySym) {
-  let currencyCode = currencySym;
-  if (currencySym === '$') currencyCode = 'USD';
-  else if (currencySym === '€') currencyCode = 'EUR';
-  else if (currencySym === '£') currencyCode = 'GBP';
-  else if (currencySym === 'LE') currencyCode = 'LE';
-  
-  try {
-    const data = await fetchWithRetry('getTripPrices', {
-      tripName: tripName,
-      currency: currencySym,
-      category: category
-    });
-    
-    if (data && data.prices) {
-      if (!currentTrip.prices[currencyCode]) currentTrip.prices[currencyCode] = [];
-      for (let i = 0; i < currentTrip.items.length; i++) {
-        if (i < data.prices.length) {
-          currentTrip.prices[currencyCode][i] = data.prices[i] || 0;
-        } else {
-          currentTrip.prices[currencyCode][i] = 0;
-        }
-      }
-    }
-  } catch(err) {
-    console.error(`Error loading prices for ${currencySym}:`, err);
-    // لا نرمي الخطأ، نستمر بأسعار صفرية
-  }
-}
-  // ============================================================
-  // ITEMS MANAGEMENT
-  // ============================================================
- function addItem() {
+// ============================================================
+// ITEMS MANAGEMENT
+// ============================================================
+function addItem() {
   const newIndex = currentTrip.items.length;
   currentTrip.items.push('');
   
-  // تهيئة الأسعار لجميع العملات
   const currencies = ['USD', 'EUR', 'GBP', 'LE'];
   for (const cur of currencies) {
     if (!currentTrip.prices[cur]) currentTrip.prices[cur] = [];
     currentTrip.prices[cur].push(0);
   }
   
-  // تحديث واجهة البنود
   updateItemsUI();
-  
-  // تحديث واجهة الأسعار
   updatePricesUI();
   
-  // ✅ التركيز تلقائياً على حقل اسم البند الجديد
   setTimeout(() => {
     const newItemInput = document.getElementById(`item_${newIndex}`);
     if (newItemInput) {
@@ -1294,36 +1335,29 @@ async function loadTripPricesForCurrency(tripName, category, currencySym) {
     }
   }, 100);
   
-  // تحديث عداد البنود
   const itemsCountSpan = document.querySelector('.items-header span');
   if (itemsCountSpan) {
     itemsCountSpan.textContent = `عدد البنود: ${currentTrip.items.length}`;
   }
 }
 
-
-  function removeItem(index) {
-    showConfirm(`هل أنت متأكد من حذف البند "${currentTrip.items[index] || index + 1}"؟`, () => {
-      currentTrip.items.splice(index, 1);
-      // Remove price for this index from all currencies
-      const currencies = ['USD', 'EUR', 'GBP', 'LE'];
-      for (const cur of currencies) {
-        if (currentTrip.prices[cur]) {
-          currentTrip.prices[cur].splice(index, 1);
-        }
+function removeItem(index) {
+  showConfirm(`هل أنت متأكد من حذف البند "${currentTrip.items[index] || index + 1}"؟`, () => {
+    currentTrip.items.splice(index, 1);
+    const currencies = ['USD', 'EUR', 'GBP', 'LE'];
+    for (const cur of currencies) {
+      if (currentTrip.prices[cur]) {
+        currentTrip.prices[cur].splice(index, 1);
       }
-      updateItemsUI();
-      updatePricesUI();
-    });
-  }
+    }
+    updateItemsUI();
+    updatePricesUI();
+  });
+}
 
- // ============================================================
-// UPDATE ITEM NAME - مع debounce لمنع التحديثات المتكررة
-// ============================================================
 let itemNameDebounceTimer = null;
 
 function updateItemName(index) {
-  // منع التحديثات المتكررة
   if (itemNameDebounceTimer) clearTimeout(itemNameDebounceTimer);
   
   itemNameDebounceTimer = setTimeout(() => {
@@ -1332,11 +1366,9 @@ function updateItemName(index) {
       const newName = input.value.trim();
       const oldName = currentTrip.items[index] || '';
       
-      // فقط قم بالتحديث إذا تغير الاسم فعلاً
       if (newName !== oldName) {
         currentTrip.items[index] = newName;
         
-        // تحديث عنوان البند في بطاقة السعر
         const priceCards = document.querySelectorAll('#pricesContainer .price-card');
         if (priceCards[index]) {
           const priceHeader = priceCards[index].querySelector('.price-header');
@@ -1346,14 +1378,12 @@ function updateItemName(index) {
             priceHeader.title = newName || `بند ${index + 1}`;
           }
         }
-        
-        console.log(`✅ تم تحديث اسم البند ${index + 1} من "${oldName}" إلى "${newName}"`);
       }
     }
-  }, 300); // انتظر 300ms قبل التحديث
+  }, 300);
 }
 
- function updatePrice(index) {
+function updatePrice(index) {
   const input = document.getElementById(`price_${index}`);
   if (input) {
     let priceKey = selectedCurrency;
@@ -1367,7 +1397,6 @@ function updateItemName(index) {
     if (isNaN(value)) value = 0;
     currentTrip.prices[priceKey][index] = value;
     
-    // تحديث لون النص (إذا كان 0 يظهر باللون الرمادي)
     if (value === 0) {
       input.style.color = '#aaa';
     } else {
@@ -1376,23 +1405,20 @@ function updateItemName(index) {
   }
 }
 
-  function selectCurrency(currency) {
-    selectedCurrency = currency;
-    // Update UI for currency options
-    document.querySelectorAll('.currency-option').forEach(opt => {
-      opt.classList.remove('selected');
-      if (opt.textContent.includes(currency === '$' ? 'دولار' : currency === '€' ? 'يورو' : currency === '£' ? 'استرليني' : 'جنيه')) {
-        opt.classList.add('selected');
-      }
-    });
-    updatePricesUI();
-  }
+function selectCurrency(currency) {
+  selectedCurrency = currency;
+  document.querySelectorAll('.currency-option').forEach(opt => {
+    opt.classList.remove('selected');
+    if (opt.textContent.includes(currency === '$' ? 'دولار' : currency === '€' ? 'يورو' : currency === '£' ? 'استرليني' : 'جنيه')) {
+      opt.classList.add('selected');
+    }
+  });
+  updatePricesUI();
+}
 
-  // ============================================================
-  // LOAD TRIP FOR EDIT
-  // ============================================================
- let isLoadingTrip = false;
-
+// ============================================================
+// LOAD TRIP
+// ============================================================
 async function loadTrip() {
   const tripName = document.getElementById('tripName').value.trim();
   if (!tripName) {
@@ -1407,7 +1433,6 @@ async function loadTrip() {
   
   isLoadingTrip = true;
   
-  // ✅ إظهار مؤشر تحميل داخل الحقل
   const loadBtn = document.querySelector('.btn-load');
   const originalBtnText = loadBtn ? loadBtn.innerHTML : '';
   if (loadBtn) {
@@ -1415,8 +1440,7 @@ async function loadTrip() {
     loadBtn.disabled = true;
   }
   
-  // ✅ رسالة تحميل ثابتة
-  const content = document.getElementById('mainContent');
+  // ✅ عرض رسالة تحميل
   const loadingMsg = document.createElement('div');
   loadingMsg.id = 'loadingMessage';
   loadingMsg.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #0f2b3d; color: #ffd700; padding: 15px 30px; border-radius: 50px; z-index: 9999; font-weight: bold; box-shadow: 0 4px 15px rgba(0,0,0,0.2);';
@@ -1424,7 +1448,11 @@ async function loadTrip() {
   document.body.appendChild(loadingMsg);
   
   try {
-    const def = await jsonp('getTripDefinition', { tripName });
+    // ✅ استخدام centerName تلقائياً من Session
+    const def = await jsonp('getTripDefinition', { 
+      tripName: tripName,
+      centerName: currentUser?.centerName || '' 
+    });
     
     if (def && def.name) {
       currentTrip = {
@@ -1442,22 +1470,16 @@ async function loadTrip() {
       const costCheckbox = document.getElementById('hasCost');
       if (costCheckbox) costCheckbox.checked = currentTrip.hasCost;
       
-      // تحديث واجهة البنود
       updateItemsUI();
       
-      // تحميل الأسعار لجميع العملات
+      // ✅ تحميل الأسعار لجميع العملات بالتوازي
       const currencies = ['$', '€', '£', 'LE'];
-      for (const cur of currencies) {
-        await loadTripPricesForCurrency(def.name, def.category, cur);
-      }
+      await Promise.all(currencies.map(cur => loadTripPricesForCurrency(def.name, def.category, cur)));
       
       selectedCurrency = '$';
       updatePricesUI();
       
-      // ✅ إزالة رسالة التحميل
       if (loadingMsg) loadingMsg.remove();
-      
-      // ✅ رسالة نجاح تظهر لفترة قصيرة ثم تختفي تلقائياً
       showTemporaryAlert(`✅ تم تحميل الرحلة "${def.name}" بنجاح`, 2000);
       
     } else {
@@ -1478,242 +1500,207 @@ async function loadTrip() {
     }
   }
 }
-let alertTimeout = null;
 
-function showTemporaryAlert(message, duration = 3000) {
-  // إزالة أي رسالة سابقة
-  const existingAlert = document.getElementById('tempAlert');
-  if (existingAlert) existingAlert.remove();
-  if (alertTimeout) clearTimeout(alertTimeout);
+async function loadTripPricesForCurrency(tripName, category, currencySym) {
+  let currencyCode = currencySym;
+  if (currencySym === '$') currencyCode = 'USD';
+  else if (currencySym === '€') currencyCode = 'EUR';
+  else if (currencySym === '£') currencyCode = 'GBP';
+  else if (currencySym === 'LE') currencyCode = 'LE';
   
-  const alertDiv = document.createElement('div');
-  alertDiv.id = 'tempAlert';
-  alertDiv.style.cssText = `
-    position: fixed;
-    bottom: 30px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: #27ae60;
-    color: white;
-    padding: 12px 25px;
-    border-radius: 50px;
-    font-weight: bold;
-    z-index: 10001;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-    animation: slideUp 0.3s ease;
-  `;
-  alertDiv.innerHTML = message;
-  document.body.appendChild(alertDiv);
-  
-  alertTimeout = setTimeout(() => {
-    if (alertDiv) alertDiv.remove();
-  }, duration);
+  try {
+    const data = await jsonp('getTripPrices', {
+      tripName: tripName,
+      currency: currencySym,
+      category: category,
+      centerName: currentUser?.centerName || ''
+    });
+    
+    if (data && data.prices) {
+      if (!currentTrip.prices[currencyCode]) currentTrip.prices[currencyCode] = [];
+      for (let i = 0; i < currentTrip.items.length; i++) {
+        if (i < data.prices.length) {
+          currentTrip.prices[currencyCode][i] = data.prices[i] || 0;
+        } else {
+          currentTrip.prices[currencyCode][i] = 0;
+        }
+      }
+    }
+  } catch(err) {
+    console.error(`Error loading prices for ${currencySym}:`, err);
+  }
 }
 
-  async function loadTripPricesForCurrency(tripName, category, currencySym) {
-    let currencyCode = currencySym;
-    if (currencySym === '$') currencyCode = 'USD';
-    else if (currencySym === '€') currencyCode = 'EUR';
-    else if (currencySym === '£') currencyCode = 'GBP';
-    else if (currencySym === 'LE') currencyCode = 'LE';
-    
-    try {
-      const data = await jsonp('getTripPrices', {
-        tripName: tripName,
-        currency: currencySym,
-        category: category
-      });
-      
-      if (data && data.prices) {
-        if (!currentTrip.prices[currencyCode]) currentTrip.prices[currencyCode] = [];
-        for (let i = 0; i < currentTrip.items.length; i++) {
-          if (i < data.prices.length) {
-            currentTrip.prices[currencyCode][i] = data.prices[i] || 0;
-          } else {
-            currentTrip.prices[currencyCode][i] = 0;
-          }
-        }
-      }
-    } catch(err) {
-      console.error(`Error loading prices for ${currencySym}:`, err);
-    }
+// ============================================================
+// SAVE TRIP
+// ============================================================
+async function saveTrip() {
+  const tripName = document.getElementById('tripName').value.trim();
+  const category = document.getElementById('tripCategory').value.trim();
+  const bankPercent = parseFloat(document.getElementById('bankPercentage').value) || 2.5;
+  const hasCost = document.getElementById('hasCost').checked;
+  
+  if (!tripName) {
+    showAlert('الرجاء إدخال اسم الرحلة');
+    return;
   }
-
-  // ============================================================
-  // SAVE TRIP (with LE prices modal)
-  // ============================================================
-  async function saveTrip() {
-    const tripName = document.getElementById('tripName').value.trim();
-    const category = document.getElementById('tripCategory').value.trim();
-    const bankPercent = parseFloat(document.getElementById('bankPercentage').value) || 2.5;
-    const hasCost = document.getElementById('hasCost').checked;
-    
-    if (!tripName) {
-      showAlert('الرجاء إدخال اسم الرحلة');
-      return;
-    }
-    if (!category) {
-      showAlert('الرجاء اختيار الفئة');
-      return;
-    }
-    
-    // Check if trip already exists
-    const existingTrip = allTrips.find(t => t.name.toLowerCase() === tripName.toLowerCase());
-    if (existingTrip && !isEditMode) {
-      showAlert('⚠️ هذه الرحلة موجودة بالفعل. استخدم تعديل الرحلة بدلاً من الإضافة.');
-      return;
-    }
-    
-    // Validate items
-    const items = [];
-    for (let i = 0; i < currentTrip.items.length; i++) {
-      const itemName = currentTrip.items[i] || '';
-      if (!itemName.trim()) {
-        showAlert(`الرجاء إدخال اسم البند رقم ${i + 1}`);
-        return;
-      }
-      items.push(itemName);
-    }
-    
-    if (items.length === 0) {
-      showAlert('يجب إضافة بند واحد على الأقل');
-      return;
-    }
-    
-    // Prepare USD prices for saving
-    const usdPrices = [];
-    if (currentTrip.prices.USD) {
-      for (let i = 0; i < items.length; i++) {
-        usdPrices.push(currentTrip.prices.USD[i] || 0);
-      }
-    } else {
-      for (let i = 0; i < items.length; i++) usdPrices.push(0);
-    }
-    
-    // Save trip data temporarily
-    pendingTripData = {
-      tripName: tripName,
-      category: category,
-      items: items,
-      usdPrices: usdPrices,
-      hasCost: hasCost,
-      bankPercent: bankPercent
-    };
-    
-    // If we have LE prices already, save directly
-    if (currentTrip.prices.LE && currentTrip.prices.LE.some(p => p > 0)) {
-      await executeSaveTrip(pendingTripData);
-    } else {
-      // Show modal to enter LE prices
-      showCurrencyModal(items, async (lePrices) => {
-        pendingTripData.lePrices = lePrices;
-        await executeSaveTrip(pendingTripData);
-      });
-    }
+  if (!category) {
+    showAlert('الرجاء اختيار الفئة');
+    return;
   }
   
-  function showCurrencyModal(items, callback) {
-    const modal = document.getElementById('currencyModal');
-    const container = document.getElementById('currencyModalItems');
-    
-    let html = '';
+  const existingTrip = allTrips.find(t => t.name.toLowerCase() === tripName.toLowerCase());
+  if (existingTrip && !isEditMode) {
+    showAlert('⚠️ هذه الرحلة موجودة بالفعل. استخدم تعديل الرحلة بدلاً من الإضافة.');
+    return;
+  }
+  
+  const items = [];
+  for (let i = 0; i < currentTrip.items.length; i++) {
+    const itemName = currentTrip.items[i] || '';
+    if (!itemName.trim()) {
+      showAlert(`الرجاء إدخال اسم البند رقم ${i + 1}`);
+      return;
+    }
+    items.push(itemName);
+  }
+  
+  if (items.length === 0) {
+    showAlert('يجب إضافة بند واحد على الأقل');
+    return;
+  }
+  
+  const usdPrices = [];
+  if (currentTrip.prices.USD) {
     for (let i = 0; i < items.length; i++) {
-      html += `
-        <div class="currency-modal-item">
-          <span>${escapeHtml(items[i])}</span>
-          <input type="number" id="lePrice_${i}" value="0" step="0.01" min="0" placeholder="السعر بالجنيه">
-        </div>
-      `;
+      usdPrices.push(currentTrip.prices.USD[i] || 0);
     }
-    container.innerHTML = html;
-    
-    modal.style.display = 'flex';
-    
-    const saveBtn = document.getElementById('currencyModalYes');
-    const skipBtn = document.getElementById('currencyModalNo');
-    
-    const saveHandler = () => {
-      const lePrices = [];
-      for (let i = 0; i < items.length; i++) {
-        const input = document.getElementById(`lePrice_${i}`);
-        lePrices.push(parseFloat(input.value) || 0);
-      }
-      modal.style.display = 'none';
-      cleanup();
-      callback(lePrices);
-    };
-    
-    const skipHandler = () => {
-      modal.style.display = 'none';
-      cleanup();
-      const zeroPrices = items.map(() => 0);
-      callback(zeroPrices);
-    };
-    
-    const cleanup = () => {
-      saveBtn.removeEventListener('click', saveHandler);
-      skipBtn.removeEventListener('click', skipHandler);
-    };
-    
-    saveBtn.addEventListener('click', saveHandler);
-    skipBtn.addEventListener('click', skipHandler);
+  } else {
+    for (let i = 0; i < items.length; i++) usdPrices.push(0);
   }
   
-  async function executeSaveTrip(data) {
-    showAlert('جاري حفظ الرحلة...');
-    
-    try {
-      // 1. Save trip definition
-      const defRes = await jsonp('saveTripDefinition', {
-        tripName: data.tripName,
-        category: data.category,
-        items: JSON.stringify(data.items)
-      });
-      
-      if (!defRes.success) {
-        showAlert('❌ خطأ في حفظ تعريف الرحلة: ' + defRes.message);
-        return;
-      }
-      
-      // 2. Save USD prices (this will auto-create all currencies via updateTrip)
-      const updateRes = await jsonp('updateTrip', {
-        tripName: data.tripName,
-        category: data.category,
-        currency: '$',
-        prices: JSON.stringify(data.usdPrices),
-        hasCost: data.hasCost,
-        bankPercentage: data.bankPercent
-      });
-      
-      if (updateRes.success) {
-        // 3. If we have LE prices, save them separately
-        if (data.lePrices && data.lePrices.length === data.items.length) {
-          const leRes = await jsonp('updateTrip', {
-            tripName: data.tripName,
-            category: data.category,
-            currency: 'LE',
-            prices: JSON.stringify(data.lePrices),
-            hasCost: data.hasCost,
-            bankPercentage: data.bankPercent
-          });
-          console.log('LE prices saved:', leRes);
-        }
-        
-        showAlert('✅ تم حفظ الرحلة بنجاح');
-        await loadAllTrips();
-        newTrip();
-      } else {
-        showAlert('❌ خطأ في حفظ الأسعار: ' + updateRes.message);
-      }
-    } catch(err) {
-      showAlert('❌ خطأ في الاتصال: ' + err.message);
-    }
+  pendingTripData = {
+    tripName: tripName,
+    category: category,
+    items: items,
+    usdPrices: usdPrices,
+    hasCost: hasCost,
+    bankPercent: bankPercent,
+    centerName: currentUser?.centerName || ''
+  };
+  
+  if (currentTrip.prices.LE && currentTrip.prices.LE.some(p => p > 0)) {
+    await executeSaveTrip(pendingTripData);
+  } else {
+    showCurrencyModal(items, async (lePrices) => {
+      pendingTripData.lePrices = lePrices;
+      await executeSaveTrip(pendingTripData);
+    });
   }
+}
 
-  // ============================================================
-  // UPDATE TRIP
-  // ============================================================
- async function updateTrip() {
+function showCurrencyModal(items, callback) {
+  const modal = document.getElementById('currencyModal');
+  const container = document.getElementById('currencyModalItems');
+  
+  let html = '';
+  for (let i = 0; i < items.length; i++) {
+    html += `
+      <div class="currency-modal-item">
+        <span>${escapeHtml(items[i])}</span>
+        <input type="number" id="lePrice_${i}" value="0" step="0.01" min="0" placeholder="السعر بالجنيه">
+      </div>
+    `;
+  }
+  container.innerHTML = html;
+  
+  modal.style.display = 'flex';
+  
+  const saveBtn = document.getElementById('currencyModalYes');
+  const skipBtn = document.getElementById('currencyModalNo');
+  
+  const saveHandler = () => {
+    const lePrices = [];
+    for (let i = 0; i < items.length; i++) {
+      const input = document.getElementById(`lePrice_${i}`);
+      lePrices.push(parseFloat(input.value) || 0);
+    }
+    modal.style.display = 'none';
+    cleanup();
+    callback(lePrices);
+  };
+  
+  const skipHandler = () => {
+    modal.style.display = 'none';
+    cleanup();
+    const zeroPrices = items.map(() => 0);
+    callback(zeroPrices);
+  };
+  
+  const cleanup = () => {
+    saveBtn.removeEventListener('click', saveHandler);
+    skipBtn.removeEventListener('click', skipHandler);
+  };
+  
+  saveBtn.addEventListener('click', saveHandler);
+  skipBtn.addEventListener('click', skipHandler);
+}
+
+async function executeSaveTrip(data) {
+  showAlert('جاري حفظ الرحلة...');
+  
+  try {
+    const defRes = await jsonp('saveTripDefinition', {
+      tripName: data.tripName,
+      category: data.category,
+      items: JSON.stringify(data.items),
+      centerName: data.centerName || currentUser?.centerName || ''
+    });
+    
+    if (!defRes.success) {
+      showAlert('❌ خطأ في حفظ تعريف الرحلة: ' + defRes.message);
+      return;
+    }
+    
+    const updateRes = await jsonp('updateTrip', {
+      tripName: data.tripName,
+      category: data.category,
+      currency: '$',
+      prices: JSON.stringify(data.usdPrices),
+      hasCost: data.hasCost,
+      bankPercentage: data.bankPercent,
+      centerName: data.centerName || currentUser?.centerName || ''
+    });
+    
+    if (updateRes.success) {
+      if (data.lePrices && data.lePrices.length === data.items.length) {
+        const leRes = await jsonp('updateTrip', {
+          tripName: data.tripName,
+          category: data.category,
+          currency: 'LE',
+          prices: JSON.stringify(data.lePrices),
+          hasCost: data.hasCost,
+          bankPercentage: data.bankPercent,
+          centerName: data.centerName || currentUser?.centerName || ''
+        });
+        console.log('LE prices saved:', leRes);
+      }
+      
+      showAlert('✅ تم حفظ الرحلة بنجاح');
+      await loadAllTrips();
+      newTrip();
+    } else {
+      showAlert('❌ خطأ في حفظ الأسعار: ' + updateRes.message);
+    }
+  } catch(err) {
+    showAlert('❌ خطأ في الاتصال: ' + err.message);
+  }
+}
+
+// ============================================================
+// UPDATE TRIP
+// ============================================================
+async function updateTrip() {
   if (!currentTrip.name) {
     showAlert('الرجاء تحميل رحلة أولاً');
     return;
@@ -1735,7 +1722,6 @@ function showTemporaryAlert(message, duration = 3000) {
     prices.push(val);
   }
   
-  // ✅ جمع البنود الحالية لإرسالها إلى الخادم
   const currentItems = currentTrip.items.filter(item => item && item.trim() !== '');
   
   showConfirm(`تحديث الرحلة "${currentTrip.name}" بالعملة ${selectedCurrency}؟`, async () => {
@@ -1747,13 +1733,12 @@ function showTemporaryAlert(message, duration = 3000) {
         prices: JSON.stringify(prices),
         hasCost: hasCost,
         bankPercentage: bankPercent,
-        items: JSON.stringify(currentItems)  // ✅ إرسال البنود الحالية
+        items: JSON.stringify(currentItems),
+        centerName: currentUser?.centerName || ''
       });
       
       if (res.success) {
         showAlert('✅ ' + res.message);
-        
-        // تحديث القائمة المحلية
         await loadAllTrips();
         
         if (selectedCurrency === '$') {
@@ -1775,33 +1760,38 @@ function showTemporaryAlert(message, duration = 3000) {
     }
   });
 }
-  // ============================================================
-  // DELETE TRIP
-  // ============================================================
-  async function deleteCurrentTrip() {
-    if (!currentTrip.name) {
-      showAlert('الرجاء اختيار رحلة أولاً');
-      return;
-    }
-    
-    showConfirm(`⚠️ هل أنت متأكد من حذف الرحلة "${currentTrip.name}"؟\nسيتم حذف جميع الأسعار المرتبطة بها.`, async () => {
-      try {
-        const res = await jsonp('deleteTrip', { tripName: currentTrip.name });
-        
-        if (res.success) {
-          showAlert('✅ تم حذف الرحلة بنجاح');
-          await loadAllTrips();
-          newTrip();
-        } else {
-          showAlert('❌ خطأ في حذف الرحلة: ' + res.message);
-        }
-      } catch(err) {
-        showAlert('❌ خطأ في الاتصال: ' + err.message);
-      }
-    });
+
+// ============================================================
+// DELETE TRIP
+// ============================================================
+async function deleteCurrentTrip() {
+  if (!currentTrip.name) {
+    showAlert('الرجاء اختيار رحلة أولاً');
+    return;
   }
- // ============================================================
-// TRIPS LIST - VERSION CORRECTED
+  
+  showConfirm(`⚠️ هل أنت متأكد من حذف الرحلة "${currentTrip.name}"؟\nسيتم حذف جميع الأسعار المرتبطة بها.`, async () => {
+    try {
+      const res = await jsonp('deleteTrip', { 
+        tripName: currentTrip.name,
+        centerName: currentUser?.centerName || ''
+      });
+      
+      if (res.success) {
+        showAlert('✅ تم حذف الرحلة بنجاح');
+        await loadAllTrips();
+        newTrip();
+      } else {
+        showAlert('❌ خطأ في حذف الرحلة: ' + res.message);
+      }
+    } catch(err) {
+      showAlert('❌ خطأ في الاتصال: ' + err.message);
+    }
+  });
+}
+
+// ============================================================
+// TRIPS LIST - VERSION IMPROVED (بدون حد ارتفاع)
 // ============================================================
 async function showTripsList() {
   const content = document.getElementById('mainContent');
@@ -1811,41 +1801,38 @@ async function showTripsList() {
     <div class="card">
       <div class="card-title">🔍 البحث في الرحلات</div>
       <div class="search-box">
-        <input type="text" id="tripSearch" placeholder="ابحث عن رحلة بالاسم أو الفئة..." onkeyup="window.filterTripsList()">
+        <input type="text" id="tripSearch" placeholder="ابحث عن رحلة بالاسم أو الفئة..." onkeyup="filterTripsList()">
       </div>
     </div>
-    <div id="tripsListContainer" style="text-align: center; padding: 50px;">
-      <div class="loading"></div> جاري التحميل...
+    <div id="tripsListContainer" style="padding: 20px;">
+      <div style="text-align: center; padding: 50px;">
+        <div class="loading" style="border-color: #0f2b3d; border-top-color: #ffd700;"></div> جاري التحميل...
+      </div>
     </div>
   `;
   
-  // ✅ تأكد من وجود العنصر قبل محاولة التحميل
+  await loadTripsListData();
+}
+
+async function loadTripsListData() {
   const container = document.getElementById('tripsListContainer');
   if (!container) {
     console.error('tripsListContainer not found');
     return;
   }
   
-  await loadTripsListData();
-}
-
-async function loadTripsListData() {
-  // ✅ التحقق من وجود العنصر مرة أخرى
-  const container = document.getElementById('tripsListContainer');
-  if (!container) {
-    console.error('tripsListContainer not found in loadTripsListData');
-    return;
-  }
-  
   try {
-    const trips = await jsonp('getAllTrips');
+    const trips = await jsonp('getAllTrips', { 
+      includeItems: 'true',
+      centerName: currentUser?.centerName || '' 
+    });
     
     if (!trips || trips.length === 0) {
       container.innerHTML = '<div style="text-align: center; padding: 50px; color: #666;">📭 لا توجد رحلات مسجلة</div>';
       return;
     }
     
-    trips.sort((a,b) => a.name.localeCompare(b.name, 'ar'));
+    trips.sort((a, b) => a.name.localeCompare(b.name, 'ar'));
     window.allTripsList = trips;
     displayFilteredTrips(trips);
     
@@ -1904,7 +1891,7 @@ function displayFilteredTrips(trips) {
         <td>${trip.totalItems || 0}</td>
         <td>${hasCostIcon}</td>
         <td>
-          <button class="btn-secondary btn-small" onclick="window.editTripFromList('${escapeHtml(trip.name)}')" style="padding: 6px 15px;">
+          <button class="btn-secondary" onclick="editTripFromList('${escapeHtml(trip.name)}')" style="padding: 6px 15px; border-radius: 30px; font-size: 12px; border: 1px solid #ced4da; background: #e9ecef; cursor: pointer;">
             ✏️ تعديل
           </button>
         </td>
@@ -1922,77 +1909,49 @@ function displayFilteredTrips(trips) {
 }
 
 function editTripFromList(tripName) {
-  // ✅ التبديل إلى تبويب التعديل
   showTab('edit');
   
-  // ✅ انتظار اكتمال تحميل النموذج ثم تعبئة الاسم
   setTimeout(() => {
     const tripInput = document.getElementById('tripName');
     if (tripInput) {
       tripInput.value = tripName;
       loadTrip();
     } else {
-      console.error('tripName input not found');
       showAlert('حدث خطأ في تحميل نموذج التعديل');
     }
   }, 300);
 }
 
-
-
-  // ============================================================
-  // UTILITIES
-  // ============================================================
- function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+// ============================================================
+// RESET FORM
+// ============================================================
+function resetForm() {
+  if (isEditMode) {
+    showEditForm();
+  } else {
+    newTrip();
+  }
 }
 
-  function resetForm() {
-    if (isEditMode) {
-      showEditForm();
-    } else {
-      newTrip();
-    }
-  }
-
-  function goBack() {
-    if (document.referrer) {
-      window.location.href = document.referrer;
-    } else {
-      const pages = {
-        Admin: 'Dashboard.html',
-        Owner: 'OwnerDashboard.html',
-        Sales: 'SalesDashboard.html',
-        Accountant: 'AccountantDashboard.html'
-      };
-      const defaultPage = pages[currentUser?.type] || 'Dashboard.html';
-      window.location.href = defaultPage;
-    }
-  }
-
-  // Expose functions globally
-  window.showTab = showTab;
-  window.addItem = addItem;
-  window.removeItem = removeItem;
-  window.selectCurrency = selectCurrency;
-  window.saveTrip = saveTrip;
-  window.updateTrip = updateTrip;
-  window.updateItemName = updateItemName;
-  window.updatePrice = updatePrice;
-  window.deleteCurrentTrip = deleteCurrentTrip;
-  window.resetForm = resetForm;
-  window.goBack = goBack;
-  window.loadTrip = loadTrip;
-  window.filterTripsList = filterTripsList;
-  window.editTripFromList = editTripFromList;
-  window.showAlert = showAlert;
-  window.showConfirm = showConfirm;
+// ============================================================
+// EXPOSE GLOBALLY
+// ============================================================
+window.showTab = showTab;
+window.addItem = addItem;
+window.removeItem = removeItem;
+window.selectCurrency = selectCurrency;
+window.saveTrip = saveTrip;
+window.updateTrip = updateTrip;
+window.updateItemName = updateItemName;
+window.updatePrice = updatePrice;
+window.deleteCurrentTrip = deleteCurrentTrip;
+window.resetForm = resetForm;
+window.goBack = goBack;
+window.loadTrip = loadTrip;
+window.filterTripsList = filterTripsList;
+window.editTripFromList = editTripFromList;
+window.showAlert = showAlert;
+window.showConfirm = showConfirm;
 </script>
 </body>
 </html>
