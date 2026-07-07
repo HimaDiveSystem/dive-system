@@ -1415,90 +1415,108 @@ function selectCurrency(currency) {
   });
   updatePricesUI();
 }
-
+// ============================================================
+// REPLACEMENT FOR getTripDefinition (يستخدم getTripDefinitions)
+// ============================================================
+async function getTripDefinitionReplacement(tripName) {
+    try {
+        const result = await jsonp('getTripDefinitions', {
+            centerName: currentUser?.centerName || ''
+        });
+        
+        if (result?.success && Array.isArray(result.data)) {
+            // ✅ البحث عن الرحلة في القائمة
+            const found = result.data.find(t => t.TripName === tripName);
+            if (found) {
+                return {
+                    name: found.TripName,
+                    category: found.Category,
+                    items: found.Items || [],
+                    totalItems: found.TotalItems || 0,
+                    id: found.ID
+                };
+            }
+        }
+        return null;
+    } catch(e) {
+        console.error('getTripDefinitionReplacement error:', e);
+        return null;
+    }
+}
 // ============================================================
 // LOAD TRIP
 // ============================================================
 async function loadTrip() {
-  const tripName = document.getElementById('tripName').value.trim();
-  if (!tripName) {
-    showAlert('الرجاء إدخال اسم الرحلة');
-    return;
-  }
-  
-  if (isLoadingTrip) {
-    console.log('جاري التحميل بالفعل، انتظر...');
-    return;
-  }
-  
-  isLoadingTrip = true;
-  
-  const loadBtn = document.querySelector('.btn-load');
-  const originalBtnText = loadBtn ? loadBtn.innerHTML : '';
-  if (loadBtn) {
-    loadBtn.innerHTML = '<span class="loading"></span> جاري التحميل...';
-    loadBtn.disabled = true;
-  }
-  
-  // ✅ عرض رسالة تحميل
-  const loadingMsg = document.createElement('div');
-  loadingMsg.id = 'loadingMessage';
-  loadingMsg.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #0f2b3d; color: #ffd700; padding: 15px 30px; border-radius: 50px; z-index: 9999; font-weight: bold; box-shadow: 0 4px 15px rgba(0,0,0,0.2);';
-  loadingMsg.innerHTML = '<span class="loading"></span> جاري تحميل بيانات الرحلة...';
-  document.body.appendChild(loadingMsg);
-  
-  try {
-    // ✅ استخدام centerName تلقائياً من Session
-    const def = await jsonp('getTripDefinition', { 
-      tripName: tripName,
-      centerName: currentUser?.centerName || '' 
-    });
-    
-    if (def && def.name) {
-      currentTrip = {
-        id: def.id,
-        name: def.name,
-        category: def.category || '',
-        items: Array.isArray(def.items) ? [...def.items] : [],
-        prices: { USD: [], EUR: [], GBP: [], LE: [] },
-        hasCost: def.hasCost || false
-      };
-      
-      const categoryInput = document.getElementById('tripCategory');
-      if (categoryInput) categoryInput.value = def.category || '';
-      
-      const costCheckbox = document.getElementById('hasCost');
-      if (costCheckbox) costCheckbox.checked = currentTrip.hasCost;
-      
-      updateItemsUI();
-      
-      // ✅ تحميل الأسعار لجميع العملات بالتوازي
-      const currencies = ['$', '€', '£', 'LE'];
-      await Promise.all(currencies.map(cur => loadTripPricesForCurrency(def.name, def.category, cur)));
-      
-      selectedCurrency = '$';
-      updatePricesUI();
-      
-      if (loadingMsg) loadingMsg.remove();
-      showTemporaryAlert(`✅ تم تحميل الرحلة "${def.name}" بنجاح`, 2000);
-      
-    } else {
-      if (loadingMsg) loadingMsg.remove();
-      showAlert(`❌ لم يتم العثور على الرحلة "${tripName}"`);
+    const tripName = document.getElementById('tripName').value.trim();
+    if (!tripName) {
+        showAlert('الرجاء إدخال اسم الرحلة');
+        return;
     }
     
-  } catch(err) {
-    console.error('loadTrip error:', err);
-    if (loadingMsg) loadingMsg.remove();
-    showAlert('❌ خطأ في تحميل الرحلة: ' + err.message);
+    if (isLoadingTrip) return;
+    isLoadingTrip = true;
     
-  } finally {
-    isLoadingTrip = false;
+    const loadBtn = document.querySelector('.btn-load');
+    const originalBtnText = loadBtn ? loadBtn.innerHTML : '';
     if (loadBtn) {
-      loadBtn.innerHTML = originalBtnText;
-      loadBtn.disabled = false;
+        loadBtn.innerHTML = '<span class="loading"></span> جاري التحميل...';
+        loadBtn.disabled = true;
     }
-  }
+    
+    const loadingMsg = document.createElement('div');
+    loadingMsg.id = 'loadingMessage';
+    loadingMsg.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #0f2b3d; color: #ffd700; padding: 15px 30px; border-radius: 50px; z-index: 9999; font-weight: bold; box-shadow: 0 4px 15px rgba(0,0,0,0.2);';
+    loadingMsg.innerHTML = '<span class="loading"></span> جاري تحميل بيانات الرحلة...';
+    document.body.appendChild(loadingMsg);
+    
+    try {
+        // ✅ استخدام الدالة الجديدة بدلاً من getTripDefinition
+        const def = await getTripDefinitionReplacement(tripName);
+        
+        if (def && def.name) {
+            currentTrip = {
+                id: def.id,
+                name: def.name,
+                category: def.category || '',
+                items: Array.isArray(def.items) ? [...def.items] : [],
+                prices: { USD: [], EUR: [], GBP: [], LE: [] },
+                hasCost: def.hasCost || false
+            };
+            
+            const categoryInput = document.getElementById('tripCategory');
+            if (categoryInput) categoryInput.value = def.category || '';
+            
+            const costCheckbox = document.getElementById('hasCost');
+            if (costCheckbox) costCheckbox.checked = currentTrip.hasCost;
+            
+            updateItemsUI();
+            
+            const currencies = ['$', '€', '£', 'LE'];
+            await Promise.all(currencies.map(cur => loadTripPricesForCurrency(def.name, def.category, cur)));
+            
+            selectedCurrency = '$';
+            updatePricesUI();
+            
+            if (loadingMsg) loadingMsg.remove();
+            showTemporaryAlert(`✅ تم تحميل الرحلة "${def.name}" بنجاح`, 2000);
+            
+        } else {
+            if (loadingMsg) loadingMsg.remove();
+            showAlert(`❌ لم يتم العثور على الرحلة "${tripName}"`);
+        }
+        
+    } catch(err) {
+        console.error('loadTrip error:', err);
+        if (loadingMsg) loadingMsg.remove();
+        showAlert('❌ خطأ في تحميل الرحلة: ' + err.message);
+        
+    } finally {
+        isLoadingTrip = false;
+        if (loadBtn) {
+            loadBtn.innerHTML = originalBtnText;
+            loadBtn.disabled = false;
+        }
+    }
 }
 
 async function loadTripPricesForCurrency(tripName, category, currencySym) {
