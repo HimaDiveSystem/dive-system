@@ -871,6 +871,9 @@ let selectedCurrency = '$';
 let isEditMode = false;
 let pendingTripData = null;
 let isLoadingTrip = false;
+let tripsCache = null;
+let tripsCacheTime = 0;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 دقائق
 
 // ============================================================
 // SESSION CHECK
@@ -1079,18 +1082,79 @@ async function loadAllCategories() {
     console.error('loadAllCategories error:', e);
   }
 }
+// ============================================================
+// CACHE MANAGEMENT - تحسين سرعة التحميل
+// ============================================================
 
-async function loadAllTrips() {
-  try {
-    const result = await jsonp('getAllTrips', { 
-      includeItems: 'true',
-      centerName: currentUser?.centerName || '' 
-    });
-    allTrips = Array.isArray(result) ? result : [];
-    allTrips.sort((a, b) => a.name.localeCompare(b.name, 'ar'));
-  } catch(e) { 
-    console.error('loadAllTrips error:', e);
-  }
+let tripsCache = null;
+let tripsCacheTime = 0;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 دقائق
+
+async function loadAllTrips(forceRefresh = false) {
+    const now = Date.now();
+    
+    // ✅ استخدام Cache إذا كان موجوداً وصالحاً
+    if (!forceRefresh && tripsCache && (now - tripsCacheTime) < CACHE_DURATION) {
+        console.log('📦 استخدام البيانات المخزنة مؤقتاً (', tripsCache.length, 'رحلات)');
+        allTrips = tripsCache;
+        return allTrips;
+    }
+    
+    try {
+        console.log('📡 جلب الرحلات من الخادم...');
+        const result = await jsonp('getAllTrips', { 
+            includeItems: 'true',
+            centerName: currentUser?.centerName || '' 
+        });
+        
+        allTrips = Array.isArray(result) ? result : [];
+        allTrips.sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+        
+        // ✅ تخزين في Cache
+        tripsCache = allTrips;
+        tripsCacheTime = now;
+        
+        console.log('✅ تم تحميل', allTrips.length, 'رحلة');
+        return allTrips;
+        
+    } catch(e) { 
+        console.error('loadAllTrips error:', e);
+        allTrips = [];
+        return allTrips;
+    }
+}
+async function loadAllTrips(forceRefresh = false) {
+    const now = Date.now();
+    
+    // ✅ استخدام Cache إذا كان موجوداً وصالحاً
+    if (!forceRefresh && tripsCache && (now - tripsCacheTime) < CACHE_DURATION) {
+        console.log('📦 استخدام البيانات المخزنة مؤقتاً (', tripsCache.length, 'رحلات)');
+        allTrips = tripsCache;
+        return allTrips;
+    }
+    
+    try {
+        console.log('📡 جلب الرحلات من الخادم...');
+        const result = await jsonp('getAllTrips', { 
+            includeItems: 'false',  // ✅ فقط الأسماء والفئات للقائمة
+            centerName: currentUser?.centerName || '' 
+        });
+        
+        allTrips = Array.isArray(result) ? result : [];
+        allTrips.sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+        
+        // ✅ تخزين في Cache
+        tripsCache = allTrips;
+        tripsCacheTime = now;
+        
+        console.log('✅ تم تحميل', allTrips.length, 'رحلة');
+        return allTrips;
+        
+    } catch(e) { 
+        console.error('loadAllTrips error:', e);
+        allTrips = [];
+        return allTrips;
+    }
 }
 
 // ============================================================
@@ -1470,7 +1534,6 @@ async function loadTrip() {
     document.body.appendChild(loadingMsg);
     
     try {
-        // ✅ استخدام getTripDefinition مباشرة (أسرع بكثير)
         const def = await jsonp('getTripDefinition', {
             tripName: tripName,
             centerName: currentUser?.centerName || ''
@@ -1483,7 +1546,7 @@ async function loadTrip() {
                 category: def.category || '',
                 items: Array.isArray(def.items) ? [...def.items] : [],
                 prices: { USD: [], EUR: [], GBP: [], LE: [] },
-                hasCost: def.hasCost || false  // ✅ قراءة hasCost
+                hasCost: def.hasCost || false
             };
             
             const categoryInput = document.getElementById('tripCategory');
@@ -1494,7 +1557,6 @@ async function loadTrip() {
             
             updateItemsUI();
             
-            // ✅ تحميل أسعار جميع العملات
             const currencies = ['$', '€', '£', 'LE'];
             await Promise.all(currencies.map(cur => loadTripPricesForCurrency(def.name, def.category, cur)));
             
@@ -1626,7 +1688,7 @@ async function saveTrip() {
         });
     }
 }
-
+  
 function showCurrencyModal(items, callback) {
   const modal = document.getElementById('currencyModal');
   const container = document.getElementById('currencyModalItems');
@@ -1851,7 +1913,6 @@ async function updateTrip() {
         }
     });
 }
-
 // ============================================================
 // DELETE TRIP
 // ============================================================
