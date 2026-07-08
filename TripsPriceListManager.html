@@ -1473,7 +1473,7 @@ async function getTripDefinitionReplacement(tripName) {
     }
 }
 // ============================================================
-// LOAD TRIP
+// LOAD TRIP (نسخة معدلة - أسرع)
 // ============================================================
 async function loadTrip() {
     const tripName = document.getElementById('tripName').value.trim();
@@ -1522,8 +1522,11 @@ async function loadTrip() {
             
             updateItemsUI();
             
-            const currencies = ['$', '€', '£', 'LE'];
-            await Promise.all(currencies.map(cur => loadTripPricesForCurrency(def.name, def.category, cur)));
+            // ✅ تحميل أسعار العملة المختارة فقط (دولار)
+            await loadTripPricesForCurrency(def.name, def.category, '$');
+            
+            // ✅ تحميل LE فقط إذا كانت موجودة
+            await loadTripPricesForCurrency(def.name, def.category, 'LE');
             
             selectedCurrency = '$';
             updatePricesUI();
@@ -1549,7 +1552,7 @@ async function loadTrip() {
         }
     }
 }
-
+  
 async function loadTripPricesForCurrency(tripName, category, currencySym) {
   let currencyCode = currencySym;
   if (currencySym === '$') currencyCode = 'USD';
@@ -1831,9 +1834,6 @@ async function executeSaveTrip(data) {
     }
 }
 // ============================================================
-// UPDATE TRIP
-// ============================================================
-// ============================================================
 // UPDATE TRIP (نسخة معدلة)
 // ============================================================
 async function updateTrip() {
@@ -1842,9 +1842,10 @@ async function updateTrip() {
         return;
     }
     
-    // ✅ تعطيل الزر وإظهار حالة التحميل
     const updateBtn = document.querySelector('.btn-primary');
     const originalBtnText = updateBtn ? updateBtn.innerHTML : '';
+    
+    // ✅ إظهار حالة التحميل فوراً
     if (updateBtn) {
         updateBtn.innerHTML = '<span class="loading"></span> جاري التحديث...';
         updateBtn.disabled = true;
@@ -1855,14 +1856,12 @@ async function updateTrip() {
         const bankPercent = parseFloat(document.getElementById('bankPercentage').value) || 2.5;
         const hasCost = document.getElementById('hasCost').checked;
         
-        // ✅ تحديد العملة المختارة
         let priceKey = selectedCurrency;
         if (selectedCurrency === '$') priceKey = 'USD';
         else if (selectedCurrency === '€') priceKey = 'EUR';
         else if (selectedCurrency === '£') priceKey = 'GBP';
         else if (selectedCurrency === 'LE') priceKey = 'LE';
         
-        // ✅ جمع الأسعار للعملة المختارة
         const prices = [];
         for (let i = 0; i < currentTrip.items.length; i++) {
             const val = (currentTrip.prices[priceKey] && currentTrip.prices[priceKey][i]) || 0;
@@ -1870,9 +1869,8 @@ async function updateTrip() {
         }
         
         const currentItems = currentTrip.items.filter(item => item && item.trim() !== '');
-        
-        // ✅ التأكد من وجود centerName
         const centerName = currentUser?.centerName || '';
+        
         if (!centerName) {
             showAlert('❌ خطأ: centerName غير موجود');
             if (updateBtn) {
@@ -1882,9 +1880,10 @@ async function updateTrip() {
             return;
         }
         
+        // ✅ عرض نافذة التأكيد
         showConfirm(`تحديث الرحلة "${currentTrip.name}" بالعملة ${selectedCurrency}؟`, async () => {
             try {
-                // ✅ تحديث العملة المختارة مع centerName
+                // ✅ تنفيذ التحديث
                 const res = await jsonp('updateTrip', {
                     tripName: currentTrip.name,
                     category: category,
@@ -1893,14 +1892,14 @@ async function updateTrip() {
                     hasCost: hasCost,
                     bankPercentage: bankPercent,
                     items: JSON.stringify(currentItems),
-                    centerName: centerName  // ✅ تأكد من إرسال centerName
+                    centerName: centerName
                 });
                 
                 if (res.success) {
                     showAlert('✅ ' + res.message);
-                    await loadAllTrips(true);  // ✅ تحديث القائمة
+                    await loadAllTrips(true);
                     
-                    // ✅ إذا كانت العملة هي الدولار وعندما تكون LE فارغة، اعرض نافذة LE
+                    // ✅ التحقق من LE وعرض نافذة الإدخال إذا كانت فارغة
                     if (selectedCurrency === '$') {
                         const leEmpty = !currentTrip.prices.LE || currentTrip.prices.LE.every(p => p === 0);
                         
@@ -1927,30 +1926,57 @@ async function updateTrip() {
                                     showTab('add');
                                 });
                             }, () => {
+                                // ✅ إعادة تعيين الزر عند إلغاء LE
+                                if (updateBtn) {
+                                    updateBtn.innerHTML = originalBtnText;
+                                    updateBtn.disabled = false;
+                                }
                                 resetForm();
                                 showTab('add');
                             });
                         } else {
+                            // ✅ إعادة تعيين الزر
+                            if (updateBtn) {
+                                updateBtn.innerHTML = originalBtnText;
+                                updateBtn.disabled = false;
+                            }
                             resetForm();
                             showTab('add');
                         }
                     } else {
+                        // ✅ إعادة تعيين الزر
+                        if (updateBtn) {
+                            updateBtn.innerHTML = originalBtnText;
+                            updateBtn.disabled = false;
+                        }
                         resetForm();
                         showTab('add');
                     }
                 } else {
                     showAlert('❌ خطأ: ' + res.message);
+                    // ✅ إعادة تعيين الزر عند الفشل
+                    if (updateBtn) {
+                        updateBtn.innerHTML = originalBtnText;
+                        updateBtn.disabled = false;
+                    }
                 }
             } catch(err) {
                 showAlert('❌ خطأ في الاتصال: ' + err.message);
-            } finally {
-                // ✅ إعادة تفعيل الزر
+                // ✅ إعادة تعيين الزر عند الخطأ
                 if (updateBtn) {
                     updateBtn.innerHTML = originalBtnText;
                     updateBtn.disabled = false;
                 }
             }
+        }, () => {
+            // ✅ ✅ ✅ عند الضغط على "إلغاء" - إعادة تعيين الزر فوراً
+            if (updateBtn) {
+                updateBtn.innerHTML = originalBtnText;
+                updateBtn.disabled = false;
+            }
+            console.log('❌ تم إلغاء التحديث');
         });
+        
     } catch(err) {
         showAlert('❌ خطأ: ' + err.message);
         if (updateBtn) {
