@@ -1091,7 +1091,6 @@ const CACHE_DURATION = 5 * 60 * 1000; // 5 دقائق
 async function loadAllTrips(forceRefresh = false) {
     const now = Date.now();
     
-    // ✅ استخدام Cache إذا كان موجوداً وصالحاً
     if (!forceRefresh && tripsCache && (now - tripsCacheTime) < CACHE_DURATION) {
         console.log('📦 استخدام البيانات المخزنة مؤقتاً (', tripsCache.length, 'رحلات)');
         allTrips = tripsCache;
@@ -1101,14 +1100,13 @@ async function loadAllTrips(forceRefresh = false) {
     try {
         console.log('📡 جلب الرحلات من الخادم...');
         const result = await jsonp('getAllTrips', { 
-            includeItems: 'false',  // ✅ فقط الأسماء والفئات للقائمة (أسرع)
+            includeItems: 'false',  // ✅ فقط الأسماء والفئات
             centerName: currentUser?.centerName || '' 
         });
         
         allTrips = Array.isArray(result) ? result : [];
         allTrips.sort((a, b) => a.name.localeCompare(b.name, 'ar'));
         
-        // ✅ تخزين في Cache
         tripsCache = allTrips;
         tripsCacheTime = now;
         
@@ -2113,33 +2111,47 @@ async function showTripsList() {
 }
 
 async function loadTripsListData() {
-  const container = document.getElementById('tripsListContainer');
-  if (!container) {
-    console.error('tripsListContainer not found');
-    return;
-  }
-  
-  try {
-    const trips = await jsonp('getAllTrips', { 
-      includeItems: 'true',
-      centerName: currentUser?.centerName || '' 
-    });
-    
-    if (!trips || trips.length === 0) {
-      container.innerHTML = '<div style="text-align: center; padding: 50px; color: #666;">📭 لا توجد رحلات مسجلة</div>';
-      return;
+    const container = document.getElementById('tripsListContainer');
+    if (!container) {
+        console.error('tripsListContainer not found');
+        return;
     }
     
-    trips.sort((a, b) => a.name.localeCompare(b.name, 'ar'));
-    window.allTripsList = trips;
-    displayFilteredTrips(trips);
-    
-  } catch(err) {
-    console.error('loadTripsListData error:', err);
-    container.innerHTML = '<div style="color: #e74c3c; text-align: center; padding: 50px;">❌ خطأ في تحميل البيانات: ' + err.message + '</div>';
-  }
+    try {
+        // ✅ استخدام Cache أولاً
+        const now = Date.now();
+        if (tripsCache && (now - tripsCacheTime) < CACHE_DURATION) {
+            console.log('📦 استخدام البيانات المخزنة مؤقتاً للقائمة');
+            window.allTripsList = tripsCache;
+            displayFilteredTrips(tripsCache);
+            return;
+        }
+        
+        // ✅ جلب البيانات بدون البنود (أسرع)
+        const trips = await jsonp('getAllTrips', { 
+            includeItems: 'false',  // ✅ فقط الأسماء والفئات
+            centerName: currentUser?.centerName || '' 
+        });
+        
+        if (!trips || trips.length === 0) {
+            container.innerHTML = '<div style="text-align: center; padding: 50px; color: #666;">📭 لا توجد رحلات مسجلة</div>';
+            return;
+        }
+        
+        trips.sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+        window.allTripsList = trips;
+        
+        // ✅ تخزين في Cache
+        tripsCache = trips;
+        tripsCacheTime = now;
+        
+        displayFilteredTrips(trips);
+        
+    } catch(err) {
+        console.error('loadTripsListData error:', err);
+        container.innerHTML = '<div style="color: #e74c3c; text-align: center; padding: 50px;">❌ خطأ في تحميل البيانات: ' + err.message + '</div>';
+    }
 }
-
 function filterTripsList() {
   const searchInput = document.getElementById('tripSearch');
   const container = document.getElementById('tripsListContainer');
