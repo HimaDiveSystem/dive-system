@@ -1499,7 +1499,7 @@ async function loadTrip() {
             
             updateItemsUI();
             
-            // ✅ استخدام Promise.all لتحميل العملات بالتوازي
+            // ✅ تحميل أسعار الدولار والجنيه معاً
             await Promise.all([
                 loadTripPricesForCurrency(def.name, def.category, '$'),
                 loadTripPricesForCurrency(def.name, def.category, 'LE')
@@ -1568,7 +1568,6 @@ async function saveTrip() {
     const bankPercent = parseFloat(document.getElementById('bankPercentage').value) || 2.5;
     const hasCost = document.getElementById('hasCost').checked;
     
-    // ✅ التأكد من وجود centerName
     const centerName = currentUser?.centerName || '';
     if (!centerName) {
         showAlert('❌ خطأ: centerName غير موجود');
@@ -1583,10 +1582,10 @@ async function saveTrip() {
         showAlert('الرجاء اختيار الفئة');
         return;
     }
-      if (!validateBankPercentage(document.getElementById('bankPercentage').value)) {
-        return;  // الدالة ستتوقف هنا ولن تكمل
+    if (!validateBankPercentage(document.getElementById('bankPercentage').value)) {
+        return;
     }
-    // ✅ تعطيل الزر وإظهار حالة التحميل
+    
     const saveBtn = document.querySelector('.btn-primary');
     const originalBtnText = saveBtn ? saveBtn.innerHTML : '';
     if (saveBtn) {
@@ -1628,7 +1627,6 @@ async function saveTrip() {
             return;
         }
         
-        // ✅ جمع السعر الأساسي (من حقل الدولار)
         const basePrices = [];
         if (currentTrip.prices.USD) {
             for (let i = 0; i < items.length; i++) {
@@ -1638,8 +1636,8 @@ async function saveTrip() {
             for (let i = 0; i < items.length; i++) basePrices.push(0);
         }
         
-        // ✅ حفظ LE القديم (إذا وجد)
-        const oldLEPrices = currentTrip.prices.LE ? [...currentTrip.prices.LE] : [];
+        // ✅ الحصول على أسعار LE الموجودة (إن وجدت)
+        const existingLEPrices = currentTrip.prices.LE ? [...currentTrip.prices.LE] : [];
         
         pendingTripData = {
             tripName: tripName,
@@ -1649,15 +1647,14 @@ async function saveTrip() {
             hasCost: hasCost,
             bankPercent: bankPercent,
             centerName: centerName,
-            oldLEPrices: oldLEPrices
+            oldLEPrices: existingLEPrices
         };
         
-        // ✅ عرض نافذة إدخال LE (باراميترين فقط)
+        // ✅ عرض النافذة مع الأسعار الموجودة
         showCurrencyModal(items, async (lePrices) => {
-            // ✅ "حفظ": حفظ مع LE
             pendingTripData.lePrices = lePrices;
             await executeSaveTrip(pendingTripData);
-        });
+        }, existingLEPrices);
         
     } catch(err) {
         console.error('saveTrip error:', err);
@@ -1674,16 +1671,21 @@ async function saveTrip() {
 // ============================================================
 // SHOW CURRENCY MODAL (نسخة معدلة - باراميترين فقط)
 // ============================================================
-function showCurrencyModal(items, callback) {
+function showCurrencyModal(items, callback, existingLEPrices = null) {
     const modal = document.getElementById('currencyModal');
     const container = document.getElementById('currencyModalItems');
     
     let html = '';
     for (let i = 0; i < items.length; i++) {
+        // ✅ استخدام السعر الموجود إذا كان موجوداً
+        const existingPrice = (existingLEPrices && existingLEPrices[i] !== undefined && existingLEPrices[i] > 0) 
+            ? existingLEPrices[i] 
+            : '';
+        
         html += `
             <div class="currency-modal-item">
                 <span>${escapeHtml(items[i])}</span>
-                <input type="number" id="lePrice_${i}" value="0" step="0.01" min="0" placeholder="السعر بالجنيه">
+                <input type="number" id="lePrice_${i}" value="${existingPrice}" step="0.01" min="0" placeholder="السعر بالجنيه">
             </div>
         `;
     }
@@ -1694,23 +1696,40 @@ function showCurrencyModal(items, callback) {
     const saveBtn = document.getElementById('currencyModalYes');
     const skipBtn = document.getElementById('currencyModalNo');
     
+    // ✅ منع التنفيذ المتكرر
+    let isProcessing = false;
+    
     const saveHandler = () => {
+        if (isProcessing) return;
+        isProcessing = true;
+        
         const lePrices = [];
+        let hasValidPrice = false;
         for (let i = 0; i < items.length; i++) {
             const input = document.getElementById(`lePrice_${i}`);
-            lePrices.push(parseFloat(input.value) || 0);
+            const val = parseFloat(input.value);
+            if (!isNaN(val) && val > 0) {
+                lePrices.push(val);
+                hasValidPrice = true;
+            } else {
+                lePrices.push(0);
+            }
         }
+        
         modal.style.display = 'none';
         cleanup();
         callback(lePrices);
     };
     
     const skipHandler = () => {
+        if (isProcessing) return;
+        isProcessing = true;
+        
         modal.style.display = 'none';
         cleanup();
-        // ✅ "تخطي": إرسال أصفار
-        const zeroPrices = items.map(() => 0);
-        callback(zeroPrices);
+        // ✅ في حالة التخطي، نرسل الأسعار الموجودة (إن وجدت) أو أصفار
+        const existingPrices = existingLEPrices || items.map(() => 0);
+        callback(existingPrices);
     };
     
     const cleanup = () => {
@@ -1718,8 +1737,14 @@ function showCurrencyModal(items, callback) {
         skipBtn.removeEventListener('click', skipHandler);
     };
     
-    saveBtn.addEventListener('click', saveHandler);
-    skipBtn.addEventListener('click', skipHandler);
+    // ✅ إزالة المستمعين القدامى قبل إضافة الجدد
+    const newSaveBtn = saveBtn.cloneNode(true);
+    const newSkipBtn = skipBtn.cloneNode(true);
+    saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
+    skipBtn.parentNode.replaceChild(newSkipBtn, skipBtn);
+    
+    newSaveBtn.addEventListener('click', saveHandler);
+    newSkipBtn.addEventListener('click', skipHandler);
 }
 // ============================================================
 // EXECUTE SAVE TRIP (نسخة معدلة - استدعاء واحد)
@@ -1807,7 +1832,6 @@ async function updateTrip() {
     const updateBtn = document.querySelector('.btn-primary');
     const originalBtnText = updateBtn ? updateBtn.innerHTML : '';
     
-    // ✅ إظهار حالة التحميل فوراً
     if (updateBtn) {
         updateBtn.innerHTML = '<span class="loading"></span> جاري التحديث...';
         updateBtn.disabled = true;
@@ -1835,14 +1859,12 @@ async function updateTrip() {
             return;
         }
         
-        // ✅ تحديد العملة المختارة ومفتاحها
         let priceKey = selectedCurrency;
         if (selectedCurrency === '$') priceKey = 'USD';
         else if (selectedCurrency === '€') priceKey = 'EUR';
         else if (selectedCurrency === '£') priceKey = 'GBP';
         else if (selectedCurrency === 'LE') priceKey = 'LE';
         
-        // ✅ جمع الأسعار للعملة المختارة
         const prices = [];
         for (let i = 0; i < currentTrip.items.length; i++) {
             const val = (currentTrip.prices[priceKey] && currentTrip.prices[priceKey][i]) || 0;
@@ -1851,10 +1873,9 @@ async function updateTrip() {
         
         const currentItems = currentTrip.items.filter(item => item && item.trim() !== '');
         
-        // ✅ حفظ LE القديم
-        const oldLEPrices = currentTrip.prices.LE ? [...currentTrip.prices.LE] : [];
+        // ✅ الحصول على أسعار LE الموجودة
+        const existingLEPrices = currentTrip.prices.LE ? [...currentTrip.prices.LE] : [];
         
-        // ✅ عرض نافذة التأكيد
         showConfirm(`تحديث الرحلة "${currentTrip.name}" بالعملة ${selectedCurrency}؟`, async () => {
             try {
                 let updateData = {
@@ -1866,23 +1887,19 @@ async function updateTrip() {
                     centerName: centerName
                 };
                 
-                // ✅ الحالة 1: العملة هي الدولار (تحديث $, €, £)
                 if (selectedCurrency === '$') {
-                    updateData.currency = 'BASE';  // ✅ تحديث الدولار واليورو والاسترليني
+                    updateData.currency = 'BASE';
                     updateData.prices = JSON.stringify(prices);
-                    updateData.lePrices = JSON.stringify(oldLEPrices);  // ✅ الحفاظ على LE القديم
+                    updateData.lePrices = JSON.stringify(existingLEPrices);
                 }
-                // ✅ الحالة 2: العملة هي LE (تحديث LE فقط)
                 else if (selectedCurrency === 'LE') {
                     updateData.currency = 'LE_ONLY';
                     updateData.prices = JSON.stringify(prices);
                 }
-                // ✅ الحالة 3: العملة هي اليورو (تحديث اليورو فقط)
                 else if (selectedCurrency === '€') {
                     updateData.currency = 'EUR_ONLY';
                     updateData.prices = JSON.stringify(prices);
                 }
-                // ✅ الحالة 4: العملة هي الاسترليني (تحديث الاسترليني فقط)
                 else if (selectedCurrency === '£') {
                     updateData.currency = 'GBP_ONLY';
                     updateData.prices = JSON.stringify(prices);
@@ -1893,7 +1910,6 @@ async function updateTrip() {
                 if (res.success) {
                     // ✅ تحديث currentTrip.prices
                     if (selectedCurrency === '$') {
-                        // تحديث $, €, £
                         if (!currentTrip.prices.USD) currentTrip.prices.USD = [];
                         if (!currentTrip.prices.EUR) currentTrip.prices.EUR = [];
                         if (!currentTrip.prices.GBP) currentTrip.prices.GBP = [];
@@ -1902,10 +1918,9 @@ async function updateTrip() {
                             currentTrip.prices.EUR[i] = prices[i];
                             currentTrip.prices.GBP[i] = prices[i];
                         }
-                        // ✅ الحفاظ على LE القديم
                         if (!currentTrip.prices.LE) currentTrip.prices.LE = [];
-                        for (let i = 0; i < oldLEPrices.length; i++) {
-                            currentTrip.prices.LE[i] = oldLEPrices[i];
+                        for (let i = 0; i < existingLEPrices.length; i++) {
+                            currentTrip.prices.LE[i] = existingLEPrices[i];
                         }
                     } else if (selectedCurrency === 'LE') {
                         if (!currentTrip.prices.LE) currentTrip.prices.LE = [];
@@ -1928,16 +1943,18 @@ async function updateTrip() {
                     await loadAllTrips(true);
                     updatePricesUI();
                     
-                    // ✅ إذا كانت العملة دولار، اعرض رسالة LE
+                    // ✅ إذا كانت العملة دولار، اعرض نافذة LE مع الأسعار الموجودة
                     if (selectedCurrency === '$') {
                         setTimeout(() => {
                             const leEmpty = !currentTrip.prices.LE || currentTrip.prices.LE.every(p => p === 0);
+                            const hasLE = !leEmpty;
                             
                             showConfirm(
-                                leEmpty ? 'هل تريد إدخال أسعار هذه الرحلة بالجنيه المصري؟' : 'هل تريد تعديل سعر الجنيه المصري؟',
+                                hasLE ? 'هل تريد تعديل سعر الجنيه المصري؟' : 'هل تريد إدخال أسعار الجنيه المصري؟',
                                 async () => {
+                                    // ✅ تمرير الأسعار الموجودة إلى نافذة LE
+                                    const currentLE = currentTrip.prices.LE ? [...currentTrip.prices.LE] : [];
                                     showCurrencyModal(currentTrip.items, async (lePrices) => {
-                                        // ✅ تحديث LE فقط
                                         const leRes = await jsonp('updateTrip', {
                                             tripName: currentTrip.name,
                                             category: category,
@@ -1965,10 +1982,9 @@ async function updateTrip() {
                                         }
                                         resetForm();
                                         showTab('add');
-                                    });
+                                    }, currentLE);  // ✅ تمرير الأسعار الموجودة
                                 },
                                 () => {
-                                    // ✅ "إلغاء": الاحتفاظ بكل شيء
                                     if (updateBtn) {
                                         updateBtn.innerHTML = originalBtnText;
                                         updateBtn.disabled = false;
