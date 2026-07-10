@@ -646,32 +646,56 @@ async function openEdit() {
     }
 
     const category = selectedAccount.category;
-    if (category !== 'Submarine') {
-      console.log('جلب الرحلات والبنود للأنشطة العادية...');
-      const tripsRes = await gas('getAllTrips', {
-        centerName: currentUser?.centerName || '',
-        includeItems: true
-      });
+if (category !== 'Submarine') {
+  console.log('جلب الرحلات والبنود للأنشطة العادية...');
+  
+  // ✅ 1. جلب الرحلات حسب النشاط
+  const catTripsRes = await gas('getTripsByCategory', { 
+    category: category,
+    centerName: currentUser?.centerName || ''
+  });
+  console.log('📋 الرحلات حسب النشاط:', catTripsRes);
+  selectedAccount._categoryTrips = Array.isArray(catTripsRes) ? catTripsRes : [];
+  
+  // ✅ 2. جلب جميع الرحلات مع البنود
+  const tripsRes = await gas('getAllTrips', {
+    centerName: currentUser?.centerName || '',
+    includeItems: true
+  });
 
-      console.log('نتيجة getAllTrips:', tripsRes);
+  console.log('نتيجة getAllTrips:', tripsRes);
 
-      if (Array.isArray(tripsRes) && tripsRes.length > 0) {
-        selectedAccount._existingTripsList = tripsRes.map(t => t.name);
-        selectedAccount._existingPricesData = {};
-
-        for (const trip of tripsRes) {
-          if (trip.items && trip.items.length > 0) {
-            tripItems[trip.name] = trip.items;
-          }
-        }
-
-        selectedAccount._sheetInfo += `<br>📋 الرحلات الموجودة: ${selectedAccount._existingTripsList.join(', ')}`;
-      } else {
-        selectedAccount._existingTripsList = [];
-        selectedAccount._existingPricesData = {};
+  if (Array.isArray(tripsRes) && tripsRes.length > 0) {
+    // ✅ حفظ بنود الرحلات في tripItems
+    for (const trip of tripsRes) {
+      if (trip.items && trip.items.length > 0) {
+        tripItems[trip.name] = trip.items;
       }
     }
-
+  }
+  
+  // ✅ 3. جلب الرحلات المحددة للعميل من assignedTrips
+  let assignedTripsList = [];
+  if (selectedAccount.assignedTrips) {
+    assignedTripsList = selectedAccount.assignedTrips.split('|').filter(Boolean);
+  }
+  selectedAccount._existingTripsList = assignedTripsList;
+  console.log('📋 الرحلات المحددة للعميل:', assignedTripsList);
+  
+  // ✅ 4. جلب الأسعار المحفوظة
+  let savedPrices = {};
+  try {
+    if (selectedAccount.pricesData) {
+      savedPrices = JSON.parse(selectedAccount.pricesData);
+    }
+  } catch(e) {
+    console.warn('⚠️ فشل تحليل pricesData:', e);
+  }
+  selectedAccount._existingPricesData = savedPrices;
+  console.log('💰 الأسعار المحفوظة:', Object.keys(savedPrices).length, 'بند');
+  
+  selectedAccount._sheetInfo += `<br>📋 الرحلات المحددة: ${assignedTripsList.join(', ') || 'لا توجد'}`;
+}
     // ✅ تم نقل هذا الكود داخل try (بدون try/catch منفصل)
     if (selectedAccount.loginEmail) {
       selectedAccount.hasSystemAccess = true;
@@ -795,29 +819,43 @@ function renderStep2(cat) {
           </tbody>
         </table>
       </div>`;
-  } else {
-    let availableTrips = [...tripsForCategory];
+ } else {
+    // ✅ الرحلات المتاحة حسب النشاط
+    let availableTrips = [...(selectedAccount?._categoryTrips || tripsForCategory || [])];
+    
+    // ✅ الرحلات المحددة للعميل
     let existingTripsList = [];
-    if (isEdit && selectedAccount && selectedAccount._existingTripsList) {
-      existingTripsList = selectedAccount._existingTripsList;
-    } else if (isEdit && selectedAccount && selectedAccount.assignedTrips) {
-      existingTripsList = selectedAccount.assignedTrips.split('|').filter(Boolean);
+    if (isEdit && selectedAccount) {
+      // ✅ استخدام _existingTripsList أو assignedTrips
+      if (selectedAccount._existingTripsList && selectedAccount._existingTripsList.length > 0) {
+        existingTripsList = selectedAccount._existingTripsList;
+      } else if (selectedAccount.assignedTrips) {
+        existingTripsList = selectedAccount.assignedTrips.split('|').filter(Boolean);
+      }
     }
+    
+    // ✅ دمج القائمتين (جميع الرحلات + الرحلات المحددة)
     const allTrips = [...new Set([...availableTrips, ...existingTripsList])].sort();
+    
+    console.log('📋 renderStep2 - allTrips:', allTrips);
+    console.log('📋 renderStep2 - existingTripsList:', existingTripsList);
     
     html = `
       <div class="sec-title">📋 اختر الرحلات المخصصة لهذا الحساب</div>
       <div class="trips-box" id="tripsBox">
-        ${allTrips.length ? allTrips.map(t => `
-          <div class="trip-item ${existingTripsList.includes(t) ? 'checked' : ''}" id="ti_${safeid(t)}">
-            <input type="checkbox" id="tc_${safeid(t)}" value="${esc(t)}" ${existingTripsList.includes(t) ? 'checked' : ''} onchange="handleTripToggle(this,'${esc(t)}'); updateSaveButtonState()">
-            <label for="tc_${safeid(t)}" style="cursor:pointer">${esc(t)}</label>
-          </div>`).join('') : '<div style="padding:20px;color:#94a3b8;text-align:center;">لا توجد رحلات لهذا النشاط</div>'}
+        ${allTrips.length ? allTrips.map(t => {
+          const isChecked = existingTripsList.includes(t);
+          return `
+            <div class="trip-item ${isChecked ? 'checked' : ''}" id="ti_${safeid(t)}">
+              <input type="checkbox" id="tc_${safeid(t)}" value="${esc(t)}" ${isChecked ? 'checked' : ''} onchange="handleTripToggle(this,'${esc(t)}'); updateSaveButtonState()">
+              <label for="tc_${safeid(t)}" style="cursor:pointer">${esc(t)}</label>
+            </div>
+          `;
+        }).join('') : '<div style="padding:20px;color:#94a3b8;text-align:center;">لا توجد رحلات لهذا النشاط</div>'}
       </div>
       <div class="sec-title" id="priceTitle" style="display:none">💰 أسعار البنود (لكل عميل)</div>
       <div id="priceArea"></div>`;
-  }
-
+}
   document.getElementById('formContent').innerHTML = html;
   document.getElementById('formFooter').innerHTML = `
     <button class="btn btn-green" id="saveBtn" onclick="doSave()" disabled>💾 ${isEdit ? 'تحديث البيانات' : 'حفظ وإنشاء الشيت'}</button>
@@ -827,23 +865,32 @@ function renderStep2(cat) {
 
   updateSaveButtonState();
 
+  // ✅ تحميل الأسعار إذا كانت هناك رحلات محددة
   if (!isSubmarine && isEdit && selectedAccount) {
     let prevTrips = [];
     let savedPrices = {};
     
+    // ✅ الأولوية لـ _existingTripsList و _existingPricesData
     if (selectedAccount._existingTripsList && selectedAccount._existingTripsList.length > 0) {
       prevTrips = selectedAccount._existingTripsList;
       savedPrices = selectedAccount._existingPricesData || {};
+      console.log('✅ استخدام _existingTripsList:', prevTrips);
+      console.log('✅ استخدام _existingPricesData:', Object.keys(savedPrices).length, 'بند');
     } else if (selectedAccount.assignedTrips) {
       prevTrips = selectedAccount.assignedTrips.split('|').filter(Boolean);
       try {
         if (selectedAccount.pricesData) {
           savedPrices = JSON.parse(selectedAccount.pricesData);
+          console.log('✅ استخدام assignedTrips:', prevTrips);
+          console.log('✅ استخدام pricesData:', Object.keys(savedPrices).length, 'بند');
         }
-      } catch(e) {}
+      } catch(e) {
+        console.warn('⚠️ فشل تحليل pricesData:', e);
+      }
     }
     
     setTimeout(function() {
+      // ✅ تحديث حالة الصناديق (checked)
       for (const t of prevTrips) {
         const el = document.getElementById(`ti_${safeid(t)}`);
         if (el) {
@@ -852,17 +899,19 @@ function renderStep2(cat) {
           if (cb) cb.checked = true;
         }
       }
-   Promise.all(prevTrips.map(async function(tripName) {
-  if (!tripItems[tripName]) {
-    await fetchTripItems(tripName);
-  }
-})).then(function() {
-  return loadPriceInputsWithValues(prevTrips, savedPrices);
-}).then(function() {
-  setTimeout(updateSaveButtonState, 100);
-}).catch(function(err) {
-  console.error('خطأ في تحميل الأسعار:', err);
-});
+      
+      // ✅ تحميل الأسعار
+      Promise.all(prevTrips.map(async function(tripName) {
+        if (!tripItems[tripName]) {
+          await fetchTripItems(tripName);
+        }
+      })).then(function() {
+        return loadPriceInputsWithValues(prevTrips, savedPrices);
+      }).then(function() {
+        setTimeout(updateSaveButtonState, 100);
+      }).catch(function(err) {
+        console.error('❌ خطأ في تحميل الأسعار:', err);
+      });
     }, 200);
   }
 
@@ -892,6 +941,11 @@ function goBackStep1() {
 }
 
 async function loadPriceInputsWithValues(tripNames, savedPrices) {
+  console.log('🔍 loadPriceInputsWithValues - START');
+  console.log('📌 tripNames:', tripNames);
+  console.log('📌 savedPrices keys:', Object.keys(savedPrices || {}));
+  console.log('📌 savedPrices sample:', savedPrices ? Object.keys(savedPrices).slice(0, 3).map(k => ({ key: k, value: savedPrices[k] })) : 'empty');
+  
   const priceTitle = document.getElementById('priceTitle');
   const priceArea = document.getElementById('priceArea');
   if (!priceArea) return;
