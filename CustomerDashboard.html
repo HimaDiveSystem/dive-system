@@ -1114,6 +1114,59 @@ async function loadAll(){
       selectedBranches = [loggedInUser.branchName];
     }
     
+    // ✅ ============================================================
+    // ✅ تحديث البيانات تلقائياً من الفواتير (مرة واحدة في اليوم)
+    // ✅ ============================================================
+    try {
+      // ✅ التحقق من آخر تحديث (مرة واحدة في اليوم)
+      const lastUpdate = localStorage.getItem('lastAutoUpdate_' + customerAccount.customerId);
+      const today = new Date().toDateString();
+      
+      if (lastUpdate !== today) {
+        console.log('🔄 تحديث البيانات تلقائياً من الفواتير...');
+        
+        let branchesParam = [];
+        if(isUnlimited && selectedBranches.length > 0) {
+          branchesParam = selectedBranches;
+        } else if(!isUnlimited && loggedInUser?.branchName) {
+          branchesParam = [loggedInUser.branchName];
+        }
+        
+        const updateResult = await gas('collectAndUpdateCustomerSheet', {
+          customerId: customerAccount.customerId,
+          userId: loggedInUser?.id || '',
+          selectedBranches: JSON.stringify(branchesParam),
+          centerName: currentUser?.centerName || ''
+        });
+        
+        if (updateResult?.success) {
+          console.log(`✅ تم تحديث البيانات تلقائياً: ${updateResult.updatedDates || 0} تاريخ, ${updateResult.updatedCount || 0} خلية`);
+          
+          // ✅ تسجيل تاريخ التحديث
+          localStorage.setItem('lastAutoUpdate_' + customerAccount.customerId, today);
+          
+          // ✅ إعادة تحميل بيانات الشيت بعد التحديث
+          const sheetName = customerAccount.customerName + '_' + customerAccount.category + '_' + customerAccount.customerType;
+          const updatedSheetData = await gas('getAccountSheetData', {
+            sheetName: sheetName,
+            centerName: currentUser?.centerName || ''
+          });
+          
+          if (updatedSheetData?.success && Array.isArray(updatedSheetData.data)) {
+            sheetData = updatedSheetData.data;
+            console.log('✅ تم تحديث بيانات الشيت بعد التجميع');
+          }
+        } else {
+          console.log('⚠️ لا توجد فواتير جديدة للتحديث');
+        }
+      } else {
+        console.log('⏭️ تم التحديث اليوم بالفعل، تخطي...');
+      }
+    } catch(updateError) {
+      console.warn('⚠️ فشل التحديث التلقائي:', updateError.message);
+      // لا نعرض رسالة خطأ للمستخدم حتى لا يزعجه
+    }
+    
     renderPage('', '');
     
   } catch(e){
@@ -1121,7 +1174,6 @@ async function loadAll(){
     showAlert('خطأ في التحميل: '+e.message,'❌');
   }
 }
-
 // ============================================================
 // ✅ DOMContentLoaded - باستخدام Session API
 // ============================================================
