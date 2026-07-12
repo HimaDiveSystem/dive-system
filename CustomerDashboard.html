@@ -161,6 +161,99 @@
       table.dt thead tr.row-trip th,table.dt thead tr.row-item th,table.dt tbody td{padding:5px 4px;}
       .tab-btn{padding:6px 14px;font-size:11px;}
     }
+    /* ====== Modal الطباعة ====== */
+.print-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  align-items: center;
+  justify-content: center;
+  z-index: 99999;
+  backdrop-filter: blur(6px);
+}
+.print-modal.open {
+  display: flex;
+}
+.print-modal-box {
+  background: white;
+  width: 92%;
+  max-width: 500px;
+  max-height: 90vh;
+  border-radius: 24px;
+  padding: 30px;
+  box-shadow: 0 25px 60px rgba(0,0,0,0.3);
+  animation: pop .3s ease;
+  overflow-y: auto;
+}
+.print-modal-title {
+  color: var(--navy);
+  font-size: 20px;
+  font-weight: 900;
+  text-align: center;
+  margin-bottom: 20px;
+  border-bottom: 3px solid var(--gold);
+  padding-bottom: 12px;
+}
+.print-modal-title .icon {
+  font-size: 28px;
+}
+.print-preview-content {
+  background: #f8fafc;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 20px;
+  max-height: 300px;
+  overflow-y: auto;
+  font-size: 13px;
+  direction: rtl;
+}
+.print-preview-content .line {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px dashed #e2e8f0;
+}
+.print-preview-content .line:last-child {
+  border-bottom: none;
+}
+.print-preview-content .label {
+  color: var(--text-lt);
+  font-weight: 600;
+}
+.print-preview-content .value {
+  color: var(--navy);
+  font-weight: 700;
+}
+.print-preview-content .total-line {
+  background: #e6f0ff;
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-top: 8px;
+  font-weight: 800;
+  font-size: 16px;
+}
+.print-modal-footer {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 2px solid var(--border);
+}
+.btn-purple {
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+  color: white;
+}
+.btn-print {
+  background: linear-gradient(135deg, #1a3260, #0f1f3d);
+  color: var(--gold);
+}
+.btn-print:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(15,31,61,0.3);
+}
   </style>
 </head>
 <body>
@@ -196,7 +289,25 @@
     </div>
   </div>
 </div>
-
+<!-- ====== Modal الطباعة ====== -->
+<div id="printModal" class="print-modal">
+  <div class="print-modal-box">
+    <div class="print-modal-title">
+      <span class="icon">🖨️</span> معاينة الفاتورة
+    </div>
+    <div id="printPreviewContent" class="print-preview-content">
+      <!-- يتم ملؤها بواسطة JavaScript -->
+    </div>
+    <div class="print-modal-footer">
+      <button class="btn btn-print" onclick="confirmPrint()">
+        🖨️ طباعة
+      </button>
+      <button class="btn btn-gray" onclick="closePrintModal()">
+        إلغاء
+      </button>
+    </div>
+  </div>
+</div>
 <script>
 
 let currentUser = null;
@@ -886,15 +997,16 @@ function renderPage(startISO, endISO) {
     `;
   }
   
-  const infoBar = acc ? `
+ const infoBar = acc ? `
     <div class="customer-info-header">
       <div class="info-bar" style="flex:1; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
         <div>
           🏢 <strong>${acc.customerName}</strong> | 🏄 ${acc.category}
         </div>
-        <div style="display: flex; gap: 10px;">
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
           ${isManager ? `<button class="edit-btn" onclick="openEditCustomer()">✏️ تعديل بيانات العميل</button>` : ''}
           <button class="edit-btn" style="background:var(--green);color:white;" onclick="addNewInvoice()">📋 إضافة فاتورة جديدة</button>
+          <button class="edit-btn" style="background:var(--purple);color:white;" onclick="openPrintInvoiceModal()">🖨️ طباعة فاتورة</button>
         </div>
       </div>
     </div>
@@ -914,7 +1026,7 @@ function renderPage(startISO, endISO) {
         </div>
       </div>
     </div>
-
+    
     <div class="tabs" style="margin-bottom:16px;">
   <button class="tab-btn active" onclick="switchTab('totals',event)">💰 الإجماليات اليومية</button>
   <button class="tab-btn" onclick="switchTab('payments',event)">💳 المدفوعات والتسديدات</button>
@@ -994,7 +1106,397 @@ function addNewInvoice() {
   const userParam = encodeURIComponent(JSON.stringify(loggedInUser));
   location.href = `CustomerInvoice.html?customerId=${customerAccount.customerId}&centerName=${currentUser?.centerName || ''}&returnUrl=${encodeURIComponent(returnUrl)}&user=${userParam}`;
 }
+// ============================================================
+// ✅ دوال طباعة فاتورة العميل/المنفذ
+// ============================================================
 
+let printInvoiceData = null;
+
+function openPrintInvoiceModal() {
+  if (!customerAccount || !customerAccount.customerId) {
+    showAlert('لا يوجد حساب عميل محدد', '⚠️');
+    return;
+  }
+  
+  // ✅ بناء بيانات الفاتورة من الحساب
+  const acc = customerAccount;
+  const totalDue = calculateTotalDue();
+  const totalPaid = calculateTotalPaid();
+  const balance = totalDue - totalPaid;
+  
+  printInvoiceData = {
+    customerName: acc.customerName,
+    customerType: acc.customerType === 'Supplier' ? 'منفذ' : 'عميل',
+    category: acc.category || '-',
+    phone: acc.phone || '-',
+    email: acc.email || '-',
+    address: acc.address || '-',
+    totalDue: totalDue,
+    totalPaid: totalPaid,
+    balance: balance,
+    currency: 'LE', // يمكن تعديلها حسب العملة
+    date: new Date().toLocaleDateString('ar-EG', { day: '2-digit', month: 'short', year: 'numeric' }),
+    centerName: currentUser?.centerName || '',
+    branchName: currentUser?.branchName || '',
+    userName: currentUser?.name || '',
+    items: getInvoiceItems()
+  };
+  
+  // ✅ عرض المعاينة
+  renderPrintPreview(printInvoiceData);
+  document.getElementById('printModal').classList.add('open');
+}
+
+function calculateTotalDue() {
+  let total = 0;
+  if (sumCurrencies && sumCurrencies.length > 0) {
+    // استخدام أعمدة المجاميع من الشيت
+    const rows = sheetData?.slice(3).filter(r => r[0]) || [];
+    for (const row of rows) {
+      for (const sc of sumCurrencies) {
+        const val = parseFloat(row[sc.col]) || 0;
+        if (val > 0) {
+          // تحويل إلى LE إذا كانت العملة مختلفة
+          if (sc.currency === 'USD') total += val * 50; // مثال: سعر الصرف
+          else if (sc.currency === 'EUR') total += val * 55;
+          else if (sc.currency === 'GBP') total += val * 65;
+          else total += val;
+        }
+      }
+    }
+  }
+  return total;
+}
+
+function calculateTotalPaid() {
+  let total = 0;
+  if (paymentsData && paymentsData.length > 0) {
+    for (const p of paymentsData) {
+      total += (p.USD || 0) * 50;
+      total += (p.EUR || 0) * 55;
+      total += (p.GBP || 0) * 65;
+      total += (p.LE || 0);
+    }
+  }
+  return total;
+}
+
+function getInvoiceItems() {
+  const items = [];
+  if (tripGroups && tripGroups.length > 0) {
+    const rows = sheetData?.slice(3).filter(r => r[0]) || [];
+    for (const g of tripGroups) {
+      for (const item of g.items) {
+        let totalQty = 0;
+        for (const row of rows) {
+          const qty = parseFloat(row[item.col]) || 0;
+          if (qty > 0) totalQty += qty;
+        }
+        if (totalQty > 0) {
+          items.push({
+            trip: g.name,
+            item: item.name,
+            quantity: totalQty
+          });
+        }
+      }
+    }
+  }
+  return items;
+}
+
+function renderPrintPreview(data) {
+  const container = document.getElementById('printPreviewContent');
+  
+  let itemsHtml = '';
+  if (data.items && data.items.length > 0) {
+    data.items.forEach(item => {
+      itemsHtml += `
+        <div class="line">
+          <span class="value">${item.trip} - ${item.item}</span>
+          <span class="label">${item.quantity}</span>
+        </div>
+      `;
+    });
+  } else {
+    itemsHtml = `<div style="text-align:center;color:#94a3b8;padding:12px;">لا توجد بنود</div>`;
+  }
+  
+  container.innerHTML = `
+    <div style="text-align:center;margin-bottom:12px;padding-bottom:10px;border-bottom:2px solid var(--gold);">
+      <strong style="color:var(--navy);font-size:16px;">${data.centerName}</strong>
+      <div style="font-size:11px;color:var(--text-lt);">${data.branchName}</div>
+    </div>
+    
+    <div class="line">
+      <span class="label">👤 العميل</span>
+      <span class="value">${data.customerName}</span>
+    </div>
+    <div class="line">
+      <span class="label">🏷️ النوع</span>
+      <span class="value">${data.customerType}</span>
+    </div>
+    <div class="line">
+      <span class="label">🏄 النشاط</span>
+      <span class="value">${data.category}</span>
+    </div>
+    <div class="line">
+      <span class="label">📞 الهاتف</span>
+      <span class="value">${data.phone}</span>
+    </div>
+    <div class="line">
+      <span class="label">📅 التاريخ</span>
+      <span class="value">${data.date}</span>
+    </div>
+    
+    <div style="margin:10px 0;border-top:2px solid var(--border);"></div>
+    
+    <div style="font-weight:700;font-size:13px;margin-bottom:8px;color:var(--navy);">📋 بنود الحساب</div>
+    ${itemsHtml}
+    
+    <div style="margin:10px 0;border-top:2px solid var(--border);"></div>
+    
+    <div class="line">
+      <span class="label">💰 إجمالي المستحقات</span>
+      <span class="value">${Math.round(data.totalDue).toLocaleString()} ${data.currency}</span>
+    </div>
+    <div class="line">
+      <span class="label">💳 إجمالي المدفوعات</span>
+      <span class="value">${Math.round(data.totalPaid).toLocaleString()} ${data.currency}</span>
+    </div>
+    <div class="line total-line">
+      <span>⚖️ الرصيد المتبقي</span>
+      <span style="color:${data.balance > 0 ? '#dc2626' : '#16a34a'}">
+        ${Math.abs(Math.round(data.balance)).toLocaleString()} ${data.currency}
+        ${data.balance > 0 ? '(مطلوب)' : ''}
+      </span>
+    </div>
+    
+    <div style="margin-top:12px;padding-top:8px;border-top:1px solid var(--border);font-size:10px;color:var(--text-lt);text-align:center;">
+      تم الإنشاء بواسطة: ${data.userName} | © Dive System
+    </div>
+  `;
+}
+
+function closePrintModal() {
+  document.getElementById('printModal').classList.remove('open');
+  printInvoiceData = null;
+}
+
+function confirmPrint() {
+  if (!printInvoiceData) {
+    showAlert('لا توجد بيانات للطباعة', '⚠️');
+    return;
+  }
+  
+  // ✅ عرض رسالة تأكيد احترافية
+  showPrintConfirmation();
+}
+
+function showPrintConfirmation() {
+  // إنشاء رسالة تأكيد مخصصة
+  const confirmHtml = `
+    <div style="text-align:center;padding:10px 0;">
+      <div style="font-size:48px;margin-bottom:10px;">🖨️</div>
+      <div style="font-size:18px;font-weight:800;color:var(--navy);margin-bottom:8px;">
+        تأكيد الطباعة
+      </div>
+      <div style="font-size:14px;color:var(--text-lt);margin-bottom:16px;">
+        هل أنت متأكد من طباعة فاتورة <strong>${printInvoiceData.customerName}</strong>؟
+        <br>
+        <span style="font-size:12px;color:#94a3b8;">سيتم فتح نافذة الطباعة</span>
+      </div>
+      <div style="display:flex;gap:12px;justify-content:center;margin-top:8px;">
+        <button class="btn btn-print" onclick="executePrint()" style="padding:10px 30px;">
+          🖨️ طباعة
+        </button>
+        <button class="btn btn-gray" onclick="closePrintModal()" style="padding:10px 30px;">
+          إلغاء
+        </button>
+      </div>
+    </div>
+  `;
+  
+  // عرض الرسالة في الـ Modal الحالي
+  const container = document.getElementById('printPreviewContent');
+  container.innerHTML = confirmHtml;
+  
+  // إخفاء الأزرار القديمة وإظهار أزرار جديدة
+  const footer = document.querySelector('.print-modal-footer');
+  footer.style.display = 'none';
+}
+
+function executePrint() {
+  // ✅ إغلاق الـ Modal وطباعة الصفحة
+  closePrintModal();
+  
+  // ✅ بناء محتوى الطباعة
+  const printContent = buildPrintContent(printInvoiceData);
+  
+  // ✅ فتح نافذة الطباعة
+  const printWindow = window.open('', '_blank', 'width=800,height=600');
+  printWindow.document.write(`
+    <!DOCTYPE html>
+    <html dir="rtl">
+    <head>
+      <meta charset="UTF-8">
+      <title>فاتورة ${printInvoiceData.customerName}</title>
+      <style>
+        @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { 
+          font-family: 'Cairo', Arial, sans-serif;
+          background: white;
+          padding: 30px;
+          color: #1a2540;
+        }
+        .print-wrapper {
+          max-width: 700px;
+          margin: 0 auto;
+          border: 2px solid #0f1f3d;
+          border-radius: 16px;
+          padding: 30px;
+          box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        .print-header {
+          text-align: center;
+          border-bottom: 3px solid #f5c842;
+          padding-bottom: 15px;
+          margin-bottom: 20px;
+        }
+        .print-header h1 {
+          color: #0f1f3d;
+          font-size: 24px;
+        }
+        .print-header .sub {
+          color: #5a6a8a;
+          font-size: 13px;
+        }
+        .print-row {
+          display: flex;
+          justify-content: space-between;
+          padding: 6px 0;
+          border-bottom: 1px dashed #e2e8f0;
+        }
+        .print-row .label { color: #5a6a8a; font-weight: 600; }
+        .print-row .value { color: #0f1f3d; font-weight: 700; }
+        .print-total {
+          background: #f0f4f8;
+          padding: 12px 16px;
+          border-radius: 8px;
+          margin-top: 15px;
+          font-weight: 800;
+          font-size: 18px;
+          display: flex;
+          justify-content: space-between;
+        }
+        .print-footer {
+          text-align: center;
+          font-size: 11px;
+          color: #94a3b8;
+          margin-top: 20px;
+          padding-top: 15px;
+          border-top: 1px solid #e2e8f0;
+        }
+        @media print {
+          body { padding: 10px; }
+          .print-wrapper { box-shadow: none; border: 1px solid #ccc; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="print-wrapper">
+        ${printContent}
+      </div>
+      <script>
+        window.onload = function() {
+          window.print();
+          setTimeout(function() { window.close(); }, 1000);
+        };
+      <\/script>
+    </body>
+    </html>
+  `);
+  printWindow.document.close();
+  
+  printInvoiceData = null;
+}
+
+function buildPrintContent(data) {
+  let itemsHtml = '';
+  if (data.items && data.items.length > 0) {
+    data.items.forEach(item => {
+      itemsHtml += `
+        <div class="print-row">
+          <span class="value">${item.trip} - ${item.item}</span>
+          <span class="label">${item.quantity}</span>
+        </div>
+      `;
+    });
+  } else {
+    itemsHtml = `<div style="text-align:center;color:#94a3b8;padding:10px;">لا توجد بنود</div>`;
+  }
+  
+  return `
+    <div class="print-header">
+      <h1>🏢 ${data.centerName}</h1>
+      <div class="sub">${data.branchName}</div>
+      <div class="sub" style="margin-top:4px;">📅 ${data.date}</div>
+    </div>
+    
+    <div class="print-row">
+      <span class="label">👤 العميل</span>
+      <span class="value">${data.customerName}</span>
+    </div>
+    <div class="print-row">
+      <span class="label">🏷️ النوع</span>
+      <span class="value">${data.customerType}</span>
+    </div>
+    <div class="print-row">
+      <span class="label">🏄 النشاط</span>
+      <span class="value">${data.category}</span>
+    </div>
+    <div class="print-row">
+      <span class="label">📞 الهاتف</span>
+      <span class="value">${data.phone}</span>
+    </div>
+    
+    <div style="margin:15px 0;border-top:2px solid #0f1f3d;"></div>
+    
+    <div style="font-weight:700;font-size:15px;margin-bottom:10px;color:#0f1f3d;">📋 بنود الحساب</div>
+    ${itemsHtml}
+    
+    <div style="margin:15px 0;border-top:2px solid #0f1f3d;"></div>
+    
+    <div class="print-row">
+      <span class="label">💰 إجمالي المستحقات</span>
+      <span class="value">${Math.round(data.totalDue).toLocaleString()} ${data.currency}</span>
+    </div>
+    <div class="print-row">
+      <span class="label">💳 إجمالي المدفوعات</span>
+      <span class="value">${Math.round(data.totalPaid).toLocaleString()} ${data.currency}</span>
+    </div>
+    <div class="print-total">
+      <span>⚖️ الرصيد المتبقي</span>
+      <span style="color:${data.balance > 0 ? '#dc2626' : '#16a34a'}">
+        ${Math.abs(Math.round(data.balance)).toLocaleString()} ${data.currency}
+        ${data.balance > 0 ? '(مطلوب)' : ''}
+      </span>
+    </div>
+    
+    <div class="print-footer">
+      تم الإنشاء بواسطة: ${data.userName} | ${data.date} | © Dive System
+    </div>
+  `;
+}
+
+  // ✅ إغلاق الـ Modal عند النقر خارج المحتوى
+document.addEventListener('click', function(event) {
+  const modal = document.getElementById('printModal');
+  if (event.target === modal) {
+    closePrintModal();
+  }
+});
 function updateSelectedBranches() {
   const checkboxes = document.querySelectorAll('.branch-check');
   selectedBranches = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.value);
