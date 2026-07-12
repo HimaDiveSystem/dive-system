@@ -1383,6 +1383,23 @@ function openPrintDetailedModal() {
   // ✅ فلترة المدفوعات حسب التاريخ
   const filteredPayments = filterPaymentsByDate(paymentsData, startDate, endDate);
   
+  // ✅ حساب المدفوعات لكل عملة على حدة
+  const paidByCurrency = { USD: 0, EUR: 0, GBP: 0, LE: 0 };
+  for (const p of filteredPayments) {
+    paidByCurrency.USD += p.USD || 0;
+    paidByCurrency.EUR += p.EUR || 0;
+    paidByCurrency.GBP += p.GBP || 0;
+    paidByCurrency.LE += p.LE || 0;
+  }
+  
+  // ✅ حساب الرصيد المتبقي لكل عملة
+  const balanceByCurrency = {};
+  for (const sc of detailedData.sumCurrencies) {
+    const due = detailedData.grandTotals[sc.currency] || 0;
+    const paid = paidByCurrency[sc.currency] || 0;
+    balanceByCurrency[sc.currency] = due - paid;
+  }
+  
   const dateRangeText = (startDate || endDate) 
     ? ` (${startDate || 'بداية'} → ${endDate || 'نهاية'})`
     : ' (جميع الفترة)';
@@ -1399,13 +1416,16 @@ function openPrintDetailedModal() {
     centerName: currentUser?.centerName || '',
     branchName: currentUser?.branchName || '',
     userName: currentUser?.name || '',
-    totalsData: detailedData.totalsData,     // بيانات جدول الإجماليات (مفلترة)
-    tripGroups: detailedData.tripGroups,      // هيكل الرحلات والبنود
-    sumCurrencies: detailedData.sumCurrencies, // عملات المجاميع
-    payments: filteredPayments,               // بيانات المدفوعات (مفلترة)
-    totalDue: detailedData.totalDue,
-    totalPaid: detailedData.totalPaid,
-    balance: detailedData.balance,
+    totalsData: detailedData.totalsData,
+    tripGroups: detailedData.tripGroups,
+    sumCurrencies: detailedData.sumCurrencies,
+    payments: filteredPayments,
+    // ✅ البيانات الجديدة - كل عملة على حدة
+    grandTotals: detailedData.grandTotals,           // الإجمالي لكل عملة
+    paidByCurrency: paidByCurrency,                 // المدفوعات لكل عملة
+    balanceByCurrency: balanceByCurrency,           // الرصيد لكل عملة
+    totalDueInLE: detailedData.totalDueInLE,        // الإجمالي بالجنيه (للحسابات)
+    exchangeRates: detailedData.exchangeRates,      // أسعار الصرف
     currency: 'LE',
     startDate: startDate,
     endDate: endDate,
@@ -1416,6 +1436,7 @@ function openPrintDetailedModal() {
   renderDetailedPrintPreview(printDetailedData);
   document.getElementById('printModal').classList.add('open');
 }
+  
 function buildDetailedData(startDate, endDate) {
   // ✅ بناء بيانات الإجماليات اليومية من sheetData و tripGroups
   let rows = sheetData?.slice(3).filter(r => r[0]) || [];
@@ -1475,7 +1496,7 @@ function buildDetailedData(startDate, endDate) {
       }
     }
     
-    // قراءة المجاميع
+    // قراءة المجاميع (لكل عملة على حدة)
     for (const sc of sumCurrencies) {
       const val = parseFloat(row[sc.col]) || 0;
       rowData.totals[sc.currency] = val;
@@ -1485,40 +1506,30 @@ function buildDetailedData(startDate, endDate) {
     totalsData.push(rowData);
   }
   
-  // ✅ حساب إجمالي المستحقات والمدفوعات
-  let totalDue = 0;
+  // ✅ جلب أسعار الصرف الفعلية
+  const exchangeRates = getActualExchangeRates();
+  
+  // ✅ حساب إجمالي المستحقات بالجنيه المصري (للتوافق مع النظام)
+  let totalDueInLE = 0;
   for (const sc of sumCurrencies) {
     const val = grandTotals[sc.currency] || 0;
-    if (sc.currency === 'USD') totalDue += val * 50;
-    else if (sc.currency === 'EUR') totalDue += val * 55;
-    else if (sc.currency === 'GBP') totalDue += val * 65;
-    else totalDue += val;
+    if (sc.currency === 'USD') totalDueInLE += val * (exchangeRates.USD || 50);
+    else if (sc.currency === 'EUR') totalDueInLE += val * (exchangeRates.EUR || 55);
+    else if (sc.currency === 'GBP') totalDueInLE += val * (exchangeRates.GBP || 65);
+    else totalDueInLE += val;
   }
-  
-  // ✅ استخدام المدفوعات المفلترة (تُمرر من الخارج)
-  let totalPaid = 0;
-  for (const p of paymentsData) {
-    totalPaid += (p.USD || 0) * 50;
-    totalPaid += (p.EUR || 0) * 55;
-    totalPaid += (p.GBP || 0) * 65;
-    totalPaid += (p.LE || 0);
-  }
-  
-  const balance = totalDue - totalPaid;
   
   return {
     totalsData: totalsData,
     tripGroups: tripGroups,
     sumCurrencies: sumCurrencies,
     grandQuantities: grandQuantities,
-    grandTotals: grandTotals,
-    totalDue: totalDue,
-    totalPaid: totalPaid,
-    balance: balance
+    grandTotals: grandTotals,        // ✅ المجاميع لكل عملة
+    totalDueInLE: totalDueInLE,      // ✅ الإجمالي بالجنيه المصري (للحسابات)
+    exchangeRates: exchangeRates     // ✅ أسعار الصرف المستخدمة
   };
 }
- 
-  function renderDetailedPrintPreview(data) {
+function renderDetailedPrintPreview(data) {
   const container = document.getElementById('printPreviewContent');
   if (!container) return;
   
@@ -1544,6 +1555,36 @@ function buildDetailedData(startDate, endDate) {
       </div>
     `;
   }
+  
+  // ✅ بناء عرض الإجماليات لكل عملة في المعاينة
+  let duePreviewHtml = '';
+  let paidPreviewHtml = '';
+  let balancePreviewHtml = '';
+
+  const allCurrenciesPreview = ['USD', 'EUR', 'GBP', 'LE'];
+  for (const cur of allCurrenciesPreview) {
+    const due = data.grandTotals?.[cur] || 0;
+    const paid = data.paidByCurrency?.[cur] || 0;
+    const bal = data.balanceByCurrency?.[cur] || 0;
+    
+    if (due > 0 || paid > 0 || bal !== 0) {
+      if (due > 0) {
+        duePreviewHtml += `<div style="font-size:14px;font-weight:700;">${Math.round(due).toLocaleString()} ${cur}</div>`;
+      }
+      if (paid > 0) {
+        paidPreviewHtml += `<div style="font-size:14px;font-weight:700;color:#16a34a;">${Math.round(paid).toLocaleString()} ${cur}</div>`;
+      }
+      if (bal !== 0) {
+        const color = bal > 0 ? '#dc2626' : '#16a34a';
+        const label = bal > 0 ? ' (مطلوب)' : '';
+        balancePreviewHtml += `<div style="font-size:14px;font-weight:700;color:${color};">${Math.abs(Math.round(bal)).toLocaleString()} ${cur}${label}</div>`;
+      }
+    }
+  }
+
+  if (!duePreviewHtml) duePreviewHtml = '<div style="font-size:13px;color:#94a3b8;">لا توجد مستحقات</div>';
+  if (!paidPreviewHtml) paidPreviewHtml = '<div style="font-size:13px;color:#94a3b8;">لا توجد مدفوعات</div>';
+  if (!balancePreviewHtml) balancePreviewHtml = '<div style="font-size:13px;color:#94a3b8;">لا يوجد رصيد</div>';
   
   // ✅ بناء معاينة الفاتورة التفصيلية
   let html = `
@@ -1595,20 +1636,18 @@ function buildDetailedData(startDate, endDate) {
     
     <div style="font-weight:700;font-size:14px;margin-bottom:8px;color:var(--navy);text-align:center;">📊 الملخص المالي</div>
     
-    <div class="line" style="background:#f0f4f8;padding:8px 12px;border-radius:8px;margin-bottom:6px;">
-      <span class="label">💰 إجمالي المستحقات</span>
-      <span class="value" style="font-size:16px;">${Math.round(data.totalDue).toLocaleString()} ${data.currency}</span>
+    <div class="line" style="background:#f0f4f8;padding:8px 12px;border-radius:8px;margin-bottom:6px;flex-direction:column;align-items:center;">
+      <span class="label" style="margin-bottom:4px;">💰 إجمالي المستحقات</span>
+      ${duePreviewHtml}
+      ${data.exchangeRates ? `<div style="font-size:9px;color:#94a3b8;margin-top:4px;">* بسعر الصرف: USD ${data.exchangeRates.USD} | EUR ${data.exchangeRates.EUR} | GBP ${data.exchangeRates.GBP}</div>` : ''}
     </div>
-    <div class="line" style="background:#f0fdf4;padding:8px 12px;border-radius:8px;margin-bottom:6px;">
-      <span class="label">💳 إجمالي المدفوعات</span>
-      <span class="value" style="font-size:16px;color:#16a34a;">${Math.round(data.totalPaid).toLocaleString()} ${data.currency}</span>
+    <div class="line" style="background:#f0fdf4;padding:8px 12px;border-radius:8px;margin-bottom:6px;flex-direction:column;align-items:center;">
+      <span class="label" style="margin-bottom:4px;">💳 إجمالي المدفوعات</span>
+      ${paidPreviewHtml}
     </div>
-    <div class="line total-line" style="background:#e6f0ff;padding:10px 14px;border-radius:8px;margin-top:4px;">
-      <span style="font-size:15px;">⚖️ الرصيد المتبقي</span>
-      <span style="font-size:18px;color:${data.balance > 0 ? '#dc2626' : '#16a34a'};">
-        ${Math.abs(Math.round(data.balance)).toLocaleString()} ${data.currency}
-        ${data.balance > 0 ? ' (مطلوب)' : ''}
-      </span>
+    <div class="line total-line" style="background:#e6f0ff;padding:10px 14px;border-radius:8px;margin-top:4px;flex-direction:column;align-items:center;">
+      <span style="font-size:15px;font-weight:700;">⚖️ الرصيد المتبقي</span>
+      ${balancePreviewHtml}
     </div>
     
     <div style="margin-top:12px;padding-top:8px;border-top:1px solid var(--border);font-size:10px;color:var(--text-lt);text-align:center;">
@@ -1630,8 +1669,7 @@ function buildDetailedData(startDate, endDate) {
       </button>
     `;
   }
-}
-  
+}  
 function executeDetailedPrint() {
   if (!printDetailedData) {
     showAlert('لا توجد بيانات للطباعة', '⚠️');
@@ -1903,26 +1941,55 @@ if (!hasTotals) {
     html += `</div>`;
   }
   
-  // ✅ ====== 4. الملخص النهائي ======
-  html += `
-    <div class="print-summary-box">
-      <div class="print-summary-item">
-        <div class="label">💰 إجمالي المستحقات</div>
-        <div class="value">${Math.round(data.totalDue || 0).toLocaleString()} ${data.currency || 'LE'}</div>
-      </div>
-      <div class="print-summary-item">
-        <div class="label">💳 إجمالي المدفوعات</div>
-        <div class="value" style="color:#16a34a;">${Math.round(data.totalPaid || 0).toLocaleString()} ${data.currency || 'LE'}</div>
-      </div>
-      <div class="print-summary-item">
-        <div class="label">⚖️ الرصيد المتبقي</div>
-        <div class="value ${(data.balance || 0) > 0 ? 'positive' : 'negative'}">
-          ${Math.abs(Math.round(data.balance || 0)).toLocaleString()} ${data.currency || 'LE'}
-          ${(data.balance || 0) > 0 ? ' (مطلوب)' : ''}
-        </div>
-      </div>
+ // ✅ ====== 4. الملخص النهائي (كل عملة على حدة) ======
+// ✅ بناء عرض الإجماليات لكل عملة
+let dueHtml = '';
+let paidHtml = '';
+let balanceHtml = '';
+
+const allCurrencies = ['USD', 'EUR', 'GBP', 'LE'];
+for (const cur of allCurrencies) {
+  const due = data.grandTotals?.[cur] || 0;
+  const paid = data.paidByCurrency?.[cur] || 0;
+  const bal = data.balanceByCurrency?.[cur] || 0;
+  
+  if (due > 0 || paid > 0 || bal !== 0) {
+    if (due > 0) {
+      dueHtml += `<div class="value" style="font-size:16px;">${Math.round(due).toLocaleString()} ${cur}</div>`;
+    }
+    if (paid > 0) {
+      paidHtml += `<div class="value" style="font-size:16px;color:#16a34a;">${Math.round(paid).toLocaleString()} ${cur}</div>`;
+    }
+    if (bal !== 0) {
+      const color = bal > 0 ? '#dc2626' : '#16a34a';
+      const label = bal > 0 ? ' (مطلوب)' : '';
+      balanceHtml += `<div class="value" style="font-size:16px;color:${color};">${Math.abs(Math.round(bal)).toLocaleString()} ${cur}${label}</div>`;
+    }
+  }
+}
+
+// ✅ إذا لم تكن هناك عملات، عرض رسالة
+if (!dueHtml) dueHtml = '<div class="value" style="font-size:14px;color:#94a3b8;">لا توجد مستحقات</div>';
+if (!paidHtml) paidHtml = '<div class="value" style="font-size:14px;color:#94a3b8;">لا توجد مدفوعات</div>';
+if (!balanceHtml) balanceHtml = '<div class="value" style="font-size:14px;color:#94a3b8;">لا يوجد رصيد</div>';
+
+html += `
+  <div class="print-summary-box">
+    <div class="print-summary-item">
+      <div class="label">💰 إجمالي المستحقات</div>
+      ${dueHtml}
+      ${data.exchangeRates ? `<div style="font-size:9px;color:#94a3b8;margin-top:4px;">* بسعر الصرف: USD ${data.exchangeRates.USD} | EUR ${data.exchangeRates.EUR} | GBP ${data.exchangeRates.GBP}</div>` : ''}
     </div>
-  `;
+    <div class="print-summary-item">
+      <div class="label">💳 إجمالي المدفوعات</div>
+      ${paidHtml}
+    </div>
+    <div class="print-summary-item">
+      <div class="label">⚖️ الرصيد المتبقي</div>
+      ${balanceHtml}
+    </div>
+  </div>
+`;
   
   // ✅ ====== 5. التذييل ======
   html += `
@@ -2324,6 +2391,35 @@ async function loadSheetDataOnly() {
     parseSheetStructure();
   }
 }
+
+  // ============================================================
+// ✅ جلب أسعار الصرف الفعلية من شيت المركز
+// ============================================================
+function getActualExchangeRates() {
+  try {
+    const centerName = currentUser?.centerName || '';
+    if (!centerName) {
+      console.warn('⚠️ no centerName for exchange rates');
+      return { USD: 50, EUR: 55, GBP: 65, LE: 1 };
+    }
+    
+    // ✅ استخدام الدالة الموجودة في Code.gs
+    const rates = getLatestExchangeRates({ centerName: centerName });
+    if (rates) {
+      return {
+        USD: rates.bUSD || 50,
+        EUR: rates.bEUR || 55,
+        GBP: rates.bGBP || 65,
+        LE: 1
+      };
+    }
+    return { USD: 50, EUR: 55, GBP: 65, LE: 1 };
+  } catch(e) {
+    console.warn('⚠️ فشل جلب أسعار الصرف، استخدام القيم الافتراضية:', e);
+    return { USD: 50, EUR: 55, GBP: 65, LE: 1 };
+  }
+}
+  
 function filterPaymentsByDate(payments, startDate, endDate) {
   if (!payments || payments.length === 0) return [];
   
@@ -2345,6 +2441,7 @@ function filterPaymentsByDate(payments, startDate, endDate) {
     return true;
   });
 }
+  
 // ============================================================
 // ✅ loadAll - الدالة الرئيسية
 // ============================================================
