@@ -321,6 +321,7 @@ let sumCurrencies = [];
 let paymentsData = [];
 let availableBranches = [];
 let selectedBranches = [];
+let printDetailedData = null;
 
 const DASHBOARDS = CONFIG.DASHBOARD_PAGES || {
   Admin: 'Dashboard.html',
@@ -997,7 +998,7 @@ function renderPage(startISO, endISO) {
     `;
   }
   
- const infoBar = acc ? `
+const infoBar = acc ? `
     <div class="customer-info-header">
       <div class="info-bar" style="flex:1; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
         <div>
@@ -1006,7 +1007,8 @@ function renderPage(startISO, endISO) {
         <div style="display: flex; gap: 10px; flex-wrap: wrap;">
           ${isManager ? `<button class="edit-btn" onclick="openEditCustomer()">✏️ تعديل بيانات العميل</button>` : ''}
           <button class="edit-btn" style="background:var(--green);color:white;" onclick="addNewInvoice()">📋 إضافة فاتورة جديدة</button>
-          <button class="edit-btn" style="background:var(--purple);color:white;" onclick="openPrintInvoiceModal()">🖨️ طباعة فاتورة</button>
+          <button class="edit-btn" style="background:var(--purple);color:white;" onclick="openPrintInvoiceModal()">🖨️ طباعة ملخص</button>
+          <button class="edit-btn" style="background:var(--teal);color:white;" onclick="openPrintDetailedModal()">📄 طباعة تفصيلية</button>
         </div>
       </div>
     </div>
@@ -1209,6 +1211,23 @@ function renderPrintPreview(data) {
   const container = document.getElementById('printPreviewContent');
   if (!container) return;
   
+  // ✅ التأكد من وجود items
+  const items = data?.items || [];
+  
+  let itemsHtml = '';
+  if (items.length > 0) {
+    items.forEach(item => {
+      itemsHtml += `
+        <div class="line">
+          <span class="value">${item.trip || ''} - ${item.item || ''}</span>
+          <span class="label">${item.quantity || 0}</span>
+        </div>
+      `;
+    });
+  } else {
+    itemsHtml = `<div style="text-align:center;color:#94a3b8;padding:12px;">لا توجد بنود</div>`;
+  }
+  
   // ✅ التأكد من وجود جميع الحقول
   const centerName = data?.centerName || 'Dive Center';
   const branchName = data?.branchName || '';
@@ -1252,21 +1271,24 @@ function renderPrintPreview(data) {
     
     <div style="margin:10px 0;border-top:2px solid var(--border);"></div>
     
-    <div style="font-weight:700;font-size:14px;margin-bottom:8px;color:var(--navy);text-align:center;">📊 الملخص المالي</div>
+    <div style="font-weight:700;font-size:13px;margin-bottom:8px;color:var(--navy);">📋 بنود الحساب</div>
+    ${itemsHtml}
     
-    <div class="line" style="background:#f0f4f8;padding:8px 12px;border-radius:8px;margin-bottom:6px;">
+    <div style="margin:10px 0;border-top:2px solid var(--border);"></div>
+    
+    <div class="line">
       <span class="label">💰 إجمالي المستحقات</span>
-      <span class="value" style="font-size:16px;">${Math.round(totalDue).toLocaleString()} ${currency}</span>
+      <span class="value">${Math.round(totalDue).toLocaleString()} ${currency}</span>
     </div>
-    <div class="line" style="background:#f0fdf4;padding:8px 12px;border-radius:8px;margin-bottom:6px;">
+    <div class="line">
       <span class="label">💳 إجمالي المدفوعات</span>
-      <span class="value" style="font-size:16px;color:#16a34a;">${Math.round(totalPaid).toLocaleString()} ${currency}</span>
+      <span class="value">${Math.round(totalPaid).toLocaleString()} ${currency}</span>
     </div>
-    <div class="line total-line" style="background:#e6f0ff;padding:10px 14px;border-radius:8px;margin-top:4px;">
-      <span style="font-size:15px;">⚖️ الرصيد المتبقي</span>
-      <span style="font-size:18px;color:${balance > 0 ? '#dc2626' : '#16a34a'};">
+    <div class="line total-line">
+      <span>⚖️ الرصيد المتبقي</span>
+      <span style="color:${balance > 0 ? '#dc2626' : '#16a34a'}">
         ${Math.abs(Math.round(balance)).toLocaleString()} ${currency}
-        ${balance > 0 ? ' (مطلوب)' : ''}
+        ${balance > 0 ? '(مطلوب)' : ''}
       </span>
     </div>
     
@@ -1323,7 +1345,612 @@ function showPrintConfirmation() {
   const footer = document.querySelector('.print-modal-footer');
   footer.style.display = 'none';
 }
+// ============================================================
+// ✅ دوال طباعة الفاتورة التفصيلية
+// ============================================================
 
+function openPrintDetailedModal() {
+  if (!customerAccount || !customerAccount.customerId) {
+    showAlert('لا يوجد حساب عميل محدد', '⚠️');
+    return;
+  }
+  
+  // ✅ بناء بيانات الفاتورة التفصيلية من الحساب
+  const acc = customerAccount;
+  
+  // ✅ جلب بيانات الإجماليات اليومية (نفس هيكل تبويب totals)
+  const detailedData = buildDetailedData();
+  
+  printDetailedData = {
+    customerName: acc.customerName,
+    customerType: acc.customerType === 'Supplier' ? 'منفذ' : 'عميل',
+    category: acc.category || '-',
+    phone: acc.phone || '-',
+    email: acc.email || '-',
+    address: acc.address || '-',
+    date: new Date().toLocaleDateString('ar-EG', { day: '2-digit', month: 'short', year: 'numeric' }),
+    centerName: currentUser?.centerName || '',
+    branchName: currentUser?.branchName || '',
+    userName: currentUser?.name || '',
+    totalsData: detailedData.totalsData,     // بيانات جدول الإجماليات
+    tripGroups: detailedData.tripGroups,      // هيكل الرحلات والبنود
+    sumCurrencies: detailedData.sumCurrencies, // عملات المجاميع
+    payments: paymentsData,                   // بيانات المدفوعات
+    totalDue: detailedData.totalDue,
+    totalPaid: detailedData.totalPaid,
+    balance: detailedData.balance,
+    currency: 'LE'
+  };
+  
+  // ✅ عرض المعاينة
+  renderDetailedPrintPreview(printDetailedData);
+  document.getElementById('printModal').classList.add('open');
+}
+
+function buildDetailedData() {
+  // ✅ بناء بيانات الإجماليات اليومية من sheetData و tripGroups
+  const rows = sheetData?.slice(3).filter(r => r[0]) || [];
+  const totalsData = [];
+  const grandTotals = {};
+  const grandQuantities = {};
+  
+  // تهيئة grandTotals لكل عملة
+  for (const sc of sumCurrencies) {
+    grandTotals[sc.currency] = 0;
+  }
+  
+  // تهيئة grandQuantities لكل بند
+  for (const g of tripGroups) {
+    for (const item of g.items) {
+      grandQuantities[`${g.name}_${item.name}`] = 0;
+    }
+  }
+  
+  // معالجة كل صف
+  for (const row of rows) {
+    const dateStr = row[0] ? fmtDate(row[0]) : '';
+    if (!dateStr) continue;
+    
+    const rowData = {
+      date: dateStr,
+      quantities: {},
+      totals: {}
+    };
+    
+    // قراءة الكميات
+    for (const g of tripGroups) {
+      for (const item of g.items) {
+        const qty = parseFloat(row[item.col]) || 0;
+        const key = `${g.name}_${item.name}`;
+        rowData.quantities[key] = qty;
+        grandQuantities[key] = (grandQuantities[key] || 0) + qty;
+      }
+    }
+    
+    // قراءة المجاميع
+    for (const sc of sumCurrencies) {
+      const val = parseFloat(row[sc.col]) || 0;
+      rowData.totals[sc.currency] = val;
+      grandTotals[sc.currency] = (grandTotals[sc.currency] || 0) + val;
+    }
+    
+    totalsData.push(rowData);
+  }
+  
+  // ✅ حساب إجمالي المستحقات والمدفوعات
+  let totalDue = 0;
+  for (const sc of sumCurrencies) {
+    const val = grandTotals[sc.currency] || 0;
+    if (sc.currency === 'USD') totalDue += val * 50;
+    else if (sc.currency === 'EUR') totalDue += val * 55;
+    else if (sc.currency === 'GBP') totalDue += val * 65;
+    else totalDue += val;
+  }
+  
+  let totalPaid = 0;
+  for (const p of paymentsData) {
+    totalPaid += (p.USD || 0) * 50;
+    totalPaid += (p.EUR || 0) * 55;
+    totalPaid += (p.GBP || 0) * 65;
+    totalPaid += (p.LE || 0);
+  }
+  
+  const balance = totalDue - totalPaid;
+  
+  return {
+    totalsData: totalsData,
+    tripGroups: tripGroups,
+    sumCurrencies: sumCurrencies,
+    grandQuantities: grandQuantities,
+    grandTotals: grandTotals,
+    totalDue: totalDue,
+    totalPaid: totalPaid,
+    balance: balance
+  };
+}
+
+function renderDetailedPrintPreview(data) {
+  const container = document.getElementById('printPreviewContent');
+  if (!container) return;
+  
+  // ✅ بناء معاينة الفاتورة التفصيلية
+  let html = `
+    <div style="text-align:center;margin-bottom:12px;padding-bottom:10px;border-bottom:2px solid var(--gold);">
+      <strong style="color:var(--navy);font-size:16px;">${data.centerName}</strong>
+      <div style="font-size:11px;color:var(--text-lt);">${data.branchName}</div>
+    </div>
+    
+    <div class="line">
+      <span class="label">👤 العميل</span>
+      <span class="value">${data.customerName}</span>
+    </div>
+    <div class="line">
+      <span class="label">🏷️ النوع</span>
+      <span class="value">${data.customerType}</span>
+    </div>
+    <div class="line">
+      <span class="label">🏄 النشاط</span>
+      <span class="value">${data.category}</span>
+    </div>
+    <div class="line">
+      <span class="label">📞 الهاتف</span>
+      <span class="value">${data.phone}</span>
+    </div>
+    <div class="line">
+      <span class="label">📅 التاريخ</span>
+      <span class="value">${data.date}</span>
+    </div>
+    
+    <div style="margin:10px 0;border-top:2px solid var(--border);"></div>
+    
+    <div style="font-weight:700;font-size:14px;margin-bottom:8px;color:var(--navy);text-align:center;">📊 الإجماليات اليومية</div>
+    
+    <div style="font-size:10px;color:var(--text-lt);text-align:center;margin-bottom:6px;">
+      <span style="color:var(--navy);font-weight:700;">ملاحظة:</span> سيتم عرض الجدول التفصيلي في نافذة الطباعة مع تكرار رؤوس الجداول في كل صفحة
+    </div>
+    
+    <div style="font-size:11px;color:var(--text-lt);text-align:center;margin-bottom:4px;">
+      📋 عدد الرحلات: ${data.tripGroups?.length || 0} | عدد البنود: ${data.tripGroups?.reduce((sum, g) => sum + g.items.length, 0) || 0}
+    </div>
+    <div style="font-size:11px;color:var(--text-lt);text-align:center;margin-bottom:4px;">
+      📅 عدد الأيام: ${data.totalsData?.length || 0} | 💳 عدد المدفوعات: ${data.payments?.length || 0}
+    </div>
+    
+    <div style="margin:10px 0;border-top:2px solid var(--border);"></div>
+    
+    <div style="font-weight:700;font-size:14px;margin-bottom:8px;color:var(--navy);text-align:center;">📊 الملخص المالي</div>
+    
+    <div class="line" style="background:#f0f4f8;padding:8px 12px;border-radius:8px;margin-bottom:6px;">
+      <span class="label">💰 إجمالي المستحقات</span>
+      <span class="value" style="font-size:16px;">${Math.round(data.totalDue).toLocaleString()} ${data.currency}</span>
+    </div>
+    <div class="line" style="background:#f0fdf4;padding:8px 12px;border-radius:8px;margin-bottom:6px;">
+      <span class="label">💳 إجمالي المدفوعات</span>
+      <span class="value" style="font-size:16px;color:#16a34a;">${Math.round(data.totalPaid).toLocaleString()} ${data.currency}</span>
+    </div>
+    <div class="line total-line" style="background:#e6f0ff;padding:10px 14px;border-radius:8px;margin-top:4px;">
+      <span style="font-size:15px;">⚖️ الرصيد المتبقي</span>
+      <span style="font-size:18px;color:${data.balance > 0 ? '#dc2626' : '#16a34a'};">
+        ${Math.abs(Math.round(data.balance)).toLocaleString()} ${data.currency}
+        ${data.balance > 0 ? ' (مطلوب)' : ''}
+      </span>
+    </div>
+    
+    <div style="margin-top:12px;padding-top:8px;border-top:1px solid var(--border);font-size:10px;color:var(--text-lt);text-align:center;">
+      تم الإنشاء بواسطة: ${data.userName} | © Dive System
+    </div>
+  `;
+  
+  container.innerHTML = html;
+  
+  // ✅ تغيير زر الطباعة لاستخدام الدالة التفصيلية
+  const footer = document.querySelector('.print-modal-footer');
+  if (footer) {
+    footer.innerHTML = `
+      <button class="btn btn-print" onclick="executeDetailedPrint()">
+        🖨️ طباعة تفصيلية
+      </button>
+      <button class="btn btn-gray" onclick="closePrintModal()">
+        إلغاء
+      </button>
+    `;
+  }
+}
+
+function executeDetailedPrint() {
+  if (!printDetailedData) {
+    showAlert('لا توجد بيانات للطباعة', '⚠️');
+    return;
+  }
+  
+  // ✅ حفظ البيانات في متغير محلي
+  const dataToPrint = printDetailedData;
+  
+  // ✅ إغلاق الـ Modal
+  closePrintModal();
+  
+  // ✅ بناء محتوى الطباعة التفصيلية
+  const printContent = buildDetailedPrintContent(dataToPrint);
+  
+  // ✅ فتح نافذة الطباعة
+  const printWindow = window.open('', '_blank', 'width=1200,height=800');
+  if (!printWindow) {
+    showAlert('تم حظر النافذة المنبثقة. يرجى السماح بالنوافذ المنبثقة.', '⚠️');
+    return;
+  }
+  
+  printWindow.document.write(`
+    <!DOCTYPE html>
+    <html dir="rtl">
+    <head>
+      <meta charset="UTF-8">
+      <title>فاتورة تفصيلية - ${dataToPrint.customerName}</title>
+      <style>
+        @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { 
+          font-family: 'Cairo', Arial, sans-serif;
+          background: white;
+          padding: 20px;
+          color: #1a2540;
+        }
+        .print-wrapper {
+          max-width: 1100px;
+          margin: 0 auto;
+        }
+        .print-header {
+          text-align: center;
+          border-bottom: 3px solid #f5c842;
+          padding-bottom: 15px;
+          margin-bottom: 20px;
+        }
+        .print-header h1 {
+          color: #0f1f3d;
+          font-size: 24px;
+        }
+        .print-header .sub {
+          color: #5a6a8a;
+          font-size: 13px;
+        }
+        .print-section-title {
+          font-size: 18px;
+          font-weight: 800;
+          color: #0f1f3d;
+          margin: 25px 0 12px 0;
+          padding-right: 12px;
+          border-right: 4px solid #f5c842;
+        }
+        .print-table-wrap {
+          overflow-x: auto;
+          margin-bottom: 20px;
+          page-break-inside: auto;
+        }
+        table.dt-print {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 11px;
+          page-break-inside: auto;
+        }
+        table.dt-print thead {
+          display: table-header-group;
+        }
+        table.dt-print thead tr.row-trip th {
+          background: #0f1f3d;
+          color: #f5c842;
+          padding: 8px 6px;
+          font-weight: 800;
+          text-align: center;
+          white-space: nowrap;
+          border: 1px solid #2a4a7a;
+        }
+        table.dt-print thead tr.row-trip th.th-date {
+          background: #1a3260;
+        }
+        table.dt-print thead tr.row-item th {
+          background: #f0f4f8;
+          color: #5a6a8a;
+          padding: 6px 6px;
+          font-weight: 700;
+          text-align: center;
+          font-size: 10px;
+          border: 1px solid #dde4f0;
+        }
+        table.dt-print tbody td {
+          padding: 5px 6px;
+          border-bottom: 1px solid #f0f4f8;
+          border-left: 1px solid #f0f4f8;
+          text-align: center;
+          white-space: nowrap;
+          font-size: 11px;
+        }
+        table.dt-print tbody td:first-child {
+          text-align: center;
+          font-weight: 600;
+          background: #fafbff;
+          border-right: 2px solid #dde4f0;
+        }
+        table.dt-print tbody tr.total-row {
+          background: #e6f0ff;
+          font-weight: 700;
+        }
+        table.dt-print tbody tr.total-row td {
+          border-top: 2px solid #0f1f3d;
+        }
+        table.dt-print tbody tr td.amt-currency {
+          font-weight: 700;
+        }
+        .badge-cur {
+          padding: 2px 6px;
+          border-radius: 8px;
+          font-size: 9px;
+          font-weight: 700;
+          display: inline-block;
+        }
+        .cur-LE { background: #dcfce7; color: #166534; }
+        .cur-USD { background: #dbeafe; color: #1e40af; }
+        .cur-EUR { background: #fef3c7; color: #92400e; }
+        .cur-GBP { background: #ede9fe; color: #5b21b6; }
+        .print-payments-table {
+          margin-top: 15px;
+          page-break-inside: auto;
+        }
+        .print-payments-table table.dt-print thead {
+          display: table-header-group;
+        }
+        .print-footer {
+          text-align: center;
+          font-size: 11px;
+          color: #94a3b8;
+          margin-top: 25px;
+          padding-top: 15px;
+          border-top: 1px solid #e2e8f0;
+        }
+        .print-summary-box {
+          background: #f8fafc;
+          border: 2px solid #0f1f3d;
+          border-radius: 12px;
+          padding: 20px 25px;
+          margin-top: 20px;
+          display: flex;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 15px;
+          page-break-inside: avoid;
+        }
+        .print-summary-item {
+          text-align: center;
+          flex: 1;
+          min-width: 120px;
+        }
+        .print-summary-item .label {
+          font-size: 12px;
+          color: #5a6a8a;
+          font-weight: 600;
+        }
+        .print-summary-item .value {
+          font-size: 20px;
+          font-weight: 900;
+          color: #0f1f3d;
+        }
+        .print-summary-item .value.positive {
+          color: #dc2626;
+        }
+        .print-summary-item .value.negative {
+          color: #16a34a;
+        }
+        .page-break {
+          page-break-before: always;
+        }
+        @media print {
+          body { padding: 10px; }
+          .print-wrapper { max-width: 100%; }
+          table.dt-print thead {
+            display: table-header-group;
+          }
+          .page-break {
+            page-break-before: always;
+          }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="print-wrapper">
+        ${printContent}
+      </div>
+      <script>
+        window.onload = function() {
+          window.print();
+          setTimeout(function() { window.close(); }, 2000);
+        };
+      <\/script>
+    </body>
+    </html>
+  `);
+  printWindow.document.close();
+  
+  printDetailedData = null;
+}
+
+function buildDetailedPrintContent(data) {
+  // ✅ ====== 1. رأس الصفحة ======
+  let html = `
+    <div class="print-header">
+      <h1>🏢 ${data.centerName || 'Dive Center'}</h1>
+      <div class="sub">${data.branchName || ''}</div>
+      <div class="sub" style="margin-top:4px;">
+        📅 ${data.date || new Date().toLocaleDateString('ar-EG')}
+      </div>
+    </div>
+    
+    <div style="display:flex;flex-wrap:wrap;gap:15px;margin-bottom:20px;padding:12px 16px;background:#f8fafc;border-radius:8px;">
+      <div><strong>👤 العميل:</strong> ${data.customerName || 'غير محدد'}</div>
+      <div><strong>🏷️ النوع:</strong> ${data.customerType || 'عميل'}</div>
+      <div><strong>🏄 النشاط:</strong> ${data.category || '-'}</div>
+      <div><strong>📞 الهاتف:</strong> ${data.phone || '-'}</div>
+    </div>
+  `;
+  
+  // ✅ ====== 2. جدول الإجماليات اليومية ======
+  html += `<div class="print-section-title">📊 الإجماليات اليومية</div>`;
+  html += `<div class="print-table-wrap">`;
+  html += buildTotalsTable(data);
+  html += `</div>`;
+  
+  // ✅ ====== 3. جدول المدفوعات ======
+  if (data.payments && data.payments.length > 0) {
+    html += `<div class="print-section-title">💳 المدفوعات والتسديدات</div>`;
+    html += `<div class="print-table-wrap print-payments-table">`;
+    html += buildPaymentsTable(data.payments);
+    html += `</div>`;
+  }
+  
+  // ✅ ====== 4. الملخص النهائي ======
+  html += `
+    <div class="print-summary-box">
+      <div class="print-summary-item">
+        <div class="label">💰 إجمالي المستحقات</div>
+        <div class="value">${Math.round(data.totalDue || 0).toLocaleString()} ${data.currency || 'LE'}</div>
+      </div>
+      <div class="print-summary-item">
+        <div class="label">💳 إجمالي المدفوعات</div>
+        <div class="value" style="color:#16a34a;">${Math.round(data.totalPaid || 0).toLocaleString()} ${data.currency || 'LE'}</div>
+      </div>
+      <div class="print-summary-item">
+        <div class="label">⚖️ الرصيد المتبقي</div>
+        <div class="value ${(data.balance || 0) > 0 ? 'positive' : 'negative'}">
+          ${Math.abs(Math.round(data.balance || 0)).toLocaleString()} ${data.currency || 'LE'}
+          ${(data.balance || 0) > 0 ? ' (مطلوب)' : ''}
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // ✅ ====== 5. التذييل ======
+  html += `
+    <div class="print-footer">
+      تم الإنشاء بواسطة: ${data.userName || 'System'} | ${data.date || ''} | © Dive System
+      <br>
+      <span style="font-size:9px;">تم إنشاء هذه الفاتورة تلقائياً من النظام</span>
+    </div>
+  `;
+  
+  return html;
+}
+
+function buildTotalsTable(data) {
+  const tripGroups = data.tripGroups || [];
+  const sumCurrencies = data.sumCurrencies || [];
+  const totalsData = data.totalsData || [];
+  const grandQuantities = data.grandQuantities || {};
+  const grandTotals = data.grandTotals || {};
+  
+  if (tripGroups.length === 0) {
+    return '<div style="padding:20px;text-align:center;color:#94a3b8;">لا توجد بيانات للإجماليات اليومية</div>';
+  }
+  
+  // ✅ بناء رأس الجدول
+  let trTrip = '<th class="th-date" rowspan="2">التاريخ</th>';
+  let trItem = '';
+  
+  for (const g of tripGroups) {
+    const span = g.items.length;
+    trTrip += `<th colspan="${span}" style="text-align:center;">${g.name}</th>`;
+    for (const it of g.items) {
+      trItem += `<th>${it.name}</th>`;
+    }
+  }
+  
+  for (const cur of sumCurrencies) {
+    trTrip += `<th class="th-sum" rowspan="2" style="text-align:center;">المجموع<br><span class="badge-cur cur-${cur.currency}">${cur.currency}</span></th>`;
+  }
+  
+  // ✅ بناء جسم الجدول
+  let tbody = '';
+  
+  for (const row of totalsData) {
+    let tds = `<td style="font-weight:600;">${row.date}</td>`;
+    
+    // الكميات
+    for (const g of tripGroups) {
+      for (const item of g.items) {
+        const key = `${g.name}_${item.name}`;
+        const qty = row.quantities[key] || 0;
+        const display = qty > 0 ? qty : '-';
+        const style = qty > 0 ? 'background:#f0fdf4;font-weight:700;color:#166534;' : 'color:#cbd5e1;';
+        tds += `<td style="${style}">${display}</td>`;
+      }
+    }
+    
+    // المجاميع
+    for (const cur of sumCurrencies) {
+      const val = row.totals[cur.currency] || 0;
+      tds += `<td style="background:#e6f0ff;font-weight:700;">${val > 0 ? Math.round(val).toLocaleString() : '-'}</td>`;
+    }
+    
+    tbody += `<tr>${tds}</tr>`;
+  }
+  
+  // ✅ صف الإجمالي الكلي
+  let grandQtyCells = '';
+  for (const g of tripGroups) {
+    for (const item of g.items) {
+      const key = `${g.name}_${item.name}`;
+      const totalQty = grandQuantities[key] || 0;
+      const display = totalQty > 0 ? totalQty : '-';
+      grandQtyCells += `<td style="background:#1a3260;color:#f5c842;font-weight:700;">${display}</td>`;
+    }
+  }
+  
+  let grandCurrencyCells = '';
+  for (const cur of sumCurrencies) {
+    const val = grandTotals[cur.currency] || 0;
+    grandCurrencyCells += `<td style="background:#1a3260;color:#f5c842;font-weight:700;">${val > 0 ? Math.round(val).toLocaleString() : '-'} ${cur.currency}</td>`;
+  }
+  
+  tbody += `<tr class="total-row"><td style="background:#1a3260;color:#f5c842;font-weight:700;text-align:center;">الإجمالي الكلي</td>${grandQtyCells}${grandCurrencyCells}</tr>`;
+  
+  return `
+    <table class="dt-print">
+      <thead>
+        <tr class="row-trip">${trTrip}</tr>
+        <tr class="row-item">${trItem}</tr>
+      </thead>
+      <tbody>${tbody}</tbody>
+    </table>
+  `;
+}
+
+function buildPaymentsTable(payments) {
+  if (!payments || payments.length === 0) {
+    return '<div style="padding:20px;text-align:center;color:#94a3b8;">لا توجد مدفوعات</div>';
+  }
+  
+  const headers = ['التاريخ', 'البيان', '$', '€', '£', 'LE', 'الحساب', 'اسم الحساب', 'الشهر', 'السنة'];
+  
+  let html = `<table class="dt-print"><thead><tr class="row-trip">`;
+  for (const h of headers) {
+    html += `<th style="background:#0f1f3d;color:#f5c842;padding:8px 6px;">${h}</th>`;
+  }
+  html += `</tr></thead><tbody>`;
+  
+  for (const p of payments) {
+    html += `<tr>`;
+    html += `<td>${p.date || '-'}</td>`;
+    html += `<td style="text-align:right;">${p.details || '-'}</td>`;
+    html += `<td>${p.USD > 0 ? p.USD : '-'}</td>`;
+    html += `<td>${p.EUR > 0 ? p.EUR : '-'}</td>`;
+    html += `<td>${p.GBP > 0 ? p.GBP : '-'}</td>`;
+    html += `<td>${p.LE > 0 ? p.LE : '-'}</td>`;
+    html += `<td>${p.account || '-'}</td>`;
+    html += `<td>${p.accountName || '-'}</td>`;
+    html += `<td>${p.month || '-'}</td>`;
+    html += `<td>${p.year || '-'}</td>`;
+    html += `</tr>`;
+  }
+  
+  html += `</tbody></table>`;
+  return html;
+}
 function executePrint() {
   // ✅ التحقق من وجود بيانات
   if (!printInvoiceData) {
@@ -1773,7 +2400,8 @@ window.addNewInvoice = addNewInvoice;
 window.refreshCustomerData = refreshCustomerData;
 window.updateSelectedBranches = updateSelectedBranches;
 window.applyBranchFilterAndRefresh = applyBranchFilterAndRefresh;
-
+window.openPrintDetailedModal = openPrintDetailedModal;
+window.executeDetailedPrint = executeDetailedPrint;
 </script>
 </body>
 </html>
