@@ -648,6 +648,8 @@ function renderPricesTab(rows) {
 
 function renderTotalsTab(rows) {
   if(!tripGroups.length) return '<div class="no-data">لا توجد بيانات بنود</div>';
+  
+  // ✅ بناء رأس الجدول
   let trTrip = '<th class="th-date" rowspan="2">التاريخ</th>';
   let trItem = '';
   for(const g of tripGroups){
@@ -658,85 +660,80 @@ function renderTotalsTab(rows) {
   for(const cur of sumCurrencies){
     trTrip += `<th class="th-sum" rowspan="2">المجموع<br><span class="${curClass(cur.currency)}">${cur.currency}</span></th>`;
   }
+  
+  // ✅ بناء جسم الجدول
   let tbody = '';
   const grandQuantities = {};
+  const grandTotals = {};
+  for(const cur of sumCurrencies) grandTotals[cur.currency] = 0;
+  
   for(let i=0;i<rows.length;i++){
     const row=rows[i];
     const dateStr=row[0]?fmtDate(row[0]):'';
     if(!dateStr) continue;
+    
+    // ✅ حساب الإجماليات اليومية
     const dayTotals={};
     for(const sc of sumCurrencies) dayTotals[sc.currency]=0;
-    let hasSumColumns=false;
-    for(const sc of sumCurrencies){
-      if(sc.col>=0&&row[sc.col]!==undefined&&parseFloat(row[sc.col])>0){
-        hasSumColumns=true;
-        dayTotals[sc.currency]=parseFloat(row[sc.col])||0;
-      }
-    }
-    if(!hasSumColumns){
-      const priceMap={};
-      for(const g of priceGroups){
-        for(const it of g.items){
-          const cell=(row[it.col]||'').toString().trim();
-          const {price,currency}=parseCell(cell);
-          if(price>0) priceMap[`${g.name}_${it.name}`]={price,currency};
-        }
-      }
-      for(const g of tripGroups){
-        for(const it of g.items){
-          const qty=parseFloat(row[it.col])||0;
-          if(qty>0){
-            const priceKey=`${g.name}_${it.name}`;
-            const priceInfo=priceMap[priceKey];
-            if(priceInfo) dayTotals[priceInfo.currency]=(dayTotals[priceInfo.currency]||0)+(priceInfo.price*qty);
+    
+    // ✅ قراءة الكميات من أعمدة tripGroups فقط (وليس priceGroups)
+    let tds = '';
+    for(const g of tripGroups){
+      for(const it of g.items){
+        // ✅ الكميات من أعمدة tripGroups (وليس priceGroups)
+        const qty = parseFloat(row[it.col]) || 0;
+        const qtyDisplay = (qty > 0 && Number.isInteger(qty)) ? qty : (qty > 0 ? qty.toFixed(1) : '-');
+        tds += `<td style="${qty > 0 ? 'background:#f0fdf4;font-weight:700;color:#166534' : 'color:#cbd5e1'}">${qtyDisplay}</td>`;
+        
+        // ✅ تجميع الإجماليات الكلية
+        const key = `${g.name}_${it.name}`;
+        grandQuantities[key] = (grandQuantities[key] || 0) + qty;
+        
+        // ✅ حساب الإجمالي النقدي من أعمدة sumCurrencies (الموجودة في الشيت)
+        for(const sc of sumCurrencies){
+          if(sc.col >= 0 && row[sc.col] !== undefined) {
+            const val = parseFloat(row[sc.col]) || 0;
+            if(val > 0) {
+              dayTotals[sc.currency] = (dayTotals[sc.currency] || 0) + val;
+            }
           }
         }
       }
     }
-    let tds='';
-    for(const g of tripGroups){
-      for(const it of g.items){
-        const qty=parseFloat(row[it.col])||0;
-        const qtyDisplay=(qty>0&&Number.isInteger(qty))?qty:(qty>0?qty.toFixed(1):'-');
-        tds+=`<td style="${qty>0?'background:#f0fdf4;font-weight:700;color:#166534':'color:#cbd5e1'}">${qtyDisplay}<\/td>`;
-        const key=`${g.name}_${it.name}`;
-        grandQuantities[key]=(grandQuantities[key]||0)+qty;
-      }
-    }
-    let sumTds='';
+    
+    // ✅ أعمدة المجاميع
+    let sumTds = '';
     for(const cur of sumCurrencies){
-      const val=dayTotals[cur.currency]||0;
-      sumTds+=`<td style="background:#e6f0ff;font-weight:700">${val>0?`${Math.round(val).toLocaleString()} <span class="${curClass(cur.currency)}">${cur.currency}</span>`:'-'}<\/td>`;
+      const val = dayTotals[cur.currency] || 0;
+      if(val > 0) grandTotals[cur.currency] = (grandTotals[cur.currency] || 0) + val;
+      sumTds += `<td style="background:#e6f0ff;font-weight:700">${val > 0 ? `${Math.round(val).toLocaleString()} <span class="${curClass(cur.currency)}">${cur.currency}</span>` : '-'}</td>`;
     }
-    tbody+=`<tr><td style="font-weight:600;text-align:center">${dateStr}<\/td>${tds}${sumTds}<\/tr>`;
+    
+    tbody += `<tr><td style="font-weight:600;text-align:center">${dateStr}</td>${tds}${sumTds}</tr>`;
   }
-  let grandQtyCells='';
+  
+  // ✅ صف الإجمالي الكلي
+  let grandQtyCells = '';
   for(const g of tripGroups){
     for(const it of g.items){
-      const key=`${g.name}_${it.name}`;
-      const totalQty=grandQuantities[key]||0;
-      const qtyDisplay=(totalQty>0&&Number.isInteger(totalQty))?totalQty:(totalQty>0?totalQty.toFixed(1):'-');
-      grandQtyCells+=`<td style="background:#1a3260;color:var(--gold);font-size:13px"><strong>${qtyDisplay}</strong><\/td>`;
+      const key = `${g.name}_${it.name}`;
+      const totalQty = grandQuantities[key] || 0;
+      const qtyDisplay = (totalQty > 0 && Number.isInteger(totalQty)) ? totalQty : (totalQty > 0 ? totalQty.toFixed(1) : '-');
+      grandQtyCells += `<td style="background:#1a3260;color:var(--gold);font-size:13px"><strong>${qtyDisplay}</strong></td>`;
     }
   }
-  let grandCurrencyCells='';
-  const grandTotals={};
-  for(const cur of sumCurrencies) grandTotals[cur.currency]=0;
-  for(const row of rows){
-    for(const sc of sumCurrencies){
-      const val=parseFloat(row[sc.col])||0;
-      if(val>0) grandTotals[sc.currency]+=val;
-    }
-  }
+  
+  let grandCurrencyCells = '';
   for(const cur of sumCurrencies){
-    const v=grandTotals[cur.currency]||0;
-    grandCurrencyCells+=`<td style="background:#1a3260;color:var(--gold);font-size:13px"><strong>${v>0?Math.round(v).toLocaleString():'-'} ${cur.currency}</strong><\/td>`;
+    const v = grandTotals[cur.currency] || 0;
+    grandCurrencyCells += `<td style="background:#1a3260;color:var(--gold);font-size:13px"><strong>${v > 0 ? Math.round(v).toLocaleString() : '-'} ${cur.currency}</strong></td>`;
   }
-  tbody+=`<tr class="total-row"><td><strong>الإجمالي الكلي</strong><\/td>${grandQtyCells}${grandCurrencyCells}<\/tr>`;
-  return `<div class="table-wrap"><table class="dt"><thead><tr class="row-trip">${trTrip}<\/tr><tr class="row-item">${trItem}<\/tr><\/thead><tbody>${tbody}<\/tbody><\/table><\/div>`;
+  
+  tbody += `<tr class="total-row"><td><strong>الإجمالي الكلي</strong></td>${grandQtyCells}${grandCurrencyCells}</tr>`;
+  
+  return `<div class="table-wrap"><table class="dt"><thead><tr class="row-trip">${trTrip}</tr><tr class="row-item">${trItem}</tr></thead><tbody>${tbody}</tbody></table></div>`;
 }
-
-function renderPaymentsTab() {
+  function renderPaymentsTab() {
   const headers = ['التاريخ', 'البيان', '$', '€', '£', 'LE', 'الحساب', 'اسم الحساب', 'الشهر', 'السنة'];
   
   let html = `<div class="table-wrap"><table class="dt"><thead><tr class="row-trip">`;
