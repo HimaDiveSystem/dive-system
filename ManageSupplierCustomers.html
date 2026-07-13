@@ -1088,6 +1088,7 @@ async function loadPriceInputs() {
 }
 
 // ====================== حفظ البيانات ======================
+// ====================== حفظ البيانات ======================
 async function doSave() {
   const btn = document.getElementById('saveBtn');
   if (btn) {
@@ -1096,6 +1097,58 @@ async function doSave() {
   }
 
   try {
+    // ✅ التحقق من رقم الهاتف
+    const phone = document.getElementById('f_phone')?.value?.trim() || '';
+    if (!phone || phone.length < 10) {
+      showAlert('⚠️ يرجى إدخال رقم هاتف صحيح للتواصل (10 أرقام على الأقل)', '⚠️');
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = isEdit ? 'تحديث البيانات' : 'حفظ وإنشاء الشيت';
+      }
+      return;
+    }
+
+    // ✅ التحقق من التغييرات في وضع التعديل
+    let rebuildRequired = false;
+    let changes = {};
+    
+    if (isEdit && selectedAccount) {
+      changes = detectChanges();
+      
+      // ✅ إذا تغيرت التواريخ أو الرحلات، نحتاج إلى إعادة بناء الشيت
+      if (changes.datesChanged || changes.tripsChanged) {
+        rebuildRequired = true;
+        
+        // ✅ تأكيد مع المستخدم
+        let confirmMessage = '⚠️ سيتم إعادة بناء شيت الحساب بالكامل بسبب:';
+        if (changes.datesChanged) {
+          confirmMessage += '\n- تغيير في التواريخ (سيتم إضافة/حذف أيام)';
+        }
+        if (changes.tripsChanged) {
+          confirmMessage += '\n- تغيير في الرحلات المخصصة (سيتم إعادة إنشاء الشيت)';
+        }
+        confirmMessage += '\n\nهل تريد المتابعة؟';
+        
+        const confirmed = await new Promise(resolve => {
+          showAlert(
+            confirmMessage,
+            '⚠️',
+            `<button class="btn btn-green" onclick="resolveAlert(true)">نعم، متابعة</button>
+             <button class="btn btn-gray" onclick="resolveAlert(false)">إلغاء</button>`
+          );
+          window.resolveAlert = resolve;
+        });
+        
+        if (!confirmed) {
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = isEdit ? 'تحديث البيانات' : 'حفظ وإنشاء الشيت';
+          }
+          return;
+        }
+      }
+    }
+
     const cat = _currentCategory || document.getElementById('f_cat')?.value ||
                 (isEdit ? selectedAccount?.category : '');
     const isSubmarine = (cat === 'Submarine');
@@ -1110,8 +1163,18 @@ async function doSave() {
       userBranchName: currentUser?.branchName || ''
     };
     
+    formData.phone = phone;
+    
     if (isEdit && selectedAccount) {
       formData.customerId = selectedAccount.customerId;
+    }
+    
+    // ✅ إضافة معلومات إعادة البناء
+    if (rebuildRequired) {
+      formData.rebuildSheet = 'true';
+      formData.newStartDate = changes.newStartDate;
+      formData.newEndDate = changes.newEndDate;
+      formData.newTrips = JSON.stringify(changes.newTrips);
     }
     
     let assignedTrips = [];
@@ -1150,19 +1213,20 @@ async function doSave() {
     formData.pricesData = JSON.stringify(pricesData);
 
     let result;
-   if (isEdit && selectedAccount) {
-  result = await gasPost({ 
-    action: 'updateSupplierCustomer', 
-    ...formData,
-    centerName: currentUser?.centerName || ''  // ✅ إضافة
-  });
-} else {
-  result = await gasPost({ 
-    action: 'addSupplierCustomer', 
-    ...formData,
-    centerName: currentUser?.centerName || ''  // ✅ إضافة
-  });
-}
+    if (isEdit && selectedAccount) {
+      result = await gasPost({ 
+        action: 'updateSupplierCustomer', 
+        ...formData,
+        centerName: currentUser?.centerName || ''
+      });
+    } else {
+      result = await gasPost({ 
+        action: 'addSupplierCustomer', 
+        ...formData,
+        centerName: currentUser?.centerName || ''
+      });
+    }
+    
     if (btn) {
       btn.disabled = false;
       btn.textContent = isEdit ? 'تحديث البيانات' : 'حفظ وإنشاء الشيت';
@@ -1170,11 +1234,12 @@ async function doSave() {
 
     if (result?.success) {
       const extra = result.sheetName ? `\nتم ${isEdit ? 'تحديث' : 'إنشاء'} الشيت: ${result.sheetName}` : '';
+      const rebuildMsg = rebuildRequired ? '\n🔄 تم إعادة بناء الشيت بنجاح' : '';
       closeModal();
       selectedAccount = null;
       directEditCustomerId = null;
       await loadAccounts();
-      showAlert(`✅ تم ${isEdit ? 'التحديث' : 'الحفظ'} بنجاح` + extra, '✅');
+      showAlert(`✅ تم ${isEdit ? 'التحديث' : 'الحفظ'} بنجاح` + extra + rebuildMsg, '✅');
     } else {
       showAlert('❌ ' + (result?.message || 'فشل الحفظ'), '❌');
     }
@@ -1188,6 +1253,57 @@ async function doSave() {
   }
 }
 
+  // ====================== التحقق من تغيير التواريخ والرحلات ======================
+function detectChanges() {
+  const changes = {
+    datesChanged: false,
+    tripsChanged: false,
+    newStartDate: null,
+    newEndDate: null,
+    oldStartDate: null,
+    oldEndDate: null,
+    newTrips: [],
+    oldTrips: []
+  };
+  
+  if (!isEdit || !selectedAccount) return changes;
+  
+  // ✅ التحقق من تغيير التواريخ
+  const newStart = document.getElementById('f_start')?.value || '';
+  const newEnd = document.getElementById('f_end')?.value || '';
+  const oldStart = selectedAccount.startDate ? formatDateForInput(selectedAccount.startDate) : '';
+  const oldEnd = selectedAccount.endDate ? formatDateForInput(selectedAccount.endDate) : '';
+  
+  changes.newStartDate = newStart;
+  changes.newEndDate = newEnd;
+  changes.oldStartDate = oldStart;
+  changes.oldEndDate = oldEnd;
+  
+  if (newStart !== oldStart || newEnd !== oldEnd) {
+    changes.datesChanged = true;
+  }
+  
+  // ✅ التحقق من تغيير الرحلات
+  if (selectedAccount.category !== 'Submarine') {
+    const checkedTrips = [];
+    document.querySelectorAll('#tripsBox input[type=checkbox]:checked').forEach(cb => {
+      checkedTrips.push(cb.value);
+    });
+    
+    const oldTrips = selectedAccount.assignedTrips ? selectedAccount.assignedTrips.split('|').filter(Boolean) : [];
+    const oldTripsSorted = [...oldTrips].sort();
+    const newTripsSorted = [...checkedTrips].sort();
+    
+    changes.newTrips = checkedTrips;
+    changes.oldTrips = oldTrips;
+    
+    if (JSON.stringify(oldTripsSorted) !== JSON.stringify(newTripsSorted)) {
+      changes.tripsChanged = true;
+    }
+  }
+  
+  return changes;
+}
 // ====================== تحديث الأسعار من تاريخ محدد ======================
 async function openPriceUpdateModal() {
   if (!selectedAccount) {
@@ -1524,7 +1640,16 @@ async function confirmDelete() {
     confirmBtn.textContent = 'حذف نهائي';
   }
 }
+// إضافة في نهاية الملف
+window.resolveAlert = null;
 
+// تعديل دالة showAlert لدعم الـ Promise
+function showAlert(msg, icon, btns) {
+  document.getElementById('alertIcon').textContent = icon || 'ℹ️';
+  document.getElementById('alertMsg').textContent = msg;
+  document.getElementById('alertBtns').innerHTML = btns || '<button class="btn btn-navy" onclick="closeAlert()">موافق</button>';
+  document.getElementById('alertModal').classList.add('open');
+}
 document.addEventListener('DOMContentLoaded', async () => {
   // ✅ التحقق من صحة الجلسة مرة أخرى (تأكيد)
   if (!Session.checkValidity()) {
