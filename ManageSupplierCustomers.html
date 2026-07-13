@@ -287,14 +287,21 @@ function validatePhoneNumber(phone) {
   return { valid: true, message: 'رقم صحيح', digits: digits, clean: clean };
 }
 // ====================== تحديث حالة الأزرار ======================
+// ====================== تحديث حالة الأزرار ======================
 function updateButtonsState() {
   const saveBtn = document.getElementById('saveBtn');
   const priceBtn = document.getElementById('priceUpdateBtn');
   
   // ✅ إذا لم يكن في وضع التعديل، كل الأزرار غير نشطة
   if (!isEdit || !selectedAccount) {
-    if (saveBtn) saveBtn.disabled = true;
-    if (priceBtn) priceBtn.disabled = true;
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.style.opacity = '0.5';
+    }
+    if (priceBtn) {
+      priceBtn.disabled = true;
+      priceBtn.style.opacity = '0.5';
+    }
     return;
   }
   
@@ -302,29 +309,29 @@ function updateButtonsState() {
   const dataChanged = detectDataChanges();
   const priceChanged = detectPriceChanges();
   
-  // ✅ تحديث حالة الأزرار
+   
+  const hasDataChanges = dataChanged;
+  const hasPriceOnlyChanges = priceChanged && !dataChanged;
+  
+  // ✅ زر "تحديث البيانات" - نشط عند تغيير البيانات أو الأسعار معاً
   if (saveBtn) {
-    saveBtn.disabled = !dataChanged;
-    // تغيير النص للإشارة إلى وجود تغييرات
-    if (dataChanged) {
+    saveBtn.disabled = !hasDataChanges;
+    saveBtn.style.opacity = hasDataChanges ? '1' : '0.5';
+    if (hasDataChanges) {
       saveBtn.textContent = '💾 تحديث البيانات';
-      saveBtn.style.opacity = '1';
-    } else {
-      saveBtn.textContent = '💾 تحديث البيانات';
-      saveBtn.style.opacity = '0.5';
     }
   }
   
+  // ✅ زر "تحديث الأسعار" - نشط فقط عند تغيير الأسعار ONLY
   if (priceBtn) {
-    priceBtn.disabled = !priceChanged;
-    if (priceChanged) {
+    priceBtn.disabled = !hasPriceOnlyChanges;
+    priceBtn.style.opacity = hasPriceOnlyChanges ? '1' : '0.5';
+    if (hasPriceOnlyChanges) {
       priceBtn.textContent = '💰 تحديث الأسعار';
-      priceBtn.style.opacity = '1';
-    } else {
-      priceBtn.textContent = '💰 تحديث الأسعار';
-      priceBtn.style.opacity = '0.5';
     }
   }
+  
+  console.log('🔘 updateButtonsState - dataChanged:', dataChanged, 'priceChanged:', priceChanged, 'hasPriceOnlyChanges:', hasPriceOnlyChanges);
 }
   // ====================== الكشف عن تغييرات بيانات الحساب ======================
 function detectDataChanges() {
@@ -431,23 +438,34 @@ function validatePhone(input) {
   
   return result;
 }
+// ✅ متغير لتخزين مؤقت الـ setTimeout
+let alertTimeout = null;
 
 function showAlert(msg, icon, btns) {
+  // ✅ إلغاء أي مؤقت سابق
+  if (alertTimeout) {
+    clearTimeout(alertTimeout);
+    alertTimeout = null;
+  }
+  
   document.getElementById('alertIcon').textContent = icon || 'ℹ️';
   document.getElementById('alertMsg').textContent = msg;
   document.getElementById('alertBtns').innerHTML = btns || '<button class="btn btn-navy" onclick="closeAlert()">موافق</button>';
   document.getElementById('alertModal').classList.add('open');
 }
 
-// ✅ تعديل closeAlert لتنفيذ resolveAlert إن وجد
 function closeAlert() { 
   document.getElementById('alertModal').classList.remove('open');
+  if (alertTimeout) {
+    clearTimeout(alertTimeout);
+    alertTimeout = null;
+  }
   if (typeof window.resolveAlert === 'function') {
     window.resolveAlert(false);
     window.resolveAlert = null;
   }
 }
-
+  
 function safeid(s) { 
   return (s||'').replace(/[^a-zA-Z0-9]/g,'_'); 
 }
@@ -803,16 +821,17 @@ async function openEdit() {
 
     renderStep1(selectedAccount);
 
-    setTimeout(function() {
-      updateButtonsState();
-      // ✅ تأكد من أن حقل الهاتف يحتوي على القيمة
-      const phoneField = document.getElementById('f_phone');
-      if (phoneField && selectedAccount?.phone) {
-        phoneField.value = selectedAccount.phone;
-        console.log('📞 تم تعيين حقل الهاتف:', phoneField.value);
-      }
-      console.log('تم استدعاء updateButtonsState بعد التحميل');
-    }, 500);
+   // ✅ في openEdit، قم بتعديل هذا الجزء
+setTimeout(function() {
+  updateButtonsState();
+  const phoneField = document.getElementById('f_phone');
+  if (phoneField && selectedAccount?.phone) {
+    phoneField.value = selectedAccount.phone;
+    console.log('📞 تم تعيين حقل الهاتف:', phoneField.value);
+  }
+  console.log('تم استدعاء updateButtonsState بعد التحميل');
+}, 100);
+
 
   } catch(e) {
     console.error('خطأ في openEdit:', e);
@@ -1370,7 +1389,7 @@ async function doSave() {
   }
 
   try {
-    // ✅ التصحيح: القراءة من _formStep1Data وليس من DOM
+    // ✅ التحقق من رقم الهاتف
     const phone = (_formStep1Data.phone || '').trim();
     const result = validatePhoneNumber(phone);
     
@@ -1383,7 +1402,6 @@ async function doSave() {
         btn.disabled = false;
         btn.textContent = isEdit ? 'تحديث البيانات' : 'حفظ وإنشاء الشيت';
       }
-      // ✅ إعادة المستخدم للخطوة الأولى لتصحيح رقم الهاتف
       goBackStep1();
       setTimeout(() => {
         const ph = document.getElementById('f_phone');
@@ -1396,8 +1414,6 @@ async function doSave() {
       return;
     }
 
-    // ✅ إذا وصلنا هنا، رقم الهاتف صحيح
-    // تحديث _formStep1Data بالرقم المؤكد
     _formStep1Data.phone = phone;
 
     // ✅ التحقق من التغييرات في وضع التعديل
@@ -1419,15 +1435,38 @@ async function doSave() {
         }
         confirmMessage += '\n\nهل تريد المتابعة؟';
         
-        const confirmed = await new Promise(resolve => {
+        // ✅ تعطيل زر الحفظ مؤقتاً
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = '⏳ في انتظار التأكيد...';
+        }
+        
+        // ✅ استخدام Promise مع تعطيل الـ timeout المؤقت
+        const confirmed = await new Promise((resolve) => {
+          // ✅ تعيين resolveAlert مع تعطيل timeout
+          window.resolveAlert = (value) => {
+            window.resolveAlert = null;
+            // ✅ إلغاء أي timeout في showAlert
+            if (alertTimeout) {
+              clearTimeout(alertTimeout);
+              alertTimeout = null;
+            }
+            resolve(value);
+          };
+          
           showAlert(
             confirmMessage,
             '⚠️',
-            `<button class="btn btn-green" onclick="resolveAlert(true)">نعم، متابعة</button>
-             <button class="btn btn-gray" onclick="resolveAlert(false)">إلغاء</button>`
+            `<button class="btn btn-green" id="confirmRebuildBtn" onclick="window.resolveAlert(true); closeAlert();">✅ نعم، متابعة</button>
+             <button class="btn btn-gray" onclick="window.resolveAlert(false); closeAlert();">❌ إلغاء</button>`
           );
-          window.resolveAlert = resolve;
         });
+        
+        // ✅ إعادة تفعيل زر الحفظ بعد التأكيد
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = isEdit ? 'تحديث البيانات' : 'حفظ وإنشاء الشيت';
+        }
         
         if (!confirmed) {
           if (btn) {
@@ -1437,6 +1476,12 @@ async function doSave() {
           return;
         }
       }
+    }
+
+    // ✅ تعطيل زر الحفظ أثناء المعالجة
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '⏳ جاري التحديث...';
     }
 
     const cat = _currentCategory || document.getElementById('f_cat')?.value ||
@@ -1453,14 +1498,12 @@ async function doSave() {
       userBranchName: currentUser?.branchName || ''
     };
     
-    // ✅ استخدام phone من _formStep1Data
     formData.phone = phone;
     
     if (isEdit && selectedAccount) {
       formData.customerId = selectedAccount.customerId;
     }
     
-    // ✅ إضافة معلومات إعادة البناء
     if (rebuildRequired) {
       formData.rebuildSheet = 'true';
       formData.newStartDate = changes.newStartDate;
@@ -1503,7 +1546,6 @@ async function doSave() {
     formData.assignedTrips = assignedTrips;
     formData.pricesData = JSON.stringify(pricesData);
 
-    // ✅ تعريف saveResult (وليس result) لتجنب التعارض مع result من validatePhoneNumber
     let saveResult;
     if (isEdit && selectedAccount) {
       saveResult = await gasPost({ 
@@ -1524,14 +1566,12 @@ async function doSave() {
       btn.textContent = isEdit ? 'تحديث البيانات' : 'حفظ وإنشاء الشيت';
     }
 
-    // ✅ استخدام saveResult بدلاً من result
     if (saveResult?.success) {
       const extra = saveResult.sheetName ? `\nتم ${isEdit ? 'تحديث' : 'إنشاء'} الشيت: ${saveResult.sheetName}` : '';
       const rebuildMsg = rebuildRequired ? '\n🔄 تم إعادة بناء الشيت بنجاح' : '';
       closeModal();
       selectedAccount = null;
       directEditCustomerId = null;
-      // ✅ إعادة تعيين حالة التغييرات
       _hasDataChanges = false;
       _hasPriceChanges = false;
       await loadAccounts();
