@@ -180,6 +180,7 @@ if (!Session.checkValidity()) {
 currentUser = Session.getUser();
 loggedInUser = currentUser;
 
+// ✅ إضافة في بداية الملف بعد المتغيرات
 let allAccounts = [];
 let selectedAccount = null;
 let isEdit = false;
@@ -190,6 +191,7 @@ let _currentCategory = '';
 let _editSheetDates = null;
 let _formStep1Data = {};
 let directEditCustomerId = null;
+window.resolveAlert = null;  // ✅ أضف هذا السطر
 
 // ====================== دوال الاتصال ======================
 function gas(action, params = {}) {
@@ -256,6 +258,45 @@ function goBack() {
   const dashboardPage = DASHBOARDS[userType] || 'Dashboard.html';
   location.href = dashboardPage;
 }
+
+// ✅ دالة موحدة للتحقق من رقم الهاتف
+function validatePhoneNumber(phone) {
+  if (!phone) {
+    return { valid: false, message: 'رقم الهاتف مطلوب', digits: 0 };
+  }
+  
+  // تحويل الأرقام العربية إلى إنجليزية
+  const arabicToEnglish = {
+    '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4',
+    '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9'
+  };
+  const clean = phone.replace(/[٠-٩]/g, (d) => arabicToEnglish[d] || d);
+  const digits = clean.replace(/\D/g, '');
+  
+  if (digits.length === 0) {
+    return { valid: false, message: 'يجب إدخال أرقام', digits: 0 };
+  }
+  
+  if (digits.length < 10) {
+    return { valid: false, message: `يجب أن يحتوي على 10 أرقام على الأقل (الآن: ${digits.length})`, digits: digits.length };
+  }
+  
+  return { valid: true, message: 'رقم صحيح', digits: digits, clean: clean };
+}
+
+// دالة التحقق أثناء الكتابة
+function validatePhone(input) {
+  const result = validatePhoneNumber(input.value);
+  
+  if (!result.valid) {
+    input.style.borderColor = '#dc2626';
+  } else {
+    input.style.borderColor = '#16a34a';
+  }
+  
+  return result;
+}
+
 function showAlert(msg, icon, btns) {
   document.getElementById('alertIcon').textContent = icon || 'ℹ️';
   document.getElementById('alertMsg').textContent = msg;
@@ -263,8 +304,13 @@ function showAlert(msg, icon, btns) {
   document.getElementById('alertModal').classList.add('open');
 }
 
+// ✅ تعديل closeAlert لتنفيذ resolveAlert إن وجد
 function closeAlert() { 
-  document.getElementById('alertModal').classList.remove('open'); 
+  document.getElementById('alertModal').classList.remove('open');
+  if (typeof window.resolveAlert === 'function') {
+    window.resolveAlert(false);
+    window.resolveAlert = null;
+  }
 }
 
 function safeid(s) { 
@@ -518,6 +564,10 @@ function renderStep1(data) {
   const loginEmail = data.loginEmail || (isCustomer && data.customerName ? generateAutoEmail(data.customerName) : '');
   const loginPassword = data.loginPassword || '';
 
+  // ✅ التأكد من قيمة الهاتف
+  const phoneValue = data.phone || selectedAccount?.phone || '';
+  console.log('📞 renderStep1 - phone value:', phoneValue);
+
   document.getElementById('formContent').innerHTML = `
     <div class="fgrid">
       <div class="fgroup"><label class="req">اسم العميل/المنفذ</label><input type="text" class="fc" id="f_name" value="${(data.customerName||'').replace(/"/g, '&quot;')}" oninput="updateAutoEmail()"></div>
@@ -535,13 +585,13 @@ function renderStep1(data) {
       </div>
       <div class="fgroup"><label>المركز/الشركة</label><input type="text" class="fc" id="f_parent" value="${(data.parentCenter||'').replace(/"/g, '&quot;')}"></div>
       <div class="fgroup"><label>شخص التواصل</label><input type="text" class="fc" id="f_contact" value="${(data.contactPerson||'').replace(/"/g, '&quot;')}"></div>
-      <div class="fgroup"><label>الهاتف</label>
-  <input type="tel" class="fc" id="f_phone" 
-         value="${(data.phone || '').replace(/"/g, '&quot;')}" 
-         placeholder="مثال: 0123456789"
-         oninput="validatePhone(this)">
-  <small style="color:#94a3b8;font-size:10px;">10 أرقام على الأقل</small>
-</div>
+      <div class="fgroup"><label class="req">الهاتف</label>
+        <input type="tel" class="fc" id="f_phone" 
+               value="${(phoneValue || '').replace(/"/g, '&quot;')}" 
+               placeholder="مثال: 01234567890"
+               oninput="validatePhone(this)">
+        <small style="color:#94a3b8;font-size:10px;">10 أرقام على الأقل</small>
+      </div>
       <div class="fgroup"><label>البريد الإلكتروني</label><input type="email" class="fc" id="f_email" value="${(data.email||'').replace(/"/g, '&quot;')}"></div>
       <div class="fgroup"><label>العنوان</label><input type="text" class="fc" id="f_address" value="${(data.address||'').replace(/"/g, '&quot;')}"></div>
       <div class="fgroup"><label class="req">تاريخ البداية ${isEdit ? '<span style="font-size:10px;color:#7c3aed">(بداية تحديث الأسعار)</span>' : ''}</label>
@@ -558,17 +608,14 @@ function renderStep1(data) {
         </select>
       </div>`;
 
- // ✅ إظهار خيار صلاحية الدخول لكل من العملاء والمنفذين
-document.getElementById('formContent').innerHTML += `
-  <div class="fgroup" style="grid-column:1/-1">
-    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-      <input type="checkbox" id="f_hasSystemAccess" onchange="toggleSystemAccess(this.checked)" ${hasSystemAccess ? 'checked' : ''}>
-      <span style="font-size:13px;">🔐 منح صلاحية الدخول للنظام ${data.customerType === 'Supplier' ? '(منفذ)' : '(عميل)'}</span>
-    </label>
-  </div>`;
-
-
+  // ✅ إظهار خيار صلاحية الدخول لكل من العملاء والمنفذين
   document.getElementById('formContent').innerHTML += `
+    <div class="fgroup" style="grid-column:1/-1">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+        <input type="checkbox" id="f_hasSystemAccess" onchange="toggleSystemAccess(this.checked)" ${hasSystemAccess ? 'checked' : ''}>
+        <span style="font-size:13px;">🔐 منح صلاحية الدخول للنظام ${data.customerType === 'Supplier' ? '(منفذ)' : '(عميل)'}</span>
+      </label>
+    </div>
     <div class="fgroup" style="grid-column:1/-1"><label>ملاحظات</label><textarea class="fc" id="f_notes" rows="2">${(data.notes||'').replace(/</g,'&lt;')}</textarea></div>
     <div id="loginFields" class="login-fields" style="grid-column:1/-1; display: ${hasSystemAccess && isCustomer ? 'block' : 'none'}">
       <div style="margin-bottom:12px;"><strong>🔐 بيانات تسجيل الدخول</strong></div>
@@ -583,6 +630,7 @@ document.getElementById('formContent').innerHTML += `
       </div>
     </div>
   </div>`;
+
 
   const sheetInfoText = data._sheetInfo || '';
   const editHint = isEdit ? `<div id="editHintWrap" style="background:#f0fdf4;border:1px solid #16a34a;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#14532d;">
@@ -652,83 +700,93 @@ async function openEdit() {
     }
 
     const category = selectedAccount.category;
-if (category !== 'Submarine') {
-  console.log('جلب الرحلات والبنود للأنشطة العادية...');
-  
-  // ✅ 1. جلب الرحلات حسب النشاط
-  const catTripsRes = await gas('getTripsByCategory', { 
-    category: category,
-    centerName: currentUser?.centerName || ''
-  });
-  console.log('📋 الرحلات حسب النشاط:', catTripsRes);
-  selectedAccount._categoryTrips = Array.isArray(catTripsRes) ? catTripsRes : [];
-  
-  // ✅ 2. جلب جميع الرحلات مع البنود
-  const tripsRes = await gas('getAllTrips', {
-    centerName: currentUser?.centerName || '',
-    includeItems: true
-  });
+    if (category !== 'Submarine') {
+      console.log('جلب الرحلات والبنود للأنشطة العادية...');
+      
+      const catTripsRes = await gas('getTripsByCategory', { 
+        category: category,
+        centerName: currentUser?.centerName || ''
+      });
+      console.log('📋 الرحلات حسب النشاط:', catTripsRes);
+      selectedAccount._categoryTrips = Array.isArray(catTripsRes) ? catTripsRes : [];
+      
+      const tripsRes = await gas('getAllTrips', {
+        centerName: currentUser?.centerName || '',
+        includeItems: true
+      });
 
-  console.log('نتيجة getAllTrips:', tripsRes);
+      console.log('نتيجة getAllTrips:', tripsRes);
 
-  if (Array.isArray(tripsRes) && tripsRes.length > 0) {
-    // ✅ حفظ بنود الرحلات في tripItems
-    for (const trip of tripsRes) {
-      if (trip.items && trip.items.length > 0) {
-        tripItems[trip.name] = trip.items;
+      if (Array.isArray(tripsRes) && tripsRes.length > 0) {
+        for (const trip of tripsRes) {
+          if (trip.items && trip.items.length > 0) {
+            tripItems[trip.name] = trip.items;
+          }
+        }
       }
+      
+      let assignedTripsList = [];
+      if (selectedAccount.assignedTrips) {
+        assignedTripsList = selectedAccount.assignedTrips.split('|').filter(Boolean);
+      }
+      selectedAccount._existingTripsList = assignedTripsList;
+      console.log('📋 الرحلات المحددة للعميل:', assignedTripsList);
+      
+      let savedPrices = {};
+      try {
+        if (selectedAccount.pricesData) {
+          savedPrices = JSON.parse(selectedAccount.pricesData);
+        }
+      } catch(e) {
+        console.warn('⚠️ فشل تحليل pricesData:', e);
+      }
+      selectedAccount._existingPricesData = savedPrices;
+      console.log('💰 الأسعار المحفوظة:', Object.keys(savedPrices).length, 'بند');
+      
+      selectedAccount._sheetInfo += `<br>📋 الرحلات المحددة: ${assignedTripsList.join(', ') || 'لا توجد'}`;
     }
-  }
-  
-  // ✅ 3. جلب الرحلات المحددة للعميل من assignedTrips
-  let assignedTripsList = [];
-  if (selectedAccount.assignedTrips) {
-    assignedTripsList = selectedAccount.assignedTrips.split('|').filter(Boolean);
-  }
-  selectedAccount._existingTripsList = assignedTripsList;
-  console.log('📋 الرحلات المحددة للعميل:', assignedTripsList);
-  
-  // ✅ 4. جلب الأسعار المحفوظة
-  let savedPrices = {};
-  try {
-    if (selectedAccount.pricesData) {
-      savedPrices = JSON.parse(selectedAccount.pricesData);
-    }
-  } catch(e) {
-    console.warn('⚠️ فشل تحليل pricesData:', e);
-  }
-  selectedAccount._existingPricesData = savedPrices;
-  console.log('💰 الأسعار المحفوظة:', Object.keys(savedPrices).length, 'بند');
-  
-  selectedAccount._sheetInfo += `<br>📋 الرحلات المحددة: ${assignedTripsList.join(', ') || 'لا توجد'}`;
-}
-    // ✅ تم نقل هذا الكود داخل try (بدون try/catch منفصل)
+    
     if (selectedAccount.loginEmail) {
       selectedAccount.hasSystemAccess = true;
       selectedAccount.loginEmail = selectedAccount.loginEmail;
       selectedAccount.loginPassword = selectedAccount.loginPassword || '';
     }
 
+    // ✅ ✅ ✅ التأكد من وجود رقم الهاتف في selectedAccount
+    console.log('📞 openEdit - selectedAccount.phone:', selectedAccount.phone);
+    
+    // ✅ إذا كان رقم الهاتف موجوداً في allAccounts ولكن ليس في selectedAccount
+    if (!selectedAccount.phone && selectedAccount.customerId) {
+      const fullAccount = allAccounts.find(a => a.customerId === selectedAccount.customerId);
+      if (fullAccount && fullAccount.phone) {
+        selectedAccount.phone = fullAccount.phone;
+        console.log('📞 تم استعادة رقم الهاتف من allAccounts:', selectedAccount.phone);
+      }
+    }
+
     renderStep1(selectedAccount);
 
     setTimeout(function() {
       updateSaveButtonState();
+      // ✅ تأكد من أن حقل الهاتف يحتوي على القيمة
+      const phoneField = document.getElementById('f_phone');
+      if (phoneField && selectedAccount?.phone) {
+        phoneField.value = selectedAccount.phone;
+        console.log('📞 تم تعيين حقل الهاتف:', phoneField.value);
+      }
       console.log('تم استدعاء updateSaveButtonState بعد التحميل');
     }, 500);
 
   } catch(e) {
     console.error('خطأ في openEdit:', e);
     selectedAccount._sheetInfo = '❌ فشل جلب بيانات الشيت: ' + e.message;
-    // عرض رسالة خطأ للمستخدم
     showAlert('❌ فشل تحميل بيانات التعديل: ' + e.message, '❌');
-    // إغلاق المودال أو عرض رسالة
     document.getElementById('formContent').innerHTML = `<div class="no-data">❌ خطأ: ${e.message}</div>`;
     document.getElementById('formFooter').innerHTML = `
       <button class="btn btn-gray" onclick="closeModal()">إغلاق</button>
     `;
   }
 }
-
 function updateSaveButtonState() {
   const saveBtn = document.getElementById('saveBtn');
   if (!saveBtn) return;
@@ -797,36 +855,6 @@ async function goStep2() {
   renderStep2(cat);
 }
 // دالة للتحقق من رقم الهاتف أثناء الكتابة
-function validatePhone(input) {
-  const val = input.value.trim();
-  if (!val) {
-    input.style.borderColor = '';
-    return { valid: false, message: 'رقم الهاتف مطلوب' };
-  }
-  
-  // تحويل الأرقام العربية إلى إنجليزية
-  const arabicToEnglish = {
-    '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4',
-    '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9'
-  };
-  const clean = val.replace(/[٠-٩]/g, (d) => arabicToEnglish[d] || d);
-  const digits = clean.replace(/\D/g, '');
-  const hasPlus = clean.startsWith('+');
-  
-  if (digits.length === 0) {
-    input.style.borderColor = '#dc2626';
-    return { valid: false, message: 'يجب إدخال أرقام' };
-  }
-  
-  // ✅ التحقق: يجب أن يكون 10 أرقام على الأقل
-  if (digits.length < 10) {
-    input.style.borderColor = '#dc2626';
-    return { valid: false, message: `يجب أن يحتوي على 10 أرقام على الأقل (الآن: ${digits.length})` };
-  }
-  
-  input.style.borderColor = '#16a34a';
-  return { valid: true, message: 'رقم صحيح', digits: digits };
-}
 
 // دالة لتنسيق رقم الهاتف أثناء الكتابة (اختياري)
 function formatPhoneOnInput(input) {
@@ -1131,7 +1159,6 @@ async function loadPriceInputs() {
 
 // ====================== حفظ البيانات ======================
 // ====================== حفظ البيانات ======================
-// ====================== حفظ البيانات ======================
 async function doSave() {
   const btn = document.getElementById('saveBtn');
   if (btn) {
@@ -1140,40 +1167,43 @@ async function doSave() {
   }
 
   try {
-    // ✅ التحقق من رقم الهاتف - حفظ القيمة مؤقتاً
+    // ✅ التحقق من رقم الهاتف
     const phoneInput = document.getElementById('f_phone');
     const phone = phoneInput?.value?.trim() || '';
+    const result = validatePhoneNumber(phone);
     
-    // ✅ التحقق من أن رقم الهاتف يحتوي على أرقام فقط (بعد إزالة المسافات والرموز)
-    const phoneDigits = phone.replace(/\D/g, '');
+    console.log('📞 doSave - phone:', phone);
+    console.log('📞 doSave - result:', result);
     
-    if (!phone || phoneDigits.length < 10) {
-      // ✅ لا نقوم بمسح الحقل، فقط نعرض رسالة الخطأ
-      showAlert('⚠️ يرجى إدخال رقم هاتف صحيح للتواصل (10 أرقام على الأقل)\nالرقم المدخل: ' + (phone || 'فارغ'), '⚠️');
+    if (!result.valid) {
+      showAlert(`⚠️ ${result.message}`, '⚠️');
       if (btn) {
         btn.disabled = false;
         btn.textContent = isEdit ? 'تحديث البيانات' : 'حفظ وإنشاء الشيت';
       }
-      // ✅ نركز على حقل الهاتف
       if (phoneInput) {
         phoneInput.focus();
         phoneInput.select();
+        phoneInput.style.borderColor = '#dc2626';
       }
       return;
     }
 
-      // ✅ التحقق من التغييرات في وضع التعديل
+    // ✅ إذا وصلنا هنا، رقم الهاتف صحيح
+    if (phoneInput) {
+      phoneInput.style.borderColor = '#16a34a';
+    }
+
+    // ✅ التحقق من التغييرات في وضع التعديل
     let rebuildRequired = false;
     let changes = {};
     
     if (isEdit && selectedAccount) {
       changes = detectChanges();
       
-      // ✅ إذا تغيرت التواريخ أو الرحلات، نحتاج إلى إعادة بناء الشيت
       if (changes.datesChanged || changes.tripsChanged) {
         rebuildRequired = true;
         
-        // ✅ تأكيد مع المستخدم
         let confirmMessage = '⚠️ سيتم إعادة بناء شيت الحساب بالكامل بسبب:';
         if (changes.datesChanged) {
           confirmMessage += '\n- تغيير في التواريخ (سيتم إضافة/حذف أيام)';
@@ -1694,16 +1724,7 @@ async function confirmDelete() {
     confirmBtn.textContent = 'حذف نهائي';
   }
 }
-// إضافة في نهاية الملف
-window.resolveAlert = null;
 
-// تعديل دالة showAlert لدعم الـ Promise
-function showAlert(msg, icon, btns) {
-  document.getElementById('alertIcon').textContent = icon || 'ℹ️';
-  document.getElementById('alertMsg').textContent = msg;
-  document.getElementById('alertBtns').innerHTML = btns || '<button class="btn btn-navy" onclick="closeAlert()">موافق</button>';
-  document.getElementById('alertModal').classList.add('open');
-}
 document.addEventListener('DOMContentLoaded', async () => {
   // ✅ التحقق من صحة الجلسة مرة أخرى (تأكيد)
   if (!Session.checkValidity()) {
