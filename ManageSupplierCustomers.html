@@ -181,6 +181,7 @@ currentUser = Session.getUser();
 loggedInUser = currentUser;
 
 // ✅ إضافة في بداية الملف بعد المتغيرات
+// ✅ إضافة في بداية الملف بعد المتغيرات
 let allAccounts = [];
 let selectedAccount = null;
 let isEdit = false;
@@ -191,8 +192,10 @@ let _currentCategory = '';
 let _editSheetDates = null;
 let _formStep1Data = {};
 let directEditCustomerId = null;
-window.resolveAlert = null;  // ✅ أضف هذا السطر
-
+window.resolveAlert = null;
+let _hasDataChanges = false;   // تغيير في بيانات الحساب
+let _hasPriceChanges = false;  // تغيير في الأسعار فقط
+let _initialState = null;      // حفظ الحالة الأولية للمقارنة
 // ====================== دوال الاتصال ======================
 function gas(action, params = {}) {
   return new Promise((resolve, reject) => {
@@ -283,7 +286,139 @@ function validatePhoneNumber(phone) {
   
   return { valid: true, message: 'رقم صحيح', digits: digits, clean: clean };
 }
-
+// ====================== تحديث حالة الأزرار ======================
+function updateButtonsState() {
+  const saveBtn = document.getElementById('saveBtn');
+  const priceBtn = document.getElementById('priceUpdateBtn');
+  
+  // ✅ إذا لم يكن في وضع التعديل، كل الأزرار غير نشطة
+  if (!isEdit || !selectedAccount) {
+    if (saveBtn) saveBtn.disabled = true;
+    if (priceBtn) priceBtn.disabled = true;
+    return;
+  }
+  
+  // ✅ تحديد التغييرات
+  const dataChanged = detectDataChanges();
+  const priceChanged = detectPriceChanges();
+  
+  // ✅ تحديث حالة الأزرار
+  if (saveBtn) {
+    saveBtn.disabled = !dataChanged;
+    // تغيير النص للإشارة إلى وجود تغييرات
+    if (dataChanged) {
+      saveBtn.textContent = '💾 تحديث البيانات';
+      saveBtn.style.opacity = '1';
+    } else {
+      saveBtn.textContent = '💾 تحديث البيانات';
+      saveBtn.style.opacity = '0.5';
+    }
+  }
+  
+  if (priceBtn) {
+    priceBtn.disabled = !priceChanged;
+    if (priceChanged) {
+      priceBtn.textContent = '💰 تحديث الأسعار';
+      priceBtn.style.opacity = '1';
+    } else {
+      priceBtn.textContent = '💰 تحديث الأسعار';
+      priceBtn.style.opacity = '0.5';
+    }
+  }
+}
+  // ====================== الكشف عن تغييرات بيانات الحساب ======================
+function detectDataChanges() {
+  if (!isEdit || !selectedAccount) return false;
+  
+  // ✅ التحقق من تغيير الاسم
+  const name = document.getElementById('f_name')?.value?.trim() || '';
+  if (name !== (selectedAccount.customerName || '')) return true;
+  
+  // ✅ التحقق من تغيير النوع
+  const type = document.getElementById('f_type')?.value || '';
+  if (type !== (selectedAccount.customerType || '')) return true;
+  
+  // ✅ التحقق من تغيير النشاط
+  const cat = document.getElementById('f_cat')?.value || '';
+  if (cat !== (selectedAccount.category || '')) return true;
+  
+  // ✅ التحقق من تغيير الهاتف
+  const phone = document.getElementById('f_phone')?.value?.trim() || '';
+  if (phone !== (selectedAccount.phone || '')) return true;
+  
+  // ✅ التحقق من تغيير التواريخ
+  const start = document.getElementById('f_start')?.value || '';
+  const end = document.getElementById('f_end')?.value || '';
+  const oldStart = selectedAccount.startDate ? formatDateForInput(selectedAccount.startDate) : '';
+  const oldEnd = selectedAccount.endDate ? formatDateForInput(selectedAccount.endDate) : '';
+  if (start !== oldStart || end !== oldEnd) return true;
+  
+  // ✅ التحقق من تغيير الرحلات (لغير Submarine)
+  if (selectedAccount.category !== 'Submarine') {
+    const checkedTrips = [];
+    document.querySelectorAll('#tripsBox input[type=checkbox]:checked').forEach(cb => {
+      checkedTrips.push(cb.value);
+    });
+    const oldTrips = selectedAccount.assignedTrips ? selectedAccount.assignedTrips.split('|').filter(Boolean) : [];
+    if (JSON.stringify(checkedTrips.sort()) !== JSON.stringify(oldTrips.sort())) return true;
+  }
+  
+  return false;
+}
+  // ====================== الكشف عن تغييرات الأسعار ======================
+function detectPriceChanges() {
+  if (!isEdit || !selectedAccount) return false;
+  
+  const cat = selectedAccount.category;
+  const isSubmarine = (cat === 'Submarine');
+  
+  if (isSubmarine) {
+    // ✅ التحقق من تغيير أسعار Submarine
+    const savedPrices = selectedAccount._existingPricesData || {};
+    for (const c of ['F', 'Aarab', 'Arab48', 'EGY']) {
+      const pax = parseFloat(document.getElementById(`sp_${c}_PAX`)?.value) || 0;
+      const child = parseFloat(document.getElementById(`sp_${c}_CHILD`)?.value) || 0;
+      const inf = parseFloat(document.getElementById(`sp_${c}_INF`)?.value) || 0;
+      const cur = document.getElementById(`sc_${c}`)?.value || 'USD';
+      
+      const saved = savedPrices['Submarine_' + c] || {};
+      if (pax !== (saved.PAX || 0)) return true;
+      if (child !== (saved.CHILD || 0)) return true;
+      if (inf !== (saved.INF || 0)) return true;
+      if (cur !== (saved.currency || 'USD')) return true;
+    }
+  } else {
+    // ✅ التحقق من تغيير أسعار الرحلات العادية
+    const priceInputs = document.querySelectorAll('#priceArea input[type="number"]');
+    for (const input of priceInputs) {
+      const id = input.id;
+      if (!id || !id.startsWith('pp_')) continue;
+      const key = id.substring(3);
+      const newPrice = parseFloat(input.value) || 0;
+      const currencySelect = document.getElementById(`pc_${key}`);
+      const newCurrency = currencySelect ? currencySelect.value : 'LE';
+      
+      // ✅ البحث عن السعر القديم
+      const savedPrices = selectedAccount._existingPricesData || {};
+      let oldPrice = 0;
+      let oldCurrency = 'LE';
+      for (const [savedKey, savedValue] of Object.entries(savedPrices)) {
+        const normalizedKey = savedKey.replace(/[^a-zA-Z0-9_]/g, '_');
+        if (normalizedKey === key || savedKey.includes(key)) {
+          oldPrice = savedValue.price || 0;
+          oldCurrency = savedValue.currency || 'LE';
+          break;
+        }
+      }
+      
+      if (newPrice !== oldPrice) return true;
+      if (newCurrency !== oldCurrency) return true;
+    }
+  }
+  
+  return false;
+}
+  
 // دالة التحقق أثناء الكتابة
 function validatePhone(input) {
   const result = validatePhoneNumber(input.value);
@@ -554,104 +689,6 @@ async function viewCustomerAccount() {
 }
 
 // ====================== الخطوة 1: البيانات الأساسية ======================
-function renderStep1(data) {
-  setStepUI(1);
-  const CATEGORIES = ['Submarine','Safari','Water Sports','Diving','Tourism Company','Excursions'];
-  const startDate = formatDateForInput(data._sheetFirstDateISO || data.startDate || '');
-  const endDate = formatDateForInput(data._sheetLastDateISO || data.endDate || '');
-  const isCustomer = data.customerType === 'Customer';
-  const hasSystemAccess = data.hasSystemAccess === true || data.hasSystemAccess === 'true';
-  const loginEmail = data.loginEmail || (isCustomer && data.customerName ? generateAutoEmail(data.customerName) : '');
-  const loginPassword = data.loginPassword || '';
-
-  // ✅ التأكد من قيمة الهاتف
-  const phoneValue = data.phone || selectedAccount?.phone || '';
-  console.log('📞 renderStep1 - phone value:', phoneValue);
-
-  document.getElementById('formContent').innerHTML = `
-    <div class="fgrid">
-      <div class="fgroup"><label class="req">اسم العميل/المنفذ</label><input type="text" class="fc" id="f_name" value="${(data.customerName||'').replace(/"/g, '&quot;')}" oninput="updateAutoEmail()"></div>
-      <div class="fgroup"><label class="req">نوع الحساب</label>
-        <select class="fc" id="f_type" onchange="toggleSystemAccess(this.value === 'Customer' && document.getElementById('f_hasSystemAccess')?.checked)">
-          <option value="Customer" ${data.customerType==='Customer'?'selected':''}>عميل</option>
-          <option value="Supplier" ${data.customerType==='Supplier'?'selected':''}>منفذ</option>
-        </select>
-      </div>
-      <div class="fgroup"><label class="req">نوع النشاط</label>
-        <select class="fc" id="f_cat" onchange="updateSaveButtonState()">
-          <option value="">-- اختر --</option>
-          ${CATEGORIES.map(c=>`<option value="${c}" ${data.category===c?'selected':''}>${c}</option>`).join('')}
-        </select>
-      </div>
-      <div class="fgroup"><label>المركز/الشركة</label><input type="text" class="fc" id="f_parent" value="${(data.parentCenter||'').replace(/"/g, '&quot;')}"></div>
-      <div class="fgroup"><label>شخص التواصل</label><input type="text" class="fc" id="f_contact" value="${(data.contactPerson||'').replace(/"/g, '&quot;')}"></div>
-      <div class="fgroup"><label class="req">الهاتف</label>
-        <input type="tel" class="fc" id="f_phone" 
-               value="${(phoneValue || '').replace(/"/g, '&quot;')}" 
-               placeholder="مثال: 01234567890"
-               oninput="validatePhone(this)">
-        <small style="color:#94a3b8;font-size:10px;">10 أرقام على الأقل</small>
-      </div>
-      <div class="fgroup"><label>البريد الإلكتروني</label><input type="email" class="fc" id="f_email" value="${(data.email||'').replace(/"/g, '&quot;')}"></div>
-      <div class="fgroup"><label>العنوان</label><input type="text" class="fc" id="f_address" value="${(data.address||'').replace(/"/g, '&quot;')}"></div>
-      <div class="fgroup"><label class="req">تاريخ البداية ${isEdit ? '<span style="font-size:10px;color:#7c3aed">(بداية تحديث الأسعار)</span>' : ''}</label>
-        <input type="date" class="fc" id="f_start" value="${startDate}">
-      </div>
-      <div class="fgroup"><label class="req">تاريخ النهاية ${isEdit ? '<span style="font-size:10px;color:#7c3aed">(نهاية تحديث الأسعار)</span>' : ''}</label>
-        <input type="date" class="fc" id="f_end" value="${endDate}">
-      </div>
-      <div class="fgroup"><label>شروط الدفع</label><input type="text" class="fc" id="f_terms" value="${(data.paymentTerms||'').replace(/"/g, '&quot;')}"></div>
-      <div class="fgroup"><label>الحالة</label>
-        <select class="fc" id="f_status">
-          <option value="true" ${data.status!==false?'selected':''}>نشط</option>
-          <option value="false" ${data.status===false?'selected':''}>متوقف</option>
-        </select>
-      </div>`;
-
-  // ✅ إظهار خيار صلاحية الدخول لكل من العملاء والمنفذين
-  document.getElementById('formContent').innerHTML += `
-    <div class="fgroup" style="grid-column:1/-1">
-      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-        <input type="checkbox" id="f_hasSystemAccess" onchange="toggleSystemAccess(this.checked)" ${hasSystemAccess ? 'checked' : ''}>
-        <span style="font-size:13px;">🔐 منح صلاحية الدخول للنظام ${data.customerType === 'Supplier' ? '(منفذ)' : '(عميل)'}</span>
-      </label>
-    </div>
-    <div class="fgroup" style="grid-column:1/-1"><label>ملاحظات</label><textarea class="fc" id="f_notes" rows="2">${(data.notes||'').replace(/</g,'&lt;')}</textarea></div>
-    <div id="loginFields" class="login-fields" style="grid-column:1/-1; display: ${hasSystemAccess && isCustomer ? 'block' : 'none'}">
-      <div style="margin-bottom:12px;"><strong>🔐 بيانات تسجيل الدخول</strong></div>
-      <div class="fgrid">
-        <div class="fgroup"><label>البريد الإلكتروني</label><input type="email" class="fc" id="f_loginEmail" value="${(loginEmail||'').replace(/"/g, '&quot;')}" placeholder="auto@system.com"></div>
-        <div class="fgroup"><label>كلمة المرور</label>
-          <div class="password-wrapper">
-            <input type="password" class="fc" id="f_loginPassword" value="${(loginPassword||'').replace(/"/g, '&quot;')}" placeholder="أدخل كلمة المرور">
-            <button type="button" class="toggle-password" onclick="togglePasswordVisibility()">👁️</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>`;
-
-
-  const sheetInfoText = data._sheetInfo || '';
-  const editHint = isEdit ? `<div id="editHintWrap" style="background:#f0fdf4;border:1px solid #16a34a;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#14532d;">
-      <strong>✏️ وضع التعديل</strong><br>
-      ${sheetInfoText ? `<span style="color:#15803d">${sheetInfoText}</span><br>` : ''}
-      تاريخ البداية والنهاية يحددان <strong>نطاق تحديث الأسعار</strong> في شيت الحساب.<br>
-      إذا كان تاريخ النهاية أكبر من آخر تاريخ في الشيت، سيتم إضافة أيام جديدة تلقائياً.
-    </div>` : '';
-  
-  const existingEditHint = document.getElementById('editHintWrap');
-  if (!existingEditHint && editHint) {
-    const wrap = document.createElement('div');
-    wrap.id = 'editHintWrap';
-    wrap.innerHTML = editHint;
-    document.getElementById('formContent').prepend(wrap);
-  }
-
-  document.getElementById('formFooter').innerHTML = `
-    <button class="btn btn-navy" onclick="goStep2()">التالي ← الرحلات والأسعار</button>
-    <button class="btn btn-gray" onclick="closeModal()">إلغاء</button>`;
-}
 
 function openAdd() {
   isEdit = false;
@@ -767,14 +804,14 @@ async function openEdit() {
     renderStep1(selectedAccount);
 
     setTimeout(function() {
-      updateSaveButtonState();
+      updateButtonsState();
       // ✅ تأكد من أن حقل الهاتف يحتوي على القيمة
       const phoneField = document.getElementById('f_phone');
       if (phoneField && selectedAccount?.phone) {
         phoneField.value = selectedAccount.phone;
         console.log('📞 تم تعيين حقل الهاتف:', phoneField.value);
       }
-      console.log('تم استدعاء updateSaveButtonState بعد التحميل');
+      console.log('تم استدعاء updateButtonsState بعد التحميل');
     }, 500);
 
   } catch(e) {
@@ -786,11 +823,6 @@ async function openEdit() {
       <button class="btn btn-gray" onclick="closeModal()">إغلاق</button>
     `;
   }
-}
-function updateSaveButtonState() {
-  const saveBtn = document.getElementById('saveBtn');
-  if (!saveBtn) return;
-  saveBtn.disabled = false;
 }
 
 // ====================== الخطوة 2: الرحلات والأسعار ======================
@@ -861,153 +893,63 @@ function formatPhoneOnInput(input) {
   // نسمح للمستخدم بكتابة أي شيء، لكن نعرض التحذير إذا كان غير صحيح
   validatePhone(input);
 }
-function renderStep2(cat) {
-  const isSubmarine = (cat === 'Submarine');
-
-  let html = '';
-
-  if (isSubmarine) {
-    html = `
-      <div class="sec-title">🚢 أسعار رحلات Submarine</div>
-      <div style="overflow-x:auto;">
-        <table class="sub-price-table">
-          <thead><th>الفئة</th><th>PAX</th><th>CHILD</th><th>INF</th><th>العملة</th></thead>
-          <tbody>
-            ${['F','Aarab','Arab48','EGY'].map(c => `
-              <tr>
-                 <td><strong>${c}</strong></td>
-                 <td><input type="number" id="sp_${c}_PAX" placeholder="0" min="0" value="0" oninput="updateSaveButtonState()"></td>
-                 <td><input type="number" id="sp_${c}_CHILD" placeholder="0" min="0" value="0" oninput="updateSaveButtonState()"></td>
-                 <td><input type="number" id="sp_${c}_INF" placeholder="0" min="0" value="0" oninput="updateSaveButtonState()"></td>
-                 <td><select id="sc_${c}" onchange="updateSaveButtonState()">
-                  <option value="USD">USD $</option>
-                  <option value="EUR">EUR €</option>
-                  <option value="GBP">GBP £</option>
-                  <option value="LE">LE ج</option>
-                </select></td>
-               </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`;
- } else {
-    // ✅ الرحلات المتاحة حسب النشاط
-    let availableTrips = [...(selectedAccount?._categoryTrips || tripsForCategory || [])];
-    
-    // ✅ الرحلات المحددة للعميل
-    let existingTripsList = [];
-    if (isEdit && selectedAccount) {
-      // ✅ استخدام _existingTripsList أو assignedTrips
-      if (selectedAccount._existingTripsList && selectedAccount._existingTripsList.length > 0) {
-        existingTripsList = selectedAccount._existingTripsList;
-      } else if (selectedAccount.assignedTrips) {
-        existingTripsList = selectedAccount.assignedTrips.split('|').filter(Boolean);
-      }
-    }
-    
-    // ✅ دمج القائمتين (جميع الرحلات + الرحلات المحددة)
-    const allTrips = [...new Set([...availableTrips, ...existingTripsList])].sort();
-    
-    console.log('📋 renderStep2 - allTrips:', allTrips);
-    console.log('📋 renderStep2 - existingTripsList:', existingTripsList);
-    
-    html = `
-      <div class="sec-title">📋 اختر الرحلات المخصصة لهذا الحساب</div>
-      <div class="trips-box" id="tripsBox">
-        ${allTrips.length ? allTrips.map(t => {
-          const isChecked = existingTripsList.includes(t);
-          return `
-            <div class="trip-item ${isChecked ? 'checked' : ''}" id="ti_${safeid(t)}">
-              <input type="checkbox" id="tc_${safeid(t)}" value="${esc(t)}" ${isChecked ? 'checked' : ''} onchange="handleTripToggle(this,'${esc(t)}'); updateSaveButtonState()">
-              <label for="tc_${safeid(t)}" style="cursor:pointer">${esc(t)}</label>
-            </div>
-          `;
-        }).join('') : '<div style="padding:20px;color:#94a3b8;text-align:center;">لا توجد رحلات لهذا النشاط</div>'}
-      </div>
-      <div class="sec-title" id="priceTitle" style="display:none">💰 أسعار البنود (لكل عميل)</div>
-      <div id="priceArea"></div>`;
+  // ====================== إضافة مستمعات الأحداث للكشف عن التغييرات ======================
+function setupChangeListeners() {
+  // ✅ حقل الاسم
+  const nameField = document.getElementById('f_name');
+  if (nameField) nameField.addEventListener('input', updateButtonsState);
+  
+  // ✅ حقل النوع
+  const typeField = document.getElementById('f_type');
+  if (typeField) typeField.addEventListener('change', updateButtonsState);
+  
+  // ✅ حقل النشاط
+  const catField = document.getElementById('f_cat');
+  if (catField) catField.addEventListener('change', updateButtonsState);
+  
+  // ✅ حقل الهاتف
+  const phoneField = document.getElementById('f_phone');
+  if (phoneField) phoneField.addEventListener('input', updateButtonsState);
+  
+  // ✅ حقول التواريخ
+  const startField = document.getElementById('f_start');
+  const endField = document.getElementById('f_end');
+  if (startField) startField.addEventListener('change', updateButtonsState);
+  if (endField) endField.addEventListener('change', updateButtonsState);
+  
+  // ✅ حقول الأسعار (تضاف في renderStep2)
+  // ستتم إضافتها ديناميكياً بعد تحميل الأسعار
 }
-  document.getElementById('formContent').innerHTML = html;
-  document.getElementById('formFooter').innerHTML = `
-    <button class="btn btn-green" id="saveBtn" onclick="doSave()" disabled>💾 ${isEdit ? 'تحديث البيانات' : 'حفظ وإنشاء الشيت'}</button>
-    ${isEdit ? '<button class="btn btn-orange" onclick="openPriceUpdateModal()">💰 تحديث الأسعار</button>' : ''}
-    <button class="btn btn-gray" onclick="goBackStep1()">← رجوع</button>
-    <button class="btn btn-gray" onclick="closeModal()">إلغاء</button>`;
 
-  updateSaveButtonState();
-
-  // ✅ تحميل الأسعار إذا كانت هناك رحلات محددة
-  if (!isSubmarine && isEdit && selectedAccount) {
-    let prevTrips = [];
-    let savedPrices = {};
-    
-    // ✅ الأولوية لـ _existingTripsList و _existingPricesData
-    if (selectedAccount._existingTripsList && selectedAccount._existingTripsList.length > 0) {
-      prevTrips = selectedAccount._existingTripsList;
-      savedPrices = selectedAccount._existingPricesData || {};
-      console.log('✅ استخدام _existingTripsList:', prevTrips);
-      console.log('✅ استخدام _existingPricesData:', Object.keys(savedPrices).length, 'بند');
-    } else if (selectedAccount.assignedTrips) {
-      prevTrips = selectedAccount.assignedTrips.split('|').filter(Boolean);
-      try {
-        if (selectedAccount.pricesData) {
-          savedPrices = JSON.parse(selectedAccount.pricesData);
-          console.log('✅ استخدام assignedTrips:', prevTrips);
-          console.log('✅ استخدام pricesData:', Object.keys(savedPrices).length, 'بند');
-        }
-      } catch(e) {
-        console.warn('⚠️ فشل تحليل pricesData:', e);
-      }
-    }
-    
-    setTimeout(function() {
-      // ✅ تحديث حالة الصناديق (checked)
-      for (const t of prevTrips) {
-        const el = document.getElementById(`ti_${safeid(t)}`);
-        if (el) {
-          el.classList.add('checked');
-          const cb = el.querySelector('input[type=checkbox]');
-          if (cb) cb.checked = true;
-        }
-      }
-      
-      // ✅ تحميل الأسعار
-      Promise.all(prevTrips.map(async function(tripName) {
-        if (!tripItems[tripName]) {
-          await fetchTripItems(tripName);
-        }
-      })).then(function() {
-        return loadPriceInputsWithValues(prevTrips, savedPrices);
-      }).then(function() {
-        setTimeout(updateSaveButtonState, 100);
-      }).catch(function(err) {
-        console.error('❌ خطأ في تحميل الأسعار:', err);
-      });
-    }, 200);
+// دالة لإضافة مستمعات لأسعار Submarine
+function setupSubmarinePriceListeners() {
+  for (const c of ['F', 'Aarab', 'Arab48', 'EGY']) {
+    const pax = document.getElementById(`sp_${c}_PAX`);
+    const child = document.getElementById(`sp_${c}_CHILD`);
+    const inf = document.getElementById(`sp_${c}_INF`);
+    const cur = document.getElementById(`sc_${c}`);
+    if (pax) pax.addEventListener('input', updateButtonsState);
+    if (child) child.addEventListener('input', updateButtonsState);
+    if (inf) inf.addEventListener('input', updateButtonsState);
+    if (cur) cur.addEventListener('change', updateButtonsState);
   }
+}
 
-  if (isSubmarine && isEdit && selectedAccount?.pricesData) {
-    try {
-      const savedPrices = JSON.parse(selectedAccount.pricesData);
-      ['F','Aarab','Arab48','EGY'].forEach(c => {
-        const p = savedPrices['Submarine_' + c];
-        if (!p) return;
-        const paxEl = document.getElementById(`sp_${c}_PAX`);
-        const childEl = document.getElementById(`sp_${c}_CHILD`);
-        const infEl = document.getElementById(`sp_${c}_INF`);
-        const curEl = document.getElementById(`sc_${c}`);
-        if (paxEl && p.PAX) paxEl.value = p.PAX;
-        if (childEl && p.CHILD) childEl.value = p.CHILD;
-        if (infEl && p.INF) infEl.value = p.INF;
-        if (curEl && p.currency) curEl.value = p.currency;
-      });
-      setTimeout(updateSaveButtonState, 100);
-    } catch(e) {}
-  }
+// دالة لإضافة مستمعات لأسعار الرحلات العادية
+function setupTripPriceListeners() {
+  document.querySelectorAll('#priceArea input[type="number"], #priceArea select').forEach(el => {
+    el.addEventListener('input', updateButtonsState);
+    el.addEventListener('change', updateButtonsState);
+  });
 }
 
 function goBackStep1() {
   const data = isEdit ? selectedAccount : {};
   renderStep1(data);
+  // ✅ بعد العودة للخطوة الأولى، حدّث حالة الأزرار
+  setTimeout(function() {
+    updateButtonsState();
+  }, 100);
 }
 
 async function loadPriceInputsWithValues(tripNames, savedPrices) {
@@ -1055,8 +997,8 @@ async function loadPriceInputsWithValues(tripNames, savedPrices) {
         <div class="pi-trip">${esc(tripName)}</div>
         <div class="pi-label">${esc(item)}</div>
         <div class="pi-row">
-          <input type="number" id="pp_${key}" placeholder="0" min="0" value="${prevPrice}" oninput="updateSaveButtonState()">
-          <select id="pc_${key}" onchange="updateSaveButtonState()">
+          <input type="number" id="pp_${key}" placeholder="0" min="0" value="${prevPrice}" oninput="updateButtonsState()">
+          <select id="pc_${key}" onchange="updateButtonsState()">
             <option value="LE" ${prevCur==='LE' ?'selected':''}>LE ج</option>
             <option value="USD" ${prevCur==='USD'?'selected':''}>USD $</option>
             <option value="EUR" ${prevCur==='EUR'?'selected':''}>EUR €</option>
@@ -1090,7 +1032,7 @@ async function handleTripToggle(cb, tripName) {
   }
 
   await loadPriceInputs();
-  updateSaveButtonState();
+  updateButtonsState();
 }
 
 async function loadPriceInputs() {
@@ -1141,8 +1083,8 @@ async function loadPriceInputs() {
         <div class="pi-trip">${esc(tripName)}</div>
         <div class="pi-label">${esc(item)}</div>
         <div class="pi-row">
-          <input type="number" id="pp_${key}" placeholder="0" min="0" value="${prevPrice}" oninput="updateSaveButtonState()">
-          <select id="pc_${key}" onchange="updateSaveButtonState()">
+          <input type="number" id="pp_${key}" placeholder="0" min="0" value="${prevPrice}" oninput="updateButtonsState()">
+          <select id="pc_${key}" onchange="updateButtonsState()">
             <option value="LE" ${prevCur==='LE' ?'selected':''}>LE ج</option>
             <option value="USD" ${prevCur==='USD'?'selected':''}>USD $</option>
             <option value="EUR" ${prevCur==='EUR'?'selected':''}>EUR €</option>
@@ -1154,7 +1096,268 @@ async function loadPriceInputs() {
   }
   html += '</div>';
   priceArea.innerHTML = html;
-  updateSaveButtonState();
+  updateButtonsState();
+}
+// ====================== الخطوة 1: البيانات الأساسية ======================
+function renderStep1(data) {
+  setStepUI(1);
+  const CATEGORIES = ['Submarine','Safari','Water Sports','Diving','Tourism Company','Excursions'];
+  const startDate = formatDateForInput(data._sheetFirstDateISO || data.startDate || '');
+  const endDate = formatDateForInput(data._sheetLastDateISO || data.endDate || '');
+  const isCustomer = data.customerType === 'Customer';
+  const hasSystemAccess = data.hasSystemAccess === true || data.hasSystemAccess === 'true';
+  const loginEmail = data.loginEmail || (isCustomer && data.customerName ? generateAutoEmail(data.customerName) : '');
+  const loginPassword = data.loginPassword || '';
+
+  // ✅ التأكد من قيمة الهاتف
+  const phoneValue = data.phone || selectedAccount?.phone || '';
+  console.log('📞 renderStep1 - phone value:', phoneValue);
+
+  document.getElementById('formContent').innerHTML = `
+    <div class="fgrid">
+      <div class="fgroup"><label class="req">اسم العميل/المنفذ</label><input type="text" class="fc" id="f_name" value="${(data.customerName||'').replace(/"/g, '&quot;')}" oninput="updateAutoEmail(); updateButtonsState();"></div>
+      <div class="fgroup"><label class="req">نوع الحساب</label>
+        <select class="fc" id="f_type" onchange="toggleSystemAccess(this.value === 'Customer' && document.getElementById('f_hasSystemAccess')?.checked); updateButtonsState();">
+          <option value="Customer" ${data.customerType==='Customer'?'selected':''}>عميل</option>
+          <option value="Supplier" ${data.customerType==='Supplier'?'selected':''}>منفذ</option>
+        </select>
+      </div>
+      <div class="fgroup"><label class="req">نوع النشاط</label>
+        <select class="fc" id="f_cat" onchange="updateButtonsState()">
+          <option value="">-- اختر --</option>
+          ${CATEGORIES.map(c=>`<option value="${c}" ${data.category===c?'selected':''}>${c}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fgroup"><label>المركز/الشركة</label><input type="text" class="fc" id="f_parent" value="${(data.parentCenter||'').replace(/"/g, '&quot;')}" oninput="updateButtonsState()"></div>
+      <div class="fgroup"><label>شخص التواصل</label><input type="text" class="fc" id="f_contact" value="${(data.contactPerson||'').replace(/"/g, '&quot;')}" oninput="updateButtonsState()"></div>
+      <div class="fgroup"><label class="req">الهاتف</label>
+        <input type="tel" class="fc" id="f_phone" 
+               value="${(phoneValue || '').replace(/"/g, '&quot;')}" 
+               placeholder="مثال: 01234567890"
+               oninput="validatePhone(this); updateButtonsState();">
+        <small style="color:#94a3b8;font-size:10px;">10 أرقام على الأقل</small>
+      </div>
+      <div class="fgroup"><label>البريد الإلكتروني</label><input type="email" class="fc" id="f_email" value="${(data.email||'').replace(/"/g, '&quot;')}" oninput="updateButtonsState()"></div>
+      <div class="fgroup"><label>العنوان</label><input type="text" class="fc" id="f_address" value="${(data.address||'').replace(/"/g, '&quot;')}" oninput="updateButtonsState()"></div>
+      <div class="fgroup"><label class="req">تاريخ البداية ${isEdit ? '<span style="font-size:10px;color:#7c3aed">(بداية تحديث الأسعار)</span>' : ''}</label>
+        <input type="date" class="fc" id="f_start" value="${startDate}" onchange="updateButtonsState()">
+      </div>
+      <div class="fgroup"><label class="req">تاريخ النهاية ${isEdit ? '<span style="font-size:10px;color:#7c3aed">(نهاية تحديث الأسعار)</span>' : ''}</label>
+        <input type="date" class="fc" id="f_end" value="${endDate}" onchange="updateButtonsState()">
+      </div>
+      <div class="fgroup"><label>شروط الدفع</label><input type="text" class="fc" id="f_terms" value="${(data.paymentTerms||'').replace(/"/g, '&quot;')}" oninput="updateButtonsState()"></div>
+      <div class="fgroup"><label>الحالة</label>
+        <select class="fc" id="f_status" onchange="updateButtonsState()">
+          <option value="true" ${data.status!==false?'selected':''}>نشط</option>
+          <option value="false" ${data.status===false?'selected':''}>متوقف</option>
+        </select>
+      </div>`;
+
+  // ✅ إظهار خيار صلاحية الدخول لكل من العملاء والمنفذين
+  document.getElementById('formContent').innerHTML += `
+    <div class="fgroup" style="grid-column:1/-1">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+        <input type="checkbox" id="f_hasSystemAccess" onchange="toggleSystemAccess(this.checked); updateButtonsState();" ${hasSystemAccess ? 'checked' : ''}>
+        <span style="font-size:13px;">🔐 منح صلاحية الدخول للنظام ${data.customerType === 'Supplier' ? '(منفذ)' : '(عميل)'}</span>
+      </label>
+    </div>
+    <div class="fgroup" style="grid-column:1/-1"><label>ملاحظات</label><textarea class="fc" id="f_notes" rows="2" oninput="updateButtonsState()">${(data.notes||'').replace(/</g,'&lt;')}</textarea></div>
+    <div id="loginFields" class="login-fields" style="grid-column:1/-1; display: ${hasSystemAccess && isCustomer ? 'block' : 'none'}">
+      <div style="margin-bottom:12px;"><strong>🔐 بيانات تسجيل الدخول</strong></div>
+      <div class="fgrid">
+        <div class="fgroup"><label>البريد الإلكتروني</label><input type="email" class="fc" id="f_loginEmail" value="${(loginEmail||'').replace(/"/g, '&quot;')}" placeholder="auto@system.com" oninput="updateButtonsState()"></div>
+        <div class="fgroup"><label>كلمة المرور</label>
+          <div class="password-wrapper">
+            <input type="password" class="fc" id="f_loginPassword" value="${(loginPassword||'').replace(/"/g, '&quot;')}" placeholder="أدخل كلمة المرور" oninput="updateButtonsState()">
+            <button type="button" class="toggle-password" onclick="togglePasswordVisibility()">👁️</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+
+  const sheetInfoText = data._sheetInfo || '';
+  const editHint = isEdit ? `<div id="editHintWrap" style="background:#f0fdf4;border:1px solid #16a34a;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#14532d;">
+      <strong>✏️ وضع التعديل</strong><br>
+      ${sheetInfoText ? `<span style="color:#15803d">${sheetInfoText}</span><br>` : ''}
+      تاريخ البداية والنهاية يحددان <strong>نطاق تحديث الأسعار</strong> في شيت الحساب.<br>
+      إذا كان تاريخ النهاية أكبر من آخر تاريخ في الشيت، سيتم إضافة أيام جديدة تلقائياً.
+    </div>` : '';
+  
+  const existingEditHint = document.getElementById('editHintWrap');
+  if (!existingEditHint && editHint) {
+    const wrap = document.createElement('div');
+    wrap.id = 'editHintWrap';
+    wrap.innerHTML = editHint;
+    document.getElementById('formContent').prepend(wrap);
+  }
+
+  document.getElementById('formFooter').innerHTML = `
+    <button class="btn btn-navy" onclick="goStep2()">التالي ← الرحلات والأسعار</button>
+    <button class="btn btn-gray" onclick="closeModal()">إلغاء</button>`;
+
+  // ✅ إضافة مستمعات الأحداث
+  setTimeout(function() {
+    setupChangeListeners();
+    // ✅ إذا كان في وضع التعديل، حدّث حالة الأزرار
+    if (isEdit) {
+      updateButtonsState();
+    }
+  }, 100);
+}
+
+
+// ====================== الخطوة 2: الرحلات والأسعار ======================
+function renderStep2(cat) {
+  const isSubmarine = (cat === 'Submarine');
+
+  let html = '';
+
+  if (isSubmarine) {
+    html = `
+      <div class="sec-title">🚢 أسعار رحلات Submarine</div>
+      <div style="overflow-x:auto;">
+        <table class="sub-price-table">
+          <thead><th>الفئة</th><th>PAX</th><th>CHILD</th><th>INF</th><th>العملة</th></thead>
+          <tbody>
+            ${['F','Aarab','Arab48','EGY'].map(c => `
+              <tr>
+                 <td><strong>${c}</strong></td>
+                 <td><input type="number" id="sp_${c}_PAX" placeholder="0" min="0" value="0" oninput="updateButtonsState()"></td>
+                 <td><input type="number" id="sp_${c}_CHILD" placeholder="0" min="0" value="0" oninput="updateButtonsState()"></td>
+                 <td><input type="number" id="sp_${c}_INF" placeholder="0" min="0" value="0" oninput="updateButtonsState()"></td>
+                 <td><select id="sc_${c}" onchange="updateButtonsState()">
+                  <option value="USD">USD $</option>
+                  <option value="EUR">EUR €</option>
+                  <option value="GBP">GBP £</option>
+                  <option value="LE">LE ج</option>
+                </select></td>
+               </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+ } else {
+    // ✅ الرحلات المتاحة حسب النشاط
+    let availableTrips = [...(selectedAccount?._categoryTrips || tripsForCategory || [])];
+    
+    // ✅ الرحلات المحددة للعميل
+    let existingTripsList = [];
+    if (isEdit && selectedAccount) {
+      if (selectedAccount._existingTripsList && selectedAccount._existingTripsList.length > 0) {
+        existingTripsList = selectedAccount._existingTripsList;
+      } else if (selectedAccount.assignedTrips) {
+        existingTripsList = selectedAccount.assignedTrips.split('|').filter(Boolean);
+      }
+    }
+    
+    // ✅ دمج القائمتين (جميع الرحلات + الرحلات المحددة)
+    const allTrips = [...new Set([...availableTrips, ...existingTripsList])].sort();
+    
+    console.log('📋 renderStep2 - allTrips:', allTrips);
+    console.log('📋 renderStep2 - existingTripsList:', existingTripsList);
+    
+    html = `
+      <div class="sec-title">📋 اختر الرحلات المخصصة لهذا الحساب</div>
+      <div class="trips-box" id="tripsBox">
+        ${allTrips.length ? allTrips.map(t => {
+          const isChecked = existingTripsList.includes(t);
+          return `
+            <div class="trip-item ${isChecked ? 'checked' : ''}" id="ti_${safeid(t)}">
+              <input type="checkbox" id="tc_${safeid(t)}" value="${esc(t)}" ${isChecked ? 'checked' : ''} onchange="handleTripToggle(this,'${esc(t)}'); updateButtonsState();">
+              <label for="tc_${safeid(t)}" style="cursor:pointer">${esc(t)}</label>
+            </div>
+          `;
+        }).join('') : '<div style="padding:20px;color:#94a3b8;text-align:center;">لا توجد رحلات لهذا النشاط</div>'}
+      </div>
+      <div class="sec-title" id="priceTitle" style="display:none">💰 أسعار البنود (لكل عميل)</div>
+      <div id="priceArea"></div>`;
+}
+  document.getElementById('formContent').innerHTML = html;
+  document.getElementById('formFooter').innerHTML = `
+    <button class="btn btn-green" id="saveBtn" onclick="doSave()" disabled>💾 تحديث البيانات</button>
+    ${isEdit ? '<button class="btn btn-orange" id="priceUpdateBtn" onclick="openPriceUpdateModal()" disabled>💰 تحديث الأسعار</button>' : ''}
+    <button class="btn btn-gray" onclick="goBackStep1()">← رجوع</button>
+    <button class="btn btn-gray" onclick="closeModal()">إلغاء</button>`;
+
+  // ✅ تحميل الأسعار إذا كانت هناك رحلات محددة
+  if (!isSubmarine && isEdit && selectedAccount) {
+    let prevTrips = [];
+    let savedPrices = {};
+    
+    if (selectedAccount._existingTripsList && selectedAccount._existingTripsList.length > 0) {
+      prevTrips = selectedAccount._existingTripsList;
+      savedPrices = selectedAccount._existingPricesData || {};
+      console.log('✅ استخدام _existingTripsList:', prevTrips);
+      console.log('✅ استخدام _existingPricesData:', Object.keys(savedPrices).length, 'بند');
+    } else if (selectedAccount.assignedTrips) {
+      prevTrips = selectedAccount.assignedTrips.split('|').filter(Boolean);
+      try {
+        if (selectedAccount.pricesData) {
+          savedPrices = JSON.parse(selectedAccount.pricesData);
+          console.log('✅ استخدام assignedTrips:', prevTrips);
+          console.log('✅ استخدام pricesData:', Object.keys(savedPrices).length, 'بند');
+        }
+      } catch(e) {
+        console.warn('⚠️ فشل تحليل pricesData:', e);
+      }
+    }
+    
+    setTimeout(function() {
+      // ✅ تحديث حالة الصناديق (checked)
+      for (const t of prevTrips) {
+        const el = document.getElementById(`ti_${safeid(t)}`);
+        if (el) {
+          el.classList.add('checked');
+          const cb = el.querySelector('input[type=checkbox]');
+          if (cb) cb.checked = true;
+        }
+      }
+      
+      // ✅ تحميل الأسعار
+      Promise.all(prevTrips.map(async function(tripName) {
+        if (!tripItems[tripName]) {
+          await fetchTripItems(tripName);
+        }
+      })).then(function() {
+        return loadPriceInputsWithValues(prevTrips, savedPrices);
+      }).then(function() {
+        setTimeout(function() {
+          // ✅ إضافة مستمعات لأسعار الرحلات
+          setupTripPriceListeners();
+          updateButtonsState();
+        }, 100);
+      }).catch(function(err) {
+        console.error('❌ خطأ في تحميل الأسعار:', err);
+      });
+    }, 200);
+  }
+
+  if (isSubmarine && isEdit && selectedAccount?.pricesData) {
+    try {
+      const savedPrices = JSON.parse(selectedAccount.pricesData);
+      ['F','Aarab','Arab48','EGY'].forEach(c => {
+        const p = savedPrices['Submarine_' + c];
+        if (!p) return;
+        const paxEl = document.getElementById(`sp_${c}_PAX`);
+        const childEl = document.getElementById(`sp_${c}_CHILD`);
+        const infEl = document.getElementById(`sp_${c}_INF`);
+        const curEl = document.getElementById(`sc_${c}`);
+        if (paxEl && p.PAX) paxEl.value = p.PAX;
+        if (childEl && p.CHILD) childEl.value = p.CHILD;
+        if (infEl && p.INF) infEl.value = p.INF;
+        if (curEl && p.currency) curEl.value = p.currency;
+      });
+      setTimeout(function() {
+        setupSubmarinePriceListeners();
+        updateButtonsState();
+      }, 200);
+    } catch(e) {}
+  }
+  
+  // ✅ تحديث حالة الأزرار بعد تحميل الأسعار
+  setTimeout(function() {
+    updateButtonsState();
+  }, 300);
 }
 
 
@@ -1167,12 +1370,11 @@ async function doSave() {
   }
 
   try {
-    // ✅ التحقق من رقم الهاتف
-    const phoneInput = document.getElementById('f_phone');
-    const phone = phoneInput?.value?.trim() || '';
+    // ✅ التصحيح: القراءة من _formStep1Data وليس من DOM
+    const phone = (_formStep1Data.phone || '').trim();
     const result = validatePhoneNumber(phone);
     
-    console.log('📞 doSave - phone:', phone);
+    console.log('📞 doSave - phone from _formStep1Data:', phone);
     console.log('📞 doSave - result:', result);
     
     if (!result.valid) {
@@ -1181,18 +1383,22 @@ async function doSave() {
         btn.disabled = false;
         btn.textContent = isEdit ? 'تحديث البيانات' : 'حفظ وإنشاء الشيت';
       }
-      if (phoneInput) {
-        phoneInput.focus();
-        phoneInput.select();
-        phoneInput.style.borderColor = '#dc2626';
-      }
+      // ✅ إعادة المستخدم للخطوة الأولى لتصحيح رقم الهاتف
+      goBackStep1();
+      setTimeout(() => {
+        const ph = document.getElementById('f_phone');
+        if (ph) {
+          ph.focus();
+          ph.style.borderColor = '#dc2626';
+          ph.select();
+        }
+      }, 200);
       return;
     }
 
     // ✅ إذا وصلنا هنا، رقم الهاتف صحيح
-    if (phoneInput) {
-      phoneInput.style.borderColor = '#16a34a';
-    }
+    // تحديث _formStep1Data بالرقم المؤكد
+    _formStep1Data.phone = phone;
 
     // ✅ التحقق من التغييرات في وضع التعديل
     let rebuildRequired = false;
@@ -1247,6 +1453,7 @@ async function doSave() {
       userBranchName: currentUser?.branchName || ''
     };
     
+    // ✅ استخدام phone من _formStep1Data
     formData.phone = phone;
     
     if (isEdit && selectedAccount) {
@@ -1324,6 +1531,9 @@ async function doSave() {
       closeModal();
       selectedAccount = null;
       directEditCustomerId = null;
+      // ✅ إعادة تعيين حالة التغييرات
+      _hasDataChanges = false;
+      _hasPriceChanges = false;
       await loadAccounts();
       showAlert(`✅ تم ${isEdit ? 'التحديث' : 'الحفظ'} بنجاح` + extra + rebuildMsg, '✅');
     } else {
@@ -1338,6 +1548,8 @@ async function doSave() {
     showAlert('❌ خطأ: ' + e.message, '❌');
   }
 }
+
+
 
   // ====================== التحقق من تغيير التواريخ والرحلات ======================
 function detectChanges() {
@@ -1774,7 +1986,6 @@ window.loadPriceInputs = loadPriceInputs;
 window.toggleSystemAccess = toggleSystemAccess;
 window.togglePasswordVisibility = togglePasswordVisibility;
 window.updateAutoEmail = updateAutoEmail;
-window.updateSaveButtonState = updateSaveButtonState;
 window.openPriceUpdateModal = openPriceUpdateModal;
 window.confirmPriceUpdate = confirmPriceUpdate;
 </script>
