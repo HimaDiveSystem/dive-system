@@ -182,6 +182,7 @@ loggedInUser = currentUser;
 
 // ✅ إضافة في بداية الملف بعد المتغيرات
 // ✅ إضافة في بداية الملف بعد المتغيرات
+// ✅ إضافة في بداية الملف بعد المتغيرات
 let allAccounts = [];
 let selectedAccount = null;
 let isEdit = false;
@@ -191,12 +192,14 @@ let tripsForCategory = [];
 let _currentCategory = '';
 let _editSheetDates = null;
 let _formStep1Data = {};
+let _originalFormData = null;  // ✅ إضافة هذا السطر
 let directEditCustomerId = null;
 window.resolveAlert = null;
-let _hasDataChanges = false;   // تغيير في بيانات الحساب
-let _hasPriceChanges = false;  // تغيير في الأسعار فقط
-let _initialState = null;      // حفظ الحالة الأولية للمقارنة
-// ====================== دوال الاتصال ======================
+let _hasDataChanges = false;
+let _hasPriceChanges = false;
+let _initialState = null;
+  
+  // ====================== دوال الاتصال ======================
 function gas(action, params = {}) {
   return new Promise((resolve, reject) => {
     const callbackName = 'jsonp_callback_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
@@ -355,53 +358,49 @@ function updateButtonsState() {
   console.log('🔘 updateButtonsState - isEdit:', isEdit, 'dataChanged:', dataChanged, 'priceChanged:', priceChanged, 'hasPriceOnlyChanges:', hasPriceOnlyChanges);
 }
 
-  // ====================== الكشف عن تغييرات بيانات الحساب ======================
 // ====================== الكشف عن تغييرات بيانات الحساب ======================
 function detectDataChanges() {
-  if (!isEdit || !selectedAccount) return false;
-  
-  // ✅ التحقق من تغيير الاسم (موجود في كل الخطوات)
-  const name = document.getElementById('f_name')?.value?.trim() || '';
-  if (name !== (selectedAccount.customerName || '')) return true;
-  
-  // ✅ ✅ ✅ التحقق من تغيير النوع - استخدام _formStep1Data
-  const type = _formStep1Data.customerType || '';
-  if (type !== (selectedAccount.customerType || '')) return true;
-  
-  // ✅ ✅ ✅ التحقق من تغيير النشاط - استخدام _formStep1Data
-  const cat = _formStep1Data.category || '';
-  if (cat !== (selectedAccount.category || '')) return true;
-  
-  // ✅ التحقق من تغيير الهاتف - استخدام _formStep1Data
-  const phone = (_formStep1Data.phone || '').trim();
-  if (phone !== (selectedAccount.phone || '')) return true;
-  
-  // ✅ التحقق من تغيير التواريخ - استخدام _formStep1Data
-  const start = _formStep1Data.startDate || '';
-  const end = _formStep1Data.endDate || '';
-  const oldStart = selectedAccount.startDate ? formatDateForInput(selectedAccount.startDate) : '';
-  const oldEnd = selectedAccount.endDate ? formatDateForInput(selectedAccount.endDate) : '';
-  if (start !== oldStart || end !== oldEnd) return true;
-  
-  // ✅ التحقق من تغيير الرحلات (لغير Submarine)
+  if (!isEdit || !selectedAccount || !_originalFormData) return false;
+
+  const f = _formStep1Data;
+  const o = _originalFormData;
+
+  if ((f.customerName || '') !== (o.customerName || '')) return true;
+  if ((f.customerType || '') !== (o.customerType || '')) return true;
+  if ((f.category || '')     !== (o.category || '')) return true;
+  if ((f.phone || '').trim() !== (o.phone || '').trim()) return true;
+  if ((f.startDate || '')    !== (o.startDate || '')) return true;
+  if ((f.endDate || '')      !== (o.endDate || '')) return true;
+  if ((f.parentCenter || '') !== (o.parentCenter || '')) return true;
+  if ((f.contactPerson || '')!== (o.contactPerson || '')) return true;
+  if ((f.email || '')        !== (o.email || '')) return true;
+  if ((f.address || '')      !== (o.address || '')) return true;
+  if ((f.paymentTerms || '') !== (o.paymentTerms || '')) return true;
+  if ((f.status || '')       !== (o.status || '')) return true;
+  if ((f.notes || '')        !== (o.notes || '')) return true;
+
+  // ✅ فحص الرحلات فقط إذا كانت شاشة الرحلات معروضة فعلياً (الخطوة 2)
   if (selectedAccount.category !== 'Submarine') {
-    const checkedTrips = [];
-    document.querySelectorAll('#tripsBox input[type=checkbox]:checked').forEach(cb => {
-      checkedTrips.push(cb.value);
-    });
-    const oldTrips = selectedAccount.assignedTrips ? selectedAccount.assignedTrips.split('|').filter(Boolean) : [];
-    if (JSON.stringify(checkedTrips.sort()) !== JSON.stringify(oldTrips.sort())) return true;
+    const tripsBox = document.getElementById('tripsBox');
+    if (tripsBox) {
+      const checkedTrips = [];
+      tripsBox.querySelectorAll('input[type=checkbox]:checked').forEach(cb => checkedTrips.push(cb.value));
+      const oldTrips = selectedAccount.assignedTrips ? selectedAccount.assignedTrips.split('|').filter(Boolean) : [];
+      if (JSON.stringify([...checkedTrips].sort()) !== JSON.stringify([...oldTrips].sort())) return true;
+    }
   }
-  
+
   return false;
 }
-  // ====================== الكشف عن تغييرات الأسعار ======================
+  
+ // ====================== الكشف عن تغييرات الأسعار ======================
 function detectPriceChanges() {
   if (!isEdit || !selectedAccount) return false;
-  
+  if (formStep !== 2) return false;   // ✅ الحقول غير موجودة بعد في الخطوة 1
+
   const cat = selectedAccount.category;
   const isSubmarine = (cat === 'Submarine');
-  
+
   if (isSubmarine) {
     // ✅ التحقق من تغيير أسعار Submarine
     const savedPrices = selectedAccount._existingPricesData || {};
@@ -831,7 +830,7 @@ async function openEdit() {
       selectedAccount._sheetInfo += `<br>📋 الرحلات المحددة: ${assignedTripsList.join(', ') || 'لا توجد'}`;
     }
     
-         // ✅ التأكد من حالة صلاحية الدخول
+    // ✅ التأكد من حالة صلاحية الدخول
     if (selectedAccount.loginEmail) {
       selectedAccount.hasSystemAccess = true;
       selectedAccount.loginEmail = selectedAccount.loginEmail;
@@ -842,6 +841,33 @@ async function openEdit() {
       selectedAccount.loginEmail = '';
       selectedAccount.loginPassword = '';
     }
+
+    // ✅ ✅ ✅ تهيئة _formStep1Data بالقيم الأصلية الحقيقية (وليس فارغة)
+    _formStep1Data = {
+      customerName:  selectedAccount.customerName || '',
+      customerType:  selectedAccount.customerType || 'Customer',
+      category:      selectedAccount.category || '',
+      parentCenter:  selectedAccount.parentCenter || '',
+      contactPerson: selectedAccount.contactPerson || '',
+      phone:         selectedAccount.phone || '',
+      email:         selectedAccount.email || '',
+      address:       selectedAccount.address || '',
+      startDate:     formatDateForInput(selectedAccount._sheetFirstDateISO || selectedAccount.startDate || ''),
+      endDate:       formatDateForInput(selectedAccount._sheetLastDateISO || selectedAccount.endDate || ''),
+      paymentTerms:  selectedAccount.paymentTerms || '',
+      status:        selectedAccount.status !== false ? 'true' : 'false',
+      notes:         selectedAccount.notes || '',
+      hasSystemAccess: selectedAccount.hasSystemAccess ? 'true' : 'false',
+      loginEmail:    selectedAccount.loginEmail || '',
+      loginPassword: selectedAccount.loginPassword || '',
+      userCenterId: currentUser?.centerId || '',
+      userBranchId: currentUser?.branchId || '',
+      userCenterName: currentUser?.centerName || '',
+      userBranchName: currentUser?.branchName || ''
+    };
+
+    // ✅ نسخة "أصلية" ثابتة للمقارنة عليها لاحقاً
+    _originalFormData = JSON.parse(JSON.stringify(_formStep1Data));
 
     // ✅ ✅ ✅ التأكد من وجود رقم الهاتف في selectedAccount
     console.log('📞 openEdit - selectedAccount.phone:', selectedAccount.phone);
@@ -857,17 +883,16 @@ async function openEdit() {
 
     renderStep1(selectedAccount);
 
-   // ✅ في openEdit، قم بتعديل هذا الجزء
-setTimeout(function() {
-  updateButtonsState();
-  const phoneField = document.getElementById('f_phone');
-  if (phoneField && selectedAccount?.phone) {
-    phoneField.value = selectedAccount.phone;
-    console.log('📞 تم تعيين حقل الهاتف:', phoneField.value);
-  }
-  console.log('تم استدعاء updateButtonsState بعد التحميل');
-}, 100);
-
+    // ✅ في openEdit، قم بتعديل هذا الجزء
+    setTimeout(function() {
+      updateButtonsState();
+      const phoneField = document.getElementById('f_phone');
+      if (phoneField && selectedAccount?.phone) {
+        phoneField.value = selectedAccount.phone;
+        console.log('📞 تم تعيين حقل الهاتف:', phoneField.value);
+      }
+      console.log('تم استدعاء updateButtonsState بعد التحميل');
+    }, 100);
 
   } catch(e) {
     console.error('خطأ في openEdit:', e);
@@ -948,34 +973,30 @@ function formatPhoneOnInput(input) {
   // نسمح للمستخدم بكتابة أي شيء، لكن نعرض التحذير إذا كان غير صحيح
   validatePhone(input);
 }
-  // ====================== إضافة مستمعات الأحداث للكشف عن التغييرات ======================
+ // ====================== إضافة مستمعات الأحداث للكشف عن التغييرات ======================
 function setupChangeListeners() {
-  // ✅ حقل الاسم
-  const nameField = document.getElementById('f_name');
-  if (nameField) nameField.addEventListener('input', updateButtonsState);
-  
-  // ✅ حقل النوع
-  const typeField = document.getElementById('f_type');
-  if (typeField) typeField.addEventListener('change', updateButtonsState);
-  
-  // ✅ حقل النشاط
-  const catField = document.getElementById('f_cat');
-  if (catField) catField.addEventListener('change', updateButtonsState);
-  
-  // ✅ حقل الهاتف
-  const phoneField = document.getElementById('f_phone');
-  if (phoneField) phoneField.addEventListener('input', updateButtonsState);
-  
-  // ✅ حقول التواريخ
-  const startField = document.getElementById('f_start');
-  const endField = document.getElementById('f_end');
-  if (startField) startField.addEventListener('change', updateButtonsState);
-  if (endField) endField.addEventListener('change', updateButtonsState);
-  
-  // ✅ حقول الأسعار (تضاف في renderStep2)
-  // ستتم إضافتها ديناميكياً بعد تحميل الأسعار
+  const bind = (id, prop, evt = 'input') => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener(evt, () => {
+      _formStep1Data[prop] = (el.value ?? '').toString().trim ? el.value.toString().trim() : el.value;
+      updateButtonsState();
+    });
+  };
+  bind('f_name', 'customerName');
+  bind('f_type', 'customerType', 'change');
+  bind('f_cat', 'category', 'change');
+  bind('f_parent', 'parentCenter');
+  bind('f_contact', 'contactPerson');
+  bind('f_phone', 'phone');
+  bind('f_email', 'email');
+  bind('f_address', 'address');
+  bind('f_start', 'startDate', 'change');
+  bind('f_end', 'endDate', 'change');
+  bind('f_terms', 'paymentTerms');
+  bind('f_status', 'status', 'change');
+  bind('f_notes', 'notes');
 }
-
 // دالة لإضافة مستمعات لأسعار Submarine
 function setupSubmarinePriceListeners() {
   for (const c of ['F', 'Aarab', 'Arab48', 'EGY']) {
@@ -1197,7 +1218,7 @@ function renderStep1(data) {
         <input type="tel" class="fc" id="f_phone" 
                value="${(phoneValue || '').replace(/"/g, '&quot;')}" 
                placeholder="مثال: 01234567890"
-               oninput="validatePhone(this); _formStep1Data.phone = this.value.trim(); updateButtonsState();">
+               oninput="validatePhone(this); updateButtonsState();">
         <small style="color:#94a3b8;font-size:10px;">10 أرقام على الأقل</small>
       </div>
       <div class="fgroup"><label>البريد الإلكتروني</label><input type="email" class="fc" id="f_email" value="${(data.email||'').replace(/"/g, '&quot;')}" oninput="updateButtonsState()"></div>
@@ -1661,56 +1682,43 @@ const confirmed = await new Promise((resolve) => {
 }
 
 
-  // ====================== التحقق من تغيير التواريخ والرحلات ======================
+// ====================== التحقق من تغيير التواريخ والرحلات ======================
 function detectChanges() {
   const changes = {
-    datesChanged: false,
-    tripsChanged: false,
-    newStartDate: null,
-    newEndDate: null,
-    oldStartDate: null,
-    oldEndDate: null,
-    newTrips: [],
-    oldTrips: []
+    datesChanged: false, tripsChanged: false,
+    newStartDate: null, newEndDate: null,
+    oldStartDate: null, oldEndDate: null,
+    newTrips: [], oldTrips: []
   };
-  
-  if (!isEdit || !selectedAccount) return changes;
-  
-  // ✅ التحقق من تغيير التواريخ
-  const newStart = document.getElementById('f_start')?.value || '';
-  const newEnd = document.getElementById('f_end')?.value || '';
-  const oldStart = selectedAccount.startDate ? formatDateForInput(selectedAccount.startDate) : '';
-  const oldEnd = selectedAccount.endDate ? formatDateForInput(selectedAccount.endDate) : '';
-  
+
+  if (!isEdit || !selectedAccount || !_originalFormData) return changes;
+
+  // ✅ القراءة من _formStep1Data بدل DOM (الحقول قد لا تكون موجودة في الخطوة 2)
+  const newStart = _formStep1Data.startDate || '';
+  const newEnd   = _formStep1Data.endDate || '';
+  const oldStart = _originalFormData.startDate || '';
+  const oldEnd   = _originalFormData.endDate || '';
+
   changes.newStartDate = newStart;
   changes.newEndDate = newEnd;
   changes.oldStartDate = oldStart;
   changes.oldEndDate = oldEnd;
-  
-  // ✅ ✅ ✅ مقارنة التواريخ كسلاسل نصية موحدة
+
   if (newStart !== oldStart || newEnd !== oldEnd) {
     changes.datesChanged = true;
   }
-  
-  // ✅ التحقق من تغيير الرحلات
+
   if (selectedAccount.category !== 'Submarine') {
     const checkedTrips = [];
-    document.querySelectorAll('#tripsBox input[type=checkbox]:checked').forEach(cb => {
-      checkedTrips.push(cb.value);
-    });
-    
+    document.querySelectorAll('#tripsBox input[type=checkbox]:checked').forEach(cb => checkedTrips.push(cb.value));
     const oldTrips = selectedAccount.assignedTrips ? selectedAccount.assignedTrips.split('|').filter(Boolean) : [];
-    const oldTripsSorted = [...oldTrips].sort();
-    const newTripsSorted = [...checkedTrips].sort();
-    
     changes.newTrips = checkedTrips;
     changes.oldTrips = oldTrips;
-    
-    if (JSON.stringify(oldTripsSorted) !== JSON.stringify(newTripsSorted)) {
+    if (JSON.stringify([...oldTrips].sort()) !== JSON.stringify([...checkedTrips].sort())) {
       changes.tripsChanged = true;
     }
   }
-  
+
   return changes;
 }
 // ====================== تحديث الأسعار من تاريخ محدد ======================
