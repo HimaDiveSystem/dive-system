@@ -473,7 +473,9 @@ function showAlert(msg, icon, btns) {
   
   const alertModal = document.getElementById('alertModal');
   if (!alertModal) {
-    // ✅ إذا لم يكن هناك عنصر، قم بإنشائه (لأغراض الأمان)
+    console.warn('⚠️ alertModal not found, creating fallback');
+    // ✅ إنشاء تنبيه بديل باستخدام alert إذا لم يوجد العنصر
+    alert(msg);
     return;
   }
   
@@ -482,7 +484,7 @@ function showAlert(msg, icon, btns) {
   document.getElementById('alertBtns').innerHTML = btns || '<button class="btn btn-navy" onclick="closeAlert()">موافق</button>';
   alertModal.classList.add('open');
   
-  // ✅ إضافة timeout تلقائي للإغلاق بعد 30 ثانية (لمنع تعليق التطبيق)
+  // ✅ إضافة timeout تلقائي للإغلاق بعد 30 ثانية
   alertTimeout = setTimeout(function() {
     closeAlert();
   }, 30000);
@@ -1737,6 +1739,13 @@ async function openPriceUpdateModal() {
     return;
   }
   
+  // ✅ تغيير نص زر "تحديث الأسعار" إلى "جاري تحميل الأسعار..."
+  const priceBtn = document.getElementById('priceUpdateBtn');
+  if (priceBtn) {
+    priceBtn.disabled = true;
+    priceBtn.textContent = '⏳ جاري تحميل الأسعار...';
+  }
+  
   // الحصول على آخر تاريخ في شيت العميل
   let lastDate = '';
   let firstDate = '';
@@ -1768,8 +1777,9 @@ async function openPriceUpdateModal() {
       </div>
       <div class="modal-footer" style="margin-top:20px;">
         <button class="btn btn-green" id="confirmPriceUpdateBtn" onclick="confirmPriceUpdate()">💾 تطبيق الأسعار الجديدة</button>
-        <button class="btn btn-gray" onclick="this.closest('.modal').remove()">إلغاء</button>
-      </div>
+       // السطر الجديد (المعدل)
+<button class="btn btn-gray" onclick="this.closest('.modal').remove(); restorePriceButton();">إلغاء</button>
+</div>
     </div>
   `;
   document.body.appendChild(modal);
@@ -1788,6 +1798,9 @@ async function openPriceUpdateModal() {
   
   // تحميل الأسعار الحالية من آخر تاريخ
   await loadCurrentPricesForDate(lastDate);
+  
+  // ✅ إعادة تفعيل زر "تحديث الأسعار" بعد تحميل الأسعار
+  restorePriceButton();
 }
   
 
@@ -1943,6 +1956,16 @@ async function loadCurrentPricesForDate(dateISO) {
     area.innerHTML = '<div class="no-data">خطأ في تحميل الأسعار: ' + e.message + '</div>';
   }
 }
+  // ====================== استعادة زر تحديث الأسعار ======================
+function restorePriceButton() {
+  const priceBtn = document.getElementById('priceUpdateBtn');
+  if (priceBtn) {
+    priceBtn.disabled = false;
+    priceBtn.textContent = '💰 تحديث الأسعار';
+    // ✅ تحديث حالة الزر بناءً على التغييرات
+    updateButtonsState();
+  }
+}
 async function confirmPriceUpdate() {
   const startDate = document.getElementById('priceStartDate')?.value;
   if (!startDate) {
@@ -1971,9 +1994,18 @@ async function confirmPriceUpdate() {
   }
   
   const btn = document.getElementById('confirmPriceUpdateBtn');
+  const modalElement = document.querySelector('.modal');
+  
+  // ✅ تغيير نص زر "تحديث الأسعار" في الأسفل
+  const priceBtn = document.getElementById('priceUpdateBtn');
+  if (priceBtn) {
+    priceBtn.disabled = true;
+    priceBtn.textContent = '⏳ جاري تحديث الأسعار...';
+  }
+  
   if (btn) {
     btn.disabled = true;
-    btn.textContent = '⏳ جاري التحديث...';
+    btn.textContent = '⏳ جاري تطبيق الأسعار الجديدة...';
   }
   
   try {
@@ -1985,31 +2017,52 @@ async function confirmPriceUpdate() {
       centerName: currentUser?.centerName || ''
     });
     
+    // ✅ إغلاق النافذة المنبثقة
+    if (modalElement) {
+      modalElement.remove();
+    }
+    
     if (result?.success) {
-      // ✅ إغلاق النافذة المنبثقة أولاً
-      const modal = document.querySelector('.modal');
-      if (modal) modal.remove();
-      
-      // ✅ ثم عرض رسالة النجاح
       showAlert(`✅ تم تحديث الأسعار بنجاح (تم تحديث ${result.updatedRows || 0} يوم)`, '✅');
       
-      // ✅ تحديث حالة الأزرار
+      // ✅ تحديث الأسعار المحفوظة
+      if (selectedAccount) {
+        try {
+          const updatedPrices = JSON.parse(result.pricesData || '{}');
+          if (Object.keys(updatedPrices).length > 0) {
+            selectedAccount._existingPricesData = updatedPrices;
+          }
+        } catch(e) {}
+      }
+      
+      // ✅ تحديث حالة الأزرار بعد نجاح التحديث
       setTimeout(function() {
+        // ✅ إعادة تعيين زر تحديث الأسعار
+        if (priceBtn) {
+          priceBtn.disabled = false;
+          priceBtn.textContent = '💰 تحديث الأسعار';
+        }
         updateButtonsState();
       }, 500);
       
     } else {
-      // ✅ إغلاق النافذة المنبثقة أولاً
-      const modal = document.querySelector('.modal');
-      if (modal) modal.remove();
-      
+      // ✅ استعادة الزر في حالة الفشل
+      if (priceBtn) {
+        priceBtn.disabled = false;
+        priceBtn.textContent = '💰 تحديث الأسعار';
+      }
       showAlert('❌ ' + (result?.message || 'فشل تحديث الأسعار'), '❌');
     }
   } catch(e) {
-    // ✅ إغلاق النافذة المنبثقة أولاً
-    const modal = document.querySelector('.modal');
-    if (modal) modal.remove();
-    
+    // ✅ إغلاق النافذة المنبثقة في حالة الخطأ
+    if (modalElement) {
+      modalElement.remove();
+    }
+    // ✅ استعادة الزر
+    if (priceBtn) {
+      priceBtn.disabled = false;
+      priceBtn.textContent = '💰 تحديث الأسعار';
+    }
     showAlert('❌ خطأ: ' + e.message, '❌');
   } finally {
     if (btn) {
