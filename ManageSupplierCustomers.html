@@ -473,6 +473,11 @@ function showAlert(msg, icon, btns) {
   document.getElementById('alertMsg').textContent = msg;
   document.getElementById('alertBtns').innerHTML = btns || '<button class="btn btn-navy" onclick="closeAlert()">موافق</button>';
   document.getElementById('alertModal').classList.add('open');
+  
+  // ✅ إضافة timeout تلقائي للإغلاق بعد 30 ثانية (لمنع تعليق التطبيق)
+  alertTimeout = setTimeout(function() {
+    closeAlert();
+  }, 30000);
 }
 
 function closeAlert() { 
@@ -545,10 +550,12 @@ function toggleSystemAccess(show) {
   if (loginFields) {
     loginFields.style.display = show ? 'block' : 'none';
   }
+  // ✅ تحديث البريد الإلكتروني تلقائياً إذا كان فارغاً
   if (show && document.getElementById('f_loginEmail') && document.getElementById('f_name')) {
     const name = document.getElementById('f_name').value.trim();
-    if (name && !document.getElementById('f_loginEmail').value) {
-      document.getElementById('f_loginEmail').value = generateAutoEmail(name);
+    const emailField = document.getElementById('f_loginEmail');
+    if (name && !emailField.value) {
+      emailField.value = generateAutoEmail(name);
     }
   }
 }
@@ -822,10 +829,16 @@ async function openEdit() {
       selectedAccount._sheetInfo += `<br>📋 الرحلات المحددة: ${assignedTripsList.join(', ') || 'لا توجد'}`;
     }
     
+         // ✅ التأكد من حالة صلاحية الدخول
     if (selectedAccount.loginEmail) {
       selectedAccount.hasSystemAccess = true;
       selectedAccount.loginEmail = selectedAccount.loginEmail;
       selectedAccount.loginPassword = selectedAccount.loginPassword || '';
+    } else {
+      // ✅ إذا لم يكن هناك بريد إلكتروني، لا تمنح صلاحية
+      selectedAccount.hasSystemAccess = false;
+      selectedAccount.loginEmail = '';
+      selectedAccount.loginPassword = '';
     }
 
     // ✅ ✅ ✅ التأكد من وجود رقم الهاتف في selectedAccount
@@ -1139,6 +1152,7 @@ async function loadPriceInputs() {
   updateButtonsState();
 }
 // ====================== الخطوة 1: البيانات الأساسية ======================
+// ====================== الخطوة 1: البيانات الأساسية ======================
 function renderStep1(data) {
   setStepUI(1);
   const CATEGORIES = ['Submarine','Safari','Water Sports','Diving','Tourism Company','Excursions'];
@@ -1146,7 +1160,7 @@ function renderStep1(data) {
   const endDate = formatDateForInput(data._sheetLastDateISO || data.endDate || '');
   const isCustomer = data.customerType === 'Customer';
   const hasSystemAccess = data.hasSystemAccess === true || data.hasSystemAccess === 'true';
-  const loginEmail = data.loginEmail || (isCustomer && data.customerName ? generateAutoEmail(data.customerName) : '');
+  const loginEmail = data.loginEmail || (data.customerName ? generateAutoEmail(data.customerName) : '');
   const loginPassword = data.loginPassword || '';
 
   // ✅ التأكد من قيمة الهاتف
@@ -1157,7 +1171,7 @@ function renderStep1(data) {
     <div class="fgrid">
       <div class="fgroup"><label class="req">اسم العميل/المنفذ</label><input type="text" class="fc" id="f_name" value="${(data.customerName||'').replace(/"/g, '&quot;')}" oninput="updateAutoEmail(); updateButtonsState();"></div>
       <div class="fgroup"><label class="req">نوع الحساب</label>
-        <select class="fc" id="f_type" onchange="toggleSystemAccess(this.value === 'Customer' && document.getElementById('f_hasSystemAccess')?.checked); updateButtonsState();">
+        <select class="fc" id="f_type" onchange="toggleSystemAccess(document.getElementById('f_hasSystemAccess')?.checked); updateButtonsState();">
           <option value="Customer" ${data.customerType==='Customer'?'selected':''}>عميل</option>
           <option value="Supplier" ${data.customerType==='Supplier'?'selected':''}>منفذ</option>
         </select>
@@ -1193,7 +1207,7 @@ function renderStep1(data) {
         </select>
       </div>`;
 
-  // ✅ إظهار خيار صلاحية الدخول لكل من العملاء والمنفذين
+  // ✅ إظهار خيار صلاحية الدخول للجميع (عملاء ومنفذين)
   document.getElementById('formContent').innerHTML += `
     <div class="fgroup" style="grid-column:1/-1">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
@@ -1202,7 +1216,7 @@ function renderStep1(data) {
       </label>
     </div>
     <div class="fgroup" style="grid-column:1/-1"><label>ملاحظات</label><textarea class="fc" id="f_notes" rows="2" oninput="updateButtonsState()">${(data.notes||'').replace(/</g,'&lt;')}</textarea></div>
-    <div id="loginFields" class="login-fields" style="grid-column:1/-1; display: ${hasSystemAccess && isCustomer ? 'block' : 'none'}">
+    <div id="loginFields" class="login-fields" style="grid-column:1/-1; display: ${hasSystemAccess ? 'block' : 'none'}">
       <div style="margin-bottom:12px;"><strong>🔐 بيانات تسجيل الدخول</strong></div>
       <div class="fgrid">
         <div class="fgroup"><label>البريد الإلكتروني</label><input type="email" class="fc" id="f_loginEmail" value="${(loginEmail||'').replace(/"/g, '&quot;')}" placeholder="auto@system.com" oninput="updateButtonsState()"></div>
@@ -1246,8 +1260,6 @@ function renderStep1(data) {
   }, 100);
 }
 
-
-// ====================== الخطوة 2: الرحلات والأسعار ======================
 // ====================== الخطوة 2: الرحلات والأسعار ======================
 function renderStep2(cat) {
   const isSubmarine = (cat === 'Submarine');
@@ -1478,27 +1490,32 @@ async function doSave() {
           btn.textContent = '⏳ في انتظار التأكيد...';
         }
         
-        // ✅ استخدام Promise مع تعطيل الـ timeout المؤقت
-        const confirmed = await new Promise((resolve) => {
-          // ✅ تعيين resolveAlert مع تعطيل timeout
-          window.resolveAlert = (value) => {
-            window.resolveAlert = null;
-            // ✅ إلغاء أي timeout في showAlert
-            if (alertTimeout) {
-              clearTimeout(alertTimeout);
-              alertTimeout = null;
-            }
-            resolve(value);
-          };
-          
-          showAlert(
-            confirmMessage,
-            '⚠️',
-            `<button class="btn btn-green" id="confirmRebuildBtn" onclick="window.resolveAlert(true); closeAlert();">✅ نعم، متابعة</button>
-             <button class="btn btn-gray" onclick="window.resolveAlert(false); closeAlert();">❌ إلغاء</button>`
-          );
-        });
-        
+              // ✅ في دالة doSave، عند عرض رسالة التأكيد
+const confirmed = await new Promise((resolve) => {
+  // ✅ إلغاء أي timeout سابق
+  if (alertTimeout) {
+    clearTimeout(alertTimeout);
+    alertTimeout = null;
+  }
+  
+  window.resolveAlert = (value) => {
+    window.resolveAlert = null;
+    // ✅ إلغاء أي timeout
+    if (alertTimeout) {
+      clearTimeout(alertTimeout);
+      alertTimeout = null;
+    }
+    resolve(value);
+  };
+  
+  showAlert(
+    confirmMessage,
+    '⚠️',
+    `<button class="btn btn-green" id="confirmRebuildBtn" onclick="window.resolveAlert(true); closeAlert();">✅ نعم، متابعة</button>
+     <button class="btn btn-gray" onclick="window.resolveAlert(false); closeAlert();">❌ إلغاء</button>`
+  );
+});
+             
         // ✅ إعادة تفعيل زر الحفظ بعد التأكيد
         if (btn) {
           btn.disabled = false;
