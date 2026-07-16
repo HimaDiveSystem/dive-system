@@ -1963,15 +1963,24 @@ function restorePriceButton() {
     updateButtonsState();
   }
 }
-async function confirmPriceUpdate() {
-  const startDate = document.getElementById('priceStartDate')?.value;
-  if (!startDate) {
-    showAlert('الرجاء إدخال تاريخ بداية تحديث الأسعار', '⚠️');
+  async function confirmPriceUpdate() {
+  // ✅ 1. التحقق من وجود selectedAccount
+  if (!selectedAccount) {
+    showCustomAlert('❌ خطأ', 'لم يتم تحديد حساب للتحديث', 'error');
     return;
   }
   
+  const startDate = document.getElementById('priceStartDate')?.value;
+  if (!startDate) {
+    showCustomAlert('⚠️ تنبيه', 'الرجاء إدخال تاريخ بداية تحديث الأسعار', 'warning');
+    return;
+  }
+  
+  // ✅ 2. جمع الأسعار مع تحسين معالجة القيم
   const pricesData = {};
   const priceInputs = document.querySelectorAll('#priceUpdateItemsArea input[type="number"]');
+  let hasValidPrices = false;
+  
   for (const input of priceInputs) {
     const id = input.id;
     if (id && id.startsWith('pp_')) {
@@ -1979,31 +1988,41 @@ async function confirmPriceUpdate() {
       const price = parseFloat(input.value) || 0;
       const currencySelect = document.getElementById(`pc_${key}`);
       const currency = currencySelect ? currencySelect.value : 'LE';
+      
+      // ✅ تخزين جميع الأسعار حتى لو كانت 0 (لحذف الأسعار القديمة)
+      pricesData[key] = { price, currency };
       if (price > 0) {
-        pricesData[key] = { price, currency };
+        hasValidPrices = true;
       }
     }
   }
   
-  if (Object.keys(pricesData).length === 0) {
-    showAlert('لا توجد أسعار جديدة للتحديث', '⚠️');
+  // ✅ 3. التحقق من وجود أسعار صالحة
+  if (!hasValidPrices || Object.keys(pricesData).length === 0) {
+    showCustomAlert('⚠️ تنبيه', 'لا توجد أسعار جديدة للتحديث. يرجى إدخال أسعار صالحة.', 'warning');
     return;
   }
   
+  // ✅ 4. عناصر التحكم
   const btn = document.getElementById('confirmPriceUpdateBtn');
   const modalElement = document.querySelector('.modal');
   const priceBtn = document.getElementById('priceUpdateBtn');
   
-  // ✅ تغيير نص زر "تحديث الأسعار" في الأسفل
+  // ✅ 5. تعطيل الأزرار وتغيير النصوص
   if (priceBtn) {
     priceBtn.disabled = true;
     priceBtn.textContent = '⏳ جاري تحديث الأسعار...';
+    priceBtn.style.opacity = '0.6';
   }
   
   if (btn) {
     btn.disabled = true;
-    btn.textContent = '⏳ جاري تطبيق الأسعار الجديدة...';
+    btn.textContent = '⏳ جاري التطبيق...';
+    btn.style.opacity = '0.6';
   }
+  
+  // ✅ 6. حفظ المرجع للـ modal
+  const modalRef = modalElement;
   
   try {
     const result = await gasPost({
@@ -2014,64 +2033,113 @@ async function confirmPriceUpdate() {
       centerName: currentUser?.centerName || ''
     });
     
-    // ✅ إغلاق النافذة المنبثقة
-    if (modalElement && modalElement.parentNode) {
-      modalElement.parentNode.removeChild(modalElement);
-    }
-    
-    // ✅ استعادة زر تحديث الأسعار
+    // ✅ 7. استعادة الأزرار
     if (priceBtn) {
       priceBtn.disabled = false;
       priceBtn.textContent = '💰 تحديث الأسعار';
+      priceBtn.style.opacity = '1';
     }
     
     if (result?.success) {
-      // ✅ عرض رسالة نجاح احترافية
       const updatedRows = result.updatedRows || 0;
-      showCustomAlert(
-        '✅ تم تحديث الأسعار بنجاح',
-        `تم تحديث ${updatedRows} يوم من الأسعار في شيت الحساب`,
-        'success'
-      );
       
-      // ✅ تحديث الأسعار المحفوظة
+      // ✅ 8. تحديث الأسعار المحفوظة
       if (selectedAccount) {
         try {
+          // ✅ دمج الأسعار الجديدة مع القديمة
           const updatedPrices = JSON.parse(result.pricesData || '{}');
           if (Object.keys(updatedPrices).length > 0) {
-            selectedAccount._existingPricesData = updatedPrices;
+            selectedAccount._existingPricesData = {
+              ...selectedAccount._existingPricesData,
+              ...updatedPrices
+            };
           }
-        } catch(e) {}
+        } catch(e) {
+          console.warn('⚠️ فشل تحديث الأسعار المحفوظة:', e);
+        }
       }
       
-      // ✅ تحديث حالة الأزرار
-      setTimeout(function() {
-        updateButtonsState();
-      }, 500);
+      // ✅ 9. إغلاق النوافذ
+      if (modalRef && modalRef.parentNode) {
+        modalRef.parentNode.removeChild(modalRef);
+      }
+      
+      // ✅ 10. إعادة تعيين الحالة
+      const accountName = selectedAccount?.customerName || '';
+      selectedAccount = null;
+      directEditCustomerId = null;
+      _hasDataChanges = false;
+      _hasPriceChanges = false;
+      
+      // ✅ 11. عرض رسالة نجاح مع تفاصيل أكثر
+      const successMessage = updatedRows > 0 
+        ? `تم تحديث ${updatedRows} يوم من الأسعار في شيت الحساب "${accountName}"`
+        : 'تم تحديث الأسعار بنجاح في شيت الحساب';
+      
+      showCustomAlert(
+        '✅ تم تحديث الأسعار بنجاح',
+        successMessage,
+        'success',
+        function() {
+          // ✅ 12. إغلاق نافذة التعديل الرئيسية
+          closeModal();
+          // ✅ 13. تحميل قائمة الحسابات
+          loadAccounts();
+        }
+      );
       
     } else {
-      showCustomAlert('❌ فشل تحديث الأسعار', result?.message || 'حدث خطأ أثناء تحديث الأسعار', 'error');
+      // ✅ 14. معالجة حالة الفشل
+      if (modalRef && modalRef.parentNode) {
+        modalRef.parentNode.removeChild(modalRef);
+      }
+      showCustomAlert(
+        '❌ فشل تحديث الأسعار', 
+        result?.message || 'حدث خطأ أثناء تحديث الأسعار. يرجى المحاولة مرة أخرى.', 
+        'error'
+      );
     }
+    
   } catch(e) {
-    // ✅ إغلاق النافذة المنبثقة في حالة الخطأ
-    if (modalElement && modalElement.parentNode) {
-      modalElement.parentNode.removeChild(modalElement);
+    console.error('❌ confirmPriceUpdate error:', e);
+    
+    // ✅ 15. معالجة الأخطاء
+    if (modalRef && modalRef.parentNode) {
+      modalRef.parentNode.removeChild(modalRef);
     }
-    // ✅ استعادة الزر
+    
     if (priceBtn) {
       priceBtn.disabled = false;
       priceBtn.textContent = '💰 تحديث الأسعار';
+      priceBtn.style.opacity = '1';
     }
-    showCustomAlert('❌ خطأ', e.message, 'error');
+    
+    // ✅ 16. رسالة خطأ واضحة
+    let errorMessage = 'حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى.';
+    if (e.message) {
+      if (e.message.includes('timeout')) {
+        errorMessage = 'انتهى وقت الاتصال. يرجى التحقق من الاتصال بالإنترنت والمحاولة مرة أخرى.';
+      } else if (e.message.includes('network')) {
+        errorMessage = 'فشل الاتصال بالخادم. يرجى التحقق من الاتصال بالإنترنت.';
+      } else {
+        errorMessage = e.message;
+      }
+    }
+    
+    showCustomAlert('❌ خطأ', errorMessage, 'error');
+    
   } finally {
+    // ✅ 17. استعادة زر التأكيد
     if (btn) {
       btn.disabled = false;
       btn.textContent = '💾 تطبيق الأسعار الجديدة';
+      btn.style.opacity = '1';
     }
   }
 }
-  // ====================== عرض رسالة منبثقة احترافية ======================
-function showCustomAlert(title, message, type = 'info') {
+
+ // ====================== عرض رسالة منبثقة احترافية ======================
+function showCustomAlert(title, message, type = 'info', callback = null) {
   // ✅ إزالة أي تنبيه سابق
   const existingAlert = document.querySelector('.custom-alert-overlay');
   if (existingAlert) {
@@ -2115,7 +2183,7 @@ function showCustomAlert(title, message, type = 'info') {
       <div style="font-size: 48px; margin-bottom: 10px;">${style.icon}</div>
       <h3 style="color: #0f1f3d; font-size: 20px; font-weight: 900; margin-bottom: 8px;">${title}</h3>
       <p style="color: #5a6a8a; font-size: 14px; margin-bottom: 20px; line-height: 1.6;">${message}</p>
-      <button onclick="this.closest('.custom-alert-overlay').remove()" style="
+      <button id="customAlertOkBtn" style="
         background: ${style.border};
         color: white;
         border: none;
@@ -2152,8 +2220,25 @@ function showCustomAlert(title, message, type = 'info') {
   overlay.addEventListener('click', function(e) {
     if (e.target === this) {
       this.remove();
+      if (typeof callback === 'function') {
+        callback();
+      }
     }
   });
+  
+  // ✅ زر "موافق" مع callback
+  const okBtn = document.getElementById('customAlertOkBtn');
+  if (okBtn) {
+    okBtn.addEventListener('click', function() {
+      const overlayParent = this.closest('.custom-alert-overlay');
+      if (overlayParent) {
+        overlayParent.remove();
+      }
+      if (typeof callback === 'function') {
+        callback();
+      }
+    });
+  }
 }
 
 function escapeHtml(str) {
