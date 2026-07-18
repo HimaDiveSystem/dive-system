@@ -452,8 +452,79 @@ function hidePDFOv(){document.getElementById('pdfOverlay').classList.remove('sho
 function showAlert(msg,icon,btns){document.getElementById('alertMsg').textContent=msg;document.getElementById('alertIcon').textContent=icon||'ℹ️';document.getElementById('alertBtns').innerHTML=btns||'<button class="btn btn-save" onclick="closeAlert()">OK</button>';document.getElementById('alertModal').classList.add('open');}
 function closeAlert(){document.getElementById('alertModal').classList.remove('open');}
 function setBtns(d){['btnSave','btnNewBooking','btnClear'].forEach(id=>{const e=document.getElementById(id);if(e)e.disabled=d;});}
-function showPDFsModal(links){const lh=links.map(v=>`<a href="${v.url}" target="_blank" rel="noopener" style="display:block;background:linear-gradient(135deg,#16a34a,#15803d);color:white;padding:8px 18px;border-radius:30px;font-weight:700;font-size:13px;text-decoration:none;margin:4px auto;width:fit-content">📄 ${v.voucherNo}</a>`).join('');showAlert(links.length>1?`✅ ${links.length} فاتورة تم حفظها`:'✅ تم حفظ الفاتورة','✅',lh+`<button class="btn btn-save" onclick="closeAlert()" style="margin-top:8px">OK</button>`);}
-
+function showPDFsModal(links){
+  const lh = links.map(v => `
+    <div style="display:flex; gap:8px; justify-content:center; align-items:center; margin:4px auto; width:fit-content;">
+      <a href="${v.url}" target="_blank" rel="noopener" style="display:inline-flex; align-items:center; gap:6px; background:linear-gradient(135deg,#2563eb,#1d4ed8); color:white; padding:8px 18px; border-radius:30px; font-weight:700; font-size:13px; text-decoration:none;">
+        📄 ${v.voucherNo}
+      </a>
+      <button onclick="shareInvoiceWhatsApp('${v.voucherNo}')" 
+              style="background:#25D366; border:none; color:white; padding:8px 16px; border-radius:30px; font-weight:700; font-size:13px; cursor:pointer; display:inline-flex; align-items:center; gap:5px;">
+        📱 واتساب
+      </button>
+    </div>
+  `).join('');
+  
+  showAlert(links.length > 1 ? `✅ ${links.length} فاتورة تم حفظها` : '✅ تم حفظ الفاتورة', '✅', 
+    lh + `<button class="btn btn-save" onclick="closeAlert()" style="margin-top:8px">OK</button>`
+  );
+}
+  async function shareInvoiceWhatsApp(voucherNo) {
+  try {
+    showPDFOv('📱 جاري تجهيز المشاركة...');
+    
+    // ✅ جلب بيانات الفاتورة من الخادم
+    const invoice = await gas('getInvoiceByVoucher', { voucherNo: voucherNo });
+    
+    if (!invoice || !invoice.success) {
+      hidePDFOv();
+      showAlert('❌ لم يتم العثور على الفاتورة', '❌');
+      return;
+    }
+    
+    const data = invoice.invoice;
+    
+    // ✅ استخراج رقم الهاتف
+    let phone = data.contactNo || '';
+    // تنظيف رقم الهاتف
+    phone = phone.replace(/[^0-9+]/g, '');
+    if (phone.startsWith('0')) phone = '20' + phone.substring(1);
+    if (!phone.startsWith('+')) phone = '+' + phone;
+    
+    if (!phone || phone === '+') {
+      hidePDFOv();
+      showAlert('❌ لا يوجد رقم هاتف للعميل', '❌');
+      return;
+    }
+    
+    // ✅ بناء رابط PDF (إذا كان موجوداً)
+    const pdfUrl = data.invoicePdf || '';
+    const pdfLink = pdfUrl ? `%0A📄 *رابط PDF:* ${pdfUrl}` : '';
+    
+    // ✅ بناء الرسالة
+    const message = `🧾 *فاتورة حجز*%0A` +
+                   `*رقم:* ${data.voucherNo || ''}%0A` +
+                   `*العميل:* ${data.guestName || ''}%0A` +
+                   `*الرحلة:* ${data.trip || ''}%0A` +
+                   `*التاريخ:* ${data.activeDate || ''}%0A` +
+                   `*المبلغ:* ${data.actualPrice || 0} ${data.invoiceCurrency || ''}%0A` +
+                   `*المتبقي:* ${data.rest || 0} ${data.invoiceCurrency || ''}%0A` +
+                   `*المندوب:* ${data.salesName || ''}%0A` +
+                   `${pdfLink}%0A%0A` +
+                   `شكراً 🙏`;
+    
+    // ✅ فتح WhatsApp
+    const waUrl = `https://wa.me/${phone}?text=${message}`;
+    window.open(waUrl, '_blank');
+    
+    hidePDFOv();
+    
+  } catch(err) {
+    console.error('❌ shareInvoiceWhatsApp error:', err);
+    hidePDFOv();
+    showAlert('❌ خطأ في المشاركة: ' + err.message, '❌');
+  }
+}
 async function getRate(dateStr, centerName) {
     if (!dateStr) return C.rate || null;
     if (C.rateByDate[dateStr]) return C.rateByDate[dateStr];
