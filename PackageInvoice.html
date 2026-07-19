@@ -736,9 +736,9 @@ async function updateAllCalc() {
   const discount = parseFloat(document.getElementById('discount')?.value) || 0;
   const total = calculatePackageTotal();
   
-  // ✅ حساب المبلغ بعد الخصم بشكل صحيح
   const afterDiscount = total - discount;
   
+  // ✅ حساب المدفوعات باستخدام أسعار الصرف لكل يوم
   const ratesByDate = {};
   for (let i = 0; i < packageDaysCount; i++) {
     if (dayData[i] && dayData[i].date) {
@@ -748,10 +748,10 @@ async function updateAllCalc() {
   const paid = await calculateTotalPaidInCurrency(currency, ratesByDate);
   const rest = afterDiscount - paid;
   
+  // ✅ تحديث العناصر
   const totalEl = document.getElementById('displayTotalPrice');
   if (totalEl) totalEl.textContent = total.toFixed(2);
   
-  // ✅ إضافة عنصر عرض المبلغ بعد الخصم
   const afterDiscountEl = document.getElementById('displayAfterDiscount');
   if (afterDiscountEl) afterDiscountEl.textContent = afterDiscount.toFixed(2);
   
@@ -778,23 +778,33 @@ async function calculateTotalPaidInCurrency(currency, ratesByDate) {
   const vG = parseFloat(document.getElementById('visaGBP')?.value) || 0;
   const vL = parseFloat(document.getElementById('visaLE')?.value) || 0;
   
-  const firstDate = dayData[0]?.date;
+  // ✅ استخدام أول يوم في الباكيدج للحصول على سعر الصرف
   let rate = null;
-  if (firstDate && ratesByDate[firstDate]) rate = ratesByDate[firstDate];
-  else rate = C.rate;
+  if (ratesByDate && Object.keys(ratesByDate).length > 0) {
+    const firstDate = Object.keys(ratesByDate)[0];
+    rate = ratesByDate[firstDate];
+  }
+  
+  if (!rate) {
+    rate = C.rate;
+  }
   
   const r = rateFields(rate);
-  if (!r) return cU + cE + cG + cL + vU + vE + vG + vL;
+  if (!r) {
+    // ✅ إذا لم تكن هناك أسعار صرف، استخدم المبالغ كما هي
+    return cU + cE + cG + cL + vU + vE + vG + vL;
+  }
   
+  // ✅ تحويل جميع المدفوعات إلى LE
   const LE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
              vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
   
+  // ✅ تحويل من LE إلى العملة المطلوبة
   if (currency === '$') return R2(LE / r.cash.USD);
   if (currency === '€') return R2(LE / r.cash.EUR);
   if (currency === '£') return R2(LE / r.cash.GBP);
   return R2(LE);
 }
-
 async function collectPackageData() {
   const phoneRaw = document.getElementById('phoneNumber')?.value || '';
   const phoneDigits = phoneRaw.replace(/\D/g, '');
@@ -934,9 +944,28 @@ if (pdfResult?.success) {
   }
 }
 
-function showPackageSuccessWithPDF(packageId, count, pdfUrl) {
-  // ✅ أولاً: تفريغ جميع البيانات فوراً
+function showPackageSuccessWithPDF(packageId, count, pdfUrl, vouchers) {
+  // ✅ تفريغ جميع البيانات فوراً
   clearFormFull();
+  
+  // ✅ بناء أزرار الفواتير للمشاركة
+  let vouchersHtml = '';
+  if (vouchers && vouchers.length > 0) {
+    vouchersHtml = '<div style="margin: 10px 0; font-size: 12px; color: #64748b;">Invoices:</div>';
+    vouchersHtml += '<div style="display: flex; flex-wrap: wrap; gap: 6px; justify-content: center;">';
+    vouchers.forEach(v => {
+      vouchersHtml += `
+        <div style="display: flex; align-items: center; gap: 4px; background: #f1f5f9; padding: 4px 10px; border-radius: 20px;">
+          <span style="font-weight: 600; font-size: 11px;">${v.voucherNo}</span>
+          <button onclick="sharePackageInvoiceWhatsApp('${v.voucherNo}')" 
+                  style="background:#25D366; border:none; color:white; padding:2px 8px; border-radius:12px; cursor:pointer; font-size:10px;">
+            📱
+          </button>
+        </div>
+      `;
+    });
+    vouchersHtml += '</div>';
+  }
   
   const modalBox = document.querySelector('#alertModal .modal-box');
   const originalIcon = document.querySelector('#alertIcon');
@@ -948,13 +977,19 @@ function showPackageSuccessWithPDF(packageId, count, pdfUrl) {
   originalIcon.innerHTML = '✅';
   originalMsg.innerHTML = `
     <div style="text-align: center;">
-      <p style="font-size: 16px; margin-bottom: 15px;">✅ Package ${packageId} saved successfully with ${count} invoices!</p>
-      <div style="display: flex; gap: 10px; justify-content: center; margin-top: 15px;">
+      <p style="font-size: 16px; margin-bottom: 10px;">✅ Package ${packageId} saved successfully with ${count} invoices!</p>
+      ${vouchersHtml}
+      <div style="display: flex; gap: 10px; justify-content: center; margin-top: 15px; flex-wrap: wrap;">
         <button onclick="window.open('${pdfUrl}', '_blank'); closeAlert();" 
                 style="background: linear-gradient(135deg, #0f1f3d, #1a2f4e); color: #f5c842; 
                        padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; 
                        font-weight: bold;">
           📄 View PDF
+        </button>
+        <button onclick="sharePackageWhatsApp('${packageId}')" 
+                style="background: #25D366; color: white; padding: 10px 20px; 
+                       border: none; border-radius: 8px; cursor: pointer; font-weight: bold;">
+          📱 WhatsApp
         </button>
         <button onclick="closeAlert();" 
                 style="background: #22c55e; color: white; padding: 10px 20px; 
@@ -980,6 +1015,136 @@ function showPackageSuccessWithPDF(packageId, count, pdfUrl) {
     originalClose();
     window.closeAlert = originalClose;
   };
+}
+  // ============================================================
+// 📱 دوال مشاركة WhatsApp للباكيدج
+// ============================================================
+
+async function sharePackageWhatsApp(packageId) {
+  try {
+    showPDFOv('📱 Preparing WhatsApp...');
+    
+    // ✅ جلب جميع فواتير الباكيدج
+    const packageData = await collectPackageData();
+    if (!packageData) {
+      hidePDFOv();
+      showAlert('❌ Failed to get package data', '❌');
+      return;
+    }
+    
+    // ✅ استخدام بيانات أول يوم للحصول على رقم العميل
+    const phone = packageData.contactNo || '';
+    const guestName = packageData.guestName || '';
+    const currency = packageData.invoiceCurrency || 'USD';
+    const total = packageData.totalAmount || 0;
+    const rest = packageData.rest || 0;
+    const centerName = packageData.centerName || 'Our Diving Center';
+    
+    // ✅ تنظيف رقم الهاتف
+    let cleanPhone = phone.replace(/[^0-9+]/g, '');
+    if (cleanPhone.startsWith('0')) cleanPhone = '20' + cleanPhone.substring(1);
+    if (!cleanPhone.startsWith('+')) cleanPhone = '+' + cleanPhone;
+    
+    if (!cleanPhone || cleanPhone === '+') {
+      hidePDFOv();
+      showAlert('❌ No phone number found', '❌');
+      return;
+    }
+    
+    // ✅ بناء تفاصيل الأيام
+    let daysDetails = '';
+    if (packageData.packageData) {
+      packageData.packageData.forEach((day, i) => {
+        const items = day.items.map(item => `${item.name}×${item.quantity}`).join(', ');
+        daysDetails += `%0A  Day ${i+1}: ${day.tripName} (${day.date}) - ${items}`;
+      });
+    }
+    
+    // ✅ بناء الرسالة
+    const message = 
+      `🧾 *Diving Package Confirmation*%0A%0A` +
+      `Dear ${guestName || 'Guest'},%0A` +
+      `Thank you for booking with ${centerName}.%0A%0A` +
+      `*Package Details*%0A` +
+      `Package ID: ${packageId}%0A` +
+      `Days: ${packageData.packageDays || 0}%0A` +
+      `${daysDetails}%0A%0A` +
+      `*Financial Summary*%0A` +
+      `Total Amount: ${total.toFixed(2)} ${currency}%0A` +
+      `Balance Due: ${rest.toFixed(2)} ${currency}%0A%0A` +
+      `We look forward to welcoming you soon! 🙏`;
+    
+    const waUrl = `https://wa.me/${cleanPhone}?text=${message}`;
+    window.open(waUrl, '_blank');
+    
+    hidePDFOv();
+    
+  } catch(err) {
+    console.error('❌ sharePackageWhatsApp error:', err);
+    hidePDFOv();
+    showAlert('❌ Error: ' + err.message, '❌');
+  }
+}
+
+async function sharePackageInvoiceWhatsApp(voucherNo) {
+  try {
+    showPDFOv('📱 Preparing WhatsApp...');
+    
+    // ✅ جلب بيانات الفاتورة
+    const invoice = await gas('getInvoiceByVoucher', { 
+      voucherNo: voucherNo,
+      centerName: currentUser?.centerName 
+    });
+    
+    if (!invoice?.success) {
+      hidePDFOv();
+      showAlert('❌ Invoice not found', '❌');
+      return;
+    }
+    
+    const data = invoice.invoice;
+    const centerName = data.centerName || 'Our Diving Center';
+    
+    // ✅ تنظيف رقم الهاتف
+    let phone = data.contactNo || '';
+    phone = phone.replace(/[^0-9+]/g, '');
+    if (phone.startsWith('0')) phone = '20' + phone.substring(1);
+    if (!phone.startsWith('+')) phone = '+' + phone;
+    
+    if (!phone || phone === '+') {
+      hidePDFOv();
+      showAlert('❌ No phone number found', '❌');
+      return;
+    }
+    
+    // ✅ رابط PDF
+    const pdfUrl = data.invoicePdf || '';
+    const pdfLink = pdfUrl ? `%0A%0A📄 *Invoice PDF:* ${pdfUrl}` : '';
+    
+    // ✅ رسالة باللغة الإنجليزية
+    const message = 
+      `🧾 *Booking Invoice*%0A%0A` +
+      `Dear ${data.guestName || 'Guest'},%0A` +
+      `Thank you for booking with ${centerName}.%0A%0A` +
+      `*Invoice Details*%0A` +
+      `Voucher No: ${data.voucherNo || ''}%0A` +
+      `Trip: ${data.trip || ''}%0A` +
+      `Date: ${data.activeDate || ''}${data.time ? ' at ' + data.time : ''}%0A` +
+      `Total Amount: ${data.actualPrice || 0} ${data.invoiceCurrency || 'USD'}%0A` +
+      `Balance Due: ${data.rest || 0} ${data.invoiceCurrency || 'USD'}%0A` +
+      `${pdfLink}%0A%0A` +
+      `We look forward to welcoming you soon! 🙏`;
+    
+    const waUrl = `https://wa.me/${phone}?text=${message}`;
+    window.open(waUrl, '_blank');
+    
+    hidePDFOv();
+    
+  } catch(err) {
+    console.error('❌ sharePackageInvoiceWhatsApp error:', err);
+    hidePDFOv();
+    showAlert('❌ Error: ' + err.message, '❌');
+  }
 }
 function updateSessionBadge() {
   let b = document.getElementById('sessionBadge');
@@ -1404,15 +1569,21 @@ function confirmClock() {
   if (currentClockDayIndex !== null) {
     const timeInput = document.getElementById(`dayTime_${currentClockDayIndex}`);
     const timeDisplay = document.getElementById(`dayTimeDisplay_${currentClockDayIndex}`);
-    if (timeInput) timeInput.value = t;
-    if (timeDisplay) { timeDisplay.textContent = t; timeDisplay.classList.remove('ph'); }
+    if (timeInput) {
+      timeInput.value = t;
+      // ✅ ✅ ✅ فرض قيمة النص مباشرة
+      timeInput.setAttribute('value', t);
+    }
+    if (timeDisplay) { 
+      timeDisplay.textContent = t; 
+      timeDisplay.classList.remove('ph'); 
+    }
     if (!dayData[currentClockDayIndex]) dayData[currentClockDayIndex] = {};
     dayData[currentClockDayIndex].time = t;
     scheduleTotalCalc();
   }
   closeClockModal();
 }
-
 // ============================================
 // 10. دوال التوقيع (Signature)
 // ============================================
