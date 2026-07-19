@@ -778,22 +778,25 @@ async function calculateTotalPaidInCurrency(currency, ratesByDate) {
   const vG = parseFloat(document.getElementById('visaGBP')?.value) || 0;
   const vL = parseFloat(document.getElementById('visaLE')?.value) || 0;
   
-  // ✅ استخدام أول يوم في الباكيدج للحصول على سعر الصرف
-  let rate = null;
-  if (ratesByDate && Object.keys(ratesByDate).length > 0) {
-    const firstDate = Object.keys(ratesByDate)[0];
-    rate = ratesByDate[firstDate];
+  // ✅ حساب إجمالي المدفوعات بالعملة الأصلية
+  const totalPayments = cU + cE + cG + cL + vU + vE + vG + vL;
+  
+  // ✅ إذا كانت المدفوعات صفر، ارجع 0
+  if (totalPayments === 0) return 0;
+  
+  // ✅ إذا لم تكن هناك أسعار صرف، استخدم المبالغ كما هي
+  if (!ratesByDate || Object.keys(ratesByDate).length === 0) {
+    return totalPayments;
   }
   
-  if (!rate) {
-    rate = C.rate;
-  }
+  // ✅ استخدام أول يوم في الباكيدج للحصول على سعر الصرف
+  const firstDate = Object.keys(ratesByDate)[0];
+  const rate = ratesByDate[firstDate];
+  
+  if (!rate) return totalPayments;
   
   const r = rateFields(rate);
-  if (!r) {
-    // ✅ إذا لم تكن هناك أسعار صرف، استخدم المبالغ كما هي
-    return cU + cE + cG + cL + vU + vE + vG + vL;
-  }
+  if (!r) return totalPayments;
   
   // ✅ تحويل جميع المدفوعات إلى LE
   const LE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
@@ -883,7 +886,7 @@ async function validatePackage() {
   
   // ✅ التحقق من اسم العميل
   if (!inv.guestName || inv.guestName.trim() === '') {
-    showAlert('الرجاء إدخال اسم العميل', '⚠️');
+    showAlert('⚠️ الرجاء إدخال اسم العميل', '⚠️');
     return null;
   }
   
@@ -896,19 +899,19 @@ async function validatePackage() {
   
   // ✅ التحقق من الجنسية
   if (!inv.nationality || inv.nationality.trim() === '') {
-    showAlert('الرجاء إدخال الجنسية', '⚠️');
+    showAlert('⚠️ الرجاء إدخال الجنسية', '⚠️');
     return null;
   }
   
   // ✅ التحقق من الفندق
   if (!inv.hotel || inv.hotel.trim() === '') {
-    showAlert('الرجاء إدخال الفندق', '⚠️');
+    showAlert('⚠️ الرجاء إدخال الفندق', '⚠️');
     return null;
   }
   
   // ✅ التحقق من عملة الفاتورة
   if (!inv.invoiceCurrency || inv.invoiceCurrency.trim() === '') {
-    showAlert('الرجاء اختيار عملة الفاتورة', '⚠️');
+    showAlert('⚠️ الرجاء اختيار عملة الفاتورة', '⚠️');
     return null;
   }
   
@@ -950,6 +953,13 @@ async function validatePackage() {
     return null;
   }
   
+  // ✅ التحقق من المدفوعات لا تتجاوز الإجمالي
+  const totalAfterDiscount = inv.totalAmount - inv.discount;
+  if (inv.paymentPrice > totalAfterDiscount) {
+    showAlert(`⚠️ المدفوعات (${inv.paymentPrice.toFixed(2)} ${inv.invoiceCurrency}) تتجاوز الإجمالي بعد الخصم (${totalAfterDiscount.toFixed(2)} ${inv.invoiceCurrency})`, '⚠️');
+    return null;
+  }
+  
   return inv;
 }
 
@@ -967,6 +977,24 @@ async function savePackageInvoice() {
     
     formData.signatureData = signatureData || '';
     
+    // ✅ حساب الإجماليات بشكل صحيح
+    const total = formData.totalAmount || 0;
+    const discount = formData.discount || 0;
+    const totalAfterDiscount = Math.max(0, total - discount);
+    
+    // ✅ حساب المدفوعات
+    const paid = formData.paymentPrice || 0;
+    const remaining = Math.max(0, totalAfterDiscount - paid);
+    
+    // ✅ التحقق من صحة المدفوعات
+    if (paid > totalAfterDiscount) {
+      hidePDFOv();
+      setBtns(false);
+      showAlert(`⚠️ المدفوعات (${paid.toFixed(2)} ${formData.invoiceCurrency}) تتجاوز إجمالي الباكيدج بعد الخصم (${totalAfterDiscount.toFixed(2)} ${formData.invoiceCurrency})`, '⚠️');
+      return;
+    }
+    
+    // ✅ حفظ البيانات
     const saveResult = await gasWithSig('savePackageInvoice', formData);
     if (!saveResult?.success) throw new Error(saveResult?.message || 'فشل الحفظ');
     
@@ -974,30 +1002,167 @@ async function savePackageInvoice() {
     const packageId = saveResult.packageId;
     
     showPDFOv('📄 جاري إنشاء PDF...');
-    const pdfResult = await gas('generatePackagePDF', { packageId: packageId, centerName: currentUser?.centerName });
+    const pdfResult = await gas('generatePackagePDF', { 
+      packageId: packageId, 
+      centerName: currentUser?.centerName 
+    });
     
-   // بعد التعديل - استبدل الجزء أعلاه بهذا:
-hidePDFOv();
-
-if (pdfResult?.success) {
-  sessionPackages.push({ packageId: packageId, url: pdfResult.url, count: vouchers.length });
-  updateSessionBadge();
-  
-  // ✅ عرض رسالة نجاح مع زر لفتح PDF
-  showPackageSuccessWithPDF(packageId, vouchers.length, pdfResult.url);
-  
-} else {
-  showAlert('تم الحفظ ولكن فشل إنشاء PDF', '⚠️');
-}
+    hidePDFOv();
+    
+    // ✅ عرض رسالة نجاح احترافية مع جميع التفاصيل
+    if (pdfResult?.success) {
+      sessionPackages.push({ packageId: packageId, url: pdfResult.url, count: vouchers.length });
+      updateSessionBadge();
+      
+      // ✅ عرض رسالة نجاح مع تفاصيل الدفع
+      showPackageSuccessWithDetails(
+        packageId, 
+        vouchers.length, 
+        pdfResult.url, 
+        vouchers,
+        totalAfterDiscount,
+        paid,
+        remaining,
+        formData.invoiceCurrency
+      );
+      
+    } else {
+      showAlert('تم الحفظ ولكن فشل إنشاء PDF', '⚠️');
+    }
+    
   } catch (err) {
     console.error('❌ خطأ:', err);
     hidePDFOv();
-    showAlert('خطأ: ' + err.message, '❌');
+    showAlert('❌ خطأ: ' + err.message, '❌');
   } finally {
     setBtns(false);
   }
 }
-
+function showPackageSuccessWithDetails(packageId, count, pdfUrl, vouchers, total, paid, remaining, currency) {
+  // ✅ تفريغ جميع البيانات فوراً
+  clearFormFull();
+  
+  // ✅ بناء أزرار الفواتير للمشاركة
+  let vouchersHtml = '';
+  if (vouchers && vouchers.length > 0) {
+    vouchersHtml = '<div style="margin: 8px 0; font-size: 12px; color: #64748b;">📋 Invoices:</div>';
+    vouchersHtml += '<div style="display: flex; flex-wrap: wrap; gap: 6px; justify-content: center;">';
+    vouchers.forEach(v => {
+      vouchersHtml += `
+        <div style="display: flex; align-items: center; gap: 4px; background: #f1f5f9; padding: 4px 10px; border-radius: 20px; border: 1px solid #e2e8f0;">
+          <span style="font-weight: 600; font-size: 11px; color: #0f1f3d;">📄 ${v.voucherNo}</span>
+          <button onclick="sharePackageInvoiceWhatsApp('${v.voucherNo}')" 
+                  style="background:#25D366; border:none; color:white; padding:2px 8px; border-radius:12px; cursor:pointer; font-size:10px; transition:all 0.2s;"
+                  onmouseover="this.style.transform='scale(1.1)'" 
+                  onmouseout="this.style.transform='scale(1)'">
+            📱
+          </button>
+        </div>
+      `;
+    });
+    vouchersHtml += '</div>';
+  }
+  
+  // ✅ عرض الملخص المالي
+  const remainingFormatted = remaining.toFixed(2);
+  const currencySymbol = currency || '€';
+  let paymentStatus = '';
+  
+  if (remaining === 0) {
+    paymentStatus = '✅ ✅ ✅ تم الدفع بالكامل';
+  } else if (remaining > 0) {
+    paymentStatus = `⚠️ المتبقي: ${remainingFormatted} ${currencySymbol}`;
+  }
+  
+  // ✅ حفظ المراجع الأصلية
+  const originalIcon = document.getElementById('alertIcon');
+  const originalMsg = document.getElementById('alertMsg');
+  const btnsContainer = document.getElementById('alertBtns');
+  
+  // ✅ تحديث المحتوى
+  originalIcon.innerHTML = '✅';
+  originalMsg.innerHTML = `
+    <div style="text-align: center;">
+      <p style="font-size: 18px; font-weight: 900; margin-bottom: 6px; color: #0f1f3d;">
+        ✅ Package <span style="color: #f5c842;">${packageId}</span> saved successfully!
+      </p>
+      <p style="font-size: 13px; color: #64748b; margin-bottom: 8px;">
+        ${count} invoice${count > 1 ? 's' : ''} created
+      </p>
+      
+      <!-- ✅ ملخص الدفع -->
+      <div style="background: #f8fafc; border-radius: 12px; padding: 12px; margin: 10px 0; border: 1px solid #e2e8f0;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; text-align: center;">
+          <div>
+            <div style="font-size: 10px; color: #94a3b8; font-weight: 700; text-transform: uppercase;">Total</div>
+            <div style="font-size: 16px; font-weight: 900; color: #0f1f3d;">${total.toFixed(2)} ${currencySymbol}</div>
+          </div>
+          <div>
+            <div style="font-size: 10px; color: #94a3b8; font-weight: 700; text-transform: uppercase;">Paid</div>
+            <div style="font-size: 16px; font-weight: 900; color: #16a34a;">${paid.toFixed(2)} ${currencySymbol}</div>
+          </div>
+          <div>
+            <div style="font-size: 10px; color: #94a3b8; font-weight: 700; text-transform: uppercase;">Remaining</div>
+            <div style="font-size: 16px; font-weight: 900; color: ${remaining === 0 ? '#16a34a' : '#dc2626'};">${remainingFormatted} ${currencySymbol}</div>
+          </div>
+        </div>
+        <div style="margin-top: 6px; font-size: 12px; font-weight: 700; color: ${remaining === 0 ? '#16a34a' : '#f59e0b'};">
+          ${paymentStatus}
+        </div>
+      </div>
+      
+      ${vouchersHtml}
+      
+      <div style="display: flex; gap: 8px; justify-content: center; margin-top: 15px; flex-wrap: wrap;">
+        <button onclick="window.open('${pdfUrl}', '_blank'); closeAlert();" 
+                style="background: linear-gradient(135deg, #0f1f3d, #1a2f4e); color: #f5c842; 
+                       padding: 8px 18px; border: none; border-radius: 30px; cursor: pointer; 
+                       font-weight: 700; font-size: 13px; transition: all 0.2s;"
+                onmouseover="this.style.transform='translateY(-2px)'" 
+                onmouseout="this.style.transform='translateY(0)'">
+          📄 View PDF
+        </button>
+        <button onclick="sharePackageWhatsApp('${packageId}')" 
+                style="background: #25D366; color: white; padding: 8px 18px; 
+                       border: none; border-radius: 30px; cursor: pointer; 
+                       font-weight: 700; font-size: 13px; transition: all 0.2s;"
+                onmouseover="this.style.transform='translateY(-2px)'" 
+                onmouseout="this.style.transform='translateY(0)'">
+          📱 WhatsApp
+        </button>
+        <button onclick="closeAlert();" 
+                style="background: #22c55e; color: white; padding: 8px 18px; 
+                       border: none; border-radius: 30px; cursor: pointer; 
+                       font-weight: 700; font-size: 13px; transition: all 0.2s;"
+                onmouseover="this.style.transform='translateY(-2px)'" 
+                onmouseout="this.style.transform='translateY(0)'">
+          ➕ New Package
+        </button>
+      </div>
+    </div>
+  `;
+  
+  // ✅ تحديث أزرار الإغلاق
+  btnsContainer.innerHTML = `
+    <button class="btn btn-clear" onclick="closeAlert();" style="background:#f1f5f9; padding:6px 20px; border-radius:30px; border:none; font-weight:600; cursor:pointer;">
+      Close
+    </button>
+  `;
+  
+  // ✅ فتح المودال
+  document.getElementById('alertModal').classList.add('open');
+  
+  // ✅ حفظ الدالة الأصلية للاستعادة
+  const originalClose = closeAlert;
+  window.closeAlert = function() {
+    // استعادة المحتوى الأصلي
+    originalIcon.innerHTML = 'ℹ️';
+    originalMsg.innerHTML = '';
+    btnsContainer.innerHTML = '<button class="btn btn-save" onclick="closeAlert()">OK</button>';
+    originalClose();
+    window.closeAlert = originalClose;
+  };
+}
 function showPackageSuccessWithPDF(packageId, count, pdfUrl, vouchers) {
   // ✅ تفريغ جميع البيانات فوراً
   clearFormFull();
@@ -1127,10 +1292,16 @@ async function sharePackageWhatsApp(packageId) {
     
     console.log('📞 Cleaned phone:', phone);
     
-    // ✅ التحقق من صحة الرقم
+    // ✅ التحقق من صحة الرقم مع رسالة احترافية
     if (!phone || phone === '+' || phone === '+20' || phone.length < 4) {
       hidePDFOv();
-      showAlert('❌ No valid phone number found for this customer', '❌');
+      showAlert(
+        '❌ No valid phone number found for this customer\n\n' +
+        '📌 Please ensure the customer has a valid phone number entered.\n' +
+        '📌 You can update the phone number in the customer profile.\n' +
+        '📌 Phone number should be: 10 digits (e.g., 01012345678)',
+        '❌'
+      );
       return;
     }
     
@@ -1205,12 +1376,18 @@ async function sharePackageInvoiceWhatsApp(voucherNo) {
     // ✅ تنظيف رقم الهاتف
     let phone = data.contactNo || '';
     phone = phone.replace(/[^0-9+]/g, '');
-    if (phone.startsWith('0')) phone = '20' + phone.substring(1);
+    if (phone.startsWith('0')) phone = '+20' + phone.substring(1);
     if (!phone.startsWith('+')) phone = '+' + phone;
     
-    if (!phone || phone === '+') {
+    // ✅ التحقق من صحة الرقم مع رسالة احترافية
+    if (!phone || phone === '+' || phone === '+20' || phone.length < 4) {
       hidePDFOv();
-      showAlert('❌ No phone number found', '❌');
+      showAlert(
+        '❌ No valid phone number found for this invoice\n\n' +
+        '📌 Please ensure the customer has a valid phone number.\n' +
+        '📌 You can update the phone number in the customer profile.',
+        '❌'
+      );
       return;
     }
     
