@@ -1134,7 +1134,10 @@ function showPackageSuccessWithDetails(packageId, count, pdfUrl, vouchers, total
       </div>
       <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
         <button onclick="window.open('${pdfUrl}','_blank');" style="background:#0f1f3d;color:#f5c842;padding:8px 18px;border:none;border-radius:30px;cursor:pointer;font-weight:700;font-size:12px;">📄 View PDF</button>
-        <button onclick="sharePackageWhatsApp('${packageId}')" style="background:#25D366;color:white;padding:8px 18px;border:none;border-radius:30px;cursor:pointer;font-weight:700;font-size:12px;">📱 Send via WhatsApp</button>
+        <button onclick="sharePackageWhatsAppWithLoading('${packageId}')" 
+        style="background:#25D366;color:white;padding:8px 18px;border:none;border-radius:30px;cursor:pointer;font-weight:700;font-size:12px;">
+  📱 Send via WhatsApp
+</button>
         <button onclick="closeAlert();" style="background:#f1f5f9;color:#1a2540;padding:8px 18px;border:none;border-radius:30px;cursor:pointer;font-weight:700;font-size:12px;">✖ Close</button>
       </div>
     </div>`;
@@ -1281,21 +1284,50 @@ function showPackageSuccessWithPDF(packageId, count, pdfUrl, vouchers) {
 function openWhatsAppSmart(phone, message) {
   const cleanPhone = phone.replace('+', '');
   const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-  const url = isMobile
-    ? `whatsapp://send?phone=${cleanPhone}&text=${message}`
-    : `https://web.whatsapp.com/send?phone=${cleanPhone}&text=${message}`;
-  window.open(url, '_blank');
+  
+  // ✅ استخدام طريقة مختلفة للموبايل والديستوب
+  let url;
+  if (isMobile) {
+    // ✅ للموبايل: استخدام whatsapp:// (يفتح التطبيق مباشرة)
+    url = `whatsapp://send?phone=${cleanPhone}&text=${message}`;
+  } else {
+    // ✅ للديستوب: استخدام web.whatsapp.com
+    url = `https://web.whatsapp.com/send?phone=${cleanPhone}&text=${message}`;
+  }
+  
+  console.log('📱 Opening WhatsApp:', url);
+  
+  // ✅ محاولة فتح الواتساب
+  const newWindow = window.open(url, '_blank');
+  
+  // ✅ إذا لم يتم فتح النافذة (قد يكون بسبب منع النوافذ المنبثقة)
+  if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+    // ✅ محاولة بديلة: فتح wa.me
+    const fallbackUrl = `https://wa.me/${cleanPhone}?text=${message}`;
+    console.log('⚠️ Fallback to wa.me:', fallbackUrl);
+    window.open(fallbackUrl, '_blank');
+  }
 }
 
-// ✅ دالة sharePackageWhatsApp المعدلة
 async function sharePackageWhatsApp(packageId) {
+  // ✅ إظهار مؤشر التحميل فوراً
+  showPDFOv('📱 Preparing WhatsApp...');
+  
   try {
-    showPDFOv('📱 Preparing WhatsApp...');
+    console.log('📱 sharePackageWhatsApp called for package:', packageId);
     
-    const result = await gas('getPackageInvoices', { 
+    // ✅ محاولة جلب البيانات مع timeout
+    const fetchPromise = gas('getPackageInvoices', { 
       packageId: packageId,
       centerName: currentUser?.centerName 
     });
+    
+    // ✅ مهلة 10 ثواني
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Request timeout')), 10000);
+    });
+    
+    const result = await Promise.race([fetchPromise, timeoutPromise]);
     
     if (!result?.success || !result?.data) {
       hidePDFOv();
@@ -1304,8 +1336,6 @@ async function sharePackageWhatsApp(packageId) {
     }
     
     const data = result.data;
-    
-    // ✅ جلب رابط PDF (متوفر الآن من getPackageInvoices)
     const pdfUrl = data.pdfUrl || '';
     
     let phone = data.contactNo || '';
@@ -1362,9 +1392,16 @@ async function sharePackageWhatsApp(packageId) {
   } catch(err) {
     console.error('❌ sharePackageWhatsApp error:', err);
     hidePDFOv();
-    showAlert('❌ Error: ' + err.message, '❌');
+    
+    // ✅ رسالة خطأ أكثر وضوحاً
+    if (err.message === 'Request timeout') {
+      showAlert('⏱️ Request timed out. Please try again.', '⚠️');
+    } else {
+      showAlert('❌ Error: ' + err.message, '❌');
+    }
   }
 }
+  
 async function sharePackageInvoiceWhatsApp(voucherNo) {
   try {
     showPDFOv('📱 Preparing WhatsApp...');
