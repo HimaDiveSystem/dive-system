@@ -1121,27 +1121,12 @@ function showPackageSuccessWithDetails(packageId, count, pdfUrl, vouchers, total
   const remainingFormatted = remaining.toFixed(2);
   const currencySymbol = currency || '$';
   
-  // ✅ بناء أزرار الفواتير للمشاركة
-  let vouchersHtml = '';
-  if (vouchers && vouchers.length > 0) {
-    vouchersHtml = '<div style="display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; margin: 6px 0;">';
-    vouchers.forEach(v => {
-      vouchersHtml += `
-        <button onclick="sharePackageInvoiceWhatsApp('${v.voucherNo}')" 
-                style="background:#25D366; border:none; color:white; padding:2px 10px; border-radius:12px; cursor:pointer; font-size:11px; font-weight:600;">
-          📱 ${v.voucherNo}
-        </button>
-      `;
-    });
-    vouchersHtml += '</div>';
-  }
-  
   // ✅ رسالة صغيرة واحترافية
   const msg = `✅ Package ${packageId} saved!\n📄 ${count} invoices created\n💰 Remaining: ${remainingFormatted} ${currencySymbol}`;
   
-  // ✅ أزرار صغيرة
+  // ✅ 3 أزرار فقط: PDF, WhatsApp (للحزمة كاملة), Close
   const btns = `
-    <div style="display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; margin-top: 6px;">
+    <div style="display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; margin-top: 8px;">
       <button onclick="window.open('${pdfUrl}', '_blank'); closeAlert();" 
               style="background:#0f1f3d; color:#f5c842; padding:6px 16px; border:none; border-radius:20px; cursor:pointer; font-weight:700; font-size:12px;">
         📄 PDF
@@ -1157,7 +1142,7 @@ function showPackageSuccessWithDetails(packageId, count, pdfUrl, vouchers, total
     </div>
   `;
   
-  showAlert(msg, '✅', vouchersHtml + btns);
+  showAlert(msg, '✅', btns);
 }
   function cleanPhoneForWhatsApp(phone) {
   if (!phone) return '';
@@ -1295,29 +1280,27 @@ function showPackageSuccessWithPDF(packageId, count, pdfUrl, vouchers) {
   // ============================================================
 // 📱 دوال مشاركة WhatsApp للباكيدج
 // ============================================================
-
 async function sharePackageWhatsApp(packageId) {
   try {
     showPDFOv('📱 Preparing WhatsApp...');
     
-    const packageData = await gas('getPackageData', { 
+    // ✅ استخدام الدالة الصحيحة لجلب بيانات الباكيدج
+    const result = await gas('getPackageInvoices', { 
       packageId: packageId,
       centerName: currentUser?.centerName 
     });
     
-    if (!packageData?.success) {
+    if (!result?.success || !result?.data) {
       hidePDFOv();
       showAlert('❌ Failed to get package data', '❌');
       return;
     }
     
-    const data = packageData.data;
+    const data = result.data;
     
-    // ✅ تنظيف رقم الهاتف بشكل صحيح
+    // ✅ تنظيف رقم الهاتف
     let phone = data.contactNo || '';
     phone = cleanPhoneForWhatsApp(phone);
-    
-    console.log('📞 Cleaned phone:', phone);
     
     if (!phone || phone === '+' || phone === '+20' || phone.length < 8) {
       hidePDFOv();
@@ -1329,19 +1312,17 @@ async function sharePackageWhatsApp(packageId) {
       return;
     }
     
-       
-    // ✅ بيانات العميل
-    const guestName = packageData.guestName || 'Guest';
-    const currency = packageData.invoiceCurrency || 'USD';
-    const total = packageData.totalAmount || 0;
-    const rest = packageData.rest || 0;
-    const centerName = packageData.centerName || 'Our Diving Center';
-    const days = packageData.packageDays || 0;
+    // ✅ بناء رسالة واتساب
+    const guestName = data.guestName || 'Guest';
+    const currency = data.invoiceCurrency || 'USD';
+    const total = data.totalAmount || 0;
+    const rest = data.rest || 0;
+    const centerName = data.centerName || 'Our Diving Center';
+    const days = data.packageDays || 0;
     
-    // ✅ بناء تفاصيل الأيام
     let daysDetails = '';
-    if (packageData.packageData && packageData.packageData.length > 0) {
-      packageData.packageData.forEach((day, i) => {
+    if (data.packageData && data.packageData.length > 0) {
+      data.packageData.forEach((day, i) => {
         const dayNum = i + 1;
         let itemsStr = '';
         if (day.items && day.items.length > 0) {
@@ -1351,7 +1332,6 @@ async function sharePackageWhatsApp(packageId) {
       });
     }
     
-    // ✅ بناء رسالة احترافية باللغة الإنجليزية
     const message = 
       `🧾 *Diving Package Confirmation*%0A%0A` +
       `Dear ${guestName},%0A` +
@@ -1365,9 +1345,7 @@ async function sharePackageWhatsApp(packageId) {
       `Balance Due: ${rest.toFixed(2)} ${currency}%0A%0A` +
       `We look forward to welcoming you soon! 🙏`;
     
-    // ✅ فتح WhatsApp
     const waUrl = `https://wa.me/${phone}?text=${message}`;
-    console.log('📱 WhatsApp URL:', waUrl);
     window.open(waUrl, '_blank');
     
     hidePDFOv();
@@ -1378,7 +1356,6 @@ async function sharePackageWhatsApp(packageId) {
     showAlert('❌ Error: ' + err.message, '❌');
   }
 }
-
 async function sharePackageInvoiceWhatsApp(voucherNo) {
   try {
     showPDFOv('📱 Preparing WhatsApp...');
