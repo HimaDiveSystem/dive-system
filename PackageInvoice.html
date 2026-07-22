@@ -1280,35 +1280,42 @@ function showPackageSuccessWithPDF(packageId, count, pdfUrl, vouchers) {
   // ============================================================
 // 📱 دوال مشاركة WhatsApp للباكيدج
 // ============================================================
-// ✅ دالة مساعدة لفتح واتساب حسب الجهاز
 function openWhatsAppSmart(phone, message) {
   const cleanPhone = phone.replace('+', '');
   const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   
-  // ✅ استخدام طريقة مختلفة للموبايل والديستوب
+  // ✅ تشفير الرسالة
+  const encodedMessage = encodeURIComponent(message);
+  
+  // ✅ بناء الرابط حسب نوع الجهاز
   let url;
   if (isMobile) {
-    // ✅ للموبايل: استخدام whatsapp:// (يفتح التطبيق مباشرة)
-    url = `whatsapp://send?phone=${cleanPhone}&text=${message}`;
+    // ✅ للموبايل: فتح تطبيق واتساب
+    url = `whatsapp://send?phone=${cleanPhone}&text=${encodedMessage}`;
+    console.log('📱 Mobile - Opening WhatsApp app:', url);
   } else {
-    // ✅ للديستوب: استخدام web.whatsapp.com
-    url = `https://web.whatsapp.com/send?phone=${cleanPhone}&text=${message}`;
+    // ✅ للديستوب: فتح واتساب ويب
+    url = `https://web.whatsapp.com/send?phone=${cleanPhone}&text=${encodedMessage}`;
+    console.log('💻 Desktop - Opening WhatsApp Web:', url);
   }
   
-  console.log('📱 Opening WhatsApp:', url);
-  
-  // ✅ محاولة فتح الواتساب
-  const newWindow = window.open(url, '_blank');
-  
-  // ✅ إذا لم يتم فتح النافذة (قد يكون بسبب منع النوافذ المنبثقة)
-  if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
-    // ✅ محاولة بديلة: فتح wa.me
-    const fallbackUrl = `https://wa.me/${cleanPhone}?text=${message}`;
-    console.log('⚠️ Fallback to wa.me:', fallbackUrl);
-    window.open(fallbackUrl, '_blank');
+  // ✅ محاولة فتح الرابط
+  try {
+    const newWindow = window.open(url, '_blank');
+    
+    // ✅ إذا فشل الفتح (منع النوافذ المنبثقة)، استخدم wa.me كـ fallback
+    if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+      const fallbackUrl = `https://wa.me/${cleanPhone}?text=${encodedMessage}`;
+      console.log('⚠️ Fallback to wa.me:', fallbackUrl);
+      window.location.href = fallbackUrl;
+    }
+  } catch(e) {
+    // ✅ في حالة حدوث خطأ، استخدم wa.me مباشرة
+    console.log('⚠️ Error opening WhatsApp, using wa.me fallback:', e.message);
+    const fallbackUrl = `https://wa.me/${cleanPhone}?text=${encodedMessage}`;
+    window.location.href = fallbackUrl;
   }
 }
-
 async function sharePackageWhatsApp(packageId) {
   // ✅ إظهار مؤشر التحميل فوراً
   showPDFOv('📱 Preparing WhatsApp...');
@@ -1350,6 +1357,56 @@ async function sharePackageWhatsApp(packageId) {
       );
       return;
     }
+    
+    const guestName = data.guestName || 'Guest';
+    const currency = data.invoiceCurrency || 'USD';
+    const total = data.totalAmount || 0;
+    const rest = data.rest || 0;
+    const centerName = data.centerName || 'Our Diving Center';
+    const days = data.packageDays || 0;
+    
+    let daysDetails = '';
+    if (data.packageData && data.packageData.length > 0) {
+      data.packageData.forEach((day, i) => {
+        const dayNum = i + 1;
+        let itemsStr = '';
+        if (day.items && day.items.length > 0) {
+          itemsStr = day.items.map(item => `${item.name}×${item.quantity}`).join(', ');
+        }
+        daysDetails += `%0A  📅 Day ${dayNum}: ${day.tripName || 'Trip'} (${day.date || 'N/A'})${itemsStr ? ' - ' + itemsStr : ''}`;
+      });
+    }
+    
+    const message = 
+      `🧾 *Diving Package Confirmation*%0A%0A` +
+      `Dear ${guestName},%0A` +
+      `Thank you for booking with ${centerName}.%0A%0A` +
+      `*📋 Package Details*%0A` +
+      `Package ID: ${packageId}%0A` +
+      `Days: ${days}%0A` +
+      `${daysDetails}%0A%0A` +
+      `*💰 Financial Summary*%0A` +
+      `Total Amount: ${total.toFixed(2)} ${currency}%0A` +
+      `Balance Due: ${rest.toFixed(2)} ${currency}%0A` +
+      `${pdfUrl ? `%0A📄 *Invoice PDF:* ${pdfUrl}` : ''}%0A%0A` +
+      `We look forward to welcoming you soon! 🙏`;
+    
+    // ✅ استخدام الدالة الذكية لفتح واتساب
+    openWhatsAppSmart(phone, message);
+    
+    hidePDFOv();
+    
+  } catch(err) {
+    console.error('❌ sharePackageWhatsApp error:', err);
+    hidePDFOv();
+    
+    if (err.message === 'Request timeout') {
+      showAlert('⏱️ Request timed out. Please try again.', '⚠️');
+    } else {
+      showAlert('❌ Error: ' + err.message, '❌');
+    }
+  }
+}
     
     const guestName = data.guestName || 'Guest';
     const currency = data.invoiceCurrency || 'USD';
