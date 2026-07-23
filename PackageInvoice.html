@@ -1327,58 +1327,66 @@ function openWhatsAppSmart(phone, message) {
   }
 }
 // ✅ استخدام نفس دالة gas الموجودة في المشروع
-function sharePackageWhatsApp(packageId) {
+async function sharePackageWhatsApp(packageId) {
   showPDFOv('📱 Preparing WhatsApp...');
   
-  gas('getPackageInvoices', { 
-    packageId: packageId,
-    centerName: currentUser?.centerName 
-  })
-  .then(function(data) {
-    hidePDFOv();
+  try {
+    console.log('📱 sharePackageWhatsApp called for package:', packageId);
     
-    if (!data?.success || !data?.data) {
+    const result = await gas('getPackageInvoices', { 
+      packageId: packageId,
+      centerName: currentUser?.centerName 
+    });
+    
+    if (!result?.success || !result?.data) {
+      hidePDFOv();
       showAlert('❌ Failed to get package data', '❌');
       return;
     }
     
-    const info = data.data;
-    let phone = (info.contactNo || '').toString().replace(/[^0-9]/g, '');
-    if (!phone) {
-      showAlert('❌ No phone number found', '❌');
+    const data = result.data;
+    const pdfUrl = data.pdfUrl || '';
+    
+    let phone = data.contactNo || '';
+    phone = cleanPhoneForWhatsApp(phone);
+    
+    if (!phone || phone === '+' || phone === '+20' || phone.length < 8) {
+      hidePDFOv();
+      showAlert('❌ No valid phone number found', '❌');
       return;
     }
     
-    // ✅ تنظيف الرقم
-    if (phone.startsWith('0')) phone = '20' + phone.substring(1);
-    if (!phone.startsWith('+')) phone = '+' + phone;
-    
-    const centerName = info.centerName || 'Scorpion Diving Center';
+    const guestName = data.guestName || 'Guest';
+    const currency = data.invoiceCurrency || 'USD';
+    const total = data.totalAmount || 0;
+    const rest = data.rest || 0;
+    const centerName = data.centerName || 'Our Diving Center';
+    const days = data.packageDays || 0;
     
     // ✅ بناء الأيام
-    let daysListText = '';
-    (info.packageData || []).forEach(function(day, idx) {
-      const date = new Date(day.date);
-      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      const dateStr = String(date.getDate()).padStart(2, '0') + '/' + months[date.getMonth()] + '/' + date.getFullYear();
-      daysListText += `  📅 Day ${idx + 1}: ${day.tripName} (${dateStr})\n`;
-    });
+    let daysDetails = '';
+    if (data.packageData && data.packageData.length > 0) {
+      data.packageData.forEach((day, i) => {
+        const dayNum = i + 1;
+        let itemsStr = '';
+        if (day.items && day.items.length > 0) {
+          itemsStr = day.items.map(item => `${item.name}×${item.quantity}`).join(', ');
+        }
+        daysDetails += `  📅 Day ${dayNum}: ${day.tripName || 'Trip'} (${day.date || 'N/A'})${itemsStr ? ' - ' + itemsStr : ''}\n`;
+      });
+    }
     
-    const currency = info.invoiceCurrency || '$';
-    const total = Number(info.totalAmount) || 0;
-    const rest = Number(info.rest) || 0;
-    
-    // ✅ ✅ ✅ بناء الرسالة بدون رموز مشفرة مسبقاً
+    // ✅ ✅ ✅ بناء الرسالة كنص عادي (بدون ترميز مسبق)
     let message = '';
     message += `🏖️ *${centerName}* Diving Center\n\n`;
     message += `🧾 *Diving Package Confirmation*\n\n`;
-    message += `Dear ${info.guestName || 'Guest'},\n`;
+    message += `Dear ${guestName},\n`;
     message += `We are delighted to confirm your booking with *${centerName}*. 🐠\n\n`;
     message += `*📋 Package Details*\n`;
     message += `─────────────────────\n`;
-    message += `🆔 Package ID: ${info.packageId}\n`;
-    message += `📅 Duration: ${info.packageDays} day${info.packageDays > 1 ? 's' : ''}\n`;
-    message += daysListText;
+    message += `🆔 Package ID: ${packageId}\n`;
+    message += `📅 Duration: ${days} day${days > 1 ? 's' : ''}\n`;
+    message += daysDetails;
     message += `─────────────────────\n\n`;
     message += `*💰 Payment Summary*\n`;
     message += `─────────────────────\n`;
@@ -1387,21 +1395,24 @@ function sharePackageWhatsApp(packageId) {
     message += `⚠️ Balance Due: ${rest.toFixed(2)} ${currency}\n`;
     message += `─────────────────────\n\n`;
     message += `📎 *Invoice Attached*\n`;
-    message += `🔗 ${info.pdfUrl || ''}\n\n`;
+    message += `🔗 ${pdfUrl}\n\n`;
     message += `We look forward to welcoming you soon! 🙏\n`;
     message += `🌊 *${centerName} Team*`;
     
-    // ✅ ترميز واحد فقط هنا
+    // ✅ ✅ ✅ ترميز واحد فقط هنا
     const encodedMessage = encodeURIComponent(message);
+    console.log('📱 Encoded message length:', encodedMessage.length);
     
     // ✅ فتح واتساب
     openWhatsAppSmart(phone, encodedMessage);
     
-  })
-  .catch(function(err) {
+    hidePDFOv();
+    
+  } catch(err) {
+    console.error('❌ sharePackageWhatsApp error:', err);
     hidePDFOv();
     showAlert('❌ Error: ' + err.message, '❌');
-  });
+  }
 }
 async function sharePackageInvoiceWhatsApp(voucherNo) {
   try {
