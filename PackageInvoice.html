@@ -255,7 +255,40 @@ function gas(action, params = {}) {
     .then(r => r.json())
     .catch(err => { console.error(`❌ ${action} failed:`, err); throw err; });
 }
+// ============================================
+// دالة لتنظيف النص من الأحرف المشوهة
+// ============================================
+function sanitizeText(text) {
+    if (!text) return '';
+    // إزالة أحرف BOM والتحكم غير المرئية
+    return String(text)
+        .replace(/^\uFEFF/, '')
+        .replace(/[\u200B-\u200D\u2060\u00A0]/g, ' ')
+        .replace(/\uFFFD/g, '')  // إزالة رمز �
+        .replace(/[^\x20-\x7E\u0600-\u06FF\u2000-\u206F\u2700-\u27BF\u1F300-\u1F6FF]/g, function(match) {
+            // الاحتفاظ بالرموز التعبيرية المدعومة
+            const emojiRanges = [
+                [0x1F600, 0x1F64F], // Emoticons
+                [0x1F300, 0x1F5FF], // Symbols & Pictographs
+                [0x1F680, 0x1F6FF], // Transport & Map
+                [0x2600, 0x26FF],   // Miscellaneous Symbols
+                [0x2700, 0x27BF],   // Dingbats
+                [0xFE00, 0xFE0F],   // Variation Selectors
+                [0x1F900, 0x1F9FF]  // Supplemental Symbols
+            ];
+            const code = match.charCodeAt(0);
+            for (const range of emojiRanges) {
+                if (code >= range[0] && code <= range[1]) return match;
+            }
+            return '';
+        })
+        .trim();
+}
 
+// دالة لعرض النص بشكل آمن (مع دعم الرموز التعبيرية)
+function safeDisplay(text) {
+    return sanitizeText(text);
+}
 async function gasWithSig(action, params) {
   const sigData = params.signatureData || '';
   const baseParams = { ...params };
@@ -287,7 +320,44 @@ async function gasWithSig(action, params) {
 function fmtDateKey(d) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
+// ============================================
+// دالة للتحقق من صحة رابط PDF
+// ============================================
+function validatePDFUrl(url) {
+    if (!url) return null;
+    
+    // ✅ التحقق من أن الرابط هو رابط ملف PDF صحيح
+    const validPatterns = [
+        /^https:\/\/drive\.google\.com\/file\/d\/[a-zA-Z0-9_-]+\/view/,
+        /^https:\/\/drive\.google\.com\/uc\?export=view&id=[a-zA-Z0-9_-]+/,
+        /^https:\/\/drive\.google\.com\/open\?id=[a-zA-Z0-9_-]+/
+    ];
+    
+    for (const pattern of validPatterns) {
+        if (pattern.test(url)) {
+            return url;
+        }
+    }
+    
+    // ✅ محاولة استخراج File ID وإعادة بناء الرابط
+    const fileIdMatch = url.match(/(?:file\/d\/|id=)([a-zA-Z0-9_-]+)/);
+    if (fileIdMatch) {
+        return 'https://drive.google.com/file/d/' + fileIdMatch[1] + '/view?usp=sharing';
+    }
+    
+    console.warn('⚠️ Invalid PDF URL:', url);
+    return null;
+}
 
+// استخدم هذه الدالة عند فتح الرابط
+function openPDF(url) {
+    const validUrl = validatePDFUrl(url);
+    if (validUrl) {
+        window.open(validUrl, '_blank');
+    } else {
+        showAlert('⚠️ رابط PDF غير صحيح', '⚠️');
+    }
+}
 function goBack() { 
   // محاولة读取 returnUrl من sessionStorage
   const returnUrl = sessionStorage.getItem('returnUrl');
@@ -331,7 +401,9 @@ function hidePDFOv() {
 }
 
 function showAlert(msg, icon, btns) {
-  document.getElementById('alertMsg').textContent = msg;
+  // ✅ تنظيف الرسالة من الأحرف المشوهة
+  const cleanMsg = sanitizeText(msg);
+  document.getElementById('alertMsg').textContent = cleanMsg;
   document.getElementById('alertIcon').textContent = icon || 'ℹ️';
   document.getElementById('alertBtns').innerHTML = btns || '<button class="btn btn-save" onclick="closeAlert()">OK</button>';
   document.getElementById('alertModal').classList.add('open');
@@ -349,7 +421,15 @@ function setBtns(d) {
 }
 
 function esc(s) {
-  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (!s) return '';
+  // ✅ استخدام sanitizeText أولاً لتنظيف الأحرف المشوهة
+  const cleaned = sanitizeText(s);
+  return cleaned
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function R2(n) {
@@ -457,7 +537,12 @@ function renderAC(id, hits) {
   if (!d) return;
   if (!hits.length) { d.classList.remove('open'); d.innerHTML = ''; return; }
   d._hits = hits;
-  d.innerHTML = hits.map((c, i) => `<div class="ac-item" onclick="acPick('${id}', ${i})"><span class="ac-n">${esc(c.name) || '—'}</span><span class="ac-s">📞 ${c.phone || ''} ${c.hotel ? '🏨 ' + c.hotel : ''}</span></div>`).join('');
+  d.innerHTML = hits.map((c, i) => {
+  const name = esc(c.name) || '—';
+  const phone = esc(c.phone) || '';
+  const hotel = c.hotel ? '🏨 ' + esc(c.hotel) : '';
+  return `<div class="ac-item" onclick="acPick('${id}', ${i})"><span class="ac-n">${name}</span><span class="ac-s">📞 ${phone} ${hotel}</span></div>`;
+}).join('');
   d.classList.add('open');
 }
 
@@ -699,13 +784,13 @@ function renderTripTableForDay(dayIndex, items, prices, savedItems) {
     const total = (qty && qty > 0) ? qty * priceValue : 0;
     
     rows += `
-      <tr>
-        <td style="font-weight:600">${esc(items[i])}</td>
-        <td><input type="number" id="dayQty_${dayIndex}_${i}" min="0" placeholder="0" value="${qty}" oninput="onDayQtyChange(${dayIndex}, ${i})" style="text-align:center;"></td>
-        <td><input type="number" id="dayPrice_${dayIndex}_${i}" value="${priceValue}" readonly style="text-align:center;"></td>
-        <td><input type="number" id="dayTotal_${dayIndex}_${i}" value="${total.toFixed(2)}" readonly style="text-align:center;"></td>
-      </tr>
-    `;
+  <tr>
+    <td style="font-weight:600">${esc(items[i])}</td>
+    <td><input type="number" id="dayQty_${dayIndex}_${i}" min="0" placeholder="0" value="${qty}" oninput="onDayQtyChange(${dayIndex}, ${i})" style="text-align:center;"></td>
+    <td><input type="number" id="dayPrice_${dayIndex}_${i}" value="${priceValue}" readonly style="text-align:center;"></td>
+    <td><input type="number" id="dayTotal_${dayIndex}_${i}" value="${total.toFixed(2)}" readonly style="text-align:center;"></td>
+  </tr>
+`;
     
     if (qty && qty > 0) hasAnyItems = true;
   }
@@ -1121,20 +1206,21 @@ async function savePackageInvoice() {
 function showPackageSuccessWithDetails(packageId, count, pdfUrl, vouchers, total, paid, remaining, currency) {
   clearFormFull();
   const cur = currency || '$';
+  const cleanPkgId = esc(packageId);
   
   document.getElementById('alertIcon').innerHTML = '✅';
   document.getElementById('alertMsg').innerHTML = `
     <div style="text-align:center;">
       <div style="font-size:17px;font-weight:800;color:#0f1f3d;margin-bottom:4px;">✅ Package Saved Successfully</div>
-      <div style="font-size:13px;color:#64748b;margin-bottom:14px;">${packageId} · ${count} invoice${count>1?'s':''} created</div>
+      <div style="font-size:13px;color:#64748b;margin-bottom:14px;">${cleanPkgId} · ${count} invoice${count>1?'s':''} created</div>
       <div style="display:flex;justify-content:space-around;gap:8px;background:#f8fafc;border-radius:14px;padding:12px;margin-bottom:14px;">
-        <div><div style="font-size:10px;color:#64748b;">TOTAL</div><div style="font-weight:800;color:#0f1f3d;">${total.toFixed(2)} ${cur}</div></div>
-        <div><div style="font-size:10px;color:#16a34a;">PAID</div><div style="font-weight:800;color:#16a34a;">${paid.toFixed(2)} ${cur}</div></div>
-        <div><div style="font-size:10px;color:#dc2626;">REMAINING</div><div style="font-weight:800;color:#dc2626;">${remaining.toFixed(2)} ${cur}</div></div>
+        <div><div style="font-size:10px;color:#64748b;">TOTAL</div><div style="font-weight:800;color:#0f1f3d;">${total.toFixed(2)} ${esc(cur)}</div></div>
+        <div><div style="font-size:10px;color:#16a34a;">PAID</div><div style="font-weight:800;color:#16a34a;">${paid.toFixed(2)} ${esc(cur)}</div></div>
+        <div><div style="font-size:10px;color:#dc2626;">REMAINING</div><div style="font-weight:800;color:#dc2626;">${remaining.toFixed(2)} ${esc(cur)}</div></div>
       </div>
       <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
-        <button onclick="window.open('${pdfUrl}','_blank');" style="background:#0f1f3d;color:#f5c842;padding:8px 18px;border:none;border-radius:30px;cursor:pointer;font-weight:700;font-size:12px;">📄 View PDF</button>
-        <button onclick="sharePackageWhatsApp('${packageId}')" 
+        <button onclick="openPDF('${pdfUrl}')" style="background:#0f1f3d;color:#f5c842;padding:8px 18px;border:none;border-radius:30px;cursor:pointer;font-weight:700;font-size:12px;">📄 View PDF</button>
+        <button onclick="sharePackageWhatsApp('${cleanPkgId}')" 
                 style="background:#25D366;color:white;padding:8px 18px;border:none;border-radius:30px;cursor:pointer;font-weight:700;font-size:12px;transition:all 0.2s;"
                 onmouseover="this.style.transform='translateY(-2px)'" 
                 onmouseout="this.style.transform='translateY(0)'">
@@ -1482,10 +1568,12 @@ function updateSessionBadge() {
     const mc = document.getElementById('mainContent');
     mc.insertBefore(b, mc.firstChild);
   }
-  const lk = sessionPackages.map(p => `<a href="${p.url}" target="_blank" style="color:var(--blue);font-weight:700;font-size:12px;text-decoration:none">📦 ${p.packageId} (${p.count})</a>`).join(' ');
+  const lk = sessionPackages.map(p => {
+    const pkgId = esc(p.packageId);
+    return `<a href="${p.url}" target="_blank" style="color:var(--blue);font-weight:700;font-size:12px;text-decoration:none">📦 ${pkgId} (${p.count})</a>`;
+  }).join(' ');
   b.innerHTML = `<span class="cnt">${sessionPackages.length}</span><strong>${sessionPackages.length} باكيدج</strong><span style="flex:1;display:flex;gap:6px;flex-wrap:wrap;">${lk}</span><span style="font-size:11px;color:var(--green)">✅ اضغط حفظ لإنهاء</span>`;
 }
-
 function clearFormFull() {
   // ✅ مسح التوقيع
   signatureData = null;
