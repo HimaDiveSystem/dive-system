@@ -1326,110 +1326,82 @@ function openWhatsAppSmart(phone, message) {
     }
   }
 }
-async function sharePackageWhatsApp(packageId) {
-  // ✅ إظهار مؤشر التحميل فوراً
+// ✅ استخدام نفس دالة gas الموجودة في المشروع
+function sharePackageWhatsApp(packageId) {
   showPDFOv('📱 Preparing WhatsApp...');
   
-  try {
-    console.log('📱 sharePackageWhatsApp called for package:', packageId);
+  gas('getPackageInvoices', { 
+    packageId: packageId,
+    centerName: currentUser?.centerName 
+  })
+  .then(function(data) {
+    hidePDFOv();
     
-    // ✅ محاولة جلب البيانات مع timeout
-    const fetchPromise = gas('getPackageInvoices', { 
-      packageId: packageId,
-      centerName: currentUser?.centerName 
-    });
-    
-    // ✅ مهلة 10 ثواني
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Request timeout')), 10000);
-    });
-    
-    const result = await Promise.race([fetchPromise, timeoutPromise]);
-    
-    if (!result?.success || !result?.data) {
-      hidePDFOv();
+    if (!data?.success || !data?.data) {
       showAlert('❌ Failed to get package data', '❌');
       return;
     }
     
-    const data = result.data;
-    const pdfUrl = data.pdfUrl || '';
-    
-    let phone = data.contactNo || '';
-    phone = cleanPhoneForWhatsApp(phone);
-    
-    if (!phone || phone === '+' || phone === '+20' || phone.length < 8) {
-      hidePDFOv();
-      showAlert(
-        '❌ No valid phone number found\n\n' +
-        '📌 Phone number should be: 10 digits (e.g., 01012345678)',
-        '❌'
-      );
+    const info = data.data;
+    let phone = (info.contactNo || '').toString().replace(/[^0-9]/g, '');
+    if (!phone) {
+      showAlert('❌ No phone number found', '❌');
       return;
     }
     
-    const guestName = data.guestName || 'Guest';
-    const currency = data.invoiceCurrency || 'USD';
-    const total = data.totalAmount || 0;
-    const rest = data.rest || 0;
-    const centerName = data.centerName || 'Our Diving Center';
-    const days = data.packageDays || 0;
+    // ✅ تنظيف الرقم
+    if (phone.startsWith('0')) phone = '20' + phone.substring(1);
+    if (!phone.startsWith('+')) phone = '+' + phone;
     
-    // ✅ جلب اللوجو من بيانات المركز
-    const logoUrl = data.centerLogo || '';
-    const logoText = logoUrl ? `🖼️ *Logo:* ${logoUrl}%0A%0A` : '';
+    const centerName = info.centerName || 'Scorpion Diving Center';
     
-    let daysDetails = '';
-    if (data.packageData && data.packageData.length > 0) {
-      data.packageData.forEach((day, i) => {
-        const dayNum = i + 1;
-        let itemsStr = '';
-        if (day.items && day.items.length > 0) {
-          itemsStr = day.items.map(item => `${item.name}×${item.quantity}`).join(', ');
-        }
-        daysDetails += `%0A  📅 Day ${dayNum}: ${day.tripName || 'Trip'} (${day.date || 'N/A'})${itemsStr ? ' - ' + itemsStr : ''}`;
-      });
-    }
+    // ✅ بناء الأيام
+    let daysListText = '';
+    (info.packageData || []).forEach(function(day, idx) {
+      const date = new Date(day.date);
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const dateStr = String(date.getDate()).padStart(2, '0') + '/' + months[date.getMonth()] + '/' + date.getFullYear();
+      daysListText += `  📅 Day ${idx + 1}: ${day.tripName} (${dateStr})\n`;
+    });
     
-    // ✅ ✅ ✅ رسالة محسنة مع اسم المركز واللوجو
-    const message = 
-      `${logoText}` +
-      `🏖️ *${centerName}* Diving Center%0A%0A` +
-      `🧾 *Diving Package Confirmation*%0A%0A` +
-      `Dear ${guestName},%0A` +
-      `Thank you for choosing *${centerName}* for your diving adventure! 🐠%0A%0A` +
-      `*📋 Your Package Details*%0A` +
-      `┌─────────────────────────%0A` +
-      `│ 🆔 Package: ${packageId}%0A` +
-      `│ 📅 Days: ${days}%0A` +
-      `${daysDetails}%0A` +
-      `└─────────────────────────%0A%0A` +
-      `*💰 Payment Summary*%0A` +
-      `┌─────────────────────────%0A` +
-      `│ 💰 Total: ${total.toFixed(2)} ${currency}%0A` +
-      `│ ✅ Paid: ${(total - rest).toFixed(2)} ${currency}%0A` +
-      `│ ⚠️ Balance: ${rest.toFixed(2)} ${currency}%0A` +
-      `└─────────────────────────%0A%0A` +
-      `📄 *Your Invoice PDF*%0A` +
-      `${pdfUrl ? `🔗 ${pdfUrl}` : ''}%0A%0A` +
-      `We look forward to welcoming you soon! 🙏%0A` +
-      `🌊 *${centerName} Team*`;
+    const currency = info.invoiceCurrency || '$';
+    const total = Number(info.totalAmount) || 0;
+    const rest = Number(info.rest) || 0;
     
-    // ✅ استخدام الدالة الذكية لفتح واتساب
-    openWhatsAppSmart(phone, message);
+    // ✅ ✅ ✅ بناء الرسالة بدون رموز مشفرة مسبقاً
+    let message = '';
+    message += `🏖️ *${centerName}* Diving Center\n\n`;
+    message += `🧾 *Diving Package Confirmation*\n\n`;
+    message += `Dear ${info.guestName || 'Guest'},\n`;
+    message += `We are delighted to confirm your booking with *${centerName}*. 🐠\n\n`;
+    message += `*📋 Package Details*\n`;
+    message += `─────────────────────\n`;
+    message += `🆔 Package ID: ${info.packageId}\n`;
+    message += `📅 Duration: ${info.packageDays} day${info.packageDays > 1 ? 's' : ''}\n`;
+    message += daysListText;
+    message += `─────────────────────\n\n`;
+    message += `*💰 Payment Summary*\n`;
+    message += `─────────────────────\n`;
+    message += `💳 Total Amount: ${total.toFixed(2)} ${currency}\n`;
+    message += `✅ Amount Paid: ${(total - rest).toFixed(2)} ${currency}\n`;
+    message += `⚠️ Balance Due: ${rest.toFixed(2)} ${currency}\n`;
+    message += `─────────────────────\n\n`;
+    message += `📎 *Invoice Attached*\n`;
+    message += `🔗 ${info.pdfUrl || ''}\n\n`;
+    message += `We look forward to welcoming you soon! 🙏\n`;
+    message += `🌊 *${centerName} Team*`;
     
+    // ✅ ترميز واحد فقط هنا
+    const encodedMessage = encodeURIComponent(message);
+    
+    // ✅ فتح واتساب
+    openWhatsAppSmart(phone, encodedMessage);
+    
+  })
+  .catch(function(err) {
     hidePDFOv();
-    
-  } catch(err) {
-    console.error('❌ sharePackageWhatsApp error:', err);
-    hidePDFOv();
-    
-    if (err.message === 'Request timeout') {
-      showAlert('⏱️ Request timed out. Please try again.', '⚠️');
-    } else {
-      showAlert('❌ Error: ' + err.message, '❌');
-    }
-  }
+    showAlert('❌ Error: ' + err.message, '❌');
+  });
 }
 async function sharePackageInvoiceWhatsApp(voucherNo) {
   try {
