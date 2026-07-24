@@ -710,7 +710,416 @@ function showCenters() {
   document.getElementById('addCenterBtn').addEventListener('click', ()=>openCenterModal());
   renderCentersTable();
 }
+// ═══════════════════════════════════════════════════════════════════
+// ✅ دوال الفروع (مع صلاحيات)
+// ═══════════════════════════════════════════════════════════════════
 
+function showBranches() {
+  // ✅ التحقق من الصلاحية
+  if (!checkUserPermission('ManageBranches')) {
+    showAlert('⚠️ ليس لديك صلاحية لعرض الفروع');
+    return;
+  }
+  
+  setActive('mi-branches');
+  const ca = document.getElementById('contentArea');
+  ca.innerHTML = `<div class="content-area"><div class="content-header"><h2>🏛️ إدارة الفروع</h2><button class="btn-primary" id="addBranchBtn">➕ إضافة فرع</button></div><div class="table-wrap"><table><thead><tr><th>الفرع</th><th>المركز</th><th>المدير</th><th>الجوال</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody id="branchesTbody">${skeletonRows(6)}</tbody></table></div></div>`;
+  document.getElementById('addBranchBtn').addEventListener('click', ()=>openBranchModal());
+  renderBranchesTable();
+}
+
+function renderBranchesTable() {
+  const tb = document.getElementById('branchesTbody'); if(!tb) return;
+  if(!branches.length){ tb.innerHTML='<tr><td colspan="6" style="text-align:center;padding:30px;color:#aaa;">لا توجد فروع</td></tr>'; return; }
+  
+  const canEdit = checkUserPermission('ManageBranches');
+  const canDelete = checkUserPermission('ManageBranches');
+  
+  tb.innerHTML = branches.map(b => {
+    const active = b.isActive === 'TRUE' || b.isActive === true;
+    
+    let actions = '';
+    if (canEdit) {
+      actions += `<button class="action-btn view" onclick="viewBranch('${b.id}')">👁 عرض</button>`;
+      actions += `<button class="action-btn edit" onclick="openBranchModal('${b.id}')">✏️ تعديل</button>`;
+      actions += `<button class="action-btn toggle" onclick="doToggleBranch('${b.id}')">🔄 حالة</button>`;
+    }
+    if (canDelete) {
+      actions += `<button class="action-btn delete" onclick="doDeleteBranch('${b.id}')">🗑️ حذف</button>`;
+    }
+    
+    return `<tr>
+      <td><strong>${safeEscape(b.name)}</strong></td>
+      <td>${safeEscape(b.centerName)}</td>
+      <td>${safeEscape(b.manager)||'—'}</td>
+      <td dir="ltr">${safeEscape(b.phone)||'—'}</td>
+      <td><span class="status-badge ${active?'status-active':'status-inactive'}">${active?'نشط':'غير نشط'}</span></td>
+      <td><div class="action-buttons">${actions}</div></td>
+    </tr>`;
+  }).join('');
+}
+
+function openBranchModal(id) {
+  // ✅ التحقق من الصلاحية
+  if (!checkUserPermission('ManageBranches')) {
+    showAlert('⚠️ ليس لديك صلاحية لإدارة الفروع');
+    return;
+  }
+  
+  const isEdit = !!id;
+  document.getElementById('branchModalTitle').textContent = isEdit ? '✏️ تعديل الفرع' : '➕ فرع جديد';
+  document.getElementById('branchForm').reset();
+  document.getElementById('branchId').value = id || '';
+  const sel = document.getElementById('branchCenterId');
+  sel.innerHTML = '<option value="">اختر المركز...</option>';
+  centers.forEach(c => sel.innerHTML += `<option value="${c.id}">${safeEscape(c.name)}</option>`);
+  if(isEdit){
+    const b = branches.find(x => x.id === id); 
+    if(!b){ showAlert('بيانات الفرع غير موجودة'); return; }
+    sel.value = b.centerId || '';
+    document.getElementById('branchName').value = b.name || '';
+    document.getElementById('branchManager').value = b.manager || '';
+    document.getElementById('branchPhone').value = b.phone || '';
+    document.getElementById('branchEmail').value = b.email || '';
+    document.getElementById('branchAddress').value = b.address || '';
+    document.getElementById('branchStatus').value = (b.isActive === 'TRUE' || b.isActive === true) ? 'Active' : 'Inactive';
+  }
+  document.getElementById('branchModal').style.display = 'flex';
+}
+
+function viewBranch(id) {
+  const b = branches.find(x => x.id === id); 
+  if(!b) return;
+  document.getElementById('viewTitle').textContent = '🏛️ تفاصيل الفرع';
+  document.getElementById('viewBody').innerHTML = `
+    <p><strong>المعرف:</strong> ${safeEscape(b.id)}</p>
+    <p><strong>الفرع:</strong> ${safeEscape(b.name)}</p>
+    <p><strong>المركز:</strong> ${safeEscape(b.centerName)}</p>
+    <p><strong>المدير:</strong> ${safeEscape(b.manager)}</p>
+    <p><strong>الجوال:</strong> ${safeEscape(b.phone)}</p>
+    <p><strong>البريد:</strong> ${safeEscape(b.email)}</p>
+    <p><strong>العنوان:</strong> ${safeEscape(b.address)}</p>
+    <p><strong>الحالة:</strong> ${(b.isActive === 'TRUE' || b.isActive === true) ? 'نشط' : 'غير نشط'}</p>`;
+  document.getElementById('viewModal').style.display = 'flex';
+}
+
+async function saveBranch(e) {
+  e.preventDefault();
+  // ✅ التحقق من الصلاحية
+  if (!checkUserPermission('ManageBranches')) {
+    showAlert('⚠️ ليس لديك صلاحية لحفظ الفروع');
+    return;
+  }
+  
+  const id = document.getElementById('branchId').value || '';
+  const data = {
+    branchId: id,
+    centerId: document.getElementById('branchCenterId').value,
+    branchName: document.getElementById('branchName').value.trim(),
+    managerName: document.getElementById('branchManager').value.trim(),
+    phone: document.getElementById('branchPhone').value.trim(),
+    email: document.getElementById('branchEmail').value.trim(),
+    address: document.getElementById('branchAddress').value.trim(),
+    isActive: document.getElementById('branchStatus').value === 'Active' ? 'TRUE' : 'FALSE',
+    password: '123456'
+  };
+  if(!data.centerId){ showAlert('الرجاء اختيار المركز'); return; }
+  if(!data.branchName){ showAlert('الرجاء إدخال اسم الفرع'); return; }
+
+  const btn = document.getElementById('branchSaveBtn'); 
+  btn.disabled = true; 
+  btn.textContent = '⏳ جاري الحفظ...';
+  
+  try {
+    const action = id ? 'updateBranch' : 'addNewBranch';
+    const r = await callGAS(action, data);
+    if(r?.success){
+      closeModal('branchModal');
+      showAlert(r.message || '✅ تم الحفظ', async()=>{ await refreshData(); showBranches(); });
+    } else {
+      showAlert('❌ ' + (r?.message || 'فشل الحفظ'));
+    }
+  } catch(err){ 
+    showAlert('❌ خطأ في الاتصال: ' + err.message); 
+  } finally { 
+    btn.disabled = false; 
+    btn.textContent = '💾 حفظ'; 
+  }
+}
+
+async function doDeleteBranch(id) {
+  // ✅ التحقق من الصلاحية
+  if (!checkUserPermission('ManageBranches')) {
+    showAlert('⚠️ ليس لديك صلاحية لحذف الفروع');
+    return;
+  }
+  
+  showConfirm('حذف هذا الفرع نهائياً؟', async()=>{
+    try {
+      const r = await callGAS('deleteBranch', { branchId: id });
+      if(r?.success) {
+        showAlert('✅ تم الحذف', async()=>{ 
+          await refreshData(); 
+          showBranches(); 
+        });
+      } else {
+        showAlert('❌ ' + (r?.message || ''));
+      }
+    } catch(e){ 
+      showAlert('❌ خطأ في الاتصال'); 
+    }
+  });
+}
+
+async function doToggleBranch(id) {
+  // ✅ التحقق من الصلاحية
+  if (!checkUserPermission('ManageBranches')) {
+    showAlert('⚠️ ليس لديك صلاحية لتغيير حالة الفروع');
+    return;
+  }
+  
+  showConfirm('تغيير حالة هذا الفرع؟', async()=>{
+    try {
+      const r = await callGAS('toggleBranchStatus', { branchId: id });
+      if(r?.success){ 
+        await refreshData(); 
+        showBranches(); 
+      } else {
+        showAlert('❌ ' + (r?.message || ''));
+      }
+    } catch(e){ 
+      showAlert('❌ خطأ في الاتصال'); 
+    }
+  });
+}
+  // ═══════════════════════════════════════════════════════════════════
+// ✅ دوال الموظفين (مع صلاحيات)
+// ═══════════════════════════════════════════════════════════════════
+
+function showStaff() {
+  // ✅ التحقق من الصلاحية
+  if (!checkUserPermission('ManageUsers')) {
+    showAlert('⚠️ ليس لديك صلاحية لعرض المستخدمين');
+    return;
+  }
+  
+  setActive('mi-staff');
+  const ca = document.getElementById('contentArea');
+  ca.innerHTML = `<div class="content-area"><div class="content-header"><h2>👥 إدارة المستخدمين</h2><button class="btn-primary" id="addUserBtn">➕ إضافة مستخدم</button></div><div class="table-wrap"><table><thead><tr><th>الاسم</th><th>المركز</th><th>الفرع</th><th>الدور</th><th>الجوال</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody id="staffTbody">${skeletonRows(7)}</tbody></table></div></div>`;
+  document.getElementById('addUserBtn').addEventListener('click', ()=>openUserModal());
+  renderStaffTable();
+}
+
+function renderStaffTable() {
+  const tb = document.getElementById('staffTbody'); 
+  if(!tb) return;
+  if(!staff.length){ 
+    tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:#aaa;">لا يوجد مستخدمون</td></tr>'; 
+    return; 
+  }
+  
+  const canEdit = checkUserPermission('ManageUsers');
+  const canDelete = checkUserPermission('ManageUsers');
+  
+  tb.innerHTML = staff.map(u => {
+    let actions = '';
+    if (canEdit) {
+      actions += `<button class="action-btn view" onclick="viewUser('${u.id}')">👁 عرض</button>`;
+      actions += `<button class="action-btn edit" onclick="openUserModal('${u.id}')">✏️ تعديل</button>`;
+    }
+    if (canDelete) {
+      actions += `<button class="action-btn delete" onclick="doDeleteUser('${u.id}')">🗑️ حذف</button>`;
+    }
+    
+    return `<tr>
+      <td><strong>${safeEscape(u.name)}</strong></td>
+      <td>${safeEscape(u.centerName)}</td>
+      <td>${safeEscape(u.branchName) || 'المركز الرئيسي'}</td>
+      <td>${safeEscape(u.type) || '—'}</td>
+      <td dir="ltr">${safeEscape(u.phone) || '—'}</td>
+      <td><span class="status-badge ${u.isActive ? 'status-active' : 'status-inactive'}">${u.isActive ? 'نشط' : 'غير نشط'}</span></td>
+      <td><div class="action-buttons">${actions}</div></td>
+    </tr>`;
+  }).join('');
+}
+
+function viewUser(id) {
+  const u = staff.find(x => x.id === id); 
+  if(!u) return;
+  document.getElementById('viewTitle').textContent = '👤 تفاصيل المستخدم';
+  document.getElementById('viewBody').innerHTML = `
+    <p><strong>المعرف:</strong> ${safeEscape(u.id)}</p>
+    <p><strong>الاسم:</strong> ${safeEscape(u.name)}</p>
+    <p><strong>المركز:</strong> ${safeEscape(u.centerName)}</p>
+    <p><strong>الفرع:</strong> ${safeEscape(u.branchName) || 'المركز الرئيسي'}</p>
+    <p><strong>الدور:</strong> ${safeEscape(u.type)}</p>
+    <p><strong>الجوال:</strong> ${safeEscape(u.phone)}</p>
+    <p><strong>البريد:</strong> ${safeEscape(u.email)}</p>
+    <p><strong>الحالة:</strong> ${u.isActive ? 'نشط' : 'غير نشط'}</p>`;
+  document.getElementById('viewModal').style.display = 'flex';
+}
+
+async function doDeleteUser(id) {
+  // ✅ التحقق من الصلاحية
+  if (!checkUserPermission('ManageUsers')) {
+    showAlert('⚠️ ليس لديك صلاحية لحذف المستخدمين');
+    return;
+  }
+  
+  showConfirm('حذف هذا المستخدم نهائياً؟', async()=>{
+    try {
+      const r = await callGAS('deleteUser', { userId: id });
+      if(r?.success) {
+        showAlert('✅ تم الحذف', async()=>{ 
+          await refreshData(); 
+          showStaff(); 
+        });
+      } else {
+        showAlert('❌ ' + (r?.message || ''));
+      }
+    } catch(e){ 
+      showAlert('❌ خطأ في الاتصال'); 
+    }
+  });
+}
+  // ═══════════════════════════════════════════════════════════════════
+// ✅ دوال الموظفين (مع صلاحيات)
+// ═══════════════════════════════════════════════════════════════════
+
+function showStaff() {
+  // ✅ التحقق من الصلاحية
+  if (!checkUserPermission('ManageUsers')) {
+    showAlert('⚠️ ليس لديك صلاحية لعرض المستخدمين');
+    return;
+  }
+  
+  setActive('mi-staff');
+  const ca = document.getElementById('contentArea');
+  ca.innerHTML = `<div class="content-area"><div class="content-header"><h2>👥 إدارة المستخدمين</h2><button class="btn-primary" id="addUserBtn">➕ إضافة مستخدم</button></div><div class="table-wrap"><table><thead><tr><th>الاسم</th><th>المركز</th><th>الفرع</th><th>الدور</th><th>الجوال</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody id="staffTbody">${skeletonRows(7)}</tbody></table></div></div>`;
+  document.getElementById('addUserBtn').addEventListener('click', ()=>openUserModal());
+  renderStaffTable();
+}
+
+function renderStaffTable() {
+  const tb = document.getElementById('staffTbody'); 
+  if(!tb) return;
+  if(!staff.length){ 
+    tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:#aaa;">لا يوجد مستخدمون</td></tr>'; 
+    return; 
+  }
+  
+  const canEdit = checkUserPermission('ManageUsers');
+  const canDelete = checkUserPermission('ManageUsers');
+  
+  tb.innerHTML = staff.map(u => {
+    let actions = '';
+    if (canEdit) {
+      actions += `<button class="action-btn view" onclick="viewUser('${u.id}')">👁 عرض</button>`;
+      actions += `<button class="action-btn edit" onclick="openUserModal('${u.id}')">✏️ تعديل</button>`;
+    }
+    if (canDelete) {
+      actions += `<button class="action-btn delete" onclick="doDeleteUser('${u.id}')">🗑️ حذف</button>`;
+    }
+    
+    return `<tr>
+      <td><strong>${safeEscape(u.name)}</strong></td>
+      <td>${safeEscape(u.centerName)}</td>
+      <td>${safeEscape(u.branchName) || 'المركز الرئيسي'}</td>
+      <td>${safeEscape(u.type) || '—'}</td>
+      <td dir="ltr">${safeEscape(u.phone) || '—'}</td>
+      <td><span class="status-badge ${u.isActive ? 'status-active' : 'status-inactive'}">${u.isActive ? 'نشط' : 'غير نشط'}</span></td>
+      <td><div class="action-buttons">${actions}</div></td>
+    </tr>`;
+  }).join('');
+}
+
+function viewUser(id) {
+  const u = staff.find(x => x.id === id); 
+  if(!u) return;
+  document.getElementById('viewTitle').textContent = '👤 تفاصيل المستخدم';
+  document.getElementById('viewBody').innerHTML = `
+    <p><strong>المعرف:</strong> ${safeEscape(u.id)}</p>
+    <p><strong>الاسم:</strong> ${safeEscape(u.name)}</p>
+    <p><strong>المركز:</strong> ${safeEscape(u.centerName)}</p>
+    <p><strong>الفرع:</strong> ${safeEscape(u.branchName) || 'المركز الرئيسي'}</p>
+    <p><strong>الدور:</strong> ${safeEscape(u.type)}</p>
+    <p><strong>الجوال:</strong> ${safeEscape(u.phone)}</p>
+    <p><strong>البريد:</strong> ${safeEscape(u.email)}</p>
+    <p><strong>الحالة:</strong> ${u.isActive ? 'نشط' : 'غير نشط'}</p>`;
+  document.getElementById('viewModal').style.display = 'flex';
+}
+
+async function doDeleteUser(id) {
+  // ✅ التحقق من الصلاحية
+  if (!checkUserPermission('ManageUsers')) {
+    showAlert('⚠️ ليس لديك صلاحية لحذف المستخدمين');
+    return;
+  }
+  
+  showConfirm('حذف هذا المستخدم نهائياً؟', async()=>{
+    try {
+      const r = await callGAS('deleteUser', { userId: id });
+      if(r?.success) {
+        showAlert('✅ تم الحذف', async()=>{ 
+          await refreshData(); 
+          showStaff(); 
+        });
+      } else {
+        showAlert('❌ ' + (r?.message || ''));
+      }
+    } catch(e){ 
+      showAlert('❌ خطأ في الاتصال'); 
+    }
+  });
+}
+  // ═══════════════════════════════════════════════════════════════════
+// ✅ دالة تحميل الفروع للمستخدمين
+// ═══════════════════════════════════════════════════════════════════
+
+async function loadBranchesForCenter(centerId, selectedId = '') {
+  if (!centerId) return;
+  try {
+    const data = await callGAS('getBranchesByCenter', { centerId });
+    const s = document.getElementById('userBranchId');
+    if (!s) return;
+    s.innerHTML = '<option value="">المركز الرئيسي</option>';
+    (Array.isArray(data) ? data : []).forEach(b => 
+      s.innerHTML += `<option value="${b.id}" ${b.id === selectedId ? 'selected' : ''}>${safeEscape(b.name)}</option>`
+    );
+  } catch(e){ 
+    console.error(e); 
+  }
+}
+  // ═══════════════════════════════════════════════════════════════════
+// ✅ دوال الأنشطة
+// ═══════════════════════════════════════════════════════════════════
+
+async function loadActivitiesCheckboxes(sel = []) {
+  const c = document.getElementById('activitiesCheckboxes');
+  if (!c) return;
+  
+  if (!cachedActivities) {
+    try {
+      cachedActivities = await callGAS('getAllActivities');
+    } catch(e) {
+      console.error(e);
+      cachedActivities = [];
+    }
+  }
+  
+  const selArr = typeof sel === 'string' ? sel.split(',').map(s => s.trim()) : sel;
+  const acts = (cachedActivities || []).filter(a => a.status);
+  
+  if (acts.length === 0) {
+    c.innerHTML = '<span style="color:#aaa;">لا توجد أنشطة</span>';
+    return;
+  }
+  
+  c.innerHTML = acts.map(a => 
+    `<label class="act-lbl"><input type="checkbox" value="${safeEscape(a.name)}" ${selArr.includes(a.name) ? 'checked' : ''}><span>${safeEscape(a.name)}</span></label>`
+  ).join('');
+}
+  
 function renderCentersTable() {
   const tb = document.getElementById('centersTbody'); if(!tb) return;
   if (!centers.length) { tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:30px;color:#aaa;">لا توجد مراكز</td></tr>'; return; }
@@ -939,41 +1348,52 @@ document.addEventListener('DOMContentLoaded', async function() {
   
   await initDashboard();
   
-  // ✅ ربط الأحداث
-  document.getElementById('mi-welcome').addEventListener('click', function() {
-    setActive('mi-welcome');
-    document.getElementById('contentArea').innerHTML = `
-      <div class="content-area">
-        <div class="welcome-area">
-          <div class="welcome-icon">🏝️</div>
-          <h2>مرحباً بك في لوحة التحكم</h2>
-          <p>من هنا يمكنك إدارة جميع مراكز وفروع الغوص</p>
-        </div>
+// ✅ ربط الأحداث
+document.getElementById('mi-welcome').addEventListener('click', function() {
+  setActive('mi-welcome');
+  document.getElementById('contentArea').innerHTML = `
+    <div class="content-area">
+      <div class="welcome-area">
+        <div class="welcome-icon">🏝️</div>
+        <h2>مرحباً بك في لوحة التحكم</h2>
+        <p>من هنا يمكنك إدارة جميع مراكز وفروع الغوص</p>
       </div>
-    `;
+    </div>
+  `;
+});
+
+document.getElementById('mi-centers').addEventListener('click', showCenters);
+document.getElementById('mi-branches').addEventListener('click', showBranches);
+document.getElementById('mi-staff').addEventListener('click', showStaff);
+document.getElementById('mi-expiring').addEventListener('click', showExpiringReport);
+document.getElementById('mi-permissions').addEventListener('click', showPermissions);
+
+// ✅ ربط stat cards
+document.getElementById('sc-centers').addEventListener('click', showCenters);
+document.getElementById('sc-branches').addEventListener('click', showBranches);
+document.getElementById('sc-staff').addEventListener('click', showStaff);
+document.getElementById('sc-critical').addEventListener('click', showCritical);
+document.getElementById('sc-warning').addEventListener('click', showWarning);
+
+// ✅ ربط النماذج
+document.getElementById('centerForm').addEventListener('submit', saveCenter);
+document.getElementById('branchForm').addEventListener('submit', saveBranch);
+document.getElementById('userForm').addEventListener('submit', saveUser);
+
+// ✅ ربط تحميل الفروع عند تغيير المركز
+document.getElementById('userCenterId').addEventListener('change', function(e) {
+  loadBranchesForCenter(e.target.value);
+});
+
+// ✅ ربط تحميل الصلاحيات عند تغيير الدور
+document.getElementById('userRole').addEventListener('change', loadPermissionsForRole);
+
+// ✅ ربط زر الخروج
+document.getElementById('logoutBtn').addEventListener('click', function() {
+  showConfirm('هل أنت متأكد من تسجيل الخروج؟', function() {
+    Session.logout();
   });
-  
-  document.getElementById('mi-centers').addEventListener('click', showCenters);
-  document.getElementById('mi-branches').addEventListener('click', showBranches);
-  document.getElementById('mi-staff').addEventListener('click', showStaff);
-  document.getElementById('mi-expiring').addEventListener('click', showExpiringReport);
-  document.getElementById('mi-permissions').addEventListener('click', showPermissions);
-  
-  // ✅ ربط زر الخروج
-  document.getElementById('logoutBtn').addEventListener('click', function() {
-    showConfirm('هل أنت متأكد من تسجيل الخروج؟', function() {
-      Session.logout();
-    });
-  });
-  
-  // ✅ ربط النماذج
-  document.getElementById('centerForm').addEventListener('submit', saveCenter);
-  document.getElementById('branchForm').addEventListener('submit', saveBranch);
-  document.getElementById('userForm').addEventListener('submit', saveUser);
-  
-  // ✅ تحميل الصلاحيات عند تغيير الدور
-  document.getElementById('userRole').addEventListener('change', loadPermissionsForRole);
-  
+});  
   // تعريف الدوال العامة
   window.showAlert = showAlert;
   window.showConfirm = showConfirm;
