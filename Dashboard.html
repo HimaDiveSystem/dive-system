@@ -5,6 +5,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>لوحة التحكم - نظام إدارة مراكز الغوص</title>
+  
+  <!-- ✅ إضافة الملفات الموحدة -->
+  <script src="config.js"></script>
+  <script src="session.js"></script>
+  <script src="ui.js"></script>
+  
   <style>
     * { margin:0; padding:0; box-sizing:border-box; font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif; }
     body { display:flex; min-height:100vh; background:#f0f8ff; }
@@ -107,6 +113,9 @@
     .mini-modal p { color:#1e2b4f; font-weight:700; font-size:15px; margin-bottom:18px; }
     .mini-modal .mbts { display:flex; gap:12px; justify-content:center; }
 
+    /* ── Footer ── */
+    .footer { text-align:center; padding:12px 0 4px 0; color:#94a3b8; font-size:10px; border-top:1px solid #e2e8f0; margin-top:16px; }
+
     @media(max-width:1300px){.stats-grid{grid-template-columns:repeat(3,1fr);}}
     @media(max-width:900px){.stats-grid{grid-template-columns:repeat(2,1fr);}.sidebar{width:90px;}.sidebar-header p,.menu-item span:not(.icon){display:none;}.menu-item{justify-content:center;padding:13px 0;margin:6px 8px;}.menu-item .icon{font-size:26px;}.main-content{margin-right:90px;padding:18px;}}
     @media(max-width:600px){.stats-grid{grid-template-columns:1fr 1fr;}.top-bar{flex-direction:column;gap:12px;}.form-row{grid-template-columns:1fr;}.action-buttons{flex-direction:column;}}
@@ -154,6 +163,11 @@
         <p>من هنا يمكنك إدارة جميع مراكز وفروع الغوص</p>
       </div>
     </div>
+  </div>
+  
+  <!-- ====== FOOTER ====== -->
+  <div class="footer">
+    <span>© 2025 <strong style="color:#1e2b4f;">🌊 Dive System</strong> — جميع الحقوق محفوظة</span>
   </div>
 </div>
 
@@ -289,194 +303,727 @@
   </div>
 </div>
 
+<!-- شريط التقدم -->
+<div id="progressOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); align-items:center; justify-content:center; z-index:10000; flex-direction:column;">
+  <div style="background:white; border-radius:16px; padding:24px; width:300px; text-align:center;">
+    <div style="font-size:24px; margin-bottom:12px;">📤</div>
+    <div id="progressText" style="margin-bottom:12px;">جاري رفع الصورة...</div>
+    <div style="width:100%; background:#e0e0e0; border-radius:10px; overflow:hidden;">
+      <div id="progressBar" style="width:0%; height:10px; background:#1e2b4f; transition:width 0.3s;"></div>
+    </div>
+    <div id="progressPercent" style="margin-top:8px; font-size:12px;">0%</div>
+  </div>
+</div>
+
 <script>
 // ══════════════════════════════════════════════════
-// الإعدادات
+// استخدام Session و UI و Config الموحدة
 // ══════════════════════════════════════════════════
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec';
 
 let centers=[], branches=[], staff=[], currentUser=null;
 let cachedActivities = null;
-    // ============================================================
-  // ✅ التحقق من صحة الجلسة - منع التوجيه المتكرر
-  // ============================================================
-  function checkSessionValidity() {
-    try {
-      // التحقق من وجود جلسة صالحة في localStorage
-      const stored = localStorage.getItem('currentUser');
-      if (!stored) {
-        // لا توجد جلسة، اخرج من الصفحة
-        window.location.href = 'index.html';
-        return false;
-      }
-      
-      const data = JSON.parse(stored);
-      // التحقق من صلاحية الجلسة (24 ساعة)
-      if (data.expiry && Date.now() < data.expiry) {
-        return true; // الجلسة صالحة
-      } else {
-        // الجلسة منتهية
-        localStorage.removeItem('currentUser');
-        window.location.href = 'index.html';
-        return false;
-      }
-    } catch(e) {
-      window.location.href = 'index.html';
-      return false;
+
+// ══════════════════════════════════════════════════
+// الدوال الرئيسية
+// ══════════════════════════════════════════════════
+
+function setActive(id) {
+  document.querySelectorAll('.menu-item').forEach(i=>i.classList.remove('active'));
+  document.getElementById(id)?.classList.add('active');
+}
+
+function skeletonRows(cols, n=5) {
+  return Array(n).fill(`<tr class="skeleton-row">${Array(cols).fill('<td>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>').join('')}</tr>`).join('');
+}
+
+function getDaysLeft(endStr) {
+  if (!endStr) return {days:null, status:'unknown', text:'غير محدد'};
+  const p = endStr.split('-');
+  if (p.length===3) {
+    const MN={Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+    const end = new Date(+p[2], MN[p[1]], +p[0]); end.setHours(0,0,0,0);
+    const today = new Date(); today.setHours(0,0,0,0);
+    const diff = Math.ceil((end-today)/86400000);
+    if (diff<0)  return {days:diff, status:'expired',  text:'منتهي'};
+    if (diff<=3) return {days:diff, status:'critical', text:`ينتهي خلال ${diff} أيام`};
+    if (diff<=7) return {days:diff, status:'warning',  text:`ينتهي خلال ${diff} أيام`};
+    return {days:diff, status:'active', text:`${diff} يوم متبقي`};
+  }
+  return {days:null, status:'unknown', text:'تاريخ غير صالح'};
+}
+
+// ══════════════════════════════════════════════════
+// التحميل الأولي
+// ══════════════════════════════════════════════════
+
+async function initDashboard() {
+  // ✅ استخدام callGAS بدلاً من jsonp
+  try {
+    const stats = await callGAS('getDashboardStats');
+    document.getElementById('cnt-centers').className  = 'stat-value';
+    document.getElementById('cnt-branches').className = 'stat-value';
+    document.getElementById('cnt-staff').className    = 'stat-value';
+    document.getElementById('cnt-critical').className = 'stat-value';
+    document.getElementById('cnt-warning').className  = 'stat-value';
+    document.getElementById('cnt-centers').textContent  = stats?.centers  ?? 0;
+    document.getElementById('cnt-branches').textContent = stats?.branches ?? 0;
+    document.getElementById('cnt-staff').textContent    = stats?.users    ?? 0;
+    document.getElementById('cnt-critical').textContent = stats?.critical ?? 0;
+    document.getElementById('cnt-warning').textContent  = stats?.warning  ?? 0;
+  } catch(e) { console.error('Stats error:', e); }
+
+  try {
+    const d = await callGAS('getAllDashboardData');
+    centers  = Array.isArray(d?.centers)  ? d.centers  : [];
+    branches = Array.isArray(d?.branches) ? d.branches : [];
+    staff    = Array.isArray(d?.users)    ? d.users    : [];
+  } catch(e) { console.error('Data error:', e); }
+}
+
+async function refreshData() {
+  try {
+    const [d, s] = await Promise.all([
+      callGAS('getAllDashboardData'),
+      callGAS('getDashboardStats')
+    ]);
+    centers  = Array.isArray(d?.centers)  ? d.centers  : centers;
+    branches = Array.isArray(d?.branches) ? d.branches : branches;
+    staff    = Array.isArray(d?.users)    ? d.users    : staff;
+    document.getElementById('cnt-centers').textContent  = s?.centers  ?? 0;
+    document.getElementById('cnt-branches').textContent = s?.branches ?? 0;
+    document.getElementById('cnt-staff').textContent    = s?.users    ?? 0;
+    document.getElementById('cnt-critical').textContent = s?.critical ?? 0;
+    document.getElementById('cnt-warning').textContent  = s?.warning  ?? 0;
+  } catch(e) { console.error('Refresh error:', e); }
+}
+
+// ══════════════════════════════════════════════════
+// المراكز
+// ══════════════════════════════════════════════════
+
+function showCenters() {
+  setActive('mi-centers');
+  const ca = document.getElementById('contentArea');
+  ca.innerHTML = `<div class="content-area"><div class="content-header"><h2>🏢 إدارة المراكز</h2><button class="btn-primary" id="addCenterBtn">➕ إضافة مركز</button></div><div class="table-wrap"><table><thead><tr><th>المركز</th><th>المالك</th><th>الجوال</th><th>انتهاء الاشتراك</th><th>المتبقي</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody id="centersTbody">${skeletonRows(7)}</tbody></table></div></div>`;
+  document.getElementById('addCenterBtn').addEventListener('click', ()=>openCenterModal());
+  renderCentersTable();
+}
+
+function renderCentersTable() {
+  const tb = document.getElementById('centersTbody'); if(!tb) return;
+  if (!centers.length) { tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:30px;color:#aaa;">لا توجد مراكز</td></tr>'; return; }
+  tb.innerHTML = centers.map(c => {
+    const d=getDaysLeft(c.subscriptionEnd);
+    const rc=d.status==='expired'?'expired':d.status==='critical'?'expiring-soon':d.status==='warning'?'expiring-week':'';
+    const active=c.status==='TRUE'||c.status===true;
+    return `<tr class="${rc}">
+      <td><strong>${safeEscape(c.name)}</strong></td><td>${safeEscape(c.owner)}</td><td dir="ltr">${safeEscape(c.phone)||'—'}</td>
+      <td>${safeEscape(c.subscriptionEnd)||'غير محدد'}</td><td>${d.text}</td>
+      <td><span class="status-badge ${active?'status-active':'status-inactive'}">${active?'نشط':'غير نشط'}</span></td>
+      <td><div class="action-buttons">
+        <button class="action-btn view"   onclick="viewCenter('${c.id}')">👁 عرض</button>
+        <button class="action-btn edit"   onclick="openCenterModal('${c.id}')">✏️ تعديل</button>
+        <button class="action-btn toggle" onclick="doToggleCenter('${c.id}')">🔄 حالة</button>
+        <button class="action-btn delete" onclick="doDeleteCenter('${c.id}')">🗑️ حذف</button>
+      </div></td></tr>`;
+  }).join('');
+}
+
+async function openCenterModal(id) {
+  const isEdit = !!id;
+  document.getElementById('centerModalTitle').textContent = isEdit ? '✏️ تعديل المركز' : '➕ مركز جديد';
+  document.getElementById('centerForm').reset();
+  document.getElementById('centerId').value = id || '';
+  
+  ensureExtraFields();
+  ensureLogoUploadField();
+  await loadActivitiesCheckboxes([]);
+  
+  if (isEdit) {
+    const c = centers.find(x => x.id === id);
+    if (!c) { showAlert('بيانات المركز غير موجودة'); return; }
+    
+    document.getElementById('centerName').value = c.name || '';
+    document.getElementById('ownerName').value = c.owner || '';
+    document.getElementById('centerEmail').value = c.email || '';
+    document.getElementById('centerPhone').value = c.phone || '';
+    document.getElementById('centerAddress').value = c.address || '';
+    document.getElementById('subscriptionPlan').value = c.subscriptionPlan || 'باقة أساسية - 3500 جنيه/شهر';
+    document.getElementById('commissionPolicy').value = c.commissionPolicy || 'POL001';
+    document.getElementById('centerStatus').value = (c.status === 'TRUE' || c.status === true) ? 'Active' : 'Inactive';
+    
+    document.getElementById('contactNumbers').value = c.contactNumbers || '';
+    document.getElementById('centerCategory').value = c.centerCategory || '';
+    document.getElementById('cancelationPolicy').value = c.cancelationPolicy || '';
+    
+    document.getElementById('subscriptionStart').value = convertDateToInput(c.subscriptionStart);
+    document.getElementById('subscriptionEnd').value = convertDateToInput(c.subscriptionEnd);
+    
+    await loadActivitiesCheckboxes(c.activities || '');
+    
+    if (c.centerLogo && c.centerLogo.trim() !== '') {
+      document.getElementById('centerLogoUrl').value = c.centerLogo;
+      document.getElementById('logoPreview').innerHTML = `<img src="${getDriveDirectUrl(c.centerLogo)}" style="width:100%; height:100%; object-fit:cover;">`;
     }
   }
   
-  // ✅ تنفيذ التحقق فوراً
-  if (!checkSessionValidity()) {
-    // سيتم التوجيه داخل الدالة، نوقف تنفيذ باقي الكود
-    throw new Error('جلسة غير صالحة');
+  document.getElementById('centerModal').style.display = 'flex';
+}
+
+function viewCenter(id) {
+  const c = centers.find(x => x.id === id);
+  if (!c) return;
+  
+  let logoHtml = '';
+  if (c.centerLogo && c.centerLogo.trim() !== '') {
+    logoHtml = `<div style="text-align:center; margin:15px 0;">
+      <img src="${getDriveDirectUrl(c.centerLogo)}" style="max-width:150px; max-height:150px; border-radius:12px; border:1px solid #ddd; padding:5px; background:white;">
+    </div>`;
   }
-// ══════════════════════════════════════════════════
-// JSONP — لكل الطلبات
-// ══════════════════════════════════════════════════
-function jsonp(action, params={}) {
-  return new Promise((res, rej) => {
-    const cb = 'cb_' + Date.now() + '_' + Math.floor(Math.random()*99999);
-    params.action = action; 
-    params.callback = cb;
-    const qs = Object.entries(params).map(([k,v])=>k+'='+encodeURIComponent(String(v??''))).join('&');
-    const sc = document.createElement('script');
-    let timeoutId;
-    
-    // ✅ تنظيف الدالة بعد الانتهاء
-    const cleanup = () => {
-      if (timeoutId) clearTimeout(timeoutId);
-      if (window[cb]) delete window[cb];
-      if (sc && sc.parentNode) sc.remove();
-    };
-    
-    // ✅ زيادة المهلة إلى 120 ثانية (لرفع الصور)
-    timeoutId = setTimeout(() => {
-      cleanup();
-      rej(new Error('timeout - استغرق الطلب أكثر من 120 ثانية'));
-    }, 120000);
-    
-    window[cb] = d => { 
-      cleanup(); 
-      res(d); 
-    };
-    
-    sc.onerror = () => { 
-      cleanup(); 
-      rej(new Error('network error - فشل الاتصال بالخادم')); 
-    };
-    
-    sc.src = GAS_URL + '?' + qs;
-    document.head.appendChild(sc);
-  });
+ 
+  document.getElementById('viewTitle').textContent = '🏢 تفاصيل المركز';
+  document.getElementById('viewBody').innerHTML = `
+    ${logoHtml}
+    <p><strong>المعرف:</strong> ${safeEscape(c.id)}</p>
+    <p><strong>المركز:</strong> ${safeEscape(c.name)}</p>
+    <p><strong>المالك:</strong> ${safeEscape(c.owner)}</p>
+    <p><strong>البريد:</strong> ${safeEscape(c.email)}</p>
+    <p><strong>الجوال:</strong> ${safeEscape(c.phone)}</p>
+    <p><strong>العنوان:</strong> ${safeEscape(c.address)}</p>
+    <p><strong>خطة الاشتراك:</strong> ${safeEscape(c.subscriptionPlan)}</p>
+    <p><strong>بداية الاشتراك:</strong> ${safeEscape(c.subscriptionStart)}</p>
+    <p><strong>انتهاء الاشتراك:</strong> ${safeEscape(c.subscriptionEnd)}</p>
+    <p><strong>أرقام التواصل:</strong> ${safeEscape(c.contactNumbers)||'—'}</p>
+    <p><strong>فئة المركز:</strong> ${safeEscape(c.centerCategory)||'—'}</p>
+    <p><strong>سياسة الإلغاء:</strong> ${safeEscape(c.cancelationPolicy)||'—'}</p>
+    <p><strong>الأنشطة:</strong> ${safeEscape(c.activities)||'—'}</p>
+    <p><strong>الحالة:</strong> ${(c.status === 'TRUE' || c.status === true) ? 'نشط' : 'غير نشط'}</p>
+  `;
+  document.getElementById('viewModal').style.display = 'flex';
 }
-// ══════════════════════════════════════════════════
-// دالة ضغط الصورة
-// ══════════════════════════════════════════════════
-async function compressImage(file, maxWidth = 800, maxHeight = 800, quality = 0.7) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        let width = img.width;
-        let height = img.height;
-        
-        if (width > maxWidth) {
-          height = (height * maxWidth) / width;
-          width = maxWidth;
-        }
-        if (height > maxHeight) {
-          width = (width * maxHeight) / height;
-          height = maxHeight;
-        }
-        
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, width, height);
-        
-        const compressedBase64 = canvas.toDataURL('image/jpeg', quality);
-        resolve(compressedBase64);
-      };
-      img.onerror = reject;
-      img.src = e.target.result;
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}async function uploadLogoInChunks(file, centerId) {
-  return new Promise(async (resolve, reject) => {
-    // إظهار شريط التقدم
-    const overlay = document.getElementById('progressOverlay');
-    const progressBar = document.getElementById('progressBar');
-    const progressPercent = document.getElementById('progressPercent');
-    const progressText = document.getElementById('progressText');
-    overlay.style.display = 'flex';
-    progressBar.style.width = '0%';
-    progressPercent.textContent = '0%';
-    
-    try {
-      // ضغط الصورة أولاً
-      progressText.textContent = 'جاري ضغط الصورة...';
-      const compressedBase64 = await compressImage(file, 400, 400, 0.6);
-      let base64 = compressedBase64.split(',')[1];
-      
-      const CHUNK_SIZE = 500;
-      const totalChunks = Math.ceil(base64.length / CHUNK_SIZE);
-      
-      console.log(`📤 بدء رفع الصورة: ${totalChunks} جزء, حجم Base64: ${base64.length}`);
-      progressText.textContent = `جاري رفع الصورة (0/${totalChunks})...`;
-      
-      for (let i = 0; i < totalChunks; i++) {
-        const chunk = base64.substring(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-        
-        console.log(`📤 رفع الجزء ${i + 1}/${totalChunks}...`);
-        const result = await jsonp('uploadCenterLogoChunk', {
-          b64: chunk,
-          chunkIndex: i,
-          totalChunks: totalChunks,
-          centerId: centerId,
-          mimeType: 'image/jpeg'
-        });
-        
-        if (!result?.chunkReceived) {
-          console.error(`❌ فشل الجزء ${i + 1}:`, result);
-          throw new Error(`فشل الجزء ${i + 1}`);
-        }
-        
-        console.log(`✅ الجزء ${i + 1}/${totalChunks} تم استلامه`);
-        
-        // تحديث شريط التقدم
-        const percent = Math.round(((i + 1) / totalChunks) * 100);
-        progressBar.style.width = percent + '%';
-        progressPercent.textContent = percent + '%';
-        progressText.textContent = `جاري رفع الصورة (${i + 1}/${totalChunks})...`;
-      }
-      
-      console.log(`📤 جميع الأجزاء (${totalChunks}) تم رفعها، جاري الدمج...`);
-      progressText.textContent = 'جاري دمج الأجزاء...';
-      const finalResult = await jsonp('assembleUploadedLogo', {
-        centerId: centerId,
-        totalChunks: totalChunks,
-        mimeType: 'image/jpeg'
-      });
-      
-      console.log('📤 نتيجة الدمج:', finalResult);
-      overlay.style.display = 'none';
-      resolve(finalResult);
-      
-    } catch(err) {
-      console.error('❌ خطأ في رفع الصورة:', err);
-      overlay.style.display = 'none';
-      reject(err);
+
+async function saveCenter(e) {
+  e.preventDefault();
+  const acts = Array.from(document.querySelectorAll('#activitiesCheckboxes input:checked')).map(x=>x.value).join(',');
+  const id = document.getElementById('centerId').value||'';
+  const logoUrl = document.getElementById('centerLogoUrl')?.value || '';
+  
+  const data = {
+    id: id,
+    name: document.getElementById('centerName').value.trim(),
+    owner: document.getElementById('ownerName').value.trim(),
+    email: document.getElementById('centerEmail').value.trim(),
+    phone: document.getElementById('centerPhone').value.trim(),
+    address: document.getElementById('centerAddress').value.trim(),
+    activities: acts,
+    subscriptionPlan: document.getElementById('subscriptionPlan').value,
+    commissionPolicy: document.getElementById('commissionPolicy').value,
+    subscriptionStart: document.getElementById('subscriptionStart').value,
+    subscriptionEnd: document.getElementById('subscriptionEnd').value,
+    status: document.getElementById('centerStatus').value === 'Active' ? 'TRUE' : 'FALSE',
+    password: '123456',
+    contactNumbers: document.getElementById('contactNumbers')?.value || '',
+    centerCategory: document.getElementById('centerCategory')?.value || '',
+    cancelationPolicy: document.getElementById('cancelationPolicy')?.value || '',
+    centerLogo: logoUrl,
+    sheetId: ''
+  };
+  
+  if(!data.name)  { showAlert('الرجاء إدخال اسم المركز'); return; }
+  if(!data.phone) { showAlert('الرجاء إدخال رقم الجوال'); return; }
+
+  const btn=document.getElementById('centerSaveBtn'); btn.disabled=true; btn.textContent='⏳ جاري الحفظ...';
+  try {
+    let action = id ? 'updateCenter' : 'createCenterWithSheet';
+    const r = await callGAS(action, data);
+    if (r?.success) {
+      closeModal('centerModal');
+      showAlert(r.message||'✅ تم الحفظ', async()=>{ await refreshData(); showCenters(); });
+    } else {
+      showAlert('❌ ' + (r?.message||'فشل الحفظ'));
     }
+  } catch(err) { showAlert('❌ خطأ في الاتصال: ' + err.message); }
+  finally { btn.disabled=false; btn.textContent='💾 حفظ'; }
+}
+
+async function doDeleteCenter(id) {
+  showConfirm('حذف هذا المركز نهائياً؟', async()=>{
+    try {
+      const r = await callGAS('deleteCenter', {centerId:id});
+      if(r?.success) { showAlert('✅ تم الحذف', async()=>{ await refreshData(); showCenters(); }); }
+      else showAlert('❌ '+(r?.message||''));
+    } catch(e) { showAlert('❌ خطأ في الاتصال'); }
   });
 }
+
+async function doToggleCenter(id) {
+  showConfirm('تغيير حالة هذا المركز؟', async()=>{
+    try {
+      const r = await callGAS('toggleCenterStatus', {centerId:id});
+      if(r?.success) { await refreshData(); showCenters(); }
+      else showAlert('❌ '+(r?.message||''));
+    } catch(e) { showAlert('❌ خطأ في الاتصال'); }
+  });
+}
+
 // ══════════════════════════════════════════════════
-// Modals
+// الفروع
 // ══════════════════════════════════════════════════
+
+function showBranches() {
+  setActive('mi-branches');
+  const ca=document.getElementById('contentArea');
+  ca.innerHTML=`<div class="content-area"><div class="content-header"><h2>🏛️ إدارة الفروع</h2><button class="btn-primary" id="addBranchBtn">➕ إضافة فرع</button></div><div class="table-wrap"><table><thead><tr><th>الفرع</th><th>المركز</th><th>المدير</th><th>الجوال</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody id="branchesTbody">${skeletonRows(6)}</tbody></table></div></div>`;
+  document.getElementById('addBranchBtn').addEventListener('click',()=>openBranchModal());
+  renderBranchesTable();
+}
+
+function renderBranchesTable() {
+  const tb=document.getElementById('branchesTbody'); if(!tb) return;
+  if(!branches.length){ tb.innerHTML='<tr><td colspan="6" style="text-align:center;padding:30px;color:#aaa;">لا توجد فروع</td></tr>'; return; }
+  tb.innerHTML=branches.map(b=>{
+    const active=b.isActive==='TRUE'||b.isActive===true;
+    return `<tr>
+      <td><strong>${safeEscape(b.name)}</strong></td><td>${safeEscape(b.centerName)}</td><td>${safeEscape(b.manager)||'—'}</td>
+      <td dir="ltr">${safeEscape(b.phone)||'—'}</td>
+      <td><span class="status-badge ${active?'status-active':'status-inactive'}">${active?'نشط':'غير نشط'}</span></td>
+      <td><div class="action-buttons">
+        <button class="action-btn view"   onclick="viewBranch('${b.id}')">👁 عرض</button>
+        <button class="action-btn edit"   onclick="openBranchModal('${b.id}')">✏️ تعديل</button>
+        <button class="action-btn toggle" onclick="doToggleBranch('${b.id}')">🔄 حالة</button>
+        <button class="action-btn delete" onclick="doDeleteBranch('${b.id}')">🗑️ حذف</button>
+      </div></td></tr>`;
+  }).join('');
+}
+
+function openBranchModal(id) {
+  const isEdit=!!id;
+  document.getElementById('branchModalTitle').textContent=isEdit?'✏️ تعديل الفرع':'➕ فرع جديد';
+  document.getElementById('branchForm').reset();
+  document.getElementById('branchId').value=id||'';
+  const sel=document.getElementById('branchCenterId');
+  sel.innerHTML='<option value="">اختر المركز...</option>';
+  centers.forEach(c=>sel.innerHTML+=`<option value="${c.id}">${safeEscape(c.name)}</option>`);
+  if(isEdit){
+    const b=branches.find(x=>x.id===id); if(!b){ showAlert('بيانات الفرع غير موجودة'); return; }
+    sel.value=b.centerId||'';
+    document.getElementById('branchName').value    = b.name||'';
+    document.getElementById('branchManager').value = b.manager||'';
+    document.getElementById('branchPhone').value   = b.phone||'';
+    document.getElementById('branchEmail').value   = b.email||'';
+    document.getElementById('branchAddress').value = b.address||'';
+    document.getElementById('branchStatus').value  = (b.isActive==='TRUE'||b.isActive===true)?'Active':'Inactive';
+  }
+  document.getElementById('branchModal').style.display='flex';
+}
+
+function viewBranch(id) {
+  const b=branches.find(x=>x.id===id); if(!b) return;
+  document.getElementById('viewTitle').textContent='🏛️ تفاصيل الفرع';
+  document.getElementById('viewBody').innerHTML=`
+    <p><strong>المعرف:</strong> ${safeEscape(b.id)}</p>
+    <p><strong>الفرع:</strong> ${safeEscape(b.name)}</p>
+    <p><strong>المركز:</strong> ${safeEscape(b.centerName)}</p>
+    <p><strong>المدير:</strong> ${safeEscape(b.manager)}</p>
+    <p><strong>الجوال:</strong> ${safeEscape(b.phone)}</p>
+    <p><strong>البريد:</strong> ${safeEscape(b.email)}</p>
+    <p><strong>العنوان:</strong> ${safeEscape(b.address)}</p>
+    <p><strong>الحالة:</strong> ${(b.isActive==='TRUE'||b.isActive===true)?'نشط':'غير نشط'}</p>`;
+  document.getElementById('viewModal').style.display='flex';
+}
+
+async function saveBranch(e) {
+  e.preventDefault();
+  const id=document.getElementById('branchId').value||'';
+  const data={
+    branchId:id,
+    centerId:document.getElementById('branchCenterId').value,
+    branchName:document.getElementById('branchName').value.trim(),
+    managerName:document.getElementById('branchManager').value.trim(),
+    phone:document.getElementById('branchPhone').value.trim(),
+    email:document.getElementById('branchEmail').value.trim(),
+    address:document.getElementById('branchAddress').value.trim(),
+    isActive:document.getElementById('branchStatus').value==='Active'?'TRUE':'FALSE',
+    password:'123456'
+  };
+  if(!data.centerId){ showAlert('الرجاء اختيار المركز'); return; }
+  if(!data.branchName){ showAlert('الرجاء إدخال اسم الفرع'); return; }
+
+  const btn=document.getElementById('branchSaveBtn'); btn.disabled=true; btn.textContent='⏳ جاري الحفظ...';
+  try {
+    const action = id ? 'updateBranch' : 'addNewBranch';
+    const r = await callGAS(action, data);
+    if(r?.success){
+      closeModal('branchModal');
+      showAlert(r.message||'✅ تم الحفظ', async()=>{ await refreshData(); showBranches(); });
+    } else showAlert('❌ '+(r?.message||'فشل الحفظ'));
+  } catch(err){ showAlert('❌ خطأ في الاتصال: '+err.message); }
+  finally{ btn.disabled=false; btn.textContent='💾 حفظ'; }
+}
+
+async function doDeleteBranch(id) {
+  showConfirm('حذف هذا الفرع نهائياً؟', async()=>{
+    try {
+      const r=await callGAS('deleteBranch',{branchId:id});
+      if(r?.success) showAlert('✅ تم الحذف', async()=>{ await refreshData(); showBranches(); });
+      else showAlert('❌ '+(r?.message||''));
+    } catch(e){ showAlert('❌ خطأ في الاتصال'); }
+  });
+}
+
+async function doToggleBranch(id) {
+  showConfirm('تغيير حالة هذا الفرع؟', async()=>{
+    try {
+      const r=await callGAS('toggleBranchStatus',{branchId:id});
+      if(r?.success){ await refreshData(); showBranches(); }
+      else showAlert('❌ '+(r?.message||''));
+    } catch(e){ showAlert('❌ خطأ في الاتصال'); }
+  });
+}
+
+// ══════════════════════════════════════════════════
+// الموظفين
+// ══════════════════════════════════════════════════
+
+function showStaff() {
+  setActive('mi-staff');
+  const ca=document.getElementById('contentArea');
+  ca.innerHTML=`<div class="content-area"><div class="content-header"><h2>👥 إدارة الموظفين</h2><button class="btn-primary" id="addUserBtn">➕ إضافة موظف</button></div><div class="table-wrap"><table><thead><tr><th>الاسم</th><th>المركز</th><th>الفرع</th><th>الدور</th><th>الجوال</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody id="staffTbody">${skeletonRows(7)}</tbody></table></div></div>`;
+  document.getElementById('addUserBtn').addEventListener('click',()=>openUserModal());
+  renderStaffTable();
+}
+
+function renderStaffTable() {
+  const tb=document.getElementById('staffTbody'); if(!tb) return;
+  if(!staff.length){ tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:30px;color:#aaa;">لا يوجد موظفون</td></tr>'; return; }
+  tb.innerHTML=staff.map(u=>`<tr>
+    <td><strong>${safeEscape(u.name)}</strong></td><td>${safeEscape(u.centerName)}</td>
+    <td>${safeEscape(u.branchName)||'المركز الرئيسي'}</td><td>${safeEscape(u.type)||'—'}</td>
+    <td dir="ltr">${safeEscape(u.phone)||'—'}</td>
+    <td><span class="status-badge ${u.isActive?'status-active':'status-inactive'}">${u.isActive?'نشط':'غير نشط'}</span></td>
+    <td><div class="action-buttons">
+      <button class="action-btn view"   onclick="viewUser('${u.id}')">👁 عرض</button>
+      <button class="action-btn edit"   onclick="openUserModal('${u.id}')">✏️ تعديل</button>
+      <button class="action-btn delete" onclick="doDeleteUser('${u.id}')">🗑️ حذف</button>
+    </div></td></tr>`).join('');
+}
+
+function openUserModal(id) {
+  const isEdit=!!id;
+  document.getElementById('userModalTitle').textContent=isEdit?'✏️ تعديل الموظف':'➕ موظف جديد';
+  document.getElementById('userForm').reset();
+  document.getElementById('userId').value=id||'';
+  document.getElementById('historyMsg').style.display='none';
+  const sel=document.getElementById('userCenterId');
+  sel.innerHTML='<option value="">اختر المركز...</option>';
+  centers.forEach(c=>sel.innerHTML+=`<option value="${c.id}">${safeEscape(c.name)}</option>`);
+  document.getElementById('userBranchId').innerHTML='<option value="">المركز الرئيسي</option>';
+  if(isEdit){
+    const u=staff.find(x=>x.id===id); if(!u){ showAlert('بيانات الموظف غير موجودة'); return; }
+    sel.value=u.centerId||'';
+    loadBranchesForCenter(u.centerId, u.branchId);
+    document.getElementById('userPhone').value    = u.phone||'';
+    document.getElementById('userFullName').value = u.name||'';
+    document.getElementById('userEmail').value    = u.email||'';
+    document.getElementById('userRole').value     = u.type||'Sales';
+    document.getElementById('userStatus').value   = u.isActive?'active':'inactive';
+  }
+  document.getElementById('userModal').style.display='flex';
+}
+
+function viewUser(id) {
+  const u=staff.find(x=>x.id===id); if(!u) return;
+  document.getElementById('viewTitle').textContent='👤 تفاصيل الموظف';
+  document.getElementById('viewBody').innerHTML=`
+    <p><strong>المعرف:</strong> ${safeEscape(u.id)}</p>
+    <p><strong>الاسم:</strong> ${safeEscape(u.name)}</p>
+    <p><strong>المركز:</strong> ${safeEscape(u.centerName)}</p>
+    <p><strong>الفرع:</strong> ${safeEscape(u.branchName)||'المركز الرئيسي'}</p>
+    <p><strong>الدور:</strong> ${safeEscape(u.type)}</p>
+    <p><strong>الجوال:</strong> ${safeEscape(u.phone)}</p>
+    <p><strong>البريد:</strong> ${safeEscape(u.email)}</p>
+    <p><strong>الحالة:</strong> ${u.isActive?'نشط':'غير نشط'}</p>`;
+  document.getElementById('viewModal').style.display='flex';
+}
+
+async function loadBranchesForCenter(centerId, selectedId='') {
+  if(!centerId) return;
+  try {
+    const data = await callGAS('getBranchesByCenter',{centerId});
+    const s=document.getElementById('userBranchId');
+    s.innerHTML='<option value="">المركز الرئيسي</option>';
+    (Array.isArray(data)?data:[]).forEach(b=>s.innerHTML+=`<option value="${b.id}" ${b.id===selectedId?'selected':''}>${safeEscape(b.name)}</option>`);
+  } catch(e){ console.error(e); }
+}
+
+async function saveUser(e) {
+  e.preventDefault();
+  const id=document.getElementById('userId').value||'';
+  const data={
+    id,
+    centerId:document.getElementById('userCenterId').value,
+    branchId:document.getElementById('userBranchId').value||'',
+    phone:document.getElementById('userPhone').value.trim(),
+    name:document.getElementById('userFullName').value.trim(),
+    email:document.getElementById('userEmail').value.trim(),
+    type:document.getElementById('userRole').value,
+    isActive:document.getElementById('userStatus').value==='active'?'true':'false',
+    password:'123456'
+  };
+  if(!data.centerId){ showAlert('الرجاء اختيار المركز'); return; }
+  if(!data.name)    { showAlert('الرجاء إدخال الاسم'); return; }
+  if(!data.phone)   { showAlert('الرجاء إدخال رقم الهاتف'); return; }
+
+  const btn=document.getElementById('userSaveBtn'); btn.disabled=true; btn.textContent='⏳ جاري الحفظ...';
+  try {
+    const action = id ? 'updateUser' : 'addNewUser';
+    const r = await callGAS(action, data);
+    if(r?.success){
+      closeModal('userModal');
+      showAlert(r.message||'✅ تم الحفظ', async()=>{ await refreshData(); showStaff(); });
+    } else showAlert('❌ '+(r?.message||'فشل الحفظ'));
+  } catch(err){ showAlert('❌ خطأ في الاتصال: '+err.message); }
+  finally{ btn.disabled=false; btn.textContent='💾 حفظ'; }
+}
+
+async function doDeleteUser(id) {
+  showConfirm('حذف هذا الموظف نهائياً؟', async()=>{
+    try {
+      const r=await callGAS('deleteUser',{userId:id});
+      if(r?.success) showAlert('✅ تم الحذف', async()=>{ await refreshData(); showStaff(); });
+      else showAlert('❌ '+(r?.message||''));
+    } catch(e){ showAlert('❌ خطأ في الاتصال'); }
+  });
+}
+
+async function searchUserByPhone(phone) {
+  if(phone.length<10) return;
+  try {
+    const u=await callGAS('findUserByPhone',{phone});
+    if(u?.name){
+      document.getElementById('historyMsg').style.display='block';
+      document.getElementById('historyMsg').textContent=`✅ موجود: ${safeEscape(u.name)} — ${safeEscape(u.phone)}`;
+      document.getElementById('userFullName').value = u.name||'';
+      document.getElementById('userEmail').value    = u.email||'';
+      document.getElementById('userPhone').value    = u.phone||'';
+    }
+  } catch(e){ console.error(e); }
+}
+
+// ══════════════════════════════════════════════════
+// الأنشطة (checkboxes)
+// ══════════════════════════════════════════════════
+
+async function loadActivitiesCheckboxes(sel=[]) {
+  const c = document.getElementById('activitiesCheckboxes');
+  if (!c) return;
+  
+  if (!cachedActivities) {
+    try {
+      cachedActivities = await callGAS('getAllActivities');
+    } catch(e) {
+      console.error(e);
+      cachedActivities = [];
+    }
+  }
+  
+  const selArr = typeof sel === 'string' ? sel.split(',').map(s=>s.trim()) : sel;
+  const acts = (cachedActivities || []).filter(a => a.status);
+  
+  if (acts.length === 0) {
+    c.innerHTML = '<span style="color:#aaa;">لا توجد أنشطة</span>';
+    return;
+  }
+  
+  c.innerHTML = acts.map(a => 
+    `<label class="act-lbl"><input type="checkbox" value="${safeEscape(a.name)}" ${selArr.includes(a.name) ? 'checked' : ''}><span>${safeEscape(a.name)}</span></label>`
+  ).join('');
+}
+
+// ══════════════════════════════════════════════════
+// تقارير الاشتراكات
+// ══════════════════════════════════════════════════
+
+async function showExpiringReport() {
+  setActive('mi-expiring');
+  document.getElementById('subTitle').textContent = '⚠️ تقرير الاشتراكات';
+  document.getElementById('subList').innerHTML = '<div style="text-align:center;padding:30px;"><div class="loader-sm"></div><p>جاري التحميل...</p></div>';
+  document.getElementById('subModal').style.display = 'flex';
+  try {
+    const r = await callGAS('getExpiryReport');
+    renderExpiryModal(r);
+  } catch(e) {
+    document.getElementById('subList').innerHTML = '<p style="color:red;text-align:center;">خطأ في التحميل</p>';
+  }
+}
+
+async function showCritical() {
+  document.getElementById('subTitle').textContent = '🔴 حرجة (≤ 3 أيام)';
+  document.getElementById('subList').innerHTML = '<div style="text-align:center;padding:30px;"><div class="loader-sm"></div></div>';
+  document.getElementById('subModal').style.display = 'flex';
+  try { const r=await callGAS('getExpiryReport'); renderExpiryModal(r,'critical'); }
+  catch(e) { document.getElementById('subList').innerHTML='<p style="color:red;text-align:center;">خطأ</p>'; }
+}
+
+async function showWarning() {
+  document.getElementById('subTitle').textContent = '🟡 تحذير (4-7 أيام)';
+  document.getElementById('subList').innerHTML = '<div style="text-align:center;padding:30px;"><div class="loader-sm"></div></div>';
+  document.getElementById('subModal').style.display = 'flex';
+  try { const r=await callGAS('getExpiryReport'); renderExpiryModal(r,'warning'); }
+  catch(e) { document.getElementById('subList').innerHTML='<p style="color:red;text-align:center;">خطأ</p>'; }
+}
+
+function renderExpiryModal(r, filter) {
+  const sections = filter
+    ? [ filter==='critical'
+          ? {label:'🔴 حرجة (≤ 3 أيام)',   color:'#c62828', bg:'#ffebee', list:r.critical||[]}
+          : {label:'🟡 تحذير (4-7 أيام)',  color:'#e65100', bg:'#fff3e0', list:r.warning||[]}
+      ]
+    : [
+        {label:'🔴 منتهية الاشتراك',       color:'#b71c1c', bg:'#ffcdd2', list:r.expired||[]},
+        {label:'🔴 حرجة (≤ 3 أيام)',       color:'#c62828', bg:'#ffebee', list:r.critical||[]},
+        {label:'🟡 تحذير (4-7 أيام)',      color:'#e65100', bg:'#fff3e0', list:r.warning||[]}
+      ];
+
+  let html = '';
+  sections.forEach(sec => {
+    html += `<div style="margin-bottom:16px;">
+      <div style="background:${sec.bg};color:${sec.color};font-weight:700;padding:8px 14px;border-radius:10px 10px 0 0;font-size:14px;">
+        ${sec.label} — ${sec.list.length} مركز
+      </div>`;
+    if (!sec.list.length) {
+      html += `<div style="padding:14px;text-align:center;color:#aaa;font-size:13px;background:#fafafa;border:1px solid #eee;border-top:none;border-radius:0 0 10px 10px;">لا توجد نتائج</div>`;
+    } else {
+      html += `<table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead><tr>
+          <th style="background:#1e2b4f;color:#ffd966;padding:8px;text-align:right;">المركز</th>
+          <th style="background:#1e2b4f;color:#ffd966;padding:8px;text-align:center;">انتهاء الاشتراك</th>
+          <th style="background:#1e2b4f;color:#ffd966;padding:8px;text-align:center;">الأيام المتبقية</th>
+          <th style="background:#1e2b4f;color:#ffd966;padding:8px;text-align:center;">الحالة</th>
+        </tr></thead><tbody>`;
+      sec.list.forEach(c => {
+        const dText = c.diff < 0 ? `منتهي منذ ${Math.abs(c.diff)} يوم` : c.diff===0 ? 'ينتهي اليوم!' : `${c.diff} يوم`;
+        const activeIcon = c.isActive ? '✅ نشط' : '🔴 موقوف';
+        html += `<tr style="border-bottom:1px solid #eee;">
+          <td style="padding:8px;font-weight:600;">${safeEscape(c.name)}</td>
+          <td style="padding:8px;text-align:center;">${safeEscape(c.endDate)}</td>
+          <td style="padding:8px;text-align:center;font-weight:700;color:${sec.color};">${dText}</td>
+          <td style="padding:8px;text-align:center;">${activeIcon}</td>
+        </tr>`;
+      });
+      html += `</tbody></table>`;
+    }
+    html += `</div>`;
+  });
+
+  html += `<div style="text-align:center;margin-top:16px;padding-top:14px;border-top:2px dashed #ddd;">
+    <button onclick="runCheckNow()" class="btn-primary" style="font-size:13px;padding:9px 20px;">
+      🔄 تشغيل التحقق الآن
+    </button>
+    <p style="color:#aaa;font-size:11px;margin-top:8px;">يُحدّث الحالة تلقائياً كل يوم عند منتصف الليل</p>
+  </div>`;
+
+  document.getElementById('subList').innerHTML = html;
+}
+
+async function runCheckNow() {
+  const btn = event.target;
+  btn.disabled=true; btn.textContent='⏳ جاري التحقق...';
+  try {
+    const r = await callGAS('checkSubscriptions');
+    if (r?.success) {
+      await refreshData();
+      showAlert(`✅ ${r.summary}`, ()=>showExpiringReport());
+    } else {
+      showAlert('❌ ' + (r?.message||'فشل التشغيل'));
+    }
+  } catch(e) { showAlert('❌ خطأ: '+e.message); }
+  finally { btn.disabled=false; btn.textContent='🔄 تشغيل التحقق الآن'; }
+}
+
+// ══════════════════════════════════════════════════
+// إدارة الصلاحيات
+// ══════════════════════════════════════════════════
+
+function showPermissions() {
+  setActive('mi-permissions');
+  const ca = document.getElementById('contentArea');
+  ca.innerHTML = `
+    <div class="content-area">
+      <div class="content-header">
+        <h2>🔑 إدارة الصلاحيات</h2>
+        <button class="btn-primary" onclick="loadPermissionsTable()">🔄 تحديث</button>
+      </div>
+      <div id="permissionsContainer">
+        <div style="text-align:center;padding:40px;">
+          <div class="loader-sm"></div>
+          <p style="color:#94a3b8;margin-top:12px;">جاري تحميل بيانات الصلاحيات...</p>
+        </div>
+      </div>
+    </div>
+  `;
+  loadPermissionsTable();
+}
+
+async function loadPermissionsTable() {
+  const container = document.getElementById('permissionsContainer');
+  if (!container) return;
+  
+  try {
+    const users = await callGAS('getAllUsersData');
+    
+    if (!users || users.length === 0) {
+      container.innerHTML = `<div style="text-align:center;padding:40px;color:#94a3b8;">لا يوجد مستخدمون لعرض صلاحياتهم</div>`;
+      return;
+    }
+    
+    let html = `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>المستخدم</th>
+              <th>الدور</th>
+              <th>الحالة</th>
+              <th>الإجراءات</th>
+            </tr>
+          </thead>
+          <tbody>
+    `;
+    
+    users.forEach(user => {
+      html += `
+        <tr>
+          <td><strong>${safeEscape(user.name || user.id)}</strong></td>
+          <td>${safeEscape(user.type || '—')}</td>
+          <td><span class="status-badge ${user.isActive ? 'status-active' : 'status-inactive'}">${user.isActive ? '✅ نشط' : '❌ غير نشط'}</span></td>
+          <td>
+            <button class="action-btn edit" onclick="editPermissions('${user.id}')">✏️ تعديل</button>
+          </td>
+        </tr>
+      `;
+    });
+    
+    html += `</tbody></table></div>
+      <div style="text-align:center;padding:16px;color:#94a3b8;font-size:12px;">
+        💡 نظام الصلاحيات قيد التطوير - سيتم إضافة إدارة تفصيلية للصلاحيات قريباً
+      </div>
+    `;
+    container.innerHTML = html;
+    
+  } catch(e) {
+    container.innerHTML = `<div style="text-align:center;padding:40px;color:red;">❌ خطأ في تحميل البيانات: ${safeEscape(e.message)}</div>`;
+  }
+}
+
+function editPermissions(userId) {
+  showAlert(`📝 تعديل صلاحيات المستخدم: ${userId}\n\nسيتم فتح نافذة التعديل التفصيلية قريباً.`);
+}
+
+// ══════════════════════════════════════════════════
+// دوال مساعدة (UI)
+// ══════════════════════════════════════════════════
+
 function closeModal(id){ document.getElementById(id).style.display='none'; }
 
 function showAlert(msg, cb) {
@@ -500,114 +1047,7 @@ function showConfirm(msg, onYes) {
   cn.addEventListener('click',()=>{ m.style.display='none'; });
 }
 
-// ══════════════════════════════════════════════════
-// Utils
-// ══════════════════════════════════════════════════
-function getDaysLeft(endStr) {
-  if (!endStr) return {days:null, status:'unknown', text:'غير محدد'};
-  const p = endStr.split('-');
-  if (p.length===3) {
-    const MN={Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
-    const end = new Date(+p[2], MN[p[1]], +p[0]); end.setHours(0,0,0,0);
-    const today = new Date(); today.setHours(0,0,0,0);
-    const diff = Math.ceil((end-today)/86400000);
-    if (diff<0)  return {days:diff, status:'expired',  text:'منتهي'};
-    if (diff<=3) return {days:diff, status:'critical', text:`ينتهي خلال ${diff} أيام`};
-    if (diff<=7) return {days:diff, status:'warning',  text:`ينتهي خلال ${diff} أيام`};
-    return {days:diff, status:'active', text:`${diff} يوم متبقي`};
-  }
-  return {days:null, status:'unknown', text:'تاريخ غير صالح'};
-}
-
-function setActive(id) {
-  document.querySelectorAll('.menu-item').forEach(i=>i.classList.remove('active'));
-  document.getElementById(id)?.classList.add('active');
-}
-
-function skeletonRows(cols, n=5) {
-  return Array(n).fill(`<tr class="skeleton-row">${Array(cols).fill('<td>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>').join('')}</tr>`).join('');
-}
-
-// ══════════════════════════════════════════════════
-// التحميل الأولي — طلبان فقط
-// ══════════════════════════════════════════════════
-async function initDashboard() {
-  // طلب 1: الإحصاءات
- loadActivitiesCheckboxes([]);
-  jsonp('getDashboardStats').then(s => {
-    document.getElementById('cnt-centers').className  = 'stat-value';
-    document.getElementById('cnt-branches').className = 'stat-value';
-    document.getElementById('cnt-staff').className    = 'stat-value';
-    document.getElementById('cnt-critical').className = 'stat-value';
-    document.getElementById('cnt-warning').className  = 'stat-value';
-    document.getElementById('cnt-centers').textContent  = s?.centers  ?? 0;
-    document.getElementById('cnt-branches').textContent = s?.branches ?? 0;
-    document.getElementById('cnt-staff').textContent    = s?.users    ?? 0;
-    document.getElementById('cnt-critical').textContent = s?.critical ?? 0;
-    document.getElementById('cnt-warning').textContent  = s?.warning  ?? 0;
-  }).catch(e => console.error('Stats error:', e));
-
-  // طلب 2: كل البيانات
-  try {
-    const d = await jsonp('getAllDashboardData');
-    console.log('البيانات المستلمة:', d);  // ✅ أضف هذا السطر للتأكد
-    centers  = Array.isArray(d?.centers)  ? d.centers  : [];
-    branches = Array.isArray(d?.branches) ? d.branches : [];
-    staff    = Array.isArray(d?.users)    ? d.users    : [];
-  } catch(e) { console.error('Data error:', e); }
-}
-
-// ══════════════════════════════════════════════════
-// إعادة تحميل البيانات بعد كل تعديل
-// ══════════════════════════════════════════════════
-async function refreshData() {
-  try {
-    const [d, s] = await Promise.all([
-      jsonp('getAllDashboardData'),
-      jsonp('getDashboardStats')
-    ]);
-    centers  = Array.isArray(d?.centers)  ? d.centers  : centers;
-    branches = Array.isArray(d?.branches) ? d.branches : branches;
-    staff    = Array.isArray(d?.users)    ? d.users    : staff;
-    document.getElementById('cnt-centers').textContent  = s?.centers  ?? 0;
-    document.getElementById('cnt-branches').textContent = s?.branches ?? 0;
-    document.getElementById('cnt-staff').textContent    = s?.users    ?? 0;
-    document.getElementById('cnt-critical').textContent = s?.critical ?? 0;
-    document.getElementById('cnt-warning').textContent  = s?.warning  ?? 0;
-  } catch(e) { console.error('Refresh error:', e); }
-}
-
-// ══════════════════════════════════════════════════
-// المراكز
-// ══════════════════════════════════════════════════
-function showCenters() {
-  setActive('mi-centers');
-  const ca = document.getElementById('contentArea');
-  ca.innerHTML = `<div class="content-area"><div class="content-header"><h2>🏢 إدارة المراكز</h2><button class="btn-primary" id="addCenterBtn">➕ إضافة مركز</button></div><div class="table-wrap"><table><thead><tr><th>المركز</th><th>المالك</th><th>الجوال</th><th>انتهاء الاشتراك</th><th>المتبقي</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody id="centersTbody">${skeletonRows(7)}</tbody></table></div></div>`;
-  document.getElementById('addCenterBtn').addEventListener('click', ()=>openCenterModal());
-  renderCentersTable();
-}
-
-function renderCentersTable() {
-  const tb = document.getElementById('centersTbody'); if(!tb) return;
-  if (!centers.length) { tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:30px;color:#aaa;">لا توجد مراكز</td></tr>'; return; }
-  tb.innerHTML = centers.map(c => {
-    const d=getDaysLeft(c.subscriptionEnd);
-    const rc=d.status==='expired'?'expired':d.status==='critical'?'expiring-soon':d.status==='warning'?'expiring-week':'';
-    const active=c.status==='TRUE'||c.status===true;
-    return `<tr class="${rc}">
-      <td><strong>${c.name||''}</strong></td><td>${c.owner||''}</td><td dir="ltr">${c.phone||'—'}</td>
-      <td>${c.subscriptionEnd||'غير محدد'}</td><td>${d.text}</td>
-      <td><span class="status-badge ${active?'status-active':'status-inactive'}">${active?'نشط':'غير نشط'}</span></td>
-      <td><div class="action-buttons">
-        <button class="action-btn view"   onclick="viewCenter('${c.id}')">👁 عرض</button>
-        <button class="action-btn edit"   onclick="openCenterModal('${c.id}')">✏️ تعديل</button>
-        <button class="action-btn toggle" onclick="doToggleCenter('${c.id}')">🔄 حالة</button>
-        <button class="action-btn delete" onclick="doDeleteCenter('${c.id}')">🗑️ حذف</button>
-      </div></td></tr>`;
-  }).join('');
-}
-  function ensureExtraFields() {
+function ensureExtraFields() {
   if (document.getElementById('extraFields')) return;
   
   const form = document.getElementById('centerForm');
@@ -631,7 +1071,6 @@ function renderCentersTable() {
     </div>
     <div class="form-group"><label>سياسة الإلغاء</label><textarea id="cancelationPolicy" rows="2" placeholder="سياسة الإلغاء والاسترداد..."></textarea></div>
   `;
-  
   form.insertBefore(extraDiv, actions);
 }
 
@@ -696,7 +1135,6 @@ function convertDateToInput(dateStr) {
 
 function getDriveDirectUrl(url) {
   if (!url) return '';
-  // استخراج File ID من الرابط
   let fileId = '';
   const patterns = [
     /\/file\/d\/([a-zA-Z0-9_-]+)/,
@@ -713,627 +1151,258 @@ function getDriveDirectUrl(url) {
   }
   return url;
 }
-async function openCenterModal(id) {
-  const isEdit = !!id;
-  document.getElementById('centerModalTitle').textContent = isEdit ? '✏️ تعديل المركز' : '➕ مركز جديد';
-  document.getElementById('centerForm').reset();
-  document.getElementById('centerId').value = id || '';
-  
-  // ✅ الخطوة 1: إنشاء الحقول الإضافية أولاً (بغض النظر عن isEdit)
-  ensureExtraFields();
-  ensureLogoUploadField();
-  
-  // ✅ الخطوة 2: تحميل الأنشطة
-  await loadActivitiesCheckboxes([]);
-  
-  // ✅ الخطوة 3: تعبئة البيانات (إذا كان تعديل)
-  if (isEdit) {
-    const c = centers.find(x => x.id === id);
-    if (!c) { 
-      showAlert('بيانات المركز غير موجودة محلياً، حاول إعادة تحميل الصفحة'); 
-      return; 
-    }
+
+async function uploadLogoInChunks(file, centerId) {
+  return new Promise(async (resolve, reject) => {
+    const overlay = document.getElementById('progressOverlay');
+    const progressBar = document.getElementById('progressBar');
+    const progressPercent = document.getElementById('progressPercent');
+    const progressText = document.getElementById('progressText');
+    overlay.style.display = 'flex';
+    progressBar.style.width = '0%';
+    progressPercent.textContent = '0%';
     
-    // الحقول الأساسية
-    document.getElementById('centerName').value = c.name || '';
-    document.getElementById('ownerName').value = c.owner || '';
-    document.getElementById('centerEmail').value = c.email || '';
-    document.getElementById('centerPhone').value = c.phone || '';
-    document.getElementById('centerAddress').value = c.address || '';
-    document.getElementById('subscriptionPlan').value = c.subscriptionPlan || 'باقة أساسية - 3500 جنيه/شهر';
-    document.getElementById('commissionPolicy').value = c.commissionPolicy || 'POL001';
-    document.getElementById('centerStatus').value = (c.status === 'TRUE' || c.status === true) ? 'Active' : 'Inactive';
-    
-    // ✅ تعبئة الحقول الجديدة (بعد التأكد من وجودها في DOM)
-    const contactNumbersField = document.getElementById('contactNumbers');
-    const centerCategoryField = document.getElementById('centerCategory');
-    const cancelationPolicyField = document.getElementById('cancelationPolicy');
-    
-    if (contactNumbersField) contactNumbersField.value = c.contactNumbers || '';
-    if (centerCategoryField) centerCategoryField.value = c.centerCategory || '';
-    if (cancelationPolicyField) cancelationPolicyField.value = c.cancelationPolicy || '';
-    
-    // التواريخ
-    const startInput = convertDateToInput(c.subscriptionStart);
-    const endInput = convertDateToInput(c.subscriptionEnd);
-    if (document.getElementById('subscriptionStart')) document.getElementById('subscriptionStart').value = startInput;
-    if (document.getElementById('subscriptionEnd')) document.getElementById('subscriptionEnd').value = endInput;
-    
-    // الأنشطة
-    await loadActivitiesCheckboxes(c.activities || '');
-    
-    // اللوجو
-    if (c.centerLogo && c.centerLogo.trim() !== '') {
-      const logoUrlField = document.getElementById('centerLogoUrl');
-      const logoPreview = document.getElementById('logoPreview');
-      if (logoUrlField) logoUrlField.value = c.centerLogo;
-      if (logoPreview) {
-        const imgUrl = getDriveDirectUrl(c.centerLogo);
-        logoPreview.innerHTML = `<img src="${imgUrl}" style="width:100%; height:100%; object-fit:cover;">`;
+    try {
+      progressText.textContent = 'جاري ضغط الصورة...';
+      const compressedBase64 = await compressImage(file, 400, 400, 0.6);
+      let base64 = compressedBase64.split(',')[1];
+      
+      const CHUNK_SIZE = 500;
+      const totalChunks = Math.ceil(base64.length / CHUNK_SIZE);
+      
+      console.log(`📤 بدء رفع الصورة: ${totalChunks} جزء`);
+      progressText.textContent = `جاري رفع الصورة (0/${totalChunks})...`;
+      
+      for (let i = 0; i < totalChunks; i++) {
+        const chunk = base64.substring(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+        const result = await callGAS('uploadCenterLogoChunk', {
+          b64: chunk,
+          chunkIndex: i,
+          totalChunks: totalChunks,
+          centerId: centerId,
+          mimeType: 'image/jpeg'
+        });
+        
+        if (!result?.chunkReceived) {
+          throw new Error(`فشل الجزء ${i + 1}`);
+        }
+        
+        const percent = Math.round(((i + 1) / totalChunks) * 100);
+        progressBar.style.width = percent + '%';
+        progressPercent.textContent = percent + '%';
+        progressText.textContent = `جاري رفع الصورة (${i + 1}/${totalChunks})...`;
       }
-    }
-  }
-  
-  document.getElementById('centerModal').style.display = 'flex';
-}
-   function viewCenter(id) {
-  const c = centers.find(x => x.id === id);
-  if (!c) return;
-  
-  let logoHtml = '';
-  if (c.centerLogo && c.centerLogo.trim() !== '') {
-    const imgUrl = getDriveDirectUrl(c.centerLogo);
-    logoHtml = `<div style="text-align:center; margin:15px 0;">
-      <img src="${imgUrl}" style="max-width:150px; max-height:150px; border-radius:12px; border:1px solid #ddd; padding:5px; background:white;">
-    </div>`;
-  }
- 
- console.log('عرض المركز:', c.name, 'اللوجو:', c.centerLogo);
-  document.getElementById('viewTitle').textContent = '🏢 تفاصيل المركز';
-  document.getElementById('viewBody').innerHTML = `
-    ${logoHtml}
-    <p><strong>المعرف:</strong> ${c.id}</p>
-    <p><strong>المركز:</strong> ${c.name || ''}</p>
-    <p><strong>المالك:</strong> ${c.owner || ''}</p>
-    <p><strong>البريد:</strong> ${c.email || ''}</p>
-    <p><strong>الجوال:</strong> ${c.phone || ''}</p>
-    <p><strong>العنوان:</strong> ${c.address || ''}</p>
-    <p><strong>خطة الاشتراك:</strong> ${c.subscriptionPlan || ''}</p>
-    <p><strong>بداية الاشتراك:</strong> ${c.subscriptionStart || ''}</p>
-    <p><strong>انتهاء الاشتراك:</strong> ${c.subscriptionEnd || ''}</p>
-    <p><strong>أرقام التواصل:</strong> ${c.contactNumbers || '—'}</p>
-    <p><strong>فئة المركز:</strong> ${c.centerCategory || '—'}</p>
-    <p><strong>سياسة الإلغاء:</strong> ${c.cancelationPolicy || '—'}</p>
-    <p><strong>الأنشطة:</strong> ${c.activities || '—'}</p>
-    <p><strong>الحالة:</strong> ${(c.status === 'TRUE' || c.status === true) ? 'نشط' : 'غير نشط'}</p>
-  `;
-  document.getElementById('viewModal').style.display = 'flex';
-}
-
-async function saveCenter(e) {
-  e.preventDefault();
-  const acts = Array.from(document.querySelectorAll('#activitiesCheckboxes input:checked')).map(x=>x.value).join(',');
-  const id   = document.getElementById('centerId').value||'';
-  const logoUrl = document.getElementById('centerLogoUrl')?.value || '';
-  
- const data = {
-    id: document.getElementById('centerId').value || '',
-    name: document.getElementById('centerName').value.trim(),
-    owner: document.getElementById('ownerName').value.trim(),
-    email: document.getElementById('centerEmail').value.trim(),
-    phone: document.getElementById('centerPhone').value.trim(),
-    address: document.getElementById('centerAddress').value.trim(),
-    activities: acts,
-    subscriptionPlan: document.getElementById('subscriptionPlan').value,
-    commissionPolicy: document.getElementById('commissionPolicy').value,
-    subscriptionStart: document.getElementById('subscriptionStart').value,
-    subscriptionEnd: document.getElementById('subscriptionEnd').value,
-    status: document.getElementById('centerStatus').value === 'Active' ? 'TRUE' : 'FALSE',
-    password: '123456',
-    
-    // ✅ أضف هذه الأسطر الثلاثة
-    contactNumbers: document.getElementById('contactNumbers')?.value || '',
-    centerCategory: document.getElementById('centerCategory')?.value || '',
-    cancelationPolicy: document.getElementById('cancelationPolicy')?.value || '',
-    
-    centerLogo: logoUrl,
-    sheetId: ''
-};
-  
-  if(!data.name)  { showAlert('الرجاء إدخال اسم المركز'); return; }
-  if(!data.phone) { showAlert('الرجاء إدخال رقم الجوال'); return; }
-
-  const btn=document.getElementById('centerSaveBtn'); btn.disabled=true; btn.textContent='⏳ جاري الحفظ...';
-  try {
-    let action = id ? 'updateCenter' : 'addNewCenter';
-    
-    // ✅ إذا كان مركز جديد، استخدم دالة إنشاء مركز متقدم
-    if (!id) {
-      action = 'createCenterWithSheet';
-    }
-    
-    const r = await jsonp(action, data);
-    if (r?.success) {
-      closeModal('centerModal');
-      showAlert(r.message||'✅ تم الحفظ', async()=>{ 
-        await refreshData(); 
-        showCenters(); 
+      
+      progressText.textContent = 'جاري دمج الأجزاء...';
+      const finalResult = await callGAS('assembleUploadedLogo', {
+        centerId: centerId,
+        totalChunks: totalChunks,
+        mimeType: 'image/jpeg'
       });
-    } else {
-      showAlert('❌ ' + (r?.message||'فشل الحفظ'));
+      
+      overlay.style.display = 'none';
+      resolve(finalResult);
+      
+    } catch(err) {
+      console.error('❌ خطأ في رفع الصورة:', err);
+      overlay.style.display = 'none';
+      reject(err);
     }
-  } catch(err) { 
-    showAlert('❌ خطأ في الاتصال: ' + err.message); 
-  }
-  finally { 
-    btn.disabled=false; 
-    btn.textContent='💾 حفظ'; 
-  }
-}
-async function doDeleteCenter(id) {
-  showConfirm('حذف هذا المركز نهائياً؟', async()=>{
-    try {
-      const r = await jsonp('deleteCenter', {centerId:id});
-      if(r?.success) { showAlert('✅ تم الحذف', async()=>{ await refreshData(); showCenters(); }); }
-      else showAlert('❌ '+(r?.message||''));
-    } catch(e) { showAlert('❌ خطأ في الاتصال'); }
   });
 }
 
-async function doToggleCenter(id) {
-  showConfirm('تغيير حالة هذا المركز؟', async()=>{
-    try {
-      const r = await jsonp('toggleCenterStatus', {centerId:id});
-      if(r?.success) { await refreshData(); showCenters(); }
-      else showAlert('❌ '+(r?.message||''));
-    } catch(e) { showAlert('❌ خطأ في الاتصال'); }
-  });
-}
-
-// ══════════════════════════════════════════════════
-// الفروع
-// ══════════════════════════════════════════════════
-function showBranches() {
-  setActive('mi-branches');
-  const ca=document.getElementById('contentArea');
-  ca.innerHTML=`<div class="content-area"><div class="content-header"><h2>🏛️ إدارة الفروع</h2><button class="btn-primary" id="addBranchBtn">➕ إضافة فرع</button></div><div class="table-wrap"><table><thead><tr><th>الفرع</th><th>المركز</th><th>المدير</th><th>الجوال</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody id="branchesTbody">${skeletonRows(6)}</tbody></table></div></div>`;
-  document.getElementById('addBranchBtn').addEventListener('click',()=>openBranchModal());
-  renderBranchesTable();
-}
-
-function renderBranchesTable() {
-  const tb=document.getElementById('branchesTbody'); if(!tb) return;
-  if(!branches.length){ tb.innerHTML='<tr><td colspan="6" style="text-align:center;padding:30px;color:#aaa;">لا توجد فروع</td></tr>'; return; }
-  tb.innerHTML=branches.map(b=>{
-    const active=b.isActive==='TRUE'||b.isActive===true;
-    return `<tr>
-      <td><strong>${b.name||''}</strong></td><td>${b.centerName||''}</td><td>${b.manager||'—'}</td>
-      <td dir="ltr">${b.phone||'—'}</td>
-      <td><span class="status-badge ${active?'status-active':'status-inactive'}">${active?'نشط':'غير نشط'}</span></td>
-      <td><div class="action-buttons">
-        <button class="action-btn view"   onclick="viewBranch('${b.id}')">👁 عرض</button>
-        <button class="action-btn edit"   onclick="openBranchModal('${b.id}')">✏️ تعديل</button>
-        <button class="action-btn toggle" onclick="doToggleBranch('${b.id}')">🔄 حالة</button>
-        <button class="action-btn delete" onclick="doDeleteBranch('${b.id}')">🗑️ حذف</button>
-      </div></td></tr>`;
-  }).join('');
-}
-
-function openBranchModal(id) {
-  const isEdit=!!id;
-  document.getElementById('branchModalTitle').textContent=isEdit?'✏️ تعديل الفرع':'➕ فرع جديد';
-  document.getElementById('branchForm').reset();
-  document.getElementById('branchId').value=id||'';
-  const sel=document.getElementById('branchCenterId');
-  sel.innerHTML='<option value="">اختر المركز...</option>';
-  centers.forEach(c=>sel.innerHTML+=`<option value="${c.id}">${c.name}</option>`);
-  if(isEdit){
-    const b=branches.find(x=>x.id===id); if(!b){ showAlert('بيانات الفرع غير موجودة'); return; }
-    sel.value=b.centerId||'';
-    document.getElementById('branchName').value    = b.name||'';
-    document.getElementById('branchManager').value = b.manager||'';
-    document.getElementById('branchPhone').value   = b.phone||'';
-    document.getElementById('branchEmail').value   = b.email||'';
-    document.getElementById('branchAddress').value = b.address||'';
-    document.getElementById('branchStatus').value  = (b.isActive==='TRUE'||b.isActive===true)?'Active':'Inactive';
-  }
-  document.getElementById('branchModal').style.display='flex';
-}
-
-function viewBranch(id) {
-  const b=branches.find(x=>x.id===id); if(!b) return;
-  document.getElementById('viewTitle').textContent='🏛️ تفاصيل الفرع';
-  document.getElementById('viewBody').innerHTML=`
-    <p><strong>المعرف:</strong> ${b.id}</p><p><strong>الفرع:</strong> ${b.name||''}</p>
-    <p><strong>المركز:</strong> ${b.centerName||''}</p><p><strong>المدير:</strong> ${b.manager||''}</p>
-    <p><strong>الجوال:</strong> ${b.phone||''}</p><p><strong>البريد:</strong> ${b.email||''}</p>
-    <p><strong>العنوان:</strong> ${b.address||''}</p>
-    <p><strong>الحالة:</strong> ${(b.isActive==='TRUE'||b.isActive===true)?'نشط':'غير نشط'}</p>`;
-  document.getElementById('viewModal').style.display='flex';
-}
-
-async function saveBranch(e) {
-  e.preventDefault();
-  const id=document.getElementById('branchId').value||'';
-  const data={
-    branchId:id,
-    centerId:document.getElementById('branchCenterId').value,
-    branchName:document.getElementById('branchName').value.trim(),
-    managerName:document.getElementById('branchManager').value.trim(),
-    phone:document.getElementById('branchPhone').value.trim(),
-    email:document.getElementById('branchEmail').value.trim(),
-    address:document.getElementById('branchAddress').value.trim(),
-    isActive:document.getElementById('branchStatus').value==='Active'?'TRUE':'FALSE',
-    password:'123456'
-  };
-  if(!data.centerId){ showAlert('الرجاء اختيار المركز'); return; }
-  if(!data.branchName){ showAlert('الرجاء إدخال اسم الفرع'); return; }
-
-  const btn=document.getElementById('branchSaveBtn'); btn.disabled=true; btn.textContent='⏳ جاري الحفظ...';
-  try {
-    const action = id ? 'updateBranch' : 'addNewBranch';
-    const r = await jsonp(action, data);
-    if(r?.success){
-      closeModal('branchModal');
-      showAlert(r.message||'✅ تم الحفظ', async()=>{ await refreshData(); showBranches(); });
-    } else showAlert('❌ '+(r?.message||'فشل الحفظ'));
-  } catch(err){ showAlert('❌ خطأ في الاتصال: '+err.message); }
-  finally{ btn.disabled=false; btn.textContent='💾 حفظ'; }
-}
-
-async function doDeleteBranch(id) {
-  showConfirm('حذف هذا الفرع نهائياً؟', async()=>{
-    try {
-      const r=await jsonp('deleteBranch',{branchId:id});
-      if(r?.success) showAlert('✅ تم الحذف', async()=>{ await refreshData(); showBranches(); });
-      else showAlert('❌ '+(r?.message||''));
-    } catch(e){ showAlert('❌ خطأ في الاتصال'); }
-  });
-}
-
-async function doToggleBranch(id) {
-  showConfirm('تغيير حالة هذا الفرع؟', async()=>{
-    try {
-      const r=await jsonp('toggleBranchStatus',{branchId:id});
-      if(r?.success){ await refreshData(); showBranches(); }
-      else showAlert('❌ '+(r?.message||''));
-    } catch(e){ showAlert('❌ خطأ في الاتصال'); }
+async function compressImage(file, maxWidth = 800, maxHeight = 800, quality = 0.7) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        
+        if (width > maxWidth) {
+          height = (height * maxWidth) / width;
+          width = maxWidth;
+        }
+        if (height > maxHeight) {
+          width = (width * maxHeight) / height;
+          height = maxHeight;
+        }
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        const compressedBase64 = canvas.toDataURL('image/jpeg', quality);
+        resolve(compressedBase64);
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
   });
 }
 
 // ══════════════════════════════════════════════════
-// الموظفين
+// التهيئة
 // ══════════════════════════════════════════════════
-function showStaff() {
-  setActive('mi-staff');
-  const ca=document.getElementById('contentArea');
-  ca.innerHTML=`<div class="content-area"><div class="content-header"><h2>👥 إدارة الموظفين</h2><button class="btn-primary" id="addUserBtn">➕ إضافة موظف</button></div><div class="table-wrap"><table><thead><tr><th>الاسم</th><th>المركز</th><th>الفرع</th><th>الدور</th><th>الجوال</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody id="staffTbody">${skeletonRows(7)}</tbody></table></div></div>`;
-  document.getElementById('addUserBtn').addEventListener('click',()=>openUserModal());
-  renderStaffTable();
-}
 
-function renderStaffTable() {
-  const tb=document.getElementById('staffTbody'); if(!tb) return;
-  if(!staff.length){ tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:30px;color:#aaa;">لا يوجد موظفون</td></tr>'; return; }
-  tb.innerHTML=staff.map(u=>`<tr>
-    <td><strong>${u.name||''}</strong></td><td>${u.centerName||''}</td>
-    <td>${u.branchName||'المركز الرئيسي'}</td><td>${u.type||'—'}</td>
-    <td dir="ltr">${u.phone||'—'}</td>
-    <td><span class="status-badge ${u.isActive?'status-active':'status-inactive'}">${u.isActive?'نشط':'غير نشط'}</span></td>
-    <td><div class="action-buttons">
-      <button class="action-btn view"   onclick="viewUser('${u.id}')">👁 عرض</button>
-      <button class="action-btn edit"   onclick="openUserModal('${u.id}')">✏️ تعديل</button>
-      <button class="action-btn delete" onclick="doDeleteUser('${u.id}')">🗑️ حذف</button>
-    </div></td></tr>`).join('');
-}
-
-function openUserModal(id) {
-  const isEdit=!!id;
-  document.getElementById('userModalTitle').textContent=isEdit?'✏️ تعديل الموظف':'➕ موظف جديد';
-  document.getElementById('userForm').reset();
-  document.getElementById('userId').value=id||'';
-  document.getElementById('historyMsg').style.display='none';
-  const sel=document.getElementById('userCenterId');
-  sel.innerHTML='<option value="">اختر المركز...</option>';
-  centers.forEach(c=>sel.innerHTML+=`<option value="${c.id}">${c.name}</option>`);
-  document.getElementById('userBranchId').innerHTML='<option value="">المركز الرئيسي</option>';
-  if(isEdit){
-    const u=staff.find(x=>x.id===id); if(!u){ showAlert('بيانات الموظف غير موجودة'); return; }
-    sel.value=u.centerId||'';
-    loadBranchesForCenter(u.centerId, u.branchId);
-    document.getElementById('userPhone').value    = u.phone||'';
-    document.getElementById('userFullName').value = u.name||'';
-    document.getElementById('userEmail').value    = u.email||'';
-    document.getElementById('userRole').value     = u.type||'Sales';
-    document.getElementById('userStatus').value   = u.isActive?'active':'inactive';
-  }
-  document.getElementById('userModal').style.display='flex';
-}
-
-function viewUser(id) {
-  const u=staff.find(x=>x.id===id); if(!u) return;
-  document.getElementById('viewTitle').textContent='👤 تفاصيل الموظف';
-  document.getElementById('viewBody').innerHTML=`
-    <p><strong>المعرف:</strong> ${u.id}</p><p><strong>الاسم:</strong> ${u.name||''}</p>
-    <p><strong>المركز:</strong> ${u.centerName||''}</p><p><strong>الفرع:</strong> ${u.branchName||'المركز الرئيسي'}</p>
-    <p><strong>الدور:</strong> ${u.type||''}</p><p><strong>الجوال:</strong> ${u.phone||''}</p>
-    <p><strong>البريد:</strong> ${u.email||''}</p>
-    <p><strong>الحالة:</strong> ${u.isActive?'نشط':'غير نشط'}</p>`;
-  document.getElementById('viewModal').style.display='flex';
-}
-
-async function loadBranchesForCenter(centerId, selectedId='') {
-  if(!centerId) return;
-  try {
-    const data = await jsonp('getBranchesByCenter',{centerId});
-    const s=document.getElementById('userBranchId');
-    s.innerHTML='<option value="">المركز الرئيسي</option>';
-    (Array.isArray(data)?data:[]).forEach(b=>s.innerHTML+=`<option value="${b.id}" ${b.id===selectedId?'selected':''}>${b.name}</option>`);
-  } catch(e){ console.error(e); }
-}
-
-async function saveUser(e) {
-  e.preventDefault();
-  const id=document.getElementById('userId').value||'';
-  const data={
-    id,
-    centerId:document.getElementById('userCenterId').value,
-    branchId:document.getElementById('userBranchId').value||'',
-    phone:document.getElementById('userPhone').value.trim(),
-    name:document.getElementById('userFullName').value.trim(),
-    email:document.getElementById('userEmail').value.trim(),
-    type:document.getElementById('userRole').value,
-    isActive:document.getElementById('userStatus').value==='active'?'true':'false',
-    password:'123456'
-  };
-  if(!data.centerId){ showAlert('الرجاء اختيار المركز'); return; }
-  if(!data.name)    { showAlert('الرجاء إدخال الاسم'); return; }
-  if(!data.phone)   { showAlert('الرجاء إدخال رقم الهاتف'); return; }
-
-  const btn=document.getElementById('userSaveBtn'); btn.disabled=true; btn.textContent='⏳ جاري الحفظ...';
-  try {
-    const action = id ? 'updateUser' : 'addNewUser';
-    const r = await jsonp(action, data);
-    if(r?.success){
-      closeModal('userModal');
-      showAlert(r.message||'✅ تم الحفظ', async()=>{ await refreshData(); showStaff(); });
-    } else showAlert('❌ '+(r?.message||'فشل الحفظ'));
-  } catch(err){ showAlert('❌ خطأ في الاتصال: '+err.message); }
-  finally{ btn.disabled=false; btn.textContent='💾 حفظ'; }
-}
-
-async function doDeleteUser(id) {
-  showConfirm('حذف هذا الموظف نهائياً؟', async()=>{
-    try {
-      const r=await jsonp('deleteUser',{userId:id});
-      if(r?.success) showAlert('✅ تم الحذف', async()=>{ await refreshData(); showStaff(); });
-      else showAlert('❌ '+(r?.message||''));
-    } catch(e){ showAlert('❌ خطأ في الاتصال'); }
-  });
-}
-
-async function searchUserByPhone(phone) {
-  if(phone.length<10) return;
-  try {
-    const u=await jsonp('findUserByPhone',{phone});
-    if(u?.name){
-      document.getElementById('historyMsg').style.display='block';
-      document.getElementById('historyMsg').textContent=`✅ موجود: ${u.name} — ${u.phone}`;
-      document.getElementById('userFullName').value = u.name||'';
-      document.getElementById('userEmail').value    = u.email||'';
-      document.getElementById('userPhone').value    = u.phone||'';
-    }
-  } catch(e){ console.error(e); }
-}
-
-// ══════════════════════════════════════════════════
-// الأنشطة (checkboxes)
-// ══════════════════════════════════════════════════
-async function loadActivitiesCheckboxes(sel=[]) {
-  const c = document.getElementById('activitiesCheckboxes');
-  if (!c) return;
-  
-  // استخدام cache إذا كان موجوداً
-  if (!cachedActivities) {
-    try {
-      cachedActivities = await jsonp('getAllActivities');
-    } catch(e) {
-      console.error(e);
-      cachedActivities = [];
-    }
-  }
-  
-  const selArr = typeof sel === 'string' ? sel.split(',').map(s=>s.trim()) : sel;
-  const acts = cachedActivities.filter(a => a.status);
-  
-  if (acts.length === 0) {
-    c.innerHTML = '<span style="color:#aaa;">لا توجد أنشطة</span>';
+document.addEventListener('DOMContentLoaded', async function() {
+  // ✅ استخدام Session.checkValidity() من session.js
+  if (!Session.checkValidity()) {
     return;
   }
   
-  c.innerHTML = acts.map(a => 
-    `<label class="act-lbl"><input type="checkbox" value="${a.name}" ${selArr.includes(a.name) ? 'checked' : ''}><span>${a.name}</span></label>`
-  ).join('');
-}
-// ══════════════════════════════════════════════════
-// تقارير الاشتراكات
-// ══════════════════════════════════════════════════
-async function showExpiringReport() {
-  setActive('mi-expiring');
-  // نجلب التقرير الحي من السيرفر
-  document.getElementById('subTitle').textContent = '⚠️ تقرير الاشتراكات';
-  document.getElementById('subList').innerHTML = '<div style="text-align:center;padding:30px;"><div class="loader-sm"></div><p>جاري التحميل...</p></div>';
-  document.getElementById('subModal').style.display = 'flex';
-  try {
-    const r = await jsonp('getExpiryReport');
-    renderExpiryModal(r);
-  } catch(e) {
-    document.getElementById('subList').innerHTML = '<p style="color:red;text-align:center;">خطأ في التحميل</p>';
+  // ✅ استخدام Session.getUser() من session.js
+  currentUser = Session.getUser();
+  
+  if (!currentUser) {
+    window.location.href = 'index.html';
+    return;
   }
-}
-
-async function showCritical() {
-  document.getElementById('subTitle').textContent = '🔴 حرجة (≤ 3 أيام)';
-  document.getElementById('subList').innerHTML = '<div style="text-align:center;padding:30px;"><div class="loader-sm"></div></div>';
-  document.getElementById('subModal').style.display = 'flex';
-  try { const r=await jsonp('getExpiryReport'); renderExpiryModal(r,'critical'); }
-  catch(e) { document.getElementById('subList').innerHTML='<p style="color:red;text-align:center;">خطأ</p>'; }
-}
-
-async function showWarning() {
-  document.getElementById('subTitle').textContent = '🟡 تحذير (4-7 أيام)';
-  document.getElementById('subList').innerHTML = '<div style="text-align:center;padding:30px;"><div class="loader-sm"></div></div>';
-  document.getElementById('subModal').style.display = 'flex';
-  try { const r=await jsonp('getExpiryReport'); renderExpiryModal(r,'warning'); }
-  catch(e) { document.getElementById('subList').innerHTML='<p style="color:red;text-align:center;">خطأ</p>'; }
-}
-
-function renderExpiryModal(r, filter) {
-  // ── بناء الجدول ──
-  const sections = filter
-    ? [ filter==='critical'
-          ? {label:'🔴 حرجة (≤ 3 أيام)',   color:'#c62828', bg:'#ffebee', list:r.critical||[]}
-          : {label:'🟡 تحذير (4-7 أيام)',  color:'#e65100', bg:'#fff3e0', list:r.warning||[]}
-      ]
-    : [
-        {label:'🔴 منتهية الاشتراك',       color:'#b71c1c', bg:'#ffcdd2', list:r.expired||[]},
-        {label:'🔴 حرجة (≤ 3 أيام)',       color:'#c62828', bg:'#ffebee', list:r.critical||[]},
-        {label:'🟡 تحذير (4-7 أيام)',      color:'#e65100', bg:'#fff3e0', list:r.warning||[]}
-      ];
-
-  let html = '';
-  sections.forEach(sec => {
-    html += `<div style="margin-bottom:16px;">
-      <div style="background:${sec.bg};color:${sec.color};font-weight:700;padding:8px 14px;border-radius:10px 10px 0 0;font-size:14px;">
-        ${sec.label} — ${sec.list.length} مركز
-      </div>`;
-    if (!sec.list.length) {
-      html += `<div style="padding:14px;text-align:center;color:#aaa;font-size:13px;background:#fafafa;border:1px solid #eee;border-top:none;border-radius:0 0 10px 10px;">لا توجد نتائج</div>`;
-    } else {
-      html += `<table style="width:100%;border-collapse:collapse;font-size:13px;">
-        <thead><tr>
-          <th style="background:#1e2b4f;color:#ffd966;padding:8px;text-align:right;">المركز</th>
-          <th style="background:#1e2b4f;color:#ffd966;padding:8px;text-align:center;">انتهاء الاشتراك</th>
-          <th style="background:#1e2b4f;color:#ffd966;padding:8px;text-align:center;">الأيام المتبقية</th>
-          <th style="background:#1e2b4f;color:#ffd966;padding:8px;text-align:center;">الحالة</th>
-        </tr></thead><tbody>`;
-      sec.list.forEach(c => {
-        const dText = c.diff < 0 ? `منتهي منذ ${Math.abs(c.diff)} يوم` : c.diff===0 ? 'ينتهي اليوم!' : `${c.diff} يوم`;
-        const activeIcon = c.isActive ? '✅ نشط' : '🔴 موقوف';
-        html += `<tr style="border-bottom:1px solid #eee;">
-          <td style="padding:8px;font-weight:600;">${c.name}</td>
-          <td style="padding:8px;text-align:center;">${c.endDate}</td>
-          <td style="padding:8px;text-align:center;font-weight:700;color:${sec.color};">${dText}</td>
-          <td style="padding:8px;text-align:center;">${activeIcon}</td>
-        </tr>`;
-      });
-      html += `</tbody></table>`;
-    }
-    html += `</div>`;
+  
+  // ✅ التحقق من الصلاحية (Admin فقط)
+  const allowedTypes = ['Admin'];
+  if (!Session.checkPermission(allowedTypes)) {
+    return;
+  }
+  
+  // ✅ تطبيق الثيم الموحد
+  if (typeof Theme !== 'undefined') {
+    Theme.applyToPage();
+    Theme.setPageTitle('لوحة تحكم المدير');
+  }
+  
+  document.getElementById('userNameDisplay').textContent = currentUser.name || 'مدير';
+  
+  // ✅ ربط الأحداث
+  document.getElementById('mi-welcome').addEventListener('click', function() {
+    setActive('mi-welcome');
+    document.getElementById('contentArea').innerHTML = `
+      <div class="content-area">
+        <div class="welcome-area">
+          <div class="welcome-icon">🏝️</div>
+          <h2>مرحباً بك في لوحة التحكم</h2>
+          <p>من هنا يمكنك إدارة جميع مراكز وفروع الغوص</p>
+        </div>
+      </div>
+    `;
   });
-
-  // زر تشغيل يدوي
-  html += `<div style="text-align:center;margin-top:16px;padding-top:14px;border-top:2px dashed #ddd;">
-    <button onclick="runCheckNow()" class="btn-primary" style="font-size:13px;padding:9px 20px;">
-      🔄 تشغيل التحقق الآن
-    </button>
-    <p style="color:#aaa;font-size:11px;margin-top:8px;">يُحدّث الحالة تلقائياً كل يوم عند منتصف الليل</p>
-  </div>`;
-
-  document.getElementById('subList').innerHTML = html;
-}
-
-async function runCheckNow() {
-  const btn = event.target;
-  btn.disabled=true; btn.textContent='⏳ جاري التحقق...';
-  try {
-    const r = await jsonp('checkSubscriptions');
-    if (r?.success) {
-      await refreshData();
-      showAlert(`✅ ${r.summary}`, ()=>showExpiringReport());
-    } else {
-      showAlert('❌ ' + (r?.message||'فشل التشغيل'));
-    }
-  } catch(e) { showAlert('❌ خطأ: '+e.message); }
-  finally { btn.disabled=false; btn.textContent='🔄 تشغيل التحقق الآن'; }
-}
-
-// ══════════════════════════════════════════════════
-// تهيئة الصفحة
-// ══════════════════════════════════════════════════
-document.addEventListener('DOMContentLoaded', async ()=>{
-  // ✅ التحقق من الجلسة أولاً من localStorage
-  const storedUser = localStorage.getItem('currentUser');
-  if (!storedUser) { 
-    location.href = 'index.html'; 
-    return; 
-  }
   
-  let ud = sessionStorage.getItem('currentUser');
-  if (!ud && storedUser) {
-    try {
-      const parsed = JSON.parse(storedUser);
-      ud = JSON.stringify(parsed.user);
-      sessionStorage.setItem('currentUser', ud);
-    } catch(e) {}
-  }
-  
-  if(!ud){ 
-    location.href='index.html'; 
-    return; 
-  }
-  try { 
-    currentUser=JSON.parse(ud); 
-  } catch(e){ 
-    location.href='index.html'; 
-    return; 
-  }
-  document.getElementById('userNameDisplay').textContent=currentUser.name||'مدير';
-
-  // ربط قائمة التنقل ...
-  document.getElementById('mi-welcome') .addEventListener('click',()=>{ setActive('mi-welcome'); document.getElementById('contentArea').innerHTML=`<div class="content-area"><div class="welcome-area"><div class="welcome-icon">🏝️</div><h2>مرحباً بك في لوحة التحكم</h2><p>من هنا يمكنك إدارة جميع مراكز وفروع الغوص</p></div></div>`; });
-  document.getElementById('mi-centers') .addEventListener('click', showCenters);
+  document.getElementById('mi-centers').addEventListener('click', showCenters);
   document.getElementById('mi-branches').addEventListener('click', showBranches);
-  document.getElementById('mi-staff')   .addEventListener('click', showStaff);
+  document.getElementById('mi-staff').addEventListener('click', showStaff);
   document.getElementById('mi-expiring').addEventListener('click', showExpiringReport);
   document.getElementById('mi-permissions').addEventListener('click', showPermissions);
-
-  // ربط stat cards
-  document.getElementById('sc-centers') .addEventListener('click', showCenters);
+  
+  // ✅ ربط stat cards
+  document.getElementById('sc-centers').addEventListener('click', showCenters);
   document.getElementById('sc-branches').addEventListener('click', showBranches);
-  document.getElementById('sc-staff')   .addEventListener('click', showStaff);
+  document.getElementById('sc-staff').addEventListener('click', showStaff);
   document.getElementById('sc-critical').addEventListener('click', showCritical);
-  document.getElementById('sc-warning') .addEventListener('click', showWarning);
-
-  // ربط النماذج
+  document.getElementById('sc-warning').addEventListener('click', showWarning);
+  
+  // ✅ ربط النماذج
   document.getElementById('centerForm').addEventListener('submit', saveCenter);
   document.getElementById('branchForm').addEventListener('submit', saveBranch);
-  document.getElementById('userForm')  .addEventListener('submit', saveUser);
-  document.getElementById('phoneSearch').addEventListener('input', e=>searchUserByPhone(e.target.value));
-  document.getElementById('userCenterId').addEventListener('change', e=>loadBranchesForCenter(e.target.value));
- document.getElementById('logoutBtn').addEventListener('click',()=>{
-    showConfirm('هل أنت متأكد من تسجيل الخروج؟', ()=>{ 
-      // ✅ مسح localStorage و sessionStorage معاً
-      localStorage.removeItem('currentUser'); 
-      sessionStorage.removeItem('currentUser'); 
-      location.href='index.html'; 
+  document.getElementById('userForm').addEventListener('submit', saveUser);
+  document.getElementById('phoneSearch').addEventListener('input', function(e) {
+    searchUserByPhone(e.target.value);
+  });
+  document.getElementById('userCenterId').addEventListener('change', function(e) {
+    loadBranchesForCenter(e.target.value);
+  });
+  
+  // ✅ ربط زر الخروج - استخدام Session.logout()
+  document.getElementById('logoutBtn').addEventListener('click', function() {
+    showConfirm('هل أنت متأكد من تسجيل الخروج؟', function() {
+      Session.logout();
     });
   });
-
-  // تحميل البيانات
+  
+  // ✅ تحميل البيانات
   await initDashboard();
+  
+  // ✅ ربط دوال التنبيه للاستخدام العام
+  window.showAlert = showAlert;
+  window.showConfirm = showConfirm;
+  window.closeModal = closeModal;
+  window.showPermissions = showPermissions;
+  window.loadPermissionsTable = loadPermissionsTable;
+  window.editPermissions = editPermissions;
+  window.showCenters = showCenters;
+  window.showBranches = showBranches;
+  window.showStaff = showStaff;
+  window.showExpiringReport = showExpiringReport;
+  window.showCritical = showCritical;
+  window.showWarning = showWarning;
+  window.runCheckNow = runCheckNow;
+  window.openCenterModal = openCenterModal;
+  window.viewCenter = viewCenter;
+  window.openBranchModal = openBranchModal;
+  window.viewBranch = viewBranch;
+  window.openUserModal = openUserModal;
+  window.viewUser = viewUser;
+  window.doDeleteCenter = doDeleteCenter;
+  window.doToggleCenter = doToggleCenter;
+  window.doDeleteBranch = doDeleteBranch;
+  window.doToggleBranch = doToggleBranch;
+  window.doDeleteUser = doDeleteUser;
 });
+
+// ══════════════════════════════════════════════════
+// التوافق مع UI.js
+// ══════════════════════════════════════════════════
+
+// إذا كانت showAlert غير معرفة من ui.js، نستخدم نسختنا
+if (typeof window.showAlert === 'undefined') {
+  window.showAlert = function(msg, cb) {
+    const m=document.getElementById('alertModal');
+    document.getElementById('alertMsg').textContent=msg;
+    m.style.display='flex';
+    const btn=document.getElementById('alertOk');
+    const clone=btn.cloneNode(true);
+    btn.replaceWith(clone);
+    clone.addEventListener('click', function() {
+      m.style.display='none';
+      if (typeof cb === 'function') cb();
+    });
+  };
+}
+
+if (typeof window.showConfirm === 'undefined') {
+  window.showConfirm = function(msg, onYes) {
+    const m=document.getElementById('confirmModal');
+    document.getElementById('confirmMsg').textContent=msg;
+    m.style.display='flex';
+    const y=document.getElementById('confirmYes'), n=document.getElementById('confirmNo');
+    const cy=y.cloneNode(true), cn=n.cloneNode(true);
+    y.replaceWith(cy); n.replaceWith(cn);
+    cy.addEventListener('click', function() {
+      m.style.display='none';
+      if (typeof onYes === 'function') onYes();
+    });
+    cn.addEventListener('click', function() {
+      m.style.display='none';
+    });
+  };
+}
+
+if (typeof window.safeEscape === 'undefined') {
+  window.safeEscape = function(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  };
+}
+
+if (typeof window.closeModal === 'undefined') {
+  window.closeModal = function(id) {
+    document.getElementById(id).style.display='none';
+  };
+}
 </script>
-  <!-- شريط التقدم -->
-<div id="progressOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); align-items:center; justify-content:center; z-index:10000; flex-direction:column;">
-  <div style="background:white; border-radius:16px; padding:24px; width:300px; text-align:center;">
-    <div style="font-size:24px; margin-bottom:12px;">📤</div>
-    <div id="progressText" style="margin-bottom:12px;">جاري رفع الصورة...</div>
-    <div style="width:100%; background:#e0e0e0; border-radius:10px; overflow:hidden;">
-      <div id="progressBar" style="width:0%; height:10px; background:#1e2b4f; transition:width 0.3s;"></div>
-    </div>
-    <div id="progressPercent" style="margin-top:8px; font-size:12px;">0%</div>
-  </div>
-</div>
 </body>
 </html>
