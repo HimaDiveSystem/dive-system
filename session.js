@@ -14,7 +14,7 @@ const Session = {
       // ✅ حفظ نسخة في sessionStorage للانتقال بين الصفحات
       sessionStorage.setItem('currentUser', JSON.stringify(user));
       
-      // ✅ ✅ ✅ حفظ نوع المستخدم ومعرفته بشكل منفصل (للرجوع السريع)
+      // ✅ حفظ نوع المستخدم ومعرفته بشكل منفصل (للرجوع السريع)
       if (user && user.type) {
         sessionStorage.setItem('userType', user.type);
         sessionStorage.setItem('userId', user.id);
@@ -30,11 +30,11 @@ const Session = {
     try {
       const stored = localStorage.getItem('currentUser');
       if (!stored) {
-        // ✅ ✅ ✅ محاولة استعادة المستخدم من sessionStorage
         return this._restoreFromSession();
       }
       const data = JSON.parse(stored);
       if (data.expiry && Date.now() < data.expiry) {
+        // ✅ ✅ ✅ إضافة: جلب الصلاحيات من localStorage إذا كانت موجودة
         return data.user;
       } else {
         this.clear();
@@ -45,7 +45,7 @@ const Session = {
     }
   },
   
-  // ✅ ✅ ✅ دالة مساعدة لاستعادة المستخدم من sessionStorage
+  // ✅ دالة مساعدة لاستعادة المستخدم من sessionStorage
   _restoreFromSession() {
     try {
       const userType = sessionStorage.getItem('userType');
@@ -53,21 +53,17 @@ const Session = {
       const userName = sessionStorage.getItem('userName');
       
       if (userType && userId) {
-        // ✅ بناء كائن مستخدم مؤقت من البيانات المحفوظة
         const tempUser = {
           id: userId,
           type: userType,
           name: userName || 'مستخدم',
-          // ✅ محاولة جلب باقي البيانات من localStorage إن وجدت
         };
         
-        // ✅ محاولة جلب البيانات الكاملة من localStorage
         const stored = localStorage.getItem('currentUser');
         if (stored) {
           try {
             const data = JSON.parse(stored);
             if (data.user) {
-              // ✅ دمج البيانات
               return { ...data.user, ...tempUser };
             }
           } catch(e) {}
@@ -85,13 +81,11 @@ const Session = {
   checkValidity(redirectOnFail = true) {
     const user = this.getUser();
     if (user) {
-      // ✅ ✅ ✅ تحديث وقت الجلسة عند التحقق
       this.refresh();
       return true;
     } else {
       if (redirectOnFail) {
         this.clear();
-        // ✅ حفظ الصفحة الحالية قبل التوجيه
         sessionStorage.setItem('intendedPage', window.location.pathname);
         window.location.href = 'index.html';
       }
@@ -121,10 +115,9 @@ const Session = {
     }
   },
   
-  // ✅ تسجيل الخروج - نسخة محسنة مع رسالة تأكيد
+  // ✅ تسجيل الخروج
   logout() {
     this.clear();
-    // ✅ مسح sessionStorage بالكامل
     sessionStorage.clear();
     window.location.href = 'index.html';
   },
@@ -132,7 +125,6 @@ const Session = {
   // ✅ مسح جميع البيانات
   clear() {
     localStorage.removeItem('currentUser');
-    // ✅ لا نمسح sessionStorage بالكامل هنا، فقط نزيل المفاتيح الخاصة
     sessionStorage.removeItem('currentUser');
     sessionStorage.removeItem('userType');
     sessionStorage.removeItem('userId');
