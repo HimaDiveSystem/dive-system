@@ -270,11 +270,38 @@ const DASHBOARDS = CONFIG.DASHBOARD_PAGES || {
 let currentUser = null;
 let loggedInUser = null;
 
+// ✅ ✅ ✅ إصلاح المشكلة: جلب المستخدم من sessionStorage أولاً
+// sessionStorage يحتفظ بالمستخدم الذي فتح الصفحة الحالية
+const sessionUser = sessionStorage.getItem('currentUser');
+if (sessionUser) {
+  try {
+    currentUser = JSON.parse(sessionUser);
+    loggedInUser = currentUser;
+    console.log('✅ تم جلب المستخدم من sessionStorage:', currentUser.name);
+  } catch(e) {
+    console.warn('⚠️ فشل جلب المستخدم من sessionStorage');
+  }
+}
 
+// ✅ إذا لم يوجد في sessionStorage، جرب localStorage
+if (!currentUser) {
+  const stored = localStorage.getItem('currentUser');
+  if (stored) {
+    try {
+      const data = JSON.parse(stored);
+      currentUser = data.user || data;
+      loggedInUser = currentUser;
+      console.log('✅ تم جلب المستخدم من localStorage:', currentUser.name);
+    } catch(e) {
+      console.warn('⚠️ فشل جلب المستخدم من localStorage');
+    }
+  }
+}
 
-// ✅ جلب المستخدم الحالي
-currentUser = Session.getUser();
-loggedInUser = currentUser;
+// ✅ إذا لم يوجد مستخدم، التوجيه إلى صفحة تسجيل الدخول
+if (!currentUser) {
+  window.location.href = 'index.html';
+}
 // ============================================================
 // ✅ دوال التحقق من الصلاحيات
 // ============================================================
@@ -391,7 +418,8 @@ function goBack() {
     Session.save(currentUser);
   }
   
-  const userType = currentUser?.type || 'Customer';
+  // ✅ استخدام loggedInUser (المستخدم الذي فتح الصفحة) بدلاً من currentUser
+  const userType = loggedInUser?.type || currentUser?.type || 'Customer';
   const pageMap = {
     'Admin': 'Dashboard.html',
     'Owner': 'OwnerDashboard.html',
@@ -405,7 +433,7 @@ function goBack() {
     'Customer': 'CustomerDashboard.html'
   };
   
-  const dashboardPage = pageMap[userType] || 'Dashboard.html';
+  const dashboardPage = pageMap[userType] || 'AccountantDashboard.html';
   window.location.href = dashboardPage;
 }
 
@@ -465,19 +493,17 @@ function selectRow(id) {
   renderTable();
 }
 
-// ✅ تعريف واحد فقط للدالة
 async function viewCustomerAccount() {
   if (!selectedAccount) {
     showAlert('يرجى اختيار حساب أولاً', '⚠️');
     return;
   }
   
-  const typeLabel = selectedAccount.customerType === 'Customer' ? 'العميل' : 'المنفذ';
-  
   const returnUrl = window.location.href;
   sessionStorage.setItem('returnUrl', returnUrl);
   
-  const userParam = encodeURIComponent(JSON.stringify(currentUser));
+  // ✅ استخدام loggedInUser بدلاً من currentUser
+  const userParam = encodeURIComponent(JSON.stringify(loggedInUser || currentUser));
   window.location.href = `CustomerDashboard.html?customerId=${selectedAccount.customerId}&user=${userParam}`;
 }
   
@@ -905,7 +931,6 @@ async function openPriceUpdateModal() {
 // ============================================================
 // ✅ التهيئة
 // ============================================================
-
 document.addEventListener('DOMContentLoaded', async () => {
   // ✅ تطبيق الثيم الموحد
   if (typeof Theme !== 'undefined' && Theme.applyToPage) {
@@ -932,9 +957,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
-  // ✅ تعيين currentUser
+  // ✅ تعيين currentUser و loggedInUser
   currentUser = user;
-  loggedInUser = user;
+  
+  // ✅ ✅ ✅ إذا كان loggedInUser غير معين، استخدم currentUser
+  if (!loggedInUser) {
+    loggedInUser = currentUser;
+  }
+  
+  // ✅ حفظ في sessionStorage لتذكر المستخدم الذي فتح الصفحة
+  sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
   
   document.getElementById('userChip').textContent = currentUser?.name || 'User';
   
