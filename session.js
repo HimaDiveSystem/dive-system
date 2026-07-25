@@ -1,17 +1,13 @@
+// ============================================================
 // session.js - نظام إدارة الجلسة الموحد (24 ساعة)
 // ============================================================
 
-const CONFIG = {
-    SESSION_DURATION: 24 * 60 * 60 * 1000, // 24 ساعة
-    DASHBOARD_PAGES: {
-        'Admin': 'index.html',
-        'Accountant': 'ManageSupplierCustomers.html',
-        'Executive': 'ExecutiveDashboard.html'
-    }
+const SESSION_CONFIG = {
+    DURATION: 24 * 60 * 60 * 1000, // 24 ساعة
 };
 
 const Session = {
-    // ✅ حفظ بيانات المستخدم (نسخة واحدة موحدة)
+    // ✅ حفظ بيانات المستخدم مع صلاحياته
     save(user) {
         if (!user) {
             console.warn('⚠️ محاولة حفظ مستخدم فارغ');
@@ -19,70 +15,79 @@ const Session = {
         }
 
         try {
-            // ✅ تخزين موحد في localStorage فقط (المصدر الرئيسي)
+            const userWithPermissions = {
+                ...user,
+                permissions: user.permissions || []
+            };
+
+            // 1️⃣ تخزين في localStorage
             const dataToStore = {
-                user: user,
-                expiry: Date.now() + CONFIG.SESSION_DURATION
+                user: userWithPermissions,
+                expiry: Date.now() + SESSION_CONFIG.DURATION
             };
             localStorage.setItem('currentUser', JSON.stringify(dataToStore));
 
-            // ✅ نسخة احتياطية في sessionStorage (للمستخدم الحالي فقط)
-            sessionStorage.setItem('currentUser', JSON.stringify(user));
-            
-            // ✅ تخزين معلومات أساسية للرجوع السريع
-            sessionStorage.setItem('userType', user.type || '');
-            sessionStorage.setItem('userId', user.id || '');
-            sessionStorage.setItem('userName', user.name || '');
-            
-            // ✅ ✅ ✅ حفظ الصلاحيات بشكل منفصل
-            if (user.permissions) {
-                sessionStorage.setItem('userPermissions', JSON.stringify(user.permissions));
-                localStorage.setItem('userPermissions', JSON.stringify(user.permissions));
-            }
+            // 2️⃣ تخزين في sessionStorage
+            sessionStorage.setItem('currentUser', JSON.stringify(userWithPermissions));
 
-            console.log('✅ Session.save() - تم حفظ المستخدم:', user.name);
-            console.log('📋 الصلاحيات المحفوظة:', user.permissions?.length || 0);
+            // 3️⃣ تخزين الصلاحيات بشكل منفصل
+            localStorage.setItem('userPermissions', JSON.stringify(userWithPermissions.permissions));
+            sessionStorage.setItem('userPermissions', JSON.stringify(userWithPermissions.permissions));
+
+            // 4️⃣ تخزين بيانات أساسية
+            sessionStorage.setItem('userType', userWithPermissions.type || '');
+            sessionStorage.setItem('userId', userWithPermissions.id || '');
+            sessionStorage.setItem('userName', userWithPermissions.name || '');
+
+            console.log('✅ Session.save() - تم حفظ المستخدم:', userWithPermissions.name);
+            console.log('📋 الصلاحيات المحفوظة:', userWithPermissions.permissions.length, 'صلاحية');
+            
         } catch(e) {
             console.error('❌ Session.save() error:', e);
         }
     },
 
-    // ✅ جلب بيانات المستخدم الحالي (من مصدر موحد)
+    // ✅ جلب بيانات المستخدم الحالي
     getUser() {
         try {
-            // 1️⃣ محاولة جلب من localStorage (المصدر الرئيسي)
+            // 1️⃣ محاولة من localStorage
             const stored = localStorage.getItem('currentUser');
             if (stored) {
                 const data = JSON.parse(stored);
                 if (data.expiry && Date.now() < data.expiry) {
-                    // ✅ التحقق من وجود الصلاحيات
                     const user = data.user || {};
                     
-                    // ✅ محاولة استعادة الصلاحيات إذا كانت مفقودة
+                    // محاولة استعادة الصلاحيات
                     if (!user.permissions || user.permissions.length === 0) {
                         const permStored = localStorage.getItem('userPermissions');
                         if (permStored) {
                             try {
                                 user.permissions = JSON.parse(permStored);
-                                console.log('✅ تم استعادة الصلاحيات من localStorage');
                             } catch(e) {}
+                        }
+                        
+                        if (!user.permissions || user.permissions.length === 0) {
+                            const sessionPerm = sessionStorage.getItem('userPermissions');
+                            if (sessionPerm) {
+                                try {
+                                    user.permissions = JSON.parse(sessionPerm);
+                                } catch(e) {}
+                            }
                         }
                     }
                     
                     return user;
                 } else {
-                    // انتهت الجلسة
                     this.clear();
                 }
             }
 
-            // 2️⃣ محاولة جلب من sessionStorage (نسخة احتياطية)
+            // 2️⃣ محاولة من sessionStorage
             const sessionUser = sessionStorage.getItem('currentUser');
             if (sessionUser) {
                 try {
                     const user = JSON.parse(sessionUser);
                     
-                    // ✅ استعادة الصلاحيات من sessionStorage
                     const permStored = sessionStorage.getItem('userPermissions');
                     if (permStored && (!user.permissions || user.permissions.length === 0)) {
                         try {
@@ -90,7 +95,6 @@ const Session = {
                         } catch(e) {}
                     }
                     
-                    // ✅ حفظ في localStorage لتحديث المصدر الرئيسي
                     if (user && user.type) {
                         this.save(user);
                     }
@@ -99,15 +103,15 @@ const Session = {
                 } catch(e) {}
             }
 
-            // 3️⃣ محاولة استعادة من sessionStorage (طوارئ)
             return this._restoreFromSession();
+            
         } catch(e) {
             console.error('❌ Session.getUser() error:', e);
             return this._restoreFromSession();
         }
     },
 
-    // ✅ دالة مساعدة لاستعادة المستخدم من sessionStorage (حالة طوارئ)
+    // ✅ استعادة طارئة من sessionStorage
     _restoreFromSession() {
         try {
             const userType = sessionStorage.getItem('userType');
@@ -116,24 +120,52 @@ const Session = {
             const userPermissions = sessionStorage.getItem('userPermissions');
 
             if (userType && userId) {
-                const tempUser = {
+                return {
                     id: userId,
                     type: userType,
                     name: userName || 'مستخدم',
                     permissions: userPermissions ? JSON.parse(userPermissions) : []
                 };
-                
-                console.log('⚠️ تم استعادة المستخدم من sessionStorage (حالة طوارئ)');
-                return tempUser;
             }
             return null;
         } catch(e) {
-            console.error('❌ _restoreFromSession() error:', e);
             return null;
         }
     },
 
-    // ✅ التحقق من صحة الجلسة (مع توجيه تلقائي إذا انتهت)
+    // ✅ الحصول على الصلاحيات فقط
+    getUserPermissions() {
+        const user = this.getUser();
+        if (!user) return [];
+        if (user.type === 'Admin') return ['*'];
+        
+        if (!user.permissions || user.permissions.length === 0) {
+            const permStored = localStorage.getItem('userPermissions');
+            if (permStored) {
+                try {
+                    return JSON.parse(permStored);
+                } catch(e) {}
+            }
+            
+            const sessionPerm = sessionStorage.getItem('userPermissions');
+            if (sessionPerm) {
+                try {
+                    return JSON.parse(sessionPerm);
+                } catch(e) {}
+            }
+        }
+        
+        return user.permissions || [];
+    },
+
+    // ✅ التحقق من الصلاحية
+    hasPermission(permission) {
+        const permissions = this.getUserPermissions();
+        if (permissions.includes('*')) return true;
+        return permissions.includes(permission);
+    },
+
+    // ✅ التحقق من صحة الجلسة
     checkValidity(redirectOnFail = true) {
         const user = this.getUser();
         if (user && user.type) {
@@ -149,7 +181,7 @@ const Session = {
         }
     },
 
-    // ✅ التحقق من أن نوع المستخدم مسموح له بالدخول
+    // ✅ التحقق من نوع المستخدم
     checkPermission(allowedTypes, redirectOnFail = true) {
         const user = this.getUser();
         if (!user || !user.type) {
@@ -160,33 +192,14 @@ const Session = {
             return false;
         }
 
-        // ✅ إذا كان المستخدم Admin، يسمح له بكل شيء
-        if (user.type === 'Admin') {
-            return true;
+        if (user.type === 'Admin') return true;
+        if (allowedTypes.includes(user.type)) return true;
+        
+        if (redirectOnFail) {
+            const targetPage = 'index.html';
+            window.location.href = targetPage;
         }
-
-        if (allowedTypes.includes(user.type)) {
-            return true;
-        } else {
-            if (redirectOnFail) {
-                const targetPage = CONFIG.DASHBOARD_PAGES?.[user.type] || 'index.html';
-                window.location.href = targetPage;
-            }
-            return false;
-        }
-    },
-
-    // ✅ الحصول على المستخدم الحالي مع صلاحياته
-    getCurrentUser() {
-        return this.getUser();
-    },
-
-    // ✅ الحصول على الصلاحيات فقط
-    getUserPermissions() {
-        const user = this.getUser();
-        if (!user) return [];
-        if (user.type === 'Admin') return ['*']; // Admin لديه كل الصلاحيات
-        return user.permissions || [];
+        return false;
     },
 
     // ✅ تسجيل الخروج
@@ -197,7 +210,7 @@ const Session = {
         window.location.href = 'index.html';
     },
 
-    // ✅ مسح جميع البيانات
+    // ✅ مسح البيانات
     clear() {
         localStorage.removeItem('currentUser');
         sessionStorage.removeItem('currentUser');
@@ -205,15 +218,13 @@ const Session = {
         sessionStorage.removeItem('userId');
         sessionStorage.removeItem('userName');
         sessionStorage.removeItem('userPermissions');
-        // لا نمسح localStorage.userPermissions عمداً للاحتفاظ بها
     },
 
-    // ✅ تحديث الجلسة (تمديد الوقت)
+    // ✅ تمديد الجلسة
     refresh() {
         const user = this.getUser();
         if (user && user.type) {
             this.save(user);
-            console.log('🔄 تم تمديد الجلسة:', user.name);
         }
     }
 };
