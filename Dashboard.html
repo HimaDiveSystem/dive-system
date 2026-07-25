@@ -9,14 +9,14 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="icon" type="image/png" href="favicon.png">
-  <meta name="description" content="نظام إدارة مراكز الغوص - لوحة التحكم">
+  <meta name="description" content="نظام إدارة مراكز الغوص">
   <meta name="author" content="Dive System">
   
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes">
   <title>لوحة التحكم - نظام إدارة مراكز الغوص</title>
   
   <!-- ✅ إضافة الملفات الموحدة -->
-  <script src="config.js"></script>
+ <script src="config.js"></script>
   <script src="session.js"></script>
   <script src="ui.js"></script>
   
@@ -187,7 +187,7 @@
     <div class="page-title">لوحة التحكم</div>
     <div class="user-info">
       <span class="user-name" id="userNameDisplay">...</span>
-      <button class="logout-btn" id="logoutBtn">🚪 خروج</button>
+      <button class="logout-btn" onclick="showLogoutConfirm()">🚪 خروج</button>
     </div>
   </div>
 
@@ -1152,8 +1152,31 @@ function renderPermissionsTable(users) {
   const container = document.getElementById('permissionsContainer');
   if (!container) return;
   
+  // ✅ التحقق من وجود بيانات
   if (!users || users.length === 0) {
-    container.innerHTML = `<div style="text-align:center;padding:40px;color:#94a3b8;">لا يوجد مستخدمون لعرض صلاحياتهم</div>`;
+    container.innerHTML = `<div style="text-align:center;padding:40px;color:#94a3b8;">
+      <div style="font-size:48px;margin-bottom:16px;">📭</div>
+      <div style="font-size:16px;font-weight:600;">لا يوجد مستخدمون لعرض صلاحياتهم</div>
+      <div style="font-size:12px;color:#aaa;margin-top:8px;">تأكد من وجود مستخدمين في شيت Users</div>
+    </div>`;
+    return;
+  }
+  
+  // ✅ فلترة المستخدمين الذين لديهم صلاحيات (أو Admin)
+  const filteredUsers = users.filter(user => {
+    // إذا كان Admin، يظهر دائماً
+    if (user.type === 'Admin') return true;
+    // إذا كان لديه صلاحيات، يظهر
+    if (user.permissions && user.permissions.length > 0) return true;
+    return false;
+  });
+  
+  if (filteredUsers.length === 0) {
+    container.innerHTML = `<div style="text-align:center;padding:40px;color:#94a3b8;">
+      <div style="font-size:48px;margin-bottom:16px;">🔑</div>
+      <div style="font-size:16px;font-weight:600;">لا توجد صلاحيات مخصصة</div>
+      <div style="font-size:12px;color:#aaa;margin-top:8px;">قم بمنح صلاحيات للمستخدمين من خلال إضافة مستخدم جديد</div>
+    </div>`;
     return;
   }
   
@@ -1171,15 +1194,19 @@ function renderPermissionsTable(users) {
         <tbody>
   `;
   
-  users.forEach(user => {
+  filteredUsers.forEach(user => {
     const perms = user.permissions || [];
-    const permLabels = perms.map(p => `<span style="display:inline-block;background:#e8f5e9;padding:2px 8px;border-radius:12px;font-size:11px;margin:2px;">${p.permission || p}</span>`).join(' ');
+    const permLabels = perms.map(p => 
+      `<span style="display:inline-block;background:#e8f5e9;padding:2px 8px;border-radius:12px;font-size:11px;margin:2px;border:1px solid #c8e6c9;">
+        ${p.permission || p}
+      </span>`
+    ).join(' ');
     
     html += `
       <tr>
         <td><strong>${safeEscape(user.name || user.id)}</strong></td>
-        <td>${safeEscape(user.type || '—')}</td>
-        <td style="font-size:12px;">${permLabels || '—'}</td>
+        <td><span class="status-badge ${user.type === 'Admin' ? 'status-active' : 'status-inactive'}">${safeEscape(user.type || '—')}</span></td>
+        <td style="font-size:12px;max-width:300px;">${permLabels || '—'}</td>
         <td>
           <button class="action-btn edit" onclick="editUserPermissions('${user.id}')">✏️ تعديل</button>
         </td>
@@ -1187,7 +1214,11 @@ function renderPermissionsTable(users) {
     `;
   });
   
-  html += `</tbody></table></div>`;
+  html += `</tbody></table>
+    <div style="padding:12px;background:#f8f9fa;border-radius:0 0 18px 18px;font-size:12px;color:#6c757d;text-align:center;border-top:1px solid #e9ecef;">
+      🔑 عدد المستخدمين: ${filteredUsers.length} | عدد الصلاحيات الكلي: ${filteredUsers.reduce((sum, u) => sum + (u.permissions?.length || 0), 0)}
+    </div>
+  </div>`;
   container.innerHTML = html;
 }
 
@@ -1672,13 +1703,39 @@ async function runCheckNow() {
 // ═══════════════════════════════════════════════════════════════════
 
 async function initDashboard() {
+  // ✅ استخدام Session.getUser()
   currentUser = Session.getUser();
   
   if (!currentUser) {
+    // ✅ التحقق من وجود userType في sessionStorage
+    const userType = sessionStorage.getItem('userType');
+    if (userType) {
+      // ✅ محاولة استعادة المستخدم من localStorage
+      const stored = localStorage.getItem('currentUser');
+      if (stored) {
+        try {
+          const data = JSON.parse(stored);
+          if (data.user) {
+            currentUser = data.user;
+            // ✅ استكمال البيانات
+            if (typeof Theme !== 'undefined') {
+              Theme.applyToPage();
+              Theme.setPageTitle('لوحة تحكم المدير');
+            }
+            document.getElementById('userNameDisplay').textContent = currentUser.name || 'مدير';
+            hideElementsByPermissions();
+            // ✅ تحميل البيانات
+            await loadDashboardData();
+            return;
+          }
+        } catch(e) {}
+      }
+    }
     window.location.href = 'index.html';
     return;
   }
   
+  // ✅ تطبيق الثيم الموحد
   if (typeof Theme !== 'undefined') {
     Theme.applyToPage();
     Theme.setPageTitle('لوحة تحكم المدير');
@@ -1686,7 +1743,10 @@ async function initDashboard() {
   
   document.getElementById('userNameDisplay').textContent = currentUser.name || 'مدير';
   hideElementsByPermissions();
-  
+  await loadDashboardData();
+}
+
+async function loadDashboardData() {
   try {
     const stats = await callGAS('getDashboardStats');
     document.getElementById('cnt-centers').className  = 'stat-value';
@@ -1708,7 +1768,121 @@ async function initDashboard() {
     staff    = Array.isArray(d?.users)    ? d.users    : [];
   } catch(e) { console.error('Data error:', e); }
 }
-
+// ✅ دالة الخروج الاحترافية الموحدة
+function showLogoutConfirm() {
+  // إنشاء overlay
+  const overlay = document.createElement('div');
+  overlay.id = 'logoutOverlay';
+  overlay.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 99999;
+    animation: fadeIn 0.3s ease;
+  `;
+  
+  overlay.innerHTML = `
+    <div style="
+      background: white;
+      border-radius: 28px;
+      padding: 35px 40px;
+      max-width: 400px;
+      width: 90%;
+      text-align: center;
+      box-shadow: 0 25px 60px rgba(0,0,0,0.3);
+      animation: popIn 0.3s ease;
+      direction: rtl;
+    ">
+      <div style="font-size: 56px; margin-bottom: 10px;">🚪</div>
+      <h3 style="color: #1e2b4f; font-size: 22px; font-weight: 800; margin-bottom: 8px;">تسجيل الخروج</h3>
+      <p style="color: #5a6a8a; font-size: 15px; margin-bottom: 25px; line-height: 1.6;">
+        هل أنت متأكد من رغبتك في تسجيل الخروج من النظام؟
+        <br>
+        <span style="font-size: 12px; color: #94a3b8;">سيتم إنهاء الجلسة الحالية</span>
+      </p>
+      <div style="display: flex; gap: 12px; justify-content: center;">
+        <button id="logoutConfirmBtn" style="
+          background: #dc2626;
+          color: white;
+          border: none;
+          padding: 12px 32px;
+          border-radius: 40px;
+          font-size: 14px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: transform 0.2s;
+          font-family: 'Cairo', sans-serif;
+        " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+          ✅ نعم، خروج
+        </button>
+        <button id="logoutCancelBtn" style="
+          background: #f1f5f9;
+          color: #1e2b4f;
+          border: none;
+          padding: 12px 32px;
+          border-radius: 40px;
+          font-size: 14px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: transform 0.2s;
+          font-family: 'Cairo', sans-serif;
+        " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+          ❌ إلغاء
+        </button>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(overlay);
+  
+  // ✅ إضافة الـ CSS للـ animations
+  const styleSheet = document.createElement('style');
+  styleSheet.textContent = `
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    @keyframes popIn {
+      from { opacity: 0; transform: scale(0.85) translateY(-20px); }
+      to { opacity: 1; transform: scale(1) translateY(0); }
+    }
+  `;
+  document.head.appendChild(styleSheet);
+  
+  // ✅ ربط الأحداث
+  document.getElementById('logoutConfirmBtn').addEventListener('click', function() {
+    overlay.remove();
+    styleSheet.remove();
+    // ✅ استخدام Session.logout()
+    if (typeof Session !== 'undefined' && Session.logout) {
+      Session.logout();
+    } else {
+      localStorage.removeItem('currentUser');
+      sessionStorage.clear();
+      window.location.href = 'index.html';
+    }
+  });
+  
+  document.getElementById('logoutCancelBtn').addEventListener('click', function() {
+    overlay.remove();
+    styleSheet.remove();
+  });
+  
+  // ✅ إغلاق عند الضغط خارج النافذة
+  overlay.addEventListener('click', function(e) {
+    if (e.target === this) {
+      overlay.remove();
+      styleSheet.remove();
+    }
+  });
+}
 async function refreshData() {
   try {
     const [d, s] = await Promise.all([
