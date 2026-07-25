@@ -266,46 +266,89 @@ const DASHBOARDS = CONFIG.DASHBOARD_PAGES || {
   Customer: 'CustomerDashboard.html'
 };
 
-// ✅ استخدام let بدلاً من const
-let currentUser = null;
+
+  let currentUser = null;
 let loggedInUser = null;
 
-// ✅ ✅ ✅ إصلاح المشكلة: جلب المستخدم من sessionStorage أولاً
-// sessionStorage يحتفظ بالمستخدم الذي فتح الصفحة الحالية
-const sessionUser = sessionStorage.getItem('currentUser');
-if (sessionUser) {
-  try {
-    currentUser = JSON.parse(sessionUser);
-    loggedInUser = currentUser;
-    console.log('✅ تم جلب المستخدم من sessionStorage:', currentUser.name);
-  } catch(e) {
-    console.warn('⚠️ فشل جلب المستخدم من sessionStorage');
-  }
-}
+const freshUser = Session.getUser();
 
-// ✅ إذا لم يوجد في sessionStorage، جرب localStorage
-if (!currentUser) {
+if (freshUser) {
+  currentUser = freshUser;
+  loggedInUser = freshUser;
+  console.log('✅ تم جلب المستخدم من Session:', currentUser.name);
+  console.log('✅ الصلاحيات:', currentUser.permissions);
+} else {
+
   const stored = localStorage.getItem('currentUser');
   if (stored) {
     try {
       const data = JSON.parse(stored);
       currentUser = data.user || data;
       loggedInUser = currentUser;
-      console.log('✅ تم جلب المستخدم من localStorage:', currentUser.name);
+      console.log('⚠️ تم جلب المستخدم من localStorage (قديم):', currentUser.name);
     } catch(e) {
       console.warn('⚠️ فشل جلب المستخدم من localStorage');
     }
   }
 }
 
-// ✅ إذا لم يوجد مستخدم، التوجيه إلى صفحة تسجيل الدخول
 if (!currentUser) {
   window.location.href = 'index.html';
 }
-// ============================================================
-// ✅ دوال التحقق من الصلاحيات
-// ============================================================
+if (currentUser && (!currentUser.permissions || currentUser.permissions.length === 0)) {
+  console.warn('⚠️ الصلاحيات فارغة! محاولة جلبها من الخادم...');
+}
 
+  // ✅ عرض معلومات المستخدم على الشاشة للتشخيص
+(function debugUser() {
+  setTimeout(() => {
+    const debugDiv = document.createElement('div');
+    debugDiv.style.cssText = `
+      position: fixed;
+      top: 60px;
+      left: 10px;
+      right: 10px;
+      background: #1e2b4f;
+      color: #ffd966;
+      padding: 12px 16px;
+      border-radius: 12px;
+      font-size: 13px;
+      z-index: 99999;
+      text-align: center;
+      font-family: 'Cairo', sans-serif;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      border: 2px solid #ffd966;
+    `;
+    
+    const permCount = currentUser?.permissions?.length || 0;
+    const permText = permCount > 0 ? currentUser.permissions.join(', ') : '❌ لا توجد صلاحيات!';
+    
+    debugDiv.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <span>👤 ${currentUser?.name || 'غير معروف'}</span>
+        <span>🏷️ ${currentUser?.type || '—'}</span>
+        <span>🔑 ${permCount} صلاحية</span>
+        ${permCount === 0 ? '<span style="color:#ff6b6b;">⚠️ مشكلة!</span>' : '<span style="color:#4caf50;">✅</span>'}
+      </div>
+      <div style="font-size:11px; color:#b0c4de; margin-top:6px; word-break:break-all;">
+        ${permText}
+      </div>
+      <div style="font-size:10px; color:#94a3b8; margin-top:4px;">
+        عرض الشاشة: ${window.innerWidth}px | 
+        ${window.innerWidth < 768 ? '📱 هاتف' : '💻 كمبيوتر'}
+      </div>
+    `;
+    document.body.prepend(debugDiv);
+    
+    // ✅ إخفاء بعد 10 ثواني
+    setTimeout(() => {
+      debugDiv.style.transition = 'opacity 0.5s';
+      debugDiv.style.opacity = '0';
+      setTimeout(() => debugDiv.remove(), 500);
+    }, 10000);
+  }, 500);
+})();
+  
 function checkUserPermission(permission) {
   if (!currentUser) return false;
   if (currentUser.type === 'Admin') return true;
@@ -316,7 +359,6 @@ function hideElementsByPermissions() {
   const user = currentUser;
   if (!user) return;
   
-  // ✅ إخفاء الأزرار حسب الصلاحيات
   document.querySelectorAll('.btn[data-permission]').forEach(el => {
     const perm = el.dataset.permission;
     if (!checkUserPermission(perm)) {
