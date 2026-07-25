@@ -259,40 +259,62 @@ color: var(--color-secondary);
   // ============================================================
   // دالة تسجيل الدخول (باستخدام Session)
   // ============================================================
-  async function login() {
-    const email    = document.getElementById('email').value.trim();
+async function login() {
+    const email = document.getElementById('email').value.trim();
     const password = document.getElementById('password').value.trim();
 
     if (!email || !password) {
-      showAlert('يرجى إدخال البريد الإلكتروني وكلمة المرور', '⚠️');
-      return;
+        showAlert('يرجى إدخال البريد الإلكتروني وكلمة المرور', '⚠️');
+        return;
     }
 
     setLoading(true);
 
     try {
-      const result = await API.login(email, password);
+        const result = await API.login(email, password);
 
-      if (!result?.success) {
-        showAlert(result?.message || 'بيانات الدخول غير صحيحة', '❌');
-        return;
-      }
+        if (!result?.success) {
+            showAlert(result?.message || 'بيانات الدخول غير صحيحة', '❌');
+            return;
+        }
 
-      // ✅ استخدام Session.save من session.js
-      Session.save(result.user);
-      
-      // ✅ استخدام CONFIG.DASHBOARD_PAGES بدلاً من المتغير المحلي
-      const page = CONFIG.DASHBOARD_PAGES[result.user?.type] || 'Dashboard.html';
-      window.location.href = page;
+        // ✅ ✅ ✅ التأكد من وجود صلاحيات قبل الحفظ
+        if (!result.user.permissions || result.user.permissions.length === 0) {
+            console.warn('⚠️ لا توجد صلاحيات للمستخدم، جاري جلب الصلاحيات الافتراضية...');
+            // ✅ جلب الصلاحيات الافتراضية حسب نوع المستخدم
+            const defaultPerms = getDefaultPermissionsForType(result.user.type);
+            result.user.permissions = defaultPerms;
+        }
+
+        // ✅ حفظ المستخدم
+        Session.save(result.user);
+        
+        // ✅ ✅ ✅ حفظ في localStorage.userPermissions كنسخة احتياطية
+        localStorage.setItem('userPermissions', JSON.stringify(result.user.permissions));
+        
+        // ✅ التوجيه
+        const page = CONFIG.DASHBOARD_PAGES[result.user?.type] || 'Dashboard.html';
+        window.location.href = page;
 
     } catch(err) {
-      console.error('Login error:', err);
-      showAlert('تعذّر الاتصال بالخادم.\nتحقق من رابط Web App.', '❌');
+        console.error('Login error:', err);
+        showAlert('تعذّر الاتصال بالخادم.\nتحقق من رابط Web App.', '❌');
     } finally {
-      setLoading(false);
+        setLoading(false);
     }
-  }
+}
 
+// ✅ دالة مساعدة للصلاحيات الافتراضية
+function getDefaultPermissionsForType(userType) {
+    const permissionsMap = {
+        'Admin': ['ManageAll', 'ManageCenters', 'ManageBranches', 'ManageUsers', 'ManagePermissions'],
+        'Owner': ['ViewBranches', 'ViewStaff', 'ViewInvoices', 'ViewSalesReport', 'ViewCashRegister'],
+        'Accountant': ['ViewCustomersSuppliers', 'AddCustomerSupplier', 'EditCustomerSupplier', 'DeleteCustomerSupplier', 'UpdateCustomerPrices'],
+        'Sales': ['CreateInvoice', 'ViewInvoices', 'ViewBookingsToday'],
+        'Customer': ['ViewCustomerAccount', 'ViewCustomerInvoices']
+    };
+    return permissionsMap[userType] || [];
+}
   // ============================================================
   // دوال مساعدة
   // ============================================================
