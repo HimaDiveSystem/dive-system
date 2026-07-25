@@ -266,87 +266,202 @@ const DASHBOARDS = CONFIG.DASHBOARD_PAGES || {
   Customer: 'CustomerDashboard.html'
 };
 
-
-  let currentUser = null;
+let currentUser = null;
 let loggedInUser = null;
 
-const freshUser = Session.getUser();
+  const freshUser = Session.getUser();
 
-if (freshUser) {
-  currentUser = freshUser;
-  loggedInUser = freshUser;
-  console.log('✅ تم جلب المستخدم من Session:', currentUser.name);
-  console.log('✅ الصلاحيات:', currentUser.permissions);
-} else {
 
-  const stored = localStorage.getItem('currentUser');
-  if (stored) {
+  if (freshUser && (!freshUser.permissions || freshUser.permissions.length === 0)) {
+    console.log('⚠️ الصلاحيات فارغة، محاولة استعادتها...');
     try {
-      const data = JSON.parse(stored);
-      currentUser = data.user || data;
-      loggedInUser = currentUser;
-      console.log('⚠️ تم جلب المستخدم من localStorage (قديم):', currentUser.name);
+    
+            const permStored = localStorage.getItem('userPermissions');
+        if (permStored) {
+            const perms = JSON.parse(permStored);
+            if (perms && perms.length > 0) {
+                freshUser.permissions = perms;
+                console.log('✅ تم استعادة الصلاحيات من localStorage.userPermissions:', perms);
+            }
+        }
+
+      
+      if (!freshUser.permissions || freshUser.permissions.length === 0) {
+            const sessionPerm = sessionStorage.getItem('userPermissions');
+            if (sessionPerm) {
+                const perms = JSON.parse(sessionPerm);
+                if (perms && perms.length > 0) {
+                    freshUser.permissions = perms;
+                    console.log('✅ تم استعادة الصلاحيات من sessionStorage.userPermissions:', perms);
+                }
+            }
+        }
+        
+ 
+              if (freshUser.permissions && freshUser.permissions.length > 0) {
+            Session.save(freshUser);
+            console.log('✅ تم حفظ الصلاحيات في Session');
+        }
     } catch(e) {
-      console.warn('⚠️ فشل جلب المستخدم من localStorage');
+        console.warn('⚠️ فشل استعادة الصلاحيات:', e);
     }
-  }
 }
 
+// 3. ✅ تعيين المستخدم الحالي
+if (freshUser) {
+    currentUser = freshUser;
+    loggedInUser = freshUser;
+    console.log('✅ تم جلب المستخدم من Session:', currentUser.name);
+    console.log('✅ الصلاحيات:', currentUser.permissions);
+} else {
+    // ✅ محاولة من localStorage كحل احتياطي
+    const stored = localStorage.getItem('currentUser');
+    if (stored) {
+        try {
+            const data = JSON.parse(stored);
+            currentUser = data.user || data;
+            loggedInUser = currentUser;
+            console.log('⚠️ تم جلب المستخدم من localStorage (قديم):', currentUser.name);
+        } catch(e) {
+            console.warn('⚠️ فشل جلب المستخدم من localStorage');
+        }
+    }
+}
+
+// 4. ✅ التحقق من وجود المستخدم
 if (!currentUser) {
-  window.location.href = 'index.html';
-}
-if (currentUser && (!currentUser.permissions || currentUser.permissions.length === 0)) {
-  console.warn('⚠️ الصلاحيات فارغة! محاولة جلبها من الخادم...');
+    window.location.href = 'index.html';
 }
 
-  // ✅ عرض معلومات المستخدم على الشاشة للتشخيص
+// 5. ✅ التحقق من الصلاحيات (محاولة أخيرة)
+if (currentUser && (!currentUser.permissions || currentUser.permissions.length === 0)) {
+    console.warn('⚠️ الصلاحيات فارغة! محاولة جلبها من الخادم...');
+    
+    // ✅ محاولة جلب الصلاحيات من localStorage.userPermissions مرة أخيرة
+    try {
+        const permStored = localStorage.getItem('userPermissions');
+        if (permStored) {
+            const perms = JSON.parse(permStored);
+            if (perms && perms.length > 0) {
+                currentUser.permissions = perms;
+                loggedInUser.permissions = perms;
+                console.log('✅ تم استعادة الصلاحيات من localStorage (محاولة أخيرة):', perms);
+                // ✅ حفظ في Session
+                Session.save(currentUser);
+            }
+        }
+    } catch(e) {
+        console.warn('⚠️ فشل استعادة الصلاحيات (محاولة أخيرة):', e);
+    }
+}
+
+// 6. ✅ ✅ ✅ إضافة زر تسجيل خروج من جميع الجلسات
+(function addLogoutAllButton() {
+    // ✅ التأكد من عدم وجود الزر مسبقاً
+    if (document.getElementById('logoutAllBtn')) return;
+    
+    const logoutAllBtn = document.createElement('button');
+    logoutAllBtn.id = 'logoutAllBtn';
+    logoutAllBtn.innerHTML = '🚪 خروج الكل';
+    logoutAllBtn.style.cssText = `
+        position: fixed;
+        bottom: 80px;
+        right: 20px;
+        background: #dc3545;
+        color: white;
+        border: none;
+        border-radius: 50px;
+        padding: 12px 22px;
+        font-size: 14px;
+        font-weight: bold;
+        z-index: 99999;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+        cursor: pointer;
+        font-family: 'Cairo', sans-serif;
+        transition: all 0.2s ease;
+    `;
+    logoutAllBtn.onmouseover = function() {
+        this.style.transform = 'scale(1.05)';
+        this.style.boxShadow = '0 6px 20px rgba(220,53,69,0.5)';
+    };
+    logoutAllBtn.onmouseout = function() {
+        this.style.transform = 'scale(1)';
+        this.style.boxShadow = '0 4px 12px rgba(0,0,0,0.4)';
+    };
+    logoutAllBtn.onclick = function() {
+        if (confirm('⚠️ سيتم تسجيل الخروج من جميع الأجهزة والجلسات.\nهل أنت متأكد؟')) {
+            // ✅ مسح جميع الجلسات
+            if (typeof Session !== 'undefined' && Session.logoutAll) {
+                Session.logoutAll();
+            } else {
+                // ✅ مسح يدوي
+                for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    if (key && key.startsWith('currentUser_')) {
+                        localStorage.removeItem(key);
+                    }
+                }
+                localStorage.removeItem('activeSessionId');
+                localStorage.removeItem('userPermissions');
+                sessionStorage.clear();
+                window.location.href = 'index.html';
+            }
+        }
+    };
+    document.body.appendChild(logoutAllBtn);
+    console.log('✅ تم إضافة زر "خروج الكل"');
+})();
+
+// 7. ✅ عرض معلومات المستخدم على الشاشة للتشخيص
 (function debugUser() {
-  setTimeout(() => {
-    const debugDiv = document.createElement('div');
-    debugDiv.style.cssText = `
-      position: fixed;
-      top: 60px;
-      left: 10px;
-      right: 10px;
-      background: #1e2b4f;
-      color: #ffd966;
-      padding: 12px 16px;
-      border-radius: 12px;
-      font-size: 13px;
-      z-index: 99999;
-      text-align: center;
-      font-family: 'Cairo', sans-serif;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-      border: 2px solid #ffd966;
-    `;
-    
-    const permCount = currentUser?.permissions?.length || 0;
-    const permText = permCount > 0 ? currentUser.permissions.join(', ') : '❌ لا توجد صلاحيات!';
-    
-    debugDiv.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-        <span>👤 ${currentUser?.name || 'غير معروف'}</span>
-        <span>🏷️ ${currentUser?.type || '—'}</span>
-        <span>🔑 ${permCount} صلاحية</span>
-        ${permCount === 0 ? '<span style="color:#ff6b6b;">⚠️ مشكلة!</span>' : '<span style="color:#4caf50;">✅</span>'}
-      </div>
-      <div style="font-size:11px; color:#b0c4de; margin-top:6px; word-break:break-all;">
-        ${permText}
-      </div>
-      <div style="font-size:10px; color:#94a3b8; margin-top:4px;">
-        عرض الشاشة: ${window.innerWidth}px | 
-        ${window.innerWidth < 768 ? '📱 هاتف' : '💻 كمبيوتر'}
-      </div>
-    `;
-    document.body.prepend(debugDiv);
-    
-    // ✅ إخفاء بعد 10 ثواني
     setTimeout(() => {
-      debugDiv.style.transition = 'opacity 0.5s';
-      debugDiv.style.opacity = '0';
-      setTimeout(() => debugDiv.remove(), 500);
-    }, 10000);
-  }, 500);
+        const debugDiv = document.createElement('div');
+        debugDiv.id = 'debugUserPanel';
+        debugDiv.style.cssText = `
+            position: fixed;
+            top: 60px;
+            left: 10px;
+            right: 10px;
+            background: #1e2b4f;
+            color: #ffd966;
+            padding: 12px 16px;
+            border-radius: 12px;
+            font-size: 13px;
+            z-index: 99998;
+            text-align: center;
+            font-family: 'Cairo', sans-serif;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            border: 2px solid #ffd966;
+        `;
+        
+        const permCount = currentUser?.permissions?.length || 0;
+        const permText = permCount > 0 ? currentUser.permissions.join(', ') : '❌ لا توجد صلاحيات!';
+        
+        debugDiv.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                <span>👤 ${currentUser?.name || 'غير معروف'}</span>
+                <span>🏷️ ${currentUser?.type || '—'}</span>
+                <span>🔑 ${permCount} صلاحية</span>
+                ${permCount === 0 ? '<span style="color:#ff6b6b;">⚠️ مشكلة!</span>' : '<span style="color:#4caf50;">✅</span>'}
+            </div>
+            <div style="font-size:11px; color:#b0c4de; margin-top:6px; word-break:break-all;">
+                ${permText}
+            </div>
+            <div style="font-size:10px; color:#94a3b8; margin-top:4px;">
+                عرض الشاشة: ${window.innerWidth}px | 
+                ${window.innerWidth < 768 ? '📱 هاتف' : '💻 كمبيوتر'}
+                | 🆔 ${sessionStorage.getItem('sessionId') || '—'}
+            </div>
+        `;
+        document.body.prepend(debugDiv);
+        
+        // ✅ إخفاء بعد 10 ثواني
+        setTimeout(() => {
+            debugDiv.style.transition = 'opacity 0.5s';
+            debugDiv.style.opacity = '0';
+            setTimeout(() => debugDiv.remove(), 500);
+        }, 10000);
+    }, 500);
 })();
   
 function checkUserPermission(permission) {
