@@ -1330,20 +1330,51 @@ async function loadPermissionsTable() {
   }
 }
 
-// ✅ دالة مساعدة لتحويل الصلاحيات إلى مصفوفة
 function parsePermissions(perms) {
+    // ✅ إذا كانت القيمة null أو undefined
     if (!perms) return [];
+    
+    // ✅ إذا كانت مصفوفة بالفعل
     if (Array.isArray(perms)) return perms;
-    if (typeof perms === 'string') {
+    
+    // ✅ إذا كانت كائناً (object)
+    if (typeof perms === 'object') {
         try {
-            // محاولة تحليل JSON
-            const parsed = JSON.parse(perms);
-            if (Array.isArray(parsed)) return parsed;
+            // محاولة تحويل الكائن إلى مصفوفة
+            if (perms.permissions && Array.isArray(perms.permissions)) {
+                return perms.permissions;
+            }
+            // إذا كان الكائن يحتوي على قيم، حاول استخراجها
+            const values = Object.values(perms);
+            if (values.length > 0 && Array.isArray(values[0])) {
+                return values[0];
+            }
+            return [];
         } catch(e) {
-            // إذا لم يكن JSON، حاول تقسيم النص
-            return perms.split(',').map(p => p.trim().replace(/[\[\]"]/g, '')).filter(Boolean);
+            return [];
         }
     }
+    
+    // ✅ إذا كانت نصاً (string)
+    if (typeof perms === 'string') {
+        // محاولة تحليل JSON
+        try {
+            const parsed = JSON.parse(perms);
+            if (Array.isArray(parsed)) return parsed;
+            if (typeof parsed === 'object' && parsed.permissions) {
+                return parsed.permissions;
+            }
+            return [];
+        } catch(e) {
+            // إذا فشل التحليل، حاول تقسيم النص
+            const cleaned = perms.replace(/^\[|\]$/g, '').replace(/"/g, '').trim();
+            if (cleaned) {
+                return cleaned.split(',').map(p => p.trim()).filter(Boolean);
+            }
+            return [];
+        }
+    }
+    
     return [];
 }
 
@@ -1359,20 +1390,7 @@ function renderPermissionsTable(users) {
         return;
     }
     
-    const filteredUsers = users.filter(user => {
-        if (user.type === 'Admin') return true;
-        const perms = parsePermissions(user.permissions);
-        return perms.length > 0;
-    });
-    
-    if (filteredUsers.length === 0) {
-        container.innerHTML = `<div style="text-align:center;padding:40px;color:#94a3b8;">
-            <div style="font-size:48px;margin-bottom:16px;">🔑</div>
-            <div style="font-size:16px;font-weight:600;">لا توجد صلاحيات مخصصة</div>
-        </div>`;
-        return;
-    }
-    
+    // ✅ تحويل كل مستخدم إلى صف
     let html = `
         <div style="overflow-x:auto; -webkit-overflow-scrolling:touch;">
             <table style="width:100%; border-collapse:collapse; font-size:13px; min-width:500px;">
@@ -1387,20 +1405,23 @@ function renderPermissionsTable(users) {
                 <tbody>
     `;
     
-    filteredUsers.forEach(user => {
+    let totalPermissions = 0;
+    
+    users.forEach(user => {
         // ✅ تحويل الصلاحيات إلى مصفوفة
         let perms = parsePermissions(user.permissions);
+        
+        // ✅ إذا كان المستخدم Admin، لديه كل الصلاحيات
+        if (user.type === 'Admin' && perms.length === 0) {
+            perms = ['* جميع الصلاحيات'];
+        }
         
         // ✅ عرض الصلاحيات كـ badges
         let permLabels = '';
         if (perms.length > 0) {
-            // ✅ إزالة الأقواس والعلامات الإضافية من كل صلاحية
-            const cleanPerms = perms.map(p => {
-                return String(p).replace(/^\[|\]$/g, '').replace(/"/g, '').trim();
-            }).filter(Boolean);
-            
-            permLabels = cleanPerms.map(p => `
-                <span style="
+            permLabels = perms.map(p => {
+                const permName = String(p).trim();
+                return `<span style="
                     display:inline-block;
                     background:#e8f5e9;
                     padding:3px 8px;
@@ -1411,8 +1432,9 @@ function renderPermissionsTable(users) {
                     white-space:nowrap;
                     max-width:100%;
                     color:#1e2b4f;
-                ">${safeEscape(p)}</span>
-            `).join(' ');
+                ">${safeEscape(permName)}</span>`;
+            }).join(' ');
+            totalPermissions += perms.length;
         } else {
             permLabels = '<span style="color:#94a3b8;font-size:12px;">—</span>';
         }
@@ -1449,7 +1471,7 @@ function renderPermissionsTable(users) {
             </table>
         </div>
         <div style="padding:12px 16px;background:#f8f9fa;border-radius:0 0 18px 18px;font-size:12px;color:#6c757d;text-align:center;border-top:1px solid #e9ecef;">
-            🔑 عدد المستخدمين: ${filteredUsers.length} | عدد الصلاحيات الكلي: ${filteredUsers.reduce((sum, u) => sum + parsePermissions(u.permissions).length, 0)}
+            🔑 عدد المستخدمين: ${users.length} | عدد الصلاحيات الكلي: ${totalPermissions}
         </div>
     `;
     
