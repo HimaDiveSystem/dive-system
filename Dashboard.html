@@ -1234,7 +1234,32 @@ async function saveCenter(e) {
     btn.textContent='💾 حفظ'; 
   }
 }
-
+/**
+ * تحديث localStorage و sessionStorage من بيانات الخادم
+ */
+async function refreshLocalCache() {
+    try {
+        console.log('🔄 تحديث التخزين المحلي من الخادم...');
+        const result = await callGAS('getAllUsersWithPermissions');
+        if (result?.data && Array.isArray(result.data)) {
+            // ✅ تحديث localStorage
+            localStorage.setItem('users', JSON.stringify(result.data));
+            
+            // ✅ تحديث sessionStorage
+            sessionStorage.setItem('users', JSON.stringify(result.data));
+            
+            // ✅ تحديث staff array
+            window.staff = result.data;
+            
+            console.log(`✅ تم تحديث التخزين المحلي (${result.data.length} مستخدم)`);
+            return true;
+        }
+        return false;
+    } catch(e) {
+        console.error('❌ فشل تحديث التخزين المحلي:', e);
+        return false;
+    }
+}
 async function doDeleteCenter(id) {
   if (!checkUserPermission('ManageCenters')) {
     showAlert('⚠️ ليس لديك صلاحية لحذف المراكز');
@@ -1579,18 +1604,39 @@ function showPermissions() {
 }
 
 async function loadPermissionsTable() {
-  const container = document.getElementById('permissionsContainer');
-  if (!container) return;
-  
-  try {
-    const result = await callGAS('getAllUsersWithPermissions');
-    const users = result?.data || [];
-    renderPermissionsTable(users);
-  } catch(e) {
-    container.innerHTML = `<div style="text-align:center;padding:40px;color:red;">❌ خطأ في تحميل البيانات: ${safeEscape(e.message)}</div>`;
-  }
+    const container = document.getElementById('permissionsContainer');
+    if (!container) return;
+    
+    try {
+        // ✅ محاولة جلب البيانات من localStorage أولاً (أسرع)
+        let users = [];
+        const cached = localStorage.getItem('users');
+        if (cached) {
+            try {
+                users = JSON.parse(cached);
+                console.log('📦 استخدام البيانات من localStorage');
+            } catch(e) {}
+        }
+        
+        // ✅ إذا لم توجد في localStorage، جلب من الخادم
+        if (!users || users.length === 0) {
+            const result = await callGAS('getAllUsersWithPermissions');
+            users = result?.data || [];
+            
+            // ✅ حفظ في localStorage
+            if (users.length > 0) {
+                localStorage.setItem('users', JSON.stringify(users));
+                sessionStorage.setItem('users', JSON.stringify(users));
+                window.staff = users;
+            }
+        }
+        
+        renderPermissionsTable(users);
+    } catch(e) {
+        container.innerHTML = `<div style="text-align:center;padding:40px;color:red;">❌ خطأ في تحميل البيانات: ${safeEscape(e.message)}</div>`;
+    }
 }
-
+  
 function parsePermissions(perms) {
     // ✅ إذا كانت القيمة null أو undefined
     if (!perms) return [];
@@ -1843,67 +1889,76 @@ async function openUserModal(id) {
   document.getElementById('userModal').style.display = 'flex';
 }
 async function saveUser(e) {
-  e.preventDefault();
-  const id = document.getElementById('userId').value || '';
-  
-  // ✅ جمع الصلاحيات المحددة
-  const selectedPermissions = getSelectedPermissions();
-  
-  const data = {
-    id: id,
-    centerId: document.getElementById('userCenterId').value,
-    branchId: document.getElementById('userBranchId').value || '',
-    phone: document.getElementById('userPhone').value.trim(),
-    name: document.getElementById('userFullName').value.trim(),
-    email: document.getElementById('userEmail').value.trim(),
-    type: document.getElementById('userRole').value,
-    isActive: document.getElementById('userStatus').value === 'active' ? 'true' : 'false',
-    password: '123456',
-    permissions: selectedPermissions
-  };
-  
-  if(!data.centerId){ showAlert('الرجاء اختيار المركز'); return; }
-  if(!data.name)    { showAlert('الرجاء إدخال الاسم'); return; }
-  if(!data.phone)   { showAlert('الرجاء إدخال رقم الهاتف'); return; }
-
-  const btn = document.getElementById('userSaveBtn'); 
-  btn.disabled = true; 
-  btn.textContent = '⏳ جاري الحفظ...';
-  
-  try {
-    const action = id ? 'updateUser' : 'addNewUser';
-    const r = await callGAS(action, data);
+    e.preventDefault();
+    const id = document.getElementById('userId').value || '';
+    const selectedPermissions = getSelectedPermissions();
     
-    if(r?.success){
-      const userId = r.id || id;
-      
-      // ✅ طلب واحد فقط لحذف الصلاحيات القديمة
-      await callGAS('removeAllUserPermissions', { userId: userId });
-      
-      // ✅ طلب واحد فقط لإضافة جميع الصلاحيات الجديدة
-      if (selectedPermissions.length > 0) {
-        const assignedBy = currentUser?.id || 'System';
-        await callGAS('setUserPermissionsBatch', {
-          userId: userId,
-          permissions: selectedPermissions,
-          assignedBy: assignedBy
-        });
-      }
-      
-      closeModal('userModal');
-      showAlert(r.message || '✅ تم الحفظ', async()=>{ 
-        await refreshData(); 
-        showStaff(); 
-      });
-    } else {
-      showAlert('❌ ' + (r?.message || 'فشل الحفظ'));
+    const data = {
+        id: id,
+        centerId: document.getElementById('userCenterId').value,
+        branchId: document.getElementById('userBranchId').value || '',
+        phone: document.getElementById('userPhone').value.trim(),
+        name: document.getElementById('userFullName').value.trim(),
+        email: document.getElementById('userEmail').value.trim(),
+        type: document.getElementById('userRole').value,
+        isActive: document.getElementById('userStatus').value === 'active' ? 'true' : 'false',
+        password: '123456',
+        permissions: selectedPermissions
+    };
+    
+    if(!data.centerId){ showAlert('الرجاء اختيار المركز'); return; }
+    if(!data.name)    { showAlert('الرجاء إدخال الاسم'); return; }
+    if(!data.phone)   { showAlert('الرجاء إدخال رقم الهاتف'); return; }
+
+    const btn = document.getElementById('userSaveBtn'); 
+    btn.disabled = true; 
+    btn.textContent = '⏳ جاري الحفظ...';
+    
+    try {
+        const action = id ? 'updateUser' : 'addNewUser';
+        const r = await callGAS(action, data);
+        
+        if(r?.success){
+            const userId = r.id || id;
+            
+            // ✅ حذف الصلاحيات القديمة
+            await callGAS('removeAllUserPermissions', { userId: userId });
+            
+            // ✅ إضافة الصلاحيات الجديدة
+            if (selectedPermissions.length > 0) {
+                const assignedBy = currentUser?.id || 'System';
+                await callGAS('setUserPermissionsBatch', {
+                    userId: userId,
+                    permissions: selectedPermissions,
+                    assignedBy: assignedBy
+                });
+            }
+            
+            closeModal('userModal');
+            
+            // ✅ تحديث التخزين المحلي من الخادم
+            showAlert(r.message || '✅ تم الحفظ', async()=>{ 
+                // ✅ تحديث جميع المصادر المحلية
+                await refreshLocalCache();
+                await refreshData();
+                
+                // ✅ إعادة عرض الجدول الحالي
+                const currentTab = document.querySelector('.menu-item.active');
+                if (currentTab) {
+                    const tabId = currentTab.id;
+                    if (tabId === 'mi-staff') showStaff();
+                    else if (tabId === 'mi-permissions') loadPermissionsTable();
+                }
+            });
+        } else {
+            showAlert('❌ ' + (r?.message || 'فشل الحفظ'));
+        }
+    } catch(err){ 
+        showAlert('❌ خطأ في الاتصال: ' + err.message); 
+    } finally { 
+        btn.disabled = false; 
+        btn.textContent = '💾 حفظ'; 
     }
-  } catch(err){ 
-    showAlert('❌ خطأ في الاتصال: ' + err.message); 
-  } finally { 
-    btn.disabled = false; 
-    btn.textContent = '💾 حفظ'; 
-  }
 }
   
 
@@ -2470,20 +2525,36 @@ function showLogoutConfirm() {
   });
 }
 async function refreshData() {
-  try {
-    const [d, s] = await Promise.all([
-      callGAS('getAllDashboardData'),
-      callGAS('getDashboardStats')
-    ]);
-    centers  = Array.isArray(d?.centers)  ? d.centers  : centers;
-    branches = Array.isArray(d?.branches) ? d.branches : branches;
-    staff    = Array.isArray(d?.users)    ? d.users    : staff;
-    document.getElementById('cnt-centers').textContent  = s?.centers  ?? 0;
-    document.getElementById('cnt-branches').textContent = s?.branches ?? 0;
-    document.getElementById('cnt-staff').textContent    = s?.users    ?? 0;
-    document.getElementById('cnt-critical').textContent = s?.critical ?? 0;
-    document.getElementById('cnt-warning').textContent  = s?.warning  ?? 0;
-  } catch(e) { console.error('Refresh error:', e); }
+    try {
+        // ✅ جلب البيانات من الخادم
+        const [d, s] = await Promise.all([
+            callGAS('getAllDashboardData'),
+            callGAS('getDashboardStats')
+        ]);
+        
+        // ✅ تحديث المتغيرات العالمية
+        centers  = Array.isArray(d?.centers)  ? d.centers  : centers;
+        branches = Array.isArray(d?.branches) ? d.branches : branches;
+        staff    = Array.isArray(d?.users)    ? d.users    : staff;
+        
+        // ✅ تحديث localStorage و sessionStorage
+        if (d?.users && Array.isArray(d.users)) {
+            localStorage.setItem('users', JSON.stringify(d.users));
+            sessionStorage.setItem('users', JSON.stringify(d.users));
+            window.staff = d.users;
+        }
+        
+        // ✅ تحديث الإحصائيات
+        document.getElementById('cnt-centers').textContent  = s?.centers  ?? 0;
+        document.getElementById('cnt-branches').textContent = s?.branches ?? 0;
+        document.getElementById('cnt-staff').textContent    = s?.users    ?? 0;
+        document.getElementById('cnt-critical').textContent = s?.critical ?? 0;
+        document.getElementById('cnt-warning').textContent  = s?.warning  ?? 0;
+        
+        console.log('✅ تم تحديث جميع البيانات بنجاح');
+    } catch(e) { 
+        console.error('Refresh error:', e); 
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
