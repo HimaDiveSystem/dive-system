@@ -345,21 +345,56 @@ document.addEventListener('DOMContentLoaded', function() {
     Theme.setPageTitle('فاتورة مبيعات');
   }
   
-  let ud = getUserWithExpiry();
-   if (!ud) {
-    const p = new URLSearchParams(location.search).get('user');
-    if (p) {
-      ud = JSON.parse(decodeURIComponent(p));
-      saveUserWithExpiry(ud);
+  // ✅ استخدام Session.checkValidity()
+  if (typeof Session !== 'undefined' && Session.checkValidity) {
+    if (!Session.checkValidity()) {
+      return;
     }
   }
-  if (!ud) { location.href = 'index.html'; return; }
-    // ✅ التحقق من الصلاحية - فقط Sales يمكنه الدخول
+  
+  // ✅ استخدام Session.getUser()
+  let ud = null;
+  if (typeof Session !== 'undefined' && Session.getUser) {
+    ud = Session.getUser();
+  }
+  
+  // ✅ Fallback: getUserWithExpiry
+  if (!ud) {
+    ud = getUserWithExpiry();
+  }
+  
+  // ✅ Fallback: من URL
+  if (!ud) {
+    const p = new URLSearchParams(location.search).get('user');
+    if (p) {
+      try {
+        ud = JSON.parse(decodeURIComponent(p));
+        saveUserWithExpiry(ud);
+      } catch(e) {}
+    }
+  }
+  
+  // ✅ التحقق النهائي
+  if (!ud) { 
+    location.href = 'index.html'; 
+    return; 
+  }
+  
+  try { 
+    currentUser = ud; 
+  } catch { 
+    location.href = 'index.html'; 
+    return; 
+  }
+
+  // ✅ التحقق من الصلاحية - فقط Sales و Admin
   if (currentUser.type !== 'Sales' && currentUser.type !== 'Admin') {
     showAlert('⚠️ ليس لديك صلاحية لإنشاء فواتير مبيعات', '⚠️');
+    // العودة إلى لوحة التحكم المناسبة
+    const dashboardPage = DASH[currentUser.type] || 'Dashboard.html';
+    setTimeout(() => { location.href = dashboardPage; }, 1500);
     return;
   }
-  try { currentUser = ud; } catch { location.href = 'index.html'; return; }
 
   document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
   document.getElementById('userAvatar').textContent = (currentUser.name || 'U')[0].toUpperCase();
@@ -474,6 +509,7 @@ document.addEventListener('DOMContentLoaded', function() {
       console.warn('⚠️ فشل تحميل زبائن الفواتير');
     });
 
+});
 }); // ← نهاية DOMContentLoaded
 function R2(n){return Math.round((n+Number.EPSILON)*100)/100;}
 function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
