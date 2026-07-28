@@ -296,6 +296,25 @@ function gas(action, params = {}) {
     .catch(err => { console.error(`❌ ${action} failed:`, err); throw err; });
 }
 
+  async function uploadSignatureImage(signatureData) {
+  try {
+    // استخراج base64 من data URL
+    const base64Data = signatureData.split(',')[1];
+    if (!base64Data) return { success: false, message: 'No image data' };
+    
+    // ✅ استخدام gas لرفع الصورة
+    const result = await gas('uploadSignatureImage', {
+      b64: base64Data,
+      voucherNo: 'temp_' + Date.now()
+    });
+    
+    return result;
+  } catch(e) {
+    console.error('uploadSignatureImage error:', e);
+    return { success: false, message: e.message };
+  }
+}
+  
 async function gasWithSig(action, params) {
   const sigData = params.signatureData || '';
   const baseParams = { ...params };
@@ -435,16 +454,26 @@ document.addEventListener('DOMContentLoaded', function() {
   gas('updateNationArrange').catch(() => {});
 
   // ===== أسعار الصرف =====
-  gas('getLatestExchangeRates', { centerName: currentUser?.centerName }).then(r => {
-    if (!r) return;
-    C.rate = r;
+// ===== تحميل جميع البيانات بالتوازي =====
+Promise.all([
+  gas('getLatestExchangeRates', { centerName: currentUser?.centerName }),
+  gas('checkExchangeRateStatus', { centerName: currentUser?.centerName }),
+  gas('getNationalities'),
+  gas('getHotels'),
+  gas('getUniqueTrips', { centerName: currentUser?.centerName }),
+  gas('getInvoiceCustomers', { centerName: currentUser?.centerName })
+]).then(([rates, status, nationalities, hotels, trips, customers]) => {
+  
+  // ===== 1. معالجة أسعار الصرف =====
+  if (rates) {
+    C.rate = rates;
     const td = fmtDateKey(new Date());
-    if (!C.rateByDate[td]) C.rateByDate[td] = r;
+    if (!C.rateByDate[td]) C.rateByDate[td] = rates;
 
     const items = [
-      { lbl: 'USD $', v: r.bUSD || r.sUSD },
-      { lbl: 'EUR €', v: r.bEUR || r.sEUR },
-      { lbl: 'GBP £', v: r.bGBP || r.sGBP }
+      { lbl: 'USD $', v: rates.bUSD || rates.sUSD },
+      { lbl: 'EUR €', v: rates.bEUR || rates.sEUR },
+      { lbl: 'GBP £', v: rates.bGBP || rates.sGBP }
     ].filter(x => x.v && +x.v > 0);
 
     const tickerItems = items.map(it => {
@@ -455,7 +484,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const h = tickerItems.join('<span class="ticker-sep">◆</span>');
     document.getElementById('tickerInner').innerHTML = h + '<span class="ticker-sep" style="padding:0 20px"></span>' + h;
 
-    const rawDate = r.date || '';
+    const rawDate = rates.date || '';
     let displayDate = rawDate;
     if (rawDate && (rawDate.includes('T') || rawDate.match(/^\d{4}-\d{2}-\d{2}/))) {
       try {
@@ -467,69 +496,62 @@ document.addEventListener('DOMContentLoaded', function() {
       } catch (e) {}
     }
     document.getElementById('tickerDate').textContent = '📅 ' + displayDate;
-  }).catch(() => {});
+  }
 
-  gas('checkExchangeRateStatus', { centerName: currentUser?.centerName }).then(r => {
-    if (!r || r.status === 'ok') return;
-    if (r.status === 'block') {
+  // ===== 2. معالجة حالة أسعار الصرف =====
+  if (status && status.status !== 'ok') {
+    if (status.status === 'block') {
       document.getElementById('mainContent').innerHTML =
-        `<div class="err-bar">⛔ ${r.message}<br>يرجى تحديث أسعار الصرف أولاً.</div>
+        `<div class="err-bar">⛔ ${status.message}<br>يرجى تحديث أسعار الصرف أولاً.</div>
          <div style="text-align:center"><button class="btn btn-clear" onclick="goBack()">← العودة</button></div>`;
-    } else if (r.status === 'warning') {
+    } else if (status.status === 'warning') {
       const w = document.createElement('div');
       w.className = 'warn-bar';
-      w.textContent = '⚠️ ' + (r.message || '');
+      w.textContent = '⚠️ ' + (status.message || '');
       const mc = document.getElementById('mainContent');
       if (mc) mc.insertBefore(w, mc.firstChild);
     }
-  }).catch(() => {});
+  }
 
-  // ===== القوائم المنسدلة =====
-  gas('getNationalities').then(d => {
-    if (!Array.isArray(d)) return;
+  // ===== 3. معالجة الجنسيات =====
+  if (nationalities && Array.isArray(nationalities)) {
     const dl = document.getElementById('nationalitiesList');
-    if (dl) dl.innerHTML = d.map(v => `<option value="${v}">`).join('');
-  }).catch(() => {});
+    if (dl) dl.innerHTML = nationalities.map(v => `<option value="${v}">`).join('');
+  }
 
-  gas('getHotels').then(d => {
-    if (!Array.isArray(d)) return;
+  // ===== 4. معالجة الفنادق =====
+  if (hotels && Array.isArray(hotels)) {
     const dl = document.getElementById('hotelsList');
-    if (dl) dl.innerHTML = d.map(v => `<option value="${v}">`).join('');
-  }).catch(() => {});
+    if (dl) dl.innerHTML = hotels.map(v => `<option value="${v}">`).join('');
+  }
 
-  gas('getUniqueTrips', { centerName: currentUser?.centerName }).then(d => {
-    if (!Array.isArray(d)) return;
+  // ===== 5. معالجة الرحلات =====
+  if (trips && Array.isArray(trips)) {
     const dl = document.getElementById('tripsList');
-    if (dl) dl.innerHTML = d.map(t => `<option value="${t.name || t}">`).join('');
-  }).catch(() => {});
+    if (dl) dl.innerHTML = trips.map(t => `<option value="${t.name || t}">`).join('');
+  }
 
-  // ============================================================
-  // ✅ ✅ ✅ التعديل: جلب زبائن الفواتير فقط (من Invoices)
-  // ============================================================
-  gas('getInvoiceCustomers', { centerName: currentUser?.centerName })
-    .then(raw => {
-      if (!Array.isArray(raw)) return;
-      const map = new Map();
-      raw.forEach(c => {
-        if (c.phone) {
-          map.set(c.phone, {
-            phone: c.phone,
-            name: c.name || '',
-            nationality: c.nationality || '',
-            hotel: c.hotel || '',
-            roomNo: c.roomNo || ''
-          });
-        }
-      });
-      C.customers = Array.from(map.values());
-      console.log('✅ تم تحميل زبائن الفواتير:', C.customers.length);
-    })
-    .catch(() => {
-      console.warn('⚠️ فشل تحميل زبائن الفواتير');
+  // ===== 6. معالجة العملاء (بشكل أسرع) =====
+  if (customers && Array.isArray(customers)) {
+    const map = new Map();
+    customers.forEach(c => {
+      if (c.phone) {
+        map.set(c.phone, {
+          phone: c.phone,
+          name: c.name || '',
+          nationality: c.nationality || '',
+          hotel: c.hotel || '',
+          roomNo: c.roomNo || ''
+        });
+      }
     });
+    C.customers = Array.from(map.values());
+    console.log('✅ تم تحميل زبائن الفواتير:', C.customers.length);
+  }
 
-}); 
-  
+}).catch(err => {
+  console.warn('⚠️ فشل تحميل بعض البيانات:', err);
+});  
   function R2(n){return Math.round((n+Number.EPSILON)*100)/100;}
 function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function fmtDateKey(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
@@ -618,9 +640,22 @@ async function shareInvoiceWhatsApp(voucherNo) {
       `${pdfLink}%0A%0A` +
       `We look forward to welcoming you soon! 🙏`;
     
-    const waUrl = `https://wa.me/${phone}?text=${message}`;
-    window.open(waUrl, '_blank');
-    
+    // ✅ طريقة مضمونة لفتح واتساب
+const waWebUrl = `https://wa.me/${phone}?text=${message}`;
+
+// محاولة فتح التطبيق (للأجهزة المحمولة)
+if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+  const waAppUrl = `whatsapp://send?phone=${phone}&text=${message}`;
+  window.location.href = waAppUrl;
+  
+  // إذا لم يتم فتح التطبيق خلال 3 ثواني، انتقل إلى Web
+  setTimeout(() => {
+    window.location.href = waWebUrl;
+  }, 3000);
+} else {
+  // سطح المكتب → افتح Web مباشرة
+  window.open(waWebUrl, '_blank');
+}    
     hidePDFOv();
     
   } catch(err) {
@@ -1011,9 +1046,25 @@ async function saveInvoice() {
     }
     formData.pricesArray = prices;
     
-    const savedSignature = signatureData || '';
-    
-    const saveResult = await gasWithSig('saveInvoice', formData);
+   // ✅ رفع التوقيع إلى Drive أولاً (إذا كان موجوداً)
+let signatureUrl = '';
+if (signatureData && signatureData.startsWith('data:image')) {
+  try {
+    const uploadResult = await uploadSignatureImage(signatureData);
+    if (uploadResult.success) {
+      signatureUrl = uploadResult.url;
+      console.log('✅ تم رفع التوقيع:', signatureUrl);
+    }
+  } catch(e) {
+    console.warn('⚠️ فشل رفع التوقيع:', e);
+  }
+}
+
+// ✅ إرسال الرابط بدلاً من الصورة الكبيرة
+formData.signatureUrl = signatureUrl;
+formData.signatureData = ''; // تفريغ البيانات
+
+const saveResult = await gas('saveInvoice', formData);
     if (!saveResult?.success) throw new Error(saveResult?.message || 'فشل الحفظ');
     
     const voucherNo = saveResult.voucherNo;
@@ -1050,6 +1101,7 @@ async function saveInvoice() {
     setBtns(false);
   }
 }
+  
 async function newBooking() {
   try {
     setBtns(true);
