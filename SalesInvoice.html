@@ -255,8 +255,8 @@
   <span>© 2025 <strong style="color:#1e2b4f;">🌊 Dive System</strong> — جميع الحقوق محفوظة</span>
 </div>
 <script>
-const GAS='https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec';
-const DASH = {
+const GAS = CONFIG.GAS_URL;
+  const DASH = {
   Admin: 'Dashboard.html',
   Owner: 'OwnerDashboard.html',
   Sales: 'SalesDashboard.html',
@@ -428,12 +428,12 @@ document.addEventListener('DOMContentLoaded', function() {
   // ✅ التحقق من الصلاحية - فقط Sales و Admin
   if (currentUser.type !== 'Sales' && currentUser.type !== 'Admin') {
     showAlert('⚠️ ليس لديك صلاحية لإنشاء فواتير مبيعات', '⚠️');
-    // العودة إلى لوحة التحكم المناسبة
     const dashboardPage = DASH[currentUser.type] || 'Dashboard.html';
     setTimeout(() => { location.href = dashboardPage; }, 1500);
     return;
   }
 
+  // ✅ عرض اسم المستخدم
   document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
   document.getElementById('userAvatar').textContent = (currentUser.name || 'U')[0].toUpperCase();
   if (currentUser.centerName) {
@@ -446,112 +446,119 @@ document.addEventListener('DOMContentLoaded', function() {
     e.textContent = '📍 ' + currentUser.branchName;
     e.style.display = '';
   }
-  sessionVouchers = [];
-
+  
+  // ✅ ✅ ✅ عرض النموذج فوراً (قبل تحميل البيانات)
   renderForm();
+  
+  // ✅ تحميل البيانات في الخلفية (لا تمنع عرض النموذج)
+  loadBackgroundData();
+});
 
+// ✅ دالة منفصلة لتحميل البيانات في الخلفية
+function loadBackgroundData() {
+  // تنظيف الـ PDF القديم
   gas('clearInvoicePDFSheet').catch(() => {});
   gas('updateNationArrange').catch(() => {});
 
-  // ===== أسعار الصرف =====
-// ===== تحميل جميع البيانات بالتوازي =====
-Promise.all([
-  gas('getLatestExchangeRates', { centerName: currentUser?.centerName }),
-  gas('checkExchangeRateStatus', { centerName: currentUser?.centerName }),
-  gas('getNationalities'),
-  gas('getHotels'),
-  gas('getUniqueTrips', { centerName: currentUser?.centerName }),
-  gas('getInvoiceCustomers', { centerName: currentUser?.centerName })
-]).then(([rates, status, nationalities, hotels, trips, customers]) => {
-  
-  // ===== 1. معالجة أسعار الصرف =====
-  if (rates) {
-    C.rate = rates;
-    const td = fmtDateKey(new Date());
-    if (!C.rateByDate[td]) C.rateByDate[td] = rates;
+  // ===== تحميل جميع البيانات بالتوازي =====
+  Promise.all([
+    gas('getLatestExchangeRates', { centerName: currentUser?.centerName }),
+    gas('checkExchangeRateStatus', { centerName: currentUser?.centerName }),
+    gas('getNationalities'),
+    gas('getHotels'),
+    gas('getUniqueTrips', { centerName: currentUser?.centerName }),
+    gas('getInvoiceCustomers', { centerName: currentUser?.centerName })
+  ]).then(([rates, status, nationalities, hotels, trips, customers]) => {
+    
+    // ===== 1. معالجة أسعار الصرف =====
+    if (rates) {
+      C.rate = rates;
+      const td = fmtDateKey(new Date());
+      if (!C.rateByDate[td]) C.rateByDate[td] = rates;
 
-    const items = [
-      { lbl: 'USD $', v: rates.bUSD || rates.sUSD },
-      { lbl: 'EUR €', v: rates.bEUR || rates.sEUR },
-      { lbl: 'GBP £', v: rates.bGBP || rates.sGBP }
-    ].filter(x => x.v && +x.v > 0);
+      const items = [
+        { lbl: 'USD $', v: rates.bUSD || rates.sUSD },
+        { lbl: 'EUR €', v: rates.bEUR || rates.sEUR },
+        { lbl: 'GBP £', v: rates.bGBP || rates.sGBP }
+      ].filter(x => x.v && +x.v > 0);
 
-    const tickerItems = items.map(it => {
-      const val = +it.v;
-      const display = Number.isInteger(val) ? val.toString() : val.toFixed(2);
-      return `<span class="ticker-item"><span class="rl">${it.lbl}</span><span class="rv">${display}</span></span>`;
-    });
-    const h = tickerItems.join('<span class="ticker-sep">◆</span>');
-    document.getElementById('tickerInner').innerHTML = h + '<span class="ticker-sep" style="padding:0 20px"></span>' + h;
+      const tickerItems = items.map(it => {
+        const val = +it.v;
+        const display = Number.isInteger(val) ? val.toString() : val.toFixed(2);
+        return `<span class="ticker-item"><span class="rl">${it.lbl}</span><span class="rv">${display}</span></span>`;
+      });
+      const h = tickerItems.join('<span class="ticker-sep">◆</span>');
+      document.getElementById('tickerInner').innerHTML = h + '<span class="ticker-sep" style="padding:0 20px"></span>' + h;
 
-    const rawDate = rates.date || '';
-    let displayDate = rawDate;
-    if (rawDate && (rawDate.includes('T') || rawDate.match(/^\d{4}-\d{2}-\d{2}/))) {
-      try {
-        const d = new Date(rawDate);
-        if (!isNaN(d)) {
-          const MN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-          displayDate = String(d.getDate()).padStart(2, '0') + '/' + MN[d.getMonth()] + '/' + d.getFullYear();
-        }
-      } catch (e) {}
-    }
-    document.getElementById('tickerDate').textContent = '📅 ' + displayDate;
-  }
-
-  // ===== 2. معالجة حالة أسعار الصرف =====
-  if (status && status.status !== 'ok') {
-    if (status.status === 'block') {
-      document.getElementById('mainContent').innerHTML =
-        `<div class="err-bar">⛔ ${status.message}<br>يرجى تحديث أسعار الصرف أولاً.</div>
-         <div style="text-align:center"><button class="btn btn-clear" onclick="goBack()">← العودة</button></div>`;
-    } else if (status.status === 'warning') {
-      const w = document.createElement('div');
-      w.className = 'warn-bar';
-      w.textContent = '⚠️ ' + (status.message || '');
-      const mc = document.getElementById('mainContent');
-      if (mc) mc.insertBefore(w, mc.firstChild);
-    }
-  }
-
-  // ===== 3. معالجة الجنسيات =====
-  if (nationalities && Array.isArray(nationalities)) {
-    const dl = document.getElementById('nationalitiesList');
-    if (dl) dl.innerHTML = nationalities.map(v => `<option value="${v}">`).join('');
-  }
-
-  // ===== 4. معالجة الفنادق =====
-  if (hotels && Array.isArray(hotels)) {
-    const dl = document.getElementById('hotelsList');
-    if (dl) dl.innerHTML = hotels.map(v => `<option value="${v}">`).join('');
-  }
-
-  // ===== 5. معالجة الرحلات =====
-  if (trips && Array.isArray(trips)) {
-    const dl = document.getElementById('tripsList');
-    if (dl) dl.innerHTML = trips.map(t => `<option value="${t.name || t}">`).join('');
-  }
-
-  // ===== 6. معالجة العملاء (بشكل أسرع) =====
-  if (customers && Array.isArray(customers)) {
-    const map = new Map();
-    customers.forEach(c => {
-      if (c.phone) {
-        map.set(c.phone, {
-          phone: c.phone,
-          name: c.name || '',
-          nationality: c.nationality || '',
-          hotel: c.hotel || '',
-          roomNo: c.roomNo || ''
-        });
+      const rawDate = rates.date || '';
+      let displayDate = rawDate;
+      if (rawDate && (rawDate.includes('T') || rawDate.match(/^\d{4}-\d{2}-\d{2}/))) {
+        try {
+          const d = new Date(rawDate);
+          if (!isNaN(d)) {
+            const MN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            displayDate = String(d.getDate()).padStart(2, '0') + '/' + MN[d.getMonth()] + '/' + d.getFullYear();
+          }
+        } catch (e) {}
       }
-    });
-    C.customers = Array.from(map.values());
-    console.log('✅ تم تحميل زبائن الفواتير:', C.customers.length);
-  }
+      document.getElementById('tickerDate').textContent = '📅 ' + displayDate;
+    }
 
-}).catch(err => {
-  console.warn('⚠️ فشل تحميل بعض البيانات:', err);
-});  
+    // ===== 2. معالجة حالة أسعار الصرف =====
+    if (status && status.status !== 'ok') {
+      if (status.status === 'block') {
+        document.getElementById('mainContent').innerHTML =
+          `<div class="err-bar">⛔ ${status.message}<br>يرجى تحديث أسعار الصرف أولاً.</div>
+           <div style="text-align:center"><button class="btn btn-clear" onclick="goBack()">← العودة</button></div>`;
+      } else if (status.status === 'warning') {
+        const w = document.createElement('div');
+        w.className = 'warn-bar';
+        w.textContent = '⚠️ ' + (status.message || '');
+        const mc = document.getElementById('mainContent');
+        if (mc) mc.insertBefore(w, mc.firstChild);
+      }
+    }
+
+    // ===== 3. معالجة الجنسيات =====
+    if (nationalities && Array.isArray(nationalities)) {
+      const dl = document.getElementById('nationalitiesList');
+      if (dl) dl.innerHTML = nationalities.map(v => `<option value="${v}">`).join('');
+    }
+
+    // ===== 4. معالجة الفنادق =====
+    if (hotels && Array.isArray(hotels)) {
+      const dl = document.getElementById('hotelsList');
+      if (dl) dl.innerHTML = hotels.map(v => `<option value="${v}">`).join('');
+    }
+
+    // ===== 5. معالجة الرحلات =====
+    if (trips && Array.isArray(trips)) {
+      const dl = document.getElementById('tripsList');
+      if (dl) dl.innerHTML = trips.map(t => `<option value="${t.name || t}">`).join('');
+    }
+
+    // ===== 6. معالجة العملاء =====
+    if (customers && Array.isArray(customers)) {
+      const map = new Map();
+      customers.forEach(c => {
+        if (c.phone) {
+          map.set(c.phone, {
+            phone: c.phone,
+            name: c.name || '',
+            nationality: c.nationality || '',
+            hotel: c.hotel || '',
+            roomNo: c.roomNo || ''
+          });
+        }
+      });
+      C.customers = Array.from(map.values());
+      console.log('✅ تم تحميل زبائن الفواتير:', C.customers.length);
+    }
+
+  }).catch(err => {
+    console.warn('⚠️ فشل تحميل بعض البيانات:', err);
+  });
+}
   function R2(n){return Math.round((n+Number.EPSILON)*100)/100;}
 function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function fmtDateKey(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
