@@ -457,9 +457,7 @@ document.addEventListener('DOMContentLoaded', function() {
 // ✅ دالة منفصلة لتحميل البيانات في الخلفية
 function loadBackgroundData() {
   // تنظيف الـ PDF القديم
-  gas('clearInvoicePDFSheet').catch(() => {});
-  gas('updateNationArrange').catch(() => {});
-
+ 
   // ===== تحميل جميع البيانات بالتوازي =====
   Promise.all([
     gas('getLatestExchangeRates', { centerName: currentUser?.centerName }),
@@ -1053,40 +1051,24 @@ async function saveInvoice() {
     }
     formData.pricesArray = prices;
     
-// ✅ رفع التوقيع إلى Drive أولاً (إذا كان موجوداً)
-let uploadedSignatureUrl = '';
-if (signatureData && signatureData.startsWith('data:image')) {
-  try {
-    const uploadResult = await uploadSignatureImage(signatureData);
-    if (uploadResult.success) {
-      uploadedSignatureUrl = uploadResult.url;
-      console.log('✅ تم رفع التوقيع:', uploadedSignatureUrl);
-    }
-  } catch(e) {
-    console.warn('⚠️ فشل رفع التوقيع:', e);
-  }
-}
-
-// ✅ إرسال الرابط بدلاً من الصورة الكبيرة
-formData.signatureUrl = uploadedSignatureUrl;
-formData.signatureData = ''; // تفريغ البيانات
-
-const saveResult = await gas('saveInvoice', formData);
-if (!saveResult?.success) throw new Error(saveResult?.message || 'فشل الحفظ');
-
-const voucherNo = saveResult.voucherNo;
-const signatureUrlFromServer = saveResult.signatureUrl || '';
-
-console.log('✅ تم حفظ الفاتورة:', voucherNo);
-console.log('🔍 signatureUrl from server:', signatureUrlFromServer);
+    // ✅ إرسال التوقيع مباشرة ضمن saveInvoice (نفس مسار newBooking الذي يعمل)
+    const saveResult = await gasWithSig('saveInvoice', formData);
+    if (!saveResult?.success) throw new Error(saveResult?.message || 'فشل الحفظ');
+    
+    const voucherNo = saveResult.voucherNo;
+    const signatureUrlFromServer = saveResult.signatureUrl || '';
+    
+    console.log('✅ تم حفظ الفاتورة:', voucherNo);
+    console.log('🔍 signatureUrl from server:', signatureUrlFromServer);
     
     showPDFOv('📄 جاري إنشاء PDF...');
     
-const pdfResult = await gas('saveAndGenerateSinglePDF_New', {
-  voucherNo: voucherNo,
-  prices: JSON.stringify(prices),
-  signatureUrl: uploadedSignatureUrl  
-});
+    const pdfResult = await gas('saveAndGenerateSinglePDF_New', {
+      voucherNo: voucherNo,
+      prices: JSON.stringify(prices),
+      signatureUrl: signatureUrlFromServer,
+      centerName: currentUser?.centerName  // ✅ إضافة centerName
+    });
     
     hidePDFOv();
     
