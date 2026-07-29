@@ -296,7 +296,7 @@ function gas(action, params = {}) {
     .catch(err => { console.error(`❌ ${action} failed:`, err); throw err; });
 }
 
-  async function uploadSignatureImage(signatureData) {
+async function uploadSignatureImage(signatureData) {
   try {
     // استخراج base64 من data URL
     const base64Data = signatureData.split(',')[1];
@@ -319,35 +319,30 @@ async function gasWithSig(action, params) {
   const sigData = params.signatureData || '';
   const baseParams = { ...params };
   delete baseParams.signatureData;
-  if (!sigData || !sigData.startsWith('data:image')) {
-    return gas(action, baseParams);
-  }
-  const u = new URL(GAS);
-  u.searchParams.set('action', action);
-  Object.entries(baseParams).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== '') {
-      if (typeof v === 'object') {
-        u.searchParams.set(k, JSON.stringify(v));
+  
+  // ✅ إذا كان التوقيع موجوداً، ارفعه أولاً إلى Drive
+  if (sigData && sigData.startsWith('data:image')) {
+    try {
+      const uploadResult = await uploadSignatureImage(sigData);
+      if (uploadResult.success) {
+        // ✅ إرسال الرابط بدلاً من الصورة الكبيرة
+        baseParams.signatureUrl = uploadResult.url;
+        console.log('✅ تم رفع التوقيع، إرسال الرابط بدلاً من الصورة');
       } else {
-        u.searchParams.set(k, String(v));
+        console.warn('⚠️ فشل رفع التوقيع:', uploadResult.message);
       }
+    } catch(e) {
+      console.warn('⚠️ فشل رفع التوقيع:', e);
     }
-  });
-  u.searchParams.set('signatureData', sigData);
-  const urlStr = u.toString();
-  console.log('📡 saveInvoice URL length:', urlStr.length);
-  if (urlStr.length > 4000) {
-    console.error('❌ URL طويل جداً:', urlStr.length);
-    throw new Error('التوقيع كبير جداً، يرجى إعادة المحاولة بتوقيع أصغر');
+  } else if (sigData && !sigData.startsWith('data:image')) {
+    // ✅ إذا كان الرابط فقط، أرسله مباشرة
+    baseParams.signatureUrl = sigData;
   }
-  return fetch(urlStr, { method: 'GET', redirect: 'follow' })
-    .then(r => r.json())
-    .catch(err => {
-      console.error('❌ saveInvoice failed:', err);
-      throw err;
-    });
+  
+  // ✅ إرسال الطلب بدون بيانات التوقيع الضخمة
+  return gas(action, baseParams);
 }
-
+  
 // ✅ دالة لحفظ المستخدم مع صلاحية 24 ساعة
 function saveUserWithExpiry(userData) {
   const dataToStore = {
@@ -892,50 +887,57 @@ function renderTripTable(){
 function calcRow(i){const p=+document.getElementById(`price_${i}`)?.value||0,q=+document.getElementById(`qty_${i}`)?.value||0;document.getElementById(`total_${i}`).value=(q*p).toFixed(2);scheduleCalc();}
 function calcTotal(){let t=0,i=0;while(document.getElementById(`total_${i}`)){t+=+document.getElementById(`total_${i}`).value||0;i++;}return t;}
 
-let _ct=null;
-function scheduleCalc(){clearTimeout(_ct);_ct=setTimeout(updateAllCalc,200);}
+let _calcTimeout = null;
+
+function scheduleCalc(){
+  clearTimeout(_calcTimeout);
+  _calcTimeout = setTimeout(updateAllCalc, 300); // ✅ زيادة الوقت إلى 300ms
+}
+let _isUpdating = false;
 
 async function updateAllCalc(){
-  const actual = calcTotal();
-  const cur = document.getElementById('invoiceCurrency')?.value || '';
-  const ds = document.getElementById('activeDate')?.value;
-  const el = id => document.getElementById(id);
+  // ✅ منع التكرار أثناء التحديث
+  if (_isUpdating) return;
+  _isUpdating = true;
   
-  if (el('displayActualPrice')) el('displayActualPrice').textContent = actual.toFixed(2);
-  if (el('actualPriceCurrency')) el('actualPriceCurrency').textContent = cur;
-  
-  const disc = +el('discount')?.value || 0;
-  const cU = +el('cashUSD')?.value || 0, cE = +el('cashEUR')?.value || 0, cG = +el('cashGBP')?.value || 0, cL = +el('cashLE')?.value || 0;
-  const vU = +el('visaUSD')?.value || 0, vE = +el('visaEUR')?.value || 0, vG = +el('visaGBP')?.value || 0, vL = +el('visaLE')?.value || 0;
-  
-  // ✅ اختبار أسعار الصرف
-  const raw = ds ? await getRate(ds, currentUser?.centerName) : C.rate;
-  console.log('💰 أسعار الصرف:', raw);
-  console.log('💰 المدفوعات - USD:', cU, 'EUR:', cE, 'LE:', cL);
-  
-  let paid = 0;
-  const r = rateFields(raw);
-  
-  if (r) {
-    const LE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL + 
-               vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
-    console.log('💰 الإجمالي بالجنيه:', LE);
-    console.log('💰 سعر اليورو:', r.cash.EUR);
-    console.log('💰 سعر الدولار:', r.cash.USD);
+  try {
+    const actual = calcTotal();
+    const cur = document.getElementById('invoiceCurrency')?.value || '';
+    const ds = document.getElementById('activeDate')?.value;
+    const el = id => document.getElementById(id);
     
-    if (cur === '$') paid = R2(LE / r.cash.USD);
-    else if (cur === '€') paid = R2(LE / r.cash.EUR);
-    else if (cur === '£') paid = R2(LE / r.cash.GBP);
-    else paid = R2(LE);
-    console.log('💰 المدفوعات بالعملة:', paid, cur);
-  } else {
-    paid = directPaid(cur, cU, cE, cG, cL, vU, vE, vG, vL);
-    console.log('💰 المدفوعات (بدون أسعار صرف):', paid, cur);
+    if (el('displayActualPrice')) el('displayActualPrice').textContent = actual.toFixed(2);
+    if (el('actualPriceCurrency')) el('actualPriceCurrency').textContent = cur;
+    
+    const disc = +el('discount')?.value || 0;
+    const cU = +el('cashUSD')?.value || 0, cE = +el('cashEUR')?.value || 0, cG = +el('cashGBP')?.value || 0, cL = +el('cashLE')?.value || 0;
+    const vU = +el('visaUSD')?.value || 0, vE = +el('visaEUR')?.value || 0, vG = +el('visaGBP')?.value || 0, vL = +el('visaLE')?.value || 0;
+    
+    const raw = ds ? await getRate(ds, currentUser?.centerName) : C.rate;
+    console.log('💰 أسعار الصرف:', raw);
+    
+    let paid = 0;
+    const r = rateFields(raw);
+    
+    if (r) {
+      const LE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL + 
+                 vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
+      
+      if (cur === '$') paid = R2(LE / r.cash.USD);
+      else if (cur === '€') paid = R2(LE / r.cash.EUR);
+      else if (cur === '£') paid = R2(LE / r.cash.GBP);
+      else paid = R2(LE);
+    } else {
+      paid = directPaid(cur, cU, cE, cG, cL, vU, vE, vG, vL);
+    }
+    
+    const rest = R2(actual - disc - paid);
+    if (el('displayRest')) el('displayRest').textContent = rest.toFixed(2);
+    if (el('restCurrency')) el('restCurrency').textContent = cur;
+    
+  } finally {
+    _isUpdating = false;
   }
-  
-  const rest = R2(actual - disc - paid);
-  if (el('displayRest')) el('displayRest').textContent = rest.toFixed(2);
-  if (el('restCurrency')) el('restCurrency').textContent = cur;
 }
 function updateSessionBadge(){
   let b=document.getElementById('sessionBadge');
@@ -1038,11 +1040,7 @@ async function saveInvoice() {
     showPDFOv('💾 جاري حفظ الفاتورة...');
     
     const formData = await collectData();
-    if (!formData) {
-      hidePDFOv();
-      setBtns(false);
-      return;
-    }
+    if (!formData) { hidePDFOv(); setBtns(false); return; }
     
     const prices = [];
     for (let i = 0; i < 10; i++) {
@@ -1051,25 +1049,37 @@ async function saveInvoice() {
     }
     formData.pricesArray = prices;
     
-    // ✅ إرسال التوقيع مباشرة ضمن saveInvoice (نفس مسار newBooking الذي يعمل)
-    const saveResult = await gasWithSig('saveInvoice', formData);
+    // ✅ رفع التوقيع أولاً
+    let uploadedSignatureUrl = '';
+    if (signatureData && signatureData.startsWith('data:image')) {
+      try {
+        const uploadResult = await uploadSignatureImage(signatureData);
+        if (uploadResult.success) {
+          uploadedSignatureUrl = uploadResult.url;
+          console.log('✅ تم رفع التوقيع:', uploadedSignatureUrl);
+        }
+      } catch(e) {
+        console.warn('⚠️ فشل رفع التوقيع:', e);
+      }
+    }
+    
+    // ✅ إرسال الرابط بدلاً من الصورة الكبيرة (استخدام gas مباشرة)
+    formData.signatureUrl = uploadedSignatureUrl;
+    formData.signatureData = '';
+    
+    const saveResult = await gas('saveInvoice', formData);
     if (!saveResult?.success) throw new Error(saveResult?.message || 'فشل الحفظ');
     
     const voucherNo = saveResult.voucherNo;
     const signatureUrlFromServer = saveResult.signatureUrl || '';
     
-    console.log('✅ تم حفظ الفاتورة:', voucherNo);
-    console.log('🔍 signatureUrl from server:', signatureUrlFromServer);
-    
     showPDFOv('📄 جاري إنشاء PDF...');
-    
-    const pdfResult = await gas('saveAndGenerateSinglePDF_New', {
-      voucherNo: voucherNo,
-      prices: JSON.stringify(prices),
-      signatureUrl: signatureUrlFromServer,
-      centerName: currentUser?.centerName  // ✅ إضافة centerName
-    });
-    
+   const pdfResult = await gas('saveAndGenerateSinglePDF_New', {
+    voucherNo: voucherNo,
+    prices: JSON.stringify(prices),
+    signatureUrl: signatureUrlFromServer || '',
+    centerName: currentUser?.centerName
+  });    
     hidePDFOv();
     
     if (!pdfResult?.success) {
