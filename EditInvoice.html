@@ -140,32 +140,44 @@ function showAlert(msg, icon = 'ℹ️', btns = null) {
   );
 }
 function goBack() {
-  // ✅ محاولة العودة للصفحة السابقة مباشرة
+  // ✅ دائماً نحاول الرجوع للصفحة السابقة أولاً
   try {
+    // التحقق من وجود صفحة سابقة
     if (document.referrer && !document.referrer.includes('login.html') && !document.referrer.includes('index.html')) {
       window.history.back();
-    } else {
-      // ✅ إذا لم توجد صفحة سابقة، نذهب للوحة المناسبة
-      const user = Session.getUser() || currentUser;
-      const role = user?.role || 'Accountant';
-      
-      const dashboards = {
-        'Admin': 'Dashboard.html',
-        'Owner': 'OwnerDashboard.html',
-        'Accountant': 'AccountantDashboard.html',
-        'Sales': 'SalesDashboard.html',
-        'OperationsManager': 'OperationManager.html',
-        'OperationsSupervisor': 'OperationSupervisor.html',
-        'Customer': 'CustomerDashboard.html'
-      };
-      
-      location.href = dashboards[role] || 'AccountantDashboard.html';
+      return;
     }
-  } catch(e) {
-    // ✅ في حالة الخطأ، نذهب للوحة المناسبة
+    
+    // محاولة history.back() مباشرة
+    if (window.history.length > 1) {
+      window.history.back();
+      return;
+    }
+    
+    // في حالة عدم وجود صفحة سابقة، نستخدم returnUrl
+    const returnUrl = sessionStorage.getItem('returnUrl') || '';
+    if (returnUrl && !returnUrl.includes('login.html') && !returnUrl.includes('index.html')) {
+      location.href = returnUrl;
+      return;
+    }
+    
+    // الحل الأخير: الرجوع للوحة المناسبة
     const user = Session.getUser() || currentUser;
     const role = user?.role || 'Accountant';
-    location.href = role === 'Admin' ? 'Dashboard.html' : 'AccountantDashboard.html';
+    const dashboards = {
+      'Admin': 'Dashboard.html',
+      'Owner': 'OwnerDashboard.html',
+      'Accountant': 'AccountantDashboard.html',
+      'Sales': 'SalesDashboard.html',
+      'OperationsManager': 'OperationManager.html',
+      'OperationsSupervisor': 'OperationSupervisor.html',
+      'Customer': 'CustomerDashboard.html'
+    };
+    location.href = dashboards[role] || 'AccountantDashboard.html';
+    
+  } catch(e) {
+    // في حالة الخطأ، محاولة الرجوع للخلف
+    window.history.back();
   }
 }
   // ══════════════════════════════════════════════════════════
@@ -611,6 +623,17 @@ async function saveChanges() {
 }
 
 async function loadInvoice() {
+  // ✅ تخزين الصفحة السابقة في returnUrl قبل أي شيء
+  const referrer = document.referrer || '';
+  if (referrer && !referrer.includes('login.html') && !referrer.includes('index.html')) {
+    sessionStorage.setItem('returnUrl', referrer);
+    // ✅ استخدام Session API إذا كانت موجودة
+    if (typeof Session !== 'undefined' && Session.set) {
+      Session.set('returnUrl', referrer);
+    } else if (typeof Session !== 'undefined' && Session.save) {
+      Session.save('returnUrl', referrer);
+    }
+  }
   // ✅ التحقق من الصلاحيات - تصحيح الأسماء
   const permissions = currentUser?.permissions || [];
   const isAdmin = permissions.includes('Admin');
@@ -878,11 +901,10 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('✅ Current User:', currentUser);
     console.log('✅ Permissions:', currentUser.permissions);
     
-    // ✅ استخدام ملف المركز الخاص
-    const centerName = currentUser.centerName || '';
+      const centerName = currentUser.centerName || '';
     if (centerName) {
       sessionStorage.setItem('centerName', centerName);
-      Session.set('centerName', centerName);
+      // ✅ Session.set غير موجودة، نستخدم sessionStorage فقط
     }
     loadInvoice();
   } else {
