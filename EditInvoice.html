@@ -8,7 +8,7 @@
   <link rel="apple-touch-icon" href="favicon.png">
   <meta name="theme-color" content="#1a3a6b">
   <meta name="apple-mobile-web-app-capable" content="yes">
-    <title>Edit Invoice</title>
+    <title>🌊Edit Invoice</title>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
    <script src="ui.js"></script>
   <script src="config.js"></script>
@@ -110,7 +110,10 @@ const GAS_URL = CONFIG.GAS_URL;
 let currentUser = null, currentInvoice = null, originalInvoice = null;
 let allEmployees = [], exRatesCache = {};
 let canSave = false;
-  
+
+// ============================================================
+// ✅ الدوال الأساسية
+// ============================================================
 function esc(s) { if (s === undefined || s === null) return ''; return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function R2(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
 function dV(v) { const n = Number(v); return (n === 0 || isNaN(n)) ? '' : n; }
@@ -118,7 +121,9 @@ function formatDate(d) { if (!d) return ''; if (typeof d === 'string') return d;
 function parseDate(str) { if (!str) return null; const p = str.split('/'); if (p.length === 3) { const mi = MONTHS.findIndex(m => m.toLowerCase() === p[1].toLowerCase()); if (mi !== -1) return new Date(+p[2], mi, +p[0]); } return null; }
 function dateToInput(s) { const d = parseDate(s); if (!d) return ''; return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
 
-
+// ============================================================
+// ✅ دوال UI
+// ============================================================
 function closeAlert() { document.getElementById('alertModal').classList.remove('open'); }
 function closeCollectionModal() { document.getElementById('collectionModal').classList.remove('open'); }
 function showLoader(show, msg = 'جاري المعالجة...') {
@@ -139,36 +144,30 @@ function showAlert(msg, icon = 'ℹ️', btns = null) {
   const modal = document.getElementById('alertModal');
   if (modal) modal.classList.add('open');
 }
- function confirmExit() {
+
+function confirmExit() {
   showAlert('⚠️ هل أنت متأكد من إلغاء التعديلات؟', '⚠️', 
     '<button class="btn btn-primary" onclick="goBack()">نعم</button>' +
     '<button class="btn btn-danger" onclick="closeAlert()">لا</button>'
   );
 }
+
 function goBack() {
-  // ✅ الأولوية القصوى: الرجوع للصفحة السابقة في history
   try {
-    // 1️⃣ استخدام window.history.back() للرجوع للصفحة السابقة مباشرة
     if (window.history.length > 1) {
       window.history.back();
       return;
     }
-    
-    // 2️⃣ إذا لم توجد صفحة سابقة، نبحث عن returnUrl المخزن
     const returnUrl = sessionStorage.getItem('returnUrl') || '';
     if (returnUrl && !returnUrl.includes('login.html') && !returnUrl.includes('index.html')) {
       location.href = returnUrl;
       return;
     }
-    
-    // 3️⃣ الحل الأخير: من أين أتينا؟ نفحص referrer
     const referrer = document.referrer || '';
     if (referrer && !referrer.includes('login.html') && !referrer.includes('index.html')) {
       window.location.href = referrer;
       return;
     }
-    
-    // 4️⃣ في حالة عدم وجود أي شيء، نذهب للوحة المناسبة حسب الدور
     const user = currentUser || Session.getUser();
     const role = user?.role || 'Accountant';
     const dashboards = {
@@ -181,25 +180,50 @@ function goBack() {
       'Customer': 'CustomerDashboard.html'
     };
     location.href = dashboards[role] || 'AccountantDashboard.html';
-    
   } catch(e) {
-    // في حالة الخطأ، محاولة الرجوع للخلف
-    try {
-      window.history.back();
-    } catch(e2) {
-      // الحل النهائي: لوحة المحاسب
-      location.href = 'AccountantDashboard.html';
-    }
+    try { window.history.back(); } catch(e2) { location.href = 'AccountantDashboard.html'; }
   }
 }
-  // ══════════════════════════════════════════════════════════
-// JSONP Request (مطابق لباقي الملفات)
-// ══════════════════════════════════════════════════════════
-function jsonpRequest(action, params = {}, isPost = false) {
+
+// ============================================================
+// ✅ POST Request باستخدام fetch (بدلاً من JSONP)
+// ============================================================
+async function postRequest(action, params = {}) {
+  // إضافة centerName تلقائياً
+  if (currentInvoice && currentInvoice.centerName && !params.centerName) {
+    params.centerName = currentInvoice.centerName;
+  }
+  if (currentUser && currentUser.centerName && !params.centerName && !currentInvoice) {
+    params.centerName = currentUser.centerName;
+  }
+  
+  params.action = action;
+  
+  try {
+    const response = await fetch(GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch(err) {
+    console.error('❌ postRequest error:', err);
+    throw err;
+  }
+}
+
+// ============================================================
+// ✅ JSONP Request (للطلبات الصغيرة فقط)
+// ============================================================
+function jsonpRequest(action, params = {}) {
   return new Promise((resolve, reject) => {
     const cbName = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 99999);
     
-    // ✅ إضافة centerName تلقائياً من currentInvoice أو currentUser
     if (currentInvoice && currentInvoice.centerName && !params.centerName) {
       params.centerName = currentInvoice.centerName;
     }
@@ -210,104 +234,46 @@ function jsonpRequest(action, params = {}, isPost = false) {
     params.action = action;
     params.callback = cbName;
     
-    // ✅ زيادة المهلة للـ POST (120 ثانية) والـ GET (25 ثانية)
-    const timeoutMs = isPost ? 120000 : 25000;
+    const timeoutMs = 25000;
+    const qs = Object.entries(params).map(([k, v]) => k + '=' + encodeURIComponent(String(v ?? ''))).join('&');
+    const url = GAS_URL + '?' + qs;
+    const script = document.createElement('script');
     
-    if (isPost) {
-      // ✅ POST: لرفع الصور والبيانات الكبيرة
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = GAS_URL;
-      form.target = '_blank';
-      form.style.display = 'none';
-      
-      for (const [key, value] of Object.entries(params)) {
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = key;
-        input.value = String(value ?? '');
-        form.appendChild(input);
-      }
-      
-      const iframeName = 'iframe_' + cbName;
-      const iframe = document.createElement('iframe');
-      iframe.name = iframeName;
-      iframe.style.display = 'none';
-      document.body.appendChild(iframe);
-      form.target = iframeName;
-      
-      let timeoutId;
-      const checkInterval = setInterval(() => {
-        try {
-          const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-          if (iframeDoc && iframeDoc.body && iframeDoc.body.innerText) {
-            const responseText = iframeDoc.body.innerText;
-            if (responseText && responseText.trim()) {
-              clearInterval(checkInterval);
-              clearTimeout(timeoutId);
-              document.body.removeChild(iframe);
-              try {
-                const result = JSON.parse(responseText);
-                resolve(result);
-              } catch(e) {
-                resolve({ success: false, message: responseText });
-              }
-            }
-          }
-        } catch(e) {}
-      }, 200);
-      
-      timeoutId = setTimeout(() => {
-        clearInterval(checkInterval);
-        document.body.removeChild(iframe);
-        reject(new Error('POST timeout - استغرق الطلب أكثر من 120 ثانية'));
-      }, timeoutMs);
-      
-      document.body.appendChild(form);
-      form.submit();
-      setTimeout(() => form.remove(), 1000);
-      
-    } else {
-      // ✅ GET: JSONP للطلبات الصغيرة
-      const qs = Object.entries(params).map(([k, v]) => k + '=' + encodeURIComponent(String(v ?? ''))).join('&');
-      const url = GAS_URL + '?' + qs;
-      const script = document.createElement('script');
-      
-      const timeoutId = setTimeout(() => {
-        delete window[cbName];
-        if (script.parentNode) script.remove();
-        reject(new Error('JSONP timeout - استغرق الطلب أكثر من ' + (timeoutMs / 1000) + ' ثانية'));
-      }, timeoutMs);
-      
-      window[cbName] = (data) => {
-        clearTimeout(timeoutId);
-        delete window[cbName];
-        if (script.parentNode) script.remove();
-        resolve(data);
-      };
-      
-      script.onerror = () => {
-        clearTimeout(timeoutId);
-        delete window[cbName];
-        if (script.parentNode) script.remove();
-        reject(new Error('Network error - فشل الاتصال بالخادم'));
-      };
-      
-      script.src = url;
-      document.head.appendChild(script);
-    }
+    const timeoutId = setTimeout(() => {
+      delete window[cbName];
+      if (script.parentNode) script.remove();
+      reject(new Error('JSONP timeout - استغرق الطلب أكثر من 25 ثانية'));
+    }, timeoutMs);
+    
+    window[cbName] = (data) => {
+      clearTimeout(timeoutId);
+      delete window[cbName];
+      if (script.parentNode) script.remove();
+      resolve(data);
+    };
+    
+    script.onerror = () => {
+      clearTimeout(timeoutId);
+      delete window[cbName];
+      if (script.parentNode) script.remove();
+      reject(new Error('Network error - فشل الاتصال بالخادم'));
+    };
+    
+    script.src = url;
+    document.head.appendChild(script);
   });
 }
 
-// ✅ استبدال gas بـ jsonpRequest
-async function gas(action, params = {}) {
-  return jsonpRequest(action, params);
-}
-
+// ============================================================
+// ✅ دوال أسعار الصرف
+// ============================================================
 async function getRate(dateStr) {
   if (!dateStr) return null;
   if (exRatesCache[dateStr]) return exRatesCache[dateStr];
-  try { const r = await gas('getExchangeRate', { dateStr }); if (r) { exRatesCache[dateStr] = r; return r; } } catch(e) {}
+  try { 
+    const r = await jsonpRequest('getExchangeRate', { dateStr }); 
+    if (r) { exRatesCache[dateStr] = r; return r; } 
+  } catch(e) {}
   return null;
 }
 
@@ -317,6 +283,9 @@ function rateFields(r) {
   return { cash: { USD: +r.sUSD || 47.5, EUR: +r.sEUR || 50.25, GBP: +r.sGBP || 60 }, visa: { USD: +r.sVUSD || 46.3, EUR: +r.sVEUR || 49, GBP: +r.sVGBP || 58.5, LE: +r.sVLE || 0.975 } };
 }
 
+// ============================================================
+// ✅ دوال الحسابات
+// ============================================================
 function calcTotalFromItems() {
   let total = 0;
   for (let i = 0; i < 20; i++) {
@@ -377,7 +346,62 @@ function updateItemTotal(idx, price) {
   updateTotals();
 }
 
+// ============================================================
+// ✅ دالة رفع التوقيع إلى Drive
+// ============================================================
+async function uploadSignatureImage(signatureData) {
+  try {
+    const base64Data = signatureData.split(',')[1];
+    if (!base64Data) return { success: false, message: 'No image data' };
+    
+    const result = await postRequest('uploadSignatureImage', {
+      b64: base64Data,
+      voucherNo: 'temp_' + Date.now()
+    });
+    
+    return result;
+  } catch(e) {
+    console.error('uploadSignatureImage error:', e);
+    return { success: false, message: e.message };
+  }
+}
+
+// ============================================================
+// ✅ دالة إنشاء PDF
+// ============================================================
+async function generatePDF() {
+  if (!currentInvoice) {
+    showAlert('⚠️ لا توجد فاتورة');
+    return;
+  }
+  
+  showLoader(true, 'جاري إنشاء PDF...');
+  try {
+    const result = await postRequest('saveAndGenerateSinglePDF_New', {
+      voucherNo: currentInvoice.voucherNo,
+      prices: JSON.stringify(currentInvoice.tripPrices || []),
+      total: currentInvoice.actualPrice || 0,
+      centerName: currentInvoice.centerName || currentUser?.centerName || ''
+    });
+    
+    showLoader(false);
+    
+    if (result?.success && result?.url) {
+      window.open(result.url, '_blank');
+    } else {
+      showAlert('❌ فشل إنشاء PDF: ' + (result?.message || 'خطأ غير معروف'));
+    }
+  } catch(err) {
+    showLoader(false);
+    showAlert('❌ خطأ: ' + err.message);
+  }
+}
+
+// ============================================================
+// ✅ دوال التحصيل
+// ============================================================
 let currentCollectionRest = 0;
+
 async function openCollectionModal() {
   if (!currentInvoice) {
     showAlert('⚠️ لا توجد فاتورة حالية');
@@ -392,7 +416,6 @@ async function openCollectionModal() {
   
   currentCollectionRest = rest;
   
-  // ✅ التأكد من وجود allEmployees
   let collectorsOptions = '<option value="">-- اختر المحصل --</option>';
   if (allEmployees && allEmployees.length) {
     allEmployees.forEach(emp => {
@@ -435,34 +458,7 @@ async function openCollectionModal() {
   document.getElementById('collectionModal').classList.add('open');
   updateCollectionSummary();
 }
-// ✅ دالة إنشاء PDF
-async function generatePDF() {
-  if (!currentInvoice) {
-    showAlert('⚠️ لا توجد فاتورة');
-    return;
-  }
-  
-  showLoader(true, 'جاري إنشاء PDF...');
-  try {
-    const result = await gas('saveAndGenerateSinglePDF_New', {
-      voucherNo: currentInvoice.voucherNo,
-      prices: JSON.stringify(currentInvoice.tripPrices || []),
-      total: currentInvoice.actualPrice || 0,
-      centerName: currentInvoice.centerName || currentUser?.centerName || ''
-    });
-    
-    showLoader(false);
-    
-    if (result?.success && result?.url) {
-      window.open(result.url, '_blank');
-    } else {
-      showAlert('❌ فشل إنشاء PDF: ' + (result?.message || 'خطأ غير معروف'));
-    }
-  } catch(err) {
-    showLoader(false);
-    showAlert('❌ خطأ: ' + err.message);
-  }
-}
+
 async function updateCollectionSummary() {
   const currency = currentInvoice?.invoiceCurrency || 'LE';
   const activeDate = document.getElementById('activeDate')?.value;
@@ -517,7 +513,7 @@ async function submitCollection() {
   
   showLoader(true, 'جاري إنشاء فاتورة التحصيل...');
   try {
-    const result = await gas('createCollectionInvoice', {
+    const result = await postRequest('createCollectionInvoice', {
       parentVoucherNo: currentInvoice.voucherNo,
       activeDate: currentInvoice.activeDate || '',
       salesId: currentInvoice.salesId || '',
@@ -532,7 +528,7 @@ async function submitCollection() {
       customer: currentInvoice.customer || '',
       state: currentInvoice.state || 'pending',
       invoiceCurrency: currentInvoice.invoiceCurrency || 'LE',
-     centerName: currentInvoice.centerName || '',  // ✅ أضف هذا
+      centerName: currentInvoice.centerName || '',
       branchName: currentInvoice.branchName || '',
       salesName: currentInvoice.salesName || '',
       cashUSD: cU, cashEUR: cE, cashGBP: cG, cashLE: cL,
@@ -549,16 +545,16 @@ async function submitCollection() {
     
     if (result?.success) {
       showLoader(true, 'جاري تحديث البيانات...');
-      const refreshed = await gas('getInvoiceByVoucher', { voucherNo: currentInvoice.voucherNo });
+      const refreshed = await jsonpRequest('getInvoiceByVoucher', { voucherNo: currentInvoice.voucherNo });
       if (refreshed.success && refreshed.invoice) {
         currentInvoice = refreshed.invoice;
         originalInvoice = JSON.parse(JSON.stringify(currentInvoice));
       }
-     try {
-      await generatePDF();
-    } catch(e) {
-      console.warn('⚠️ فشل توليد PDF:', e);
-    }
+      try {
+        await generatePDF();
+      } catch(e) {
+        console.warn('⚠️ فشل توليد PDF:', e);
+      }
       showLoader(false);
       showAlert(`✅ تم تحصيل ${total} ${currentInvoice.invoiceCurrency || 'LE'} بنجاح`, '<button class="btn btn-primary" onclick="location.reload()">تحديث</button>');
     } else {
@@ -570,6 +566,9 @@ async function submitCollection() {
   }
 }
 
+// ============================================================
+// ✅ دالة جمع بيانات التعديل
+// ============================================================
 async function collectEditedData() {
   const items = [];
   const tripPrices = [];
@@ -582,11 +581,11 @@ async function collectEditedData() {
       if (name) items.push(`${name}×${qty}`);
     }
     
-    // ✅ جمع الأسعار بشكل صحيح
     const priceEl = document.getElementById(`price_${i}`);
     tripPrices.push(priceEl ? parseFloat(priceEl.value) || 0 : 0);
   }
-   return {
+  
+  return {
     voucherNo: currentInvoice.voucherNo,
     issueDate: currentInvoice.issueDate,
     activeDate: document.getElementById('activeDate')?.value || '',
@@ -627,7 +626,10 @@ async function collectEditedData() {
     tripPrices: tripPrices
   };
 }
+
+// ============================================================
 // ✅ دالة إرسال الفاتورة عبر واتساب
+// ============================================================
 async function shareInvoiceWhatsApp(voucherNo) {
   try {
     showLoader(true, '📱 جاري تجهيز واتساب...');
@@ -646,7 +648,6 @@ async function shareInvoiceWhatsApp(voucherNo) {
     const data = invoice.invoice;
     const centerName = data.centerName || currentUser?.centerName || 'مركز الغوص';
     
-    // ✅ تنظيف رقم الهاتف
     let phone = data.contactNo || '';
     phone = phone.replace(/[^0-9+]/g, '');
     if (phone.startsWith('0')) phone = '20' + phone.substring(1);
@@ -658,11 +659,9 @@ async function shareInvoiceWhatsApp(voucherNo) {
       return;
     }
     
-    // ✅ رابط PDF
     const pdfUrl = data.invoicePdf || '';
     const pdfLink = pdfUrl ? `%0A%0A📄 *رابط PDF:* ${pdfUrl}` : '';
     
-    // ✅ رسالة واتساب
     const message = 
       `مرحباً ${data.guestName || 'العميل'}،%0A%0A` +
       `شكراً لحجزك مع ${centerName}.%0A%0A` +
@@ -675,7 +674,6 @@ async function shareInvoiceWhatsApp(voucherNo) {
       `${pdfLink}%0A%0A` +
       `نحن في انتظاركم! 🙏`;
     
-    // ✅ فتح واتساب
     const waAppUrl = `whatsapp://send?phone=${phone}&text=${message}`;
     const waWebUrl = `https://wa.me/${phone}?text=${message}`;
     
@@ -698,40 +696,70 @@ async function shareInvoiceWhatsApp(voucherNo) {
     showAlert('❌ خطأ: ' + err.message, '❌');
   }
 }
-  
+
+// ============================================================
+// ✅ دالة حفظ التعديلات (باستخدام POST)
+// ============================================================
 async function saveChanges() {
   console.log('🔵 saveChanges - START');
+  
+  // ✅ التحقق من الصلاحية
+  if (!canSave) {
+    showAlert('⚠️ ليس لديك صلاحية حفظ التعديلات', '🔒');
+    return;
+  }
   
   const editedData = await collectEditedData();
   console.log('🔵 editedData:', editedData);
   showLoader(true, 'جاري حفظ التعديلات وإنشاء PDF...');
   
   try {
+    // ✅ رفع التوقيع إذا كان موجوداً
+    let uploadedSignatureUrl = '';
+    if (signatureData && signatureData.startsWith('data:image')) {
+      try {
+        const uploadResult = await uploadSignatureImage(signatureData);
+        if (uploadResult.success) {
+          uploadedSignatureUrl = uploadResult.url;
+          console.log('✅ تم رفع التوقيع:', uploadedSignatureUrl);
+        }
+      } catch(e) {
+        console.warn('⚠️ فشل رفع التوقيع:', e);
+      }
+    }
+    
+    // ✅ إضافة centerName و signatureUrl
     const updateParams = { 
       ...editedData, 
-      centerName: currentInvoice.centerName || currentUser?.centerName || ''
+      centerName: currentInvoice.centerName || currentUser?.centerName || '',
+      signatureUrl: uploadedSignatureUrl,
+      signatureData: '' // ✅ إرسال فارغ لتجنب الحجم الكبير
     };
     
-    const updateResult = await jsonpRequest('updateInvoice', updateParams, true);
+    // ✅ استخدام POST لحفظ التعديلات
+    const updateResult = await postRequest('updateInvoice', updateParams);
     
     if (!updateResult?.success) {
       throw new Error(updateResult?.message || 'فشل حفظ التعديلات');
     }
     
-    await jsonpRequest('copyInvoiceToEdit', {
+    // ✅ تسجيل التعديلات
+    await postRequest('copyInvoiceToEdit', {
       originalData: JSON.stringify(originalInvoice),
       editedData: JSON.stringify(editedData),
       userId: currentUser?.id || '',
       editSummary: 'تعديل الفاتورة',
       centerName: currentInvoice.centerName || currentUser?.centerName || ''
-    }, true);
+    });
     
-    const pdfResult = await jsonpRequest('saveAndGenerateSinglePDF_New', {
+    // ✅ إنشاء PDF جديد (استخدام POST)
+    showLoader(true, '📄 جاري إنشاء PDF...');
+    const pdfResult = await postRequest('saveAndGenerateSinglePDF_New', {
       voucherNo: editedData.voucherNo,
       prices: JSON.stringify(editedData.tripPrices || []),
       total: editedData.actualPrice || 0,
       centerName: currentInvoice.centerName || currentUser?.centerName || ''
-    }, true);
+    });
     
     showLoader(false);
     
@@ -753,20 +781,47 @@ async function saveChanges() {
   }
 }
 
-async function loadInvoice() {
-  // ✅ تخزين الصفحة السابقة في returnUrl قبل أي شيء
-  const referrer = document.referrer || '';
+// ============================================================
+// ✅ دوال تغيير الرحلة
+// ============================================================
+async function changeTrip() {
+  const newTrip = document.getElementById('tripName')?.value;
+  const currency = document.getElementById('invoiceCurrency')?.value;
+  if (!newTrip || !currency) return;
   
-  // ✅ تحديد الصفحة السابقة بدقة
+  const td = await jsonpRequest('getTripData', { 
+    tripName: newTrip, 
+    currency,
+    centerName: currentInvoice?.centerName || currentUser?.centerName || ''
+  });
+  
+  if (td?.items) {
+    let rows = '';
+    for (let i = 0; i < td.items.length; i++) {
+      rows += `<tr>
+        <td style="font-weight:600">${esc(td.items[i])}</td>
+        <td><input type="number" id="qty_${i}" min="0" step="1" oninput="updateItemTotal(${i}, ${td.prices?.[i] || 0})" style="width:70px;text-align:center"></td>
+        <td><input type="number" id="price_${i}" value="${td.prices?.[i] || 0}" readonly style="background:#f1f5f9;width:80px;text-align:center"></td>
+        <td><input type="number" id="total_${i}" value="0" readonly style="background:#f1f5f9;width:90px;text-align:center"></td>
+      </tr>`;
+    }
+    document.getElementById('itemsBody').innerHTML = rows;
+  }
+  await updateTotals();
+}
+
+// ============================================================
+// ✅ دالة تحميل الفاتورة
+// ============================================================
+async function loadInvoice() {
+  // تخزين الصفحة السابقة
+  const referrer = document.referrer || '';
   let returnPage = 'AccountantDashboard.html';
   
   if (referrer) {
     try {
-      // استخراج اسم الملف من الرابط
       const urlParts = referrer.split('/');
       const fileName = urlParts[urlParts.length - 1].split('?')[0];
-      
-      // ✅ التحقق من أن الصفحة هي BookingsByActiveDate أو BookingsToday
       if (fileName.includes('BookingsByActiveDate') || 
           fileName.includes('BookingsToday') ||
           fileName.includes('Bookings')) {
@@ -779,23 +834,21 @@ async function loadInvoice() {
     }
   }
   
-  // ✅ تخزين returnUrl
   sessionStorage.setItem('returnUrl', returnPage);
   console.log('🔍 returnUrl:', returnPage);
   
-    const permissions = currentUser?.permissions || [];
+  // ✅ التحقق من الصلاحيات
+  const permissions = currentUser?.permissions || [];
   const isAdmin = permissions.includes('Admin');
   
   const canView = permissions.includes('ViewInvoices') || permissions.includes('ViewInvoice') || isAdmin;
   const canEdit = permissions.includes('EditInvoice') || isAdmin;
   const canCollect = permissions.includes('CollectInvoice') || isAdmin;
   
-  // ✅ تحديث المتغير العام canSave
   canSave = permissions.includes('SaveInvoiceChanges') || 
             permissions.includes('EditInvoice') || 
             isAdmin;
   
-  // ✅ عرض الصلاحيات في console للتأكد
   console.log('🔍 Permissions:', permissions);
   console.log('🔍 canView:', canView);
   console.log('🔍 canEdit:', canEdit);
@@ -825,7 +878,7 @@ async function loadInvoice() {
   showLoader(true, 'جاري تحميل الفاتورة...');
   
   try {
-    // ✅ جلب الفاتورة مع centerName
+    // ✅ جلب الفاتورة
     const invoiceResult = await jsonpRequest('getInvoiceByVoucher', { 
       voucherNo: voucherNo,
       centerName: centerName 
@@ -838,7 +891,7 @@ async function loadInvoice() {
     
     document.getElementById('voucherDisplay').textContent = voucherNo;
     
-    // ✅ جلب الموظفين من ملف المركز الخاص
+    // ✅ جلب الموظفين
     let employees = [];
     if (currentInvoice.centerName) {
       try {
@@ -861,17 +914,15 @@ async function loadInvoice() {
     const tripPrices = (tripPricesData?.prices) ? tripPricesData.prices : [];
     const tripsOpts = Array.isArray(uniqueTrips) ? uniqueTrips.map(t => `<option value="${esc(t.name)}" ${t.name === currentInvoice.trip ? 'selected' : ''}>${esc(t.name)}</option>`).join('') : '';
     
-    // ✅ ربط ديناميكي حسب أسماء البنود (بدون أسماء ثابتة)
+    // ✅ ربط ديناميكي حسب أسماء البنود
     let tRows = '';
     if (tripData?.items && tripData.items.length > 0) {
-      // ✅ الحقول المتوقعة من العمود H إلى Q في شيت Invoices
       const invoiceFields = [
         'sgl', 'dbl', 'trpl', 'extra', 
         'camel', 'dinner', 'vipDinner', 
         'starGazing', 'privateTrip', 'privateTransfer'
       ];
       
-      // ✅ بناء خريطة ربط ديناميكية بين اسم البند والقيمة من currentInvoice
       const qtyMap = {};
       tripData.items.forEach((name, index) => {
         const fieldName = invoiceFields[index] || '';
@@ -890,34 +941,27 @@ async function loadInvoice() {
       }).join('');
     }
     
-    // ✅ تصحيح منطق التاريخ - استخدام activeDate وليس issueDate
+    // ✅ منطق التاريخ
     const activeDate = parseDate(currentInvoice.activeDate);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const isPastDate = activeDate && activeDate < today;
-    
-    // ✅ منع تعديل المدفوعات إذا مضى تاريخ التنفيذ
     const disablePayments = isPastDate || !canEdit;
     
-    // ✅ قراءة المتبقي من DOM بعد updateTotals()
+    // ✅ قراءة المتبقي
     const restElement = document.getElementById('displayRest');
     const currentRest = restElement ? parseFloat(restElement.textContent) || 0 : (currentInvoice.rest || 0);
-    
-    // ✅ تحديث currentInvoice.rest بالقيمة الصحيحة
     currentInvoice.rest = currentRest;
     
     const disableCollection = (currentRest <= 0.01) || !canCollect;
     
-    // ✅ رسالة توضيحية لسبب تعطيل التحصيل
     let collectionDisabledReason = '';
     if (currentRest <= 0.01) collectionDisabledReason = 'لا يوجد مبلغ متبقي';
     else if (!canCollect) collectionDisabledReason = 'ليس لديك صلاحية تحصيل';
     
-    // ✅ رسالة تحذيرية إذا مضى تاريخ التنفيذ
     const warnHtml = isPastDate ? 
       `<div class="warning-bar">⚠️ تاريخ التنفيذ (${currentInvoice.activeDate}) قد مضى — لا يمكن تعديل المدفوعات، ولكن يمكن التحصيل.</div>` : '';
     
-    // قائمة الموظفين لخيار المحصل
     let collectorsOptions = '<option value="">-- اختر المحصل --</option>';
     if (allEmployees.length) {
       allEmployees.forEach(emp => {
@@ -925,15 +969,13 @@ async function loadInvoice() {
       });
     }
     
-    // ✅ أزرار حسب الصلاحيات
+    // ✅ أزرار
     const collectBtnHtml = (canCollect && currentRest > 0.01) ? 
       `<button class="btn btn-success" id="collectionBtn" onclick="openCollectionModal()" title="${collectionDisabledReason}">💰 تحصيل (المتبقي: ${currentRest.toFixed(2)})</button>` : 
       (canCollect ? `<button class="btn btn-success" id="collectionBtn" disabled style="opacity:0.5;cursor:not-allowed;" title="${collectionDisabledReason}">💰 تحصيل - ${collectionDisabledReason}</button>` : '');
     
     const saveBtnHtml = canSave ? 
       `<button class="btn btn-primary" onclick="saveChanges()">💾 حفظ التعديلات</button>` : '';
-    
-    const pdfBtnHtml = '';
     
     const formHtml = `
       ${warnHtml}
@@ -1048,37 +1090,13 @@ async function loadInvoice() {
     showAlert('خطأ: ' + err.message, '<button class="btn btn-primary" onclick="goBack()">رجوع</button>');
   }
 }
-  
-async function changeTrip() {
-  const newTrip = document.getElementById('tripName')?.value;
-  const currency = document.getElementById('invoiceCurrency')?.value;
-  if (!newTrip || !currency) return;
-  // ✅ إضافة centerName
-  const td = await gas('getTripData', { 
-    tripName: newTrip, 
-    currency,
-    centerName: currentInvoice?.centerName || currentUser?.centerName || ''
-  });
-  if (td?.items) {
-    let rows = '';
-    for (let i = 0; i < td.items.length; i++) {
-      rows += `<tr>
-        <td style="font-weight:600">${esc(td.items[i])}</td>
-        <td><input type="number" id="qty_${i}" min="0" step="1" oninput="updateItemTotal(${i}, ${td.prices?.[i] || 0})" style="width:70px;text-align:center"></td>
-        <td><input type="number" id="price_${i}" value="${td.prices?.[i] || 0}" readonly style="background:#f1f5f9;width:80px;text-align:center"></td>
-        <td><input type="number" id="total_${i}" value="0" readonly style="background:#f1f5f9;width:90px;text-align:center"></td>
-      </tr>`;
-    }
-    document.getElementById('itemsBody').innerHTML = rows;
-  }
-  await updateTotals();
-}
 
+// ============================================================
+// ✅ تحميل الصفحة
+// ============================================================
 document.addEventListener('DOMContentLoaded', () => {
-  // ✅ محاولة استعادة المستخدم من sessionStorage مباشرة
   let userData = null;
   
-  // 1️⃣ محاولة من sessionStorage
   try {
     const storedUser = sessionStorage.getItem('currentUser');
     if (storedUser) {
@@ -1089,10 +1107,9 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
   } catch(e) {
-    console.warn('⚠️ فشل parsing user data من sessionStorage:', e);
+    console.warn('⚠️ فشل parsing user data:', e);
   }
   
-  // 2️⃣ إذا لم نجد المستخدم، نجرب Session.getUser()
   if (!userData || !userData.id) {
     try {
       const sessionUser = Session.getUser();
@@ -1105,13 +1122,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
   
-  // 3️⃣ إذا وجدنا مستخدم، استخدمه
   if (userData && userData.id) {
     currentUser = userData;
     console.log('✅ Current User:', currentUser);
     console.log('✅ Permissions:', currentUser.permissions || []);
     
-    // ✅ حفظ المستخدم في Session API لضمان استمرارية الجلسة
     try {
       if (typeof Session !== 'undefined' && Session.save) {
         Session.save(userData);
@@ -1127,13 +1142,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     loadInvoice();
   } else {
-    // ❌ انتهت الجلسة أو غير موجودة
     console.warn('⚠️ لا توجد جلسة نشطة، جاري التوجيه لتسجيل الدخول');
     showAlert('⚠️ انتهت صلاحية الجلسة، يرجى تسجيل الدخول مرة أخرى', '⏰', 
       '<button class="btn btn-primary" onclick="window.location.href=\'login.html\'">تسجيل الدخول</button>'
     );
   }
 });
+
+// ============================================================
+// ✅ ربط الدوال بالـ window
+// ============================================================
 window.goBack = goBack;
 window.closeAlert = closeAlert;
 window.closeCollectionModal = closeCollectionModal;
@@ -1146,7 +1164,8 @@ window.updateCollectionSummary = updateCollectionSummary;
 window.changeTrip = changeTrip;
 window.shareInvoiceWhatsApp = shareInvoiceWhatsApp;
 window.confirmExit = confirmExit;
-window.generatePDF = generatePDF; 
+window.generatePDF = generatePDF;
+
 </script>
 </body>
 </html>
