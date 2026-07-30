@@ -145,29 +145,30 @@ function showAlert(msg, icon = 'ℹ️', btns = null) {
   );
 }
 function goBack() {
-  // ✅ دائماً نحاول الرجوع للصفحة السابقة أولاً
+  // ✅ الأولوية القصوى: الرجوع للصفحة السابقة في history
   try {
-    // التحقق من وجود صفحة سابقة
-    if (document.referrer && !document.referrer.includes('login.html') && !document.referrer.includes('index.html')) {
-      window.history.back();
-      return;
-    }
-    
-    // محاولة history.back() مباشرة
+    // 1️⃣ استخدام window.history.back() للرجوع للصفحة السابقة مباشرة
     if (window.history.length > 1) {
       window.history.back();
       return;
     }
     
-    // في حالة عدم وجود صفحة سابقة، نستخدم returnUrl
+    // 2️⃣ إذا لم توجد صفحة سابقة، نبحث عن returnUrl المخزن
     const returnUrl = sessionStorage.getItem('returnUrl') || '';
     if (returnUrl && !returnUrl.includes('login.html') && !returnUrl.includes('index.html')) {
       location.href = returnUrl;
       return;
     }
     
-    // الحل الأخير: الرجوع للوحة المناسبة
-    const user = Session.getUser() || currentUser;
+    // 3️⃣ الحل الأخير: من أين أتينا؟ نفحص referrer
+    const referrer = document.referrer || '';
+    if (referrer && !referrer.includes('login.html') && !referrer.includes('index.html')) {
+      window.location.href = referrer;
+      return;
+    }
+    
+    // 4️⃣ في حالة عدم وجود أي شيء، نذهب للوحة المناسبة حسب الدور
+    const user = currentUser || Session.getUser();
     const role = user?.role || 'Accountant';
     const dashboards = {
       'Admin': 'Dashboard.html',
@@ -182,7 +183,12 @@ function goBack() {
     
   } catch(e) {
     // في حالة الخطأ، محاولة الرجوع للخلف
-    window.history.back();
+    try {
+      window.history.back();
+    } catch(e2) {
+      // الحل النهائي: لوحة المحاسب
+      location.href = 'AccountantDashboard.html';
+    }
   }
 }
   // ══════════════════════════════════════════════════════════
@@ -669,15 +675,26 @@ async function saveChanges() {
 
 async function loadInvoice() {
   // ✅ تخزين الصفحة السابقة في returnUrl قبل أي شيء
-  const referrer = document.referrer || '';
-  if (referrer && !referrer.includes('login.html') && !referrer.includes('index.html')) {
-    sessionStorage.setItem('returnUrl', referrer);
-    if (typeof Session !== 'undefined' && Session.set) {
-      Session.set('returnUrl', referrer);
-    } else if (typeof Session !== 'undefined' && Session.save) {
-      Session.save('returnUrl', referrer);
+   const referrer = document.referrer || '';
+  
+  // ✅ تحديد الصفحة السابقة بدقة
+  let returnPage = 'AccountantDashboard.html';
+  
+  if (referrer) {
+    // استخراج اسم الملف من الرابط
+    const urlParts = referrer.split('/');
+    const fileName = urlParts[urlParts.length - 1].split('?')[0];
+    
+    // ✅ التحقق من أن الصفحة هي BookingsByActiveDate أو BookingsToday
+    if (fileName.includes('BookingsByActiveDate') || fileName.includes('BookingsToday')) {
+      returnPage = fileName;
+    } else if (fileName && !fileName.includes('login.html') && !fileName.includes('index.html')) {
+      returnPage = fileName;
     }
   }
+  
+  // ✅ تخزين returnUrl
+  sessionStorage.setItem('returnUrl', returnPage);
   
   // ✅ التحقق من الصلاحيات
   const permissions = currentUser?.permissions || [];
@@ -956,21 +973,38 @@ async function changeTrip() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  // ✅ استخدام Session API مع صلاحية 24 ساعة
-  const currentUserData = Session.getUser();
-  if (currentUserData) {
-    currentUser = currentUserData;
+  // ✅ محاولة استعادة المستخدم من sessionStorage مباشرة
+  let userData = null;
+  try {
+    const storedUser = sessionStorage.getItem('currentUser');
+    if (storedUser) {
+      userData = JSON.parse(storedUser);
+    }
+  } catch(e) {
+    console.warn('⚠️ فشل parsing user data:', e);
+  }
+  
+  // ✅ إذا لم نجد المستخدم، نجرب Session.getUser()
+  if (!userData || !userData.id) {
+    const sessionUser = Session.getUser();
+    if (sessionUser && typeof sessionUser === 'object' && sessionUser.id) {
+      userData = sessionUser;
+    }
+  }
+  
+  if (userData && userData.id) {
+    currentUser = userData;
     console.log('✅ Current User:', currentUser);
-    console.log('✅ Permissions:', currentUser.permissions);
+    console.log('✅ Permissions:', currentUser.permissions || []);
     
-      const centerName = currentUser.centerName || '';
+    const centerName = currentUser.centerName || '';
     if (centerName) {
       sessionStorage.setItem('centerName', centerName);
-      // ✅ Session.set غير موجودة، نستخدم sessionStorage فقط
     }
     loadInvoice();
   } else {
     // ❌ انتهت الجلسة أو غير موجودة
+    console.warn('⚠️ لا توجد جلسة نشطة، جاري التوجيه لتسجيل الدخول');
     showAlert('⚠️ انتهت صلاحية الجلسة، يرجى تسجيل الدخول مرة أخرى', '⏰', 
       '<button class="btn btn-primary" onclick="window.location.href=\'login.html\'">تسجيل الدخول</button>'
     );
