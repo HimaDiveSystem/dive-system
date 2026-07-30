@@ -133,12 +133,42 @@ function showAlert(msg, icon = 'ℹ️', btns = null) {
   const modal = document.getElementById('alertModal');
   if (modal) modal.classList.add('open');
 }
-  function confirmExit() {
-  showAlert('⚠️ هل أنت متأكد من إلغاء التعديلات؟', '⚠️', '<button class="btn btn-primary" onclick="goBack()">نعم</button><button class="btn btn-danger" onclick="closeAlert()">لا</button>');
+ function confirmExit() {
+  showAlert('⚠️ هل أنت متأكد من إلغاء التعديلات؟', '⚠️', 
+    '<button class="btn btn-primary" onclick="goBack()">نعم</button>' +
+    '<button class="btn btn-danger" onclick="closeAlert()">لا</button>'
+  );
 }
-  function goBack() { location.href = sessionStorage.getItem('returnUrl') || 'Dashboard.html'; }
-
-// ══════════════════════════════════════════════════════════
+function goBack() {
+  // ✅ محاولة العودة للصفحة السابقة مباشرة
+  try {
+    if (document.referrer && !document.referrer.includes('login.html') && !document.referrer.includes('index.html')) {
+      window.history.back();
+    } else {
+      // ✅ إذا لم توجد صفحة سابقة، نذهب للوحة المناسبة
+      const user = Session.getUser() || currentUser;
+      const role = user?.role || 'Accountant';
+      
+      const dashboards = {
+        'Admin': 'Dashboard.html',
+        'Owner': 'OwnerDashboard.html',
+        'Accountant': 'AccountantDashboard.html',
+        'Sales': 'SalesDashboard.html',
+        'OperationsManager': 'OperationManager.html',
+        'OperationsSupervisor': 'OperationSupervisor.html',
+        'Customer': 'CustomerDashboard.html'
+      };
+      
+      location.href = dashboards[role] || 'AccountantDashboard.html';
+    }
+  } catch(e) {
+    // ✅ في حالة الخطأ، نذهب للوحة المناسبة
+    const user = Session.getUser() || currentUser;
+    const role = user?.role || 'Accountant';
+    location.href = role === 'Admin' ? 'Dashboard.html' : 'AccountantDashboard.html';
+  }
+}
+  // ══════════════════════════════════════════════════════════
 // JSONP Request (مطابق لباقي الملفات)
 // ══════════════════════════════════════════════════════════
 function jsonpRequest(action, params = {}, isPost = false) {
@@ -581,15 +611,22 @@ async function saveChanges() {
 }
 
 async function loadInvoice() {
-  // ✅ التحقق من الصلاحيات
+  // ✅ التحقق من الصلاحيات - تصحيح الأسماء
   const permissions = currentUser?.permissions || [];
   const isAdmin = permissions.includes('Admin');
   
-  const canView = permissions.includes('ViewInvoice') || isAdmin;
+  // ✅ دعم كلا الصيغتين (مفرد وجمع)
+  const canView = permissions.includes('ViewInvoices') || permissions.includes('ViewInvoice') || isAdmin;
   const canEdit = permissions.includes('EditInvoice') || isAdmin;
   const canCollect = permissions.includes('CollectInvoice') || isAdmin;
   const canSave = permissions.includes('SaveInvoiceChanges') || isAdmin;
   const canGeneratePDF = permissions.includes('GenerateInvoicePDF') || isAdmin;
+  
+  // ✅ عرض الصلاحيات في console للتأكد
+  console.log('🔍 Permissions:', permissions);
+  console.log('🔍 canView:', canView);
+  console.log('🔍 canEdit:', canEdit);
+  console.log('🔍 canCollect:', canCollect);
   
   if (!canView) {
     showAlert('⚠️ ليس لديك صلاحية عرض الفاتورة', '🔒', 
@@ -597,6 +634,7 @@ async function loadInvoice() {
     );
     return;
   }
+  
 
   const params = new URLSearchParams(location.search);
   const voucherNo = params.get('voucherNo');
@@ -837,10 +875,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const currentUserData = Session.getUser();
   if (currentUserData) {
     currentUser = currentUserData;
+    console.log('✅ Current User:', currentUser);
+    console.log('✅ Permissions:', currentUser.permissions);
+    
     // ✅ استخدام ملف المركز الخاص
     const centerName = currentUser.centerName || '';
     if (centerName) {
       sessionStorage.setItem('centerName', centerName);
+      Session.set('centerName', centerName);
     }
     loadInvoice();
   } else {
@@ -850,7 +892,6 @@ document.addEventListener('DOMContentLoaded', () => {
     );
   }
 });
-
 window.goBack = goBack;
 window.closeAlert = closeAlert;
 window.closeCollectionModal = closeCollectionModal;
