@@ -109,7 +109,8 @@ const GAS_URL = CONFIG.GAS_URL;
 
 let currentUser = null, currentInvoice = null, originalInvoice = null;
 let allEmployees = [], exRatesCache = {};
-
+let canSave = false;
+  
 function esc(s) { if (s === undefined || s === null) return ''; return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function R2(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
 function dV(v) { const n = Number(v); return (n === 0 || isNaN(n)) ? '' : n; }
@@ -571,19 +572,21 @@ async function submitCollection() {
 
 async function collectEditedData() {
   const items = [];
+  const tripPrices = [];
+  
   for (let i = 0; i < 20; i++) {
     const qty = parseFloat(document.getElementById(`qty_${i}`)?.value) || 0;
     if (qty > 0) {
-      const name = document.querySelector(`#itemsBody tr:nth-child(${i+1}) td:first-child`)?.textContent;
+      const nameEl = document.querySelector(`#itemsBody tr:nth-child(${i+1}) td:first-child`);
+      const name = nameEl ? nameEl.textContent.trim() : `بند ${i+1}`;
       if (name) items.push(`${name}×${qty}`);
     }
-  }
-  const tripPrices = [];
-  for (let i = 0; i < 20; i++) {
+    
+    // ✅ جمع الأسعار بشكل صحيح
     const priceEl = document.getElementById(`price_${i}`);
     tripPrices.push(priceEl ? parseFloat(priceEl.value) || 0 : 0);
   }
-  return {
+   return {
     voucherNo: currentInvoice.voucherNo,
     issueDate: currentInvoice.issueDate,
     activeDate: document.getElementById('activeDate')?.value || '',
@@ -699,31 +702,22 @@ async function shareInvoiceWhatsApp(voucherNo) {
 async function saveChanges() {
   console.log('🔵 saveChanges - START');
   
-  // ✅ التحقق من الصلاحية
-  if (!canSave) {
-    showAlert('⚠️ ليس لديك صلاحية حفظ التعديلات', '🔒');
-    return;
-  }
-  
   const editedData = await collectEditedData();
   console.log('🔵 editedData:', editedData);
   showLoader(true, 'جاري حفظ التعديلات وإنشاء PDF...');
   
   try {
-    // ✅ إضافة centerName
     const updateParams = { 
       ...editedData, 
       centerName: currentInvoice.centerName || currentUser?.centerName || ''
     };
     
-    // ✅ استخدام POST لحفظ التعديلات
     const updateResult = await jsonpRequest('updateInvoice', updateParams, true);
     
     if (!updateResult?.success) {
       throw new Error(updateResult?.message || 'فشل حفظ التعديلات');
     }
     
-    // ✅ تسجيل التعديلات
     await jsonpRequest('copyInvoiceToEdit', {
       originalData: JSON.stringify(originalInvoice),
       editedData: JSON.stringify(editedData),
@@ -732,7 +726,6 @@ async function saveChanges() {
       centerName: currentInvoice.centerName || currentUser?.centerName || ''
     }, true);
     
-    // ✅ إنشاء PDF جديد (استخدام POST)
     const pdfResult = await jsonpRequest('saveAndGenerateSinglePDF_New', {
       voucherNo: editedData.voucherNo,
       prices: JSON.stringify(editedData.tripPrices || []),
@@ -745,7 +738,6 @@ async function saveChanges() {
     let pdfUrl = (pdfResult && pdfResult.url) ? pdfResult.url : '';
     console.log('📄 PDF URL from server:', pdfUrl);
     
-    // ✅ عرض أزرار PDF وواتساب
     const voucherNo = editedData.voucherNo;
     const waBtn = `<button class="btn btn-success" onclick="shareInvoiceWhatsApp('${voucherNo}')" style="margin:5px;background:#25D366;color:white;border:none;padding:10px 20px;border-radius:30px;font-weight:bold;cursor:pointer;">📱 واتساب</button>`;
     const pdfBtn = pdfUrl ? `<a href="${pdfUrl}" target="_blank" class="btn btn-primary" style="text-decoration:none; margin:5px;padding:10px 20px;border-radius:30px;background:#0f1f3d;color:#f5c842;font-weight:bold;">📄 PDF</a>` : '';
@@ -791,19 +783,17 @@ async function loadInvoice() {
   sessionStorage.setItem('returnUrl', returnPage);
   console.log('🔍 returnUrl:', returnPage);
   
-  // ✅ التحقق من الصلاحيات
-  const permissions = currentUser?.permissions || [];
+    const permissions = currentUser?.permissions || [];
   const isAdmin = permissions.includes('Admin');
   
-  // ✅ دعم كلا الصيغتين (مفرد وجمع)
   const canView = permissions.includes('ViewInvoices') || permissions.includes('ViewInvoice') || isAdmin;
   const canEdit = permissions.includes('EditInvoice') || isAdmin;
   const canCollect = permissions.includes('CollectInvoice') || isAdmin;
   
-  // ✅ تعديل canSave - إذا كان لديه EditInvoice فله صلاحية الحفظ أيضاً
-  const canSave = permissions.includes('SaveInvoiceChanges') || 
-                  permissions.includes('EditInvoice') || 
-                  isAdmin;
+  // ✅ تحديث المتغير العام canSave
+  canSave = permissions.includes('SaveInvoiceChanges') || 
+            permissions.includes('EditInvoice') || 
+            isAdmin;
   
   // ✅ عرض الصلاحيات في console للتأكد
   console.log('🔍 Permissions:', permissions);
