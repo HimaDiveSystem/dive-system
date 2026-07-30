@@ -802,47 +802,43 @@ async function loadInvoice() {
       }).join('');
     }
     
-    // ✅ تصحيح منطق التاريخ - استخدام activeDate وليس issueDate
-    const activeDate = parseDate(currentInvoice.activeDate);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const isPastDate = activeDate && activeDate < today;
+const activeDate = parseDate(currentInvoice.activeDate);
+const today = new Date();
+today.setHours(0, 0, 0, 0);
+const isPastDate = activeDate && activeDate < today;
+
+// ✅ منع تعديل المدفوعات إذا مضى تاريخ التنفيذ
+const disablePayments = isPastDate || !canEdit;
+
+const restElement = document.getElementById('displayRest');
+const currentRest = restElement ? parseFloat(restElement.textContent) || 0 : (currentInvoice.rest || 0);
+
+currentInvoice.rest = currentRest;
+
+const disableCollection = (currentRest <= 0.01) || !canCollect;
+
+let collectionDisabledReason = '';
+if (currentRest <= 0.01) collectionDisabledReason = 'لا يوجد مبلغ متبقي';
+else if (!canCollect) collectionDisabledReason = 'ليس لديك صلاحية تحصيل';
+
+const warnHtml = isPastDate ? 
+  `<div class="warning-bar">⚠️ تاريخ التنفيذ (${currentInvoice.activeDate}) قد مضى — لا يمكن تعديل المدفوعات، ولكن يمكن التحصيل.</div>` : '';
+
+let collectorsOptions = '<option value="">-- اختر المحصل --</option>';
+if (allEmployees.length) {
+  allEmployees.forEach(emp => {
+    collectorsOptions += `<option value="${esc(emp.serial)}|${esc(emp.name)}">${esc(emp.name)} (${esc(emp.position || 'موظف')})</option>`;
+  });
+}
+
+const collectBtnHtml = (canCollect && currentRest > 0.01) ? 
+  `<button class="btn btn-success" id="collectionBtn" onclick="openCollectionModal()" title="${collectionDisabledReason}">💰 تحصيل (المتبقي: ${currentRest.toFixed(2)})</button>` : 
+  (canCollect ? `<button class="btn btn-success" id="collectionBtn" disabled style="opacity:0.5;cursor:not-allowed;" title="${collectionDisabledReason}">💰 تحصيل - ${collectionDisabledReason}</button>` : '');
+
+const saveBtnHtml = canSave ? 
+  `<button class="btn btn-primary" onclick="saveChanges()">💾 حفظ التعديلات</button>` : '';
     
-    // ✅ منع تعديل المدفوعات إذا مضى تاريخ التنفيذ
-    const disablePayments = isPastDate || !canEdit;
-    
-    // ✅ التحصيل مسموح به دائماً طالما هناك مبلغ متبقي وصلاحية
-    const currentRest = currentInvoice.rest || 0;
-    const disableCollection = (currentRest <= 0.01) || !canCollect;
-    
-    // ✅ رسالة توضيحية لسبب تعطيل التحصيل (إذا كان معطلاً)
-    let collectionDisabledReason = '';
-    if (currentRest <= 0.01) collectionDisabledReason = 'لا يوجد مبلغ متبقي';
-    else if (!canCollect) collectionDisabledReason = 'ليس لديك صلاحية تحصيل';
-    
-    // ✅ رسالة تحذيرية إذا مضى تاريخ التنفيذ
-    const warnHtml = isPastDate ? 
-      `<div class="warning-bar">⚠️ تاريخ التنفيذ (${currentInvoice.activeDate}) قد مضى — لا يمكن تعديل المدفوعات، ولكن يمكن التحصيل.</div>` : '';
-    
-    // قائمة الموظفين لخيار المحصل
-    let collectorsOptions = '<option value="">-- اختر المحصل --</option>';
-    if (allEmployees.length) {
-      allEmployees.forEach(emp => {
-        collectorsOptions += `<option value="${esc(emp.serial)}|${esc(emp.name)}">${esc(emp.name)} (${esc(emp.position || 'موظف')})</option>`;
-      });
-    }
-    
-    // ✅ أزرار حسب الصلاحيات
-    // ✅ زر التحصيل - يظهر إذا كان هناك مبلغ متبقي ولديه صلاحية
-    const collectBtnHtml = (canCollect && currentRest > 0.01) ? 
-      `<button class="btn btn-success" id="collectionBtn" onclick="openCollectionModal()" title="${collectionDisabledReason}">💰 تحصيل (المتبقي: ${currentRest.toFixed(2)})</button>` : 
-      (canCollect ? `<button class="btn btn-success" id="collectionBtn" disabled style="opacity:0.5;cursor:not-allowed;" title="${collectionDisabledReason}">💰 تحصيل - ${collectionDisabledReason}</button>` : '');
-    
-    // ✅ زر حفظ التعديلات
-    const saveBtnHtml = canSave ? 
-      `<button class="btn btn-primary" onclick="saveChanges()">💾 حفظ التعديلات</button>` : '';
-    
-    // ❌ حذف زر PDF
+   
     const pdfBtnHtml = '';
     
     const formHtml = `
@@ -987,27 +983,49 @@ async function changeTrip() {
 document.addEventListener('DOMContentLoaded', () => {
   // ✅ محاولة استعادة المستخدم من sessionStorage مباشرة
   let userData = null;
+  
+  // 1️⃣ محاولة من sessionStorage
   try {
     const storedUser = sessionStorage.getItem('currentUser');
     if (storedUser) {
-      userData = JSON.parse(storedUser);
+      const parsed = JSON.parse(storedUser);
+      if (parsed && parsed.id) {
+        userData = parsed;
+        console.log('✅ تم استعادة المستخدم من sessionStorage');
+      }
     }
   } catch(e) {
-    console.warn('⚠️ فشل parsing user data:', e);
+    console.warn('⚠️ فشل parsing user data من sessionStorage:', e);
   }
   
-  // ✅ إذا لم نجد المستخدم، نجرب Session.getUser()
+  // 2️⃣ إذا لم نجد المستخدم، نجرب Session.getUser()
   if (!userData || !userData.id) {
-    const sessionUser = Session.getUser();
-    if (sessionUser && typeof sessionUser === 'object' && sessionUser.id) {
-      userData = sessionUser;
+    try {
+      const sessionUser = Session.getUser();
+      if (sessionUser && typeof sessionUser === 'object' && sessionUser.id) {
+        userData = sessionUser;
+        console.log('✅ تم استعادة المستخدم من Session.getUser()');
+      }
+    } catch(e) {
+      console.warn('⚠️ فشل استعادة المستخدم من Session.getUser():', e);
     }
   }
   
+  // 3️⃣ إذا وجدنا مستخدم، استخدمه
   if (userData && userData.id) {
     currentUser = userData;
     console.log('✅ Current User:', currentUser);
     console.log('✅ Permissions:', currentUser.permissions || []);
+    
+    // ✅ حفظ المستخدم في Session API لضمان استمرارية الجلسة
+    try {
+      if (typeof Session !== 'undefined' && Session.save) {
+        Session.save(userData);
+        console.log('✅ تم إعادة حفظ المستخدم في Session API');
+      }
+    } catch(e) {
+      console.warn('⚠️ فشل حفظ المستخدم في Session API:', e);
+    }
     
     const centerName = currentUser.centerName || '';
     if (centerName) {
