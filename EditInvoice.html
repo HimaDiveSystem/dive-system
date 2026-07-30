@@ -4,11 +4,32 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=yes">
-  <title>Edit Invoice</title>
+  <link rel="icon" href="favicon.png" type="image/png">
+  <link rel="apple-touch-icon" href="favicon.png">
+  <meta name="theme-color" content="#1a3a6b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>Edit Invoice</title>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+   <script src="ui.js"></script>
+  <script src="config.js"></script>
+  <script src="session.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: 'Cairo', sans-serif; background: #f0f4f8; padding: 20px; }
+   body { 
+  font-family: 'Cairo', sans-serif; 
+  background: linear-gradient(135deg, #1a3a6b 0%, #2a5298 50%, #1a3a6b 100%); 
+  min-height: 100vh; 
+  margin: 0; 
+  padding: 20px; 
+}
+.page-wrapper { 
+  max-width: 1200px; 
+  margin: 0 auto; 
+  background: white; 
+  border-radius: 20px; 
+  padding: 25px; 
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3); 
+}
     .header { background: #0f1f3d; color: white; padding: 12px 20px; display: flex; justify-content: space-between; border-radius: 12px; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
     .voucher-badge { background: #f5c842; color: #0f1f3d; padding: 4px 12px; border-radius: 20px; }
     .back-btn { background: transparent; border: 1px solid rgba(255,255,255,0.3); color: white; padding: 6px 16px; border-radius: 20px; cursor: pointer; }
@@ -52,7 +73,7 @@
   </style>
 </head>
 <body>
-
+ <div class="page-wrapper">
 <div class="header">
   <div>✏️ تعديل الفاتورة</div>
   <div><span class="voucher-badge" id="voucherDisplay">---</span></div>
@@ -73,10 +94,13 @@
 </div>
 <div id="collectionModal" class="modal"><div class="modal-content" id="collectionModalContent"></div></div>
 <div id="pdfOverlay" class="modal"><div class="modal-content"><div class="spinner"></div><p id="pdfMsg">جاري المعالجة...</p></div></div>
-
+<!-- ====== FOOTER ====== -->
+<div style="text-align:center;padding:10px 0 2px 0;color:#94a3b8;font-size:10px;border-top:1px solid #e2e8f0;margin-top:8px;">
+  <span>© 2025 <strong style="color:#1e2b4f;">🌊 Dive System</strong> — جميع الحقوق محفوظة</span>
+</div>
 <script>
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec';
-const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const GAS_URL = CONFIG.GAS_URL;
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 let currentUser = null, currentInvoice = null, originalInvoice = null;
 let allEmployees = [], exRatesCache = {};
@@ -557,7 +581,24 @@ async function saveChanges() {
 }
 
 async function loadInvoice() {
- const params = new URLSearchParams(location.search);
+  // ✅ التحقق من الصلاحيات
+  const permissions = currentUser?.permissions || [];
+  const isAdmin = permissions.includes('Admin');
+  
+  const canView = permissions.includes('ViewInvoice') || isAdmin;
+  const canEdit = permissions.includes('EditInvoice') || isAdmin;
+  const canCollect = permissions.includes('CollectInvoice') || isAdmin;
+  const canSave = permissions.includes('SaveInvoiceChanges') || isAdmin;
+  const canGeneratePDF = permissions.includes('GenerateInvoicePDF') || isAdmin;
+  
+  if (!canView) {
+    showAlert('⚠️ ليس لديك صلاحية عرض الفاتورة', '🔒', 
+      '<button class="btn btn-primary" onclick="goBack()">رجوع</button>'
+    );
+    return;
+  }
+
+  const params = new URLSearchParams(location.search);
   const voucherNo = params.get('voucherNo');
   let centerName = params.get('centerName');  
   if (!centerName && currentUser && currentUser.centerName) {
@@ -569,13 +610,12 @@ async function loadInvoice() {
     return; 
   }
   
-  
   sessionStorage.setItem('returnUrl', document.referrer || 'Dashboard.html');
   showLoader(true, 'جاري تحميل الفاتورة...');
   
   try {
     // ✅ جلب الفاتورة مع centerName
-     const invoiceResult = await jsonpRequest('getInvoiceByVoucher', { 
+    const invoiceResult = await jsonpRequest('getInvoiceByVoucher', { 
       voucherNo: voucherNo,
       centerName: centerName 
     });
@@ -588,17 +628,18 @@ async function loadInvoice() {
     document.getElementById('voucherDisplay').textContent = voucherNo;
     
     // ✅ جلب الموظفين من ملف المركز الخاص
-   let employees = [];
-if (currentInvoice.centerName) {
-  try {
-    employees = await jsonpRequest('getEmployeesByCenter', { 
-      centerName: currentInvoice.centerName 
-    });
-    allEmployees = Array.isArray(employees) ? employees : [];
-  } catch(e) {
-    console.warn('فشل جلب الموظفين:', e);
-  }
-}    
+    let employees = [];
+    if (currentInvoice.centerName) {
+      try {
+        employees = await jsonpRequest('getEmployeesByCenter', { 
+          centerName: currentInvoice.centerName 
+        });
+        allEmployees = Array.isArray(employees) ? employees : [];
+      } catch(e) {
+        console.warn('فشل جلب الموظفين:', e);
+      }
+    }    
+    
     // ✅ جلب بيانات الرحلات (من الملف الرئيسي - عامة)
     const [tripData, tripPricesData, uniqueTrips] = await Promise.all([
       jsonpRequest('getTripData', { tripName: currentInvoice.trip, currency: currentInvoice.invoiceCurrency || 'LE' }),
@@ -621,7 +662,7 @@ if (currentInvoice.centerName) {
         const price = tripPrices[i] || 0;
         return `<tr>
           <td style="font-weight:600">${esc(name)}</td>
-          <td><input type="number" id="qty_${i}" min="0" step="1" value="${qty}" oninput="updateItemTotal(${i}, ${price})" style="width:70px;text-align:center"></td>
+          <td><input type="number" id="qty_${i}" min="0" step="1" value="${qty}" oninput="updateItemTotal(${i}, ${price})" style="width:70px;text-align:center" ${canEdit ? '' : 'disabled'}></td>
           <td><input type="number" id="price_${i}" value="${price}" readonly style="background:#f1f5f9;width:80px;text-align:center"></td>
           <td><input type="number" id="total_${i}" value="${(qty * price).toFixed(2)}" readonly style="background:#f1f5f9;width:90px;text-align:center"></td>
         </tr>`;
@@ -632,8 +673,8 @@ if (currentInvoice.centerName) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const isPastDate = issueDate && issueDate < today;
-    const disablePayments = isPastDate;
-    const disableCollection = isPastDate || (currentInvoice.rest || 0) <= 0.01;
+    const disablePayments = isPastDate || !canEdit;
+    const disableCollection = isPastDate || (currentInvoice.rest || 0) <= 0.01 || !canCollect;
     const warnHtml = isPastDate ? `<div class="warning-bar">⚠️ تاريخ الفاتورة (${currentInvoice.issueDate}) قد مضى — لا يمكن تعديل المدفوعات.</div>` : '';
     
     // قائمة الموظفين لخيار المحصل
@@ -644,6 +685,14 @@ if (currentInvoice.centerName) {
       });
     }
     
+    // ✅ أزرار حسب الصلاحيات
+    const collectBtnHtml = canCollect ? 
+      `<button class="btn btn-success" id="collectionBtn" ${disableCollection ? 'disabled' : ''} onclick="openCollectionModal()">💰 تحصيل</button>` : '';
+    const saveBtnHtml = canSave ? 
+      `<button class="btn btn-primary" onclick="saveChanges()">💾 حفظ</button>` : '';
+    const pdfBtnHtml = canGeneratePDF ? 
+      `<button class="btn btn-info" onclick="generatePDF()" style="background:#3b82f6;color:white;">📄 PDF</button>` : '';
+    
     const formHtml = `
       ${warnHtml}
       <input type="hidden" id="centerName" value="${esc(currentInvoice.centerName || '')}">
@@ -652,9 +701,9 @@ if (currentInvoice.centerName) {
         <div class="card-header">👤 بيانات العميل</div>
         <div class="card-body">
           <div class="form-grid">
-            <div><label>الهاتف</label><input type="text" id="contactNo" value="${esc(currentInvoice.contactNo)}"></div>
-            <div><label>الاسم</label><input type="text" id="guestName" value="${esc(currentInvoice.guestName)}"></div>
-            <div><label>الجنسية</label><input type="text" id="nationality" value="${esc(currentInvoice.nationality)}"></div>
+            <div><label>الهاتف</label><input type="text" id="contactNo" value="${esc(currentInvoice.contactNo)}" ${canEdit ? '' : 'disabled'}></div>
+            <div><label>الاسم</label><input type="text" id="guestName" value="${esc(currentInvoice.guestName)}" ${canEdit ? '' : 'disabled'}></div>
+            <div><label>الجنسية</label><input type="text" id="nationality" value="${esc(currentInvoice.nationality)}" ${canEdit ? '' : 'disabled'}></div>
           </div>
         </div>
       </div>
@@ -663,23 +712,23 @@ if (currentInvoice.centerName) {
         <div class="card-header">🏝️ تفاصيل الرحلة</div>
         <div class="card-body">
           <div class="hotel-row">
-            <div><label>الفندق</label><input type="text" id="hotel" value="${esc(currentInvoice.hotel)}"></div>
-            <div><label>الغرفة</label><input type="text" id="roomNo" value="${esc(currentInvoice.roomNo)}"></div>
-            <div><label>بالغين</label><input type="number" id="adultCount" value="${dV(currentInvoice.adultCount)}"></div>
-            <div><label>أطفال</label><input type="number" id="childCount" value="${dV(currentInvoice.childCount)}"></div>
-            <div><label>رضع</label><input type="number" id="infantCount" value="${dV(currentInvoice.infantCount)}"></div>
+            <div><label>الفندق</label><input type="text" id="hotel" value="${esc(currentInvoice.hotel)}" ${canEdit ? '' : 'disabled'}></div>
+            <div><label>الغرفة</label><input type="text" id="roomNo" value="${esc(currentInvoice.roomNo)}" ${canEdit ? '' : 'disabled'}></div>
+            <div><label>بالغين</label><input type="number" id="adultCount" value="${dV(currentInvoice.adultCount)}" ${canEdit ? '' : 'disabled'}></div>
+            <div><label>أطفال</label><input type="number" id="childCount" value="${dV(currentInvoice.childCount)}" ${canEdit ? '' : 'disabled'}></div>
+            <div><label>رضع</label><input type="number" id="infantCount" value="${dV(currentInvoice.infantCount)}" ${canEdit ? '' : 'disabled'}></div>
           </div>
           <div class="form-grid">
-            <div><label>تاريخ التنفيذ</label><input type="date" id="activeDate" value="${dateToInput(currentInvoice.activeDate)}" onchange="updateTotals()"></div>
-            <div><label>الوقت</label><input type="text" id="tripTime" value="${currentInvoice.time || ''}" placeholder="--:--"></div>
-            <div><label>عملة الفاتورة</label><select id="invoiceCurrency" onchange="changeTrip()">
+            <div><label>تاريخ التنفيذ</label><input type="date" id="activeDate" value="${dateToInput(currentInvoice.activeDate)}" onchange="updateTotals()" ${canEdit ? '' : 'disabled'}></div>
+            <div><label>الوقت</label><input type="text" id="tripTime" value="${currentInvoice.time || ''}" placeholder="--:--" ${canEdit ? '' : 'disabled'}></div>
+            <div><label>عملة الفاتورة</label><select id="invoiceCurrency" onchange="changeTrip()" ${canEdit ? '' : 'disabled'}>
               <option value="$" ${currentInvoice.invoiceCurrency === '$' ? 'selected' : ''}>USD</option>
               <option value="€" ${currentInvoice.invoiceCurrency === '€' ? 'selected' : ''}>EUR</option>
               <option value="£" ${currentInvoice.invoiceCurrency === '£' ? 'selected' : ''}>GBP</option>
               <option value="LE" ${currentInvoice.invoiceCurrency === 'LE' ? 'selected' : ''}>EGP</option>
             </select></div>
           </div>
-          <div><label>الرحلة</label><select id="tripName" onchange="changeTrip()">${tripsOpts}</select></div>
+          <div><label>الرحلة</label><select id="tripName" onchange="changeTrip()" ${canEdit ? '' : 'disabled'}>${tripsOpts}</select></div>
           <div class="trip-table">
             <table>
               <thead>
@@ -702,7 +751,7 @@ if (currentInvoice.centerName) {
         <div class="card-header">💰 المدفوعات</div>
         <div class="card-body">
           <div class="totals-strip">
-            <div class="total-item"><div class="label">الخصم</div><input type="number" id="discount" step="0.01" value="${dV(currentInvoice.discount)}" oninput="updateTotals()"></div>
+            <div class="total-item"><div class="label">الخصم</div><input type="number" id="discount" step="0.01" value="${dV(currentInvoice.discount)}" oninput="updateTotals()" ${canEdit ? '' : 'disabled'}></div>
             <div class="total-item"><div class="label">الإجمالي</div><div class="value" id="displayActualPrice">${(currentInvoice.actualPrice || 0).toFixed(2)}</div></div>
             <div class="total-item"><div class="label">المدفوع</div><div class="value" id="displayPaymentPrice">${(currentInvoice.paymentPrice || 0).toFixed(2)}</div></div>
             <div class="total-item"><div class="label">المتبقي</div><div class="value" id="displayRest">${(currentInvoice.rest || 0).toFixed(2)}</div></div>
@@ -719,7 +768,7 @@ if (currentInvoice.centerName) {
             <div class="payment-card"><label>Visa GBP</label><input type="number" id="visaGBP" step="0.01" value="${dV(currentInvoice.visaGBP)}" oninput="updateTotals()" ${disablePayments ? 'disabled' : ''}></div>
             <div class="payment-card"><label>Visa EGP</label><input type="number" id="visaLE" step="0.01" value="${dV(currentInvoice.visaLE)}" oninput="updateTotals()" ${disablePayments ? 'disabled' : ''}></div>
           </div></div>
-          <div style="margin-top:12px"><label>ملاحظات</label><textarea id="notes" rows="2">${esc(currentInvoice.notes)}</textarea></div>
+          <div style="margin-top:12px"><label>ملاحظات</label><textarea id="notes" rows="2" ${canEdit ? '' : 'disabled'}>${esc(currentInvoice.notes)}</textarea></div>
         </div>
       </div>
       
@@ -729,7 +778,7 @@ if (currentInvoice.centerName) {
           <div class="form-grid">
             <div><label>المنفذ</label><input type="text" id="supplier" value="${esc(currentInvoice.supplier)}" readonly></div>
             <div><label>العميل</label><input type="text" id="customer" value="${esc(currentInvoice.customer)}" readonly></div>
-            <div><label>الحالة</label><select id="state">
+            <div><label>الحالة</label><select id="state" ${canEdit ? '' : 'disabled'}>
               <option value="pending" ${currentInvoice.state === 'pending' ? 'selected' : ''}>⏳ قيد الانتظار</option>
               <option value="Confirmed" ${(currentInvoice.state === 'Confirmed' || currentInvoice.state === 'confirmed') ? 'selected' : ''}>✅ مؤكد</option>
               <option value="cancel" ${currentInvoice.state === 'cancel' ? 'selected' : ''}>❌ ملغي</option>
@@ -738,9 +787,10 @@ if (currentInvoice.centerName) {
         </div>
       </div>
       
-      <div style="display:flex; gap:10px; justify-content:center; margin-top:20px">
-        <button class="btn btn-success" id="collectionBtn" ${disableCollection ? 'disabled' : ''} onclick="openCollectionModal()">💰 تحصيل</button>
-        <button class="btn btn-primary" onclick="saveChanges()">💾 حفظ</button>
+      <div style="display:flex; gap:10px; justify-content:center; margin-top:20px; flex-wrap:wrap;">
+        ${collectBtnHtml}
+        ${saveBtnHtml}
+        ${pdfBtnHtml}
         <button class="btn btn-danger" onclick="confirmExit()">❌ إلغاء</button>
       </div>
     `;
@@ -783,14 +833,22 @@ async function changeTrip() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  let ud = sessionStorage.getItem('currentUser');
-  if (!ud) {
-    const p = new URLSearchParams(location.search).get('user');
-    if (p) { ud = decodeURIComponent(p); sessionStorage.setItem('currentUser', ud); }
+  // ✅ استخدام Session API مع صلاحية 24 ساعة
+  const currentUserData = Session.getUser();
+  if (currentUserData) {
+    currentUser = currentUserData;
+    // ✅ استخدام ملف المركز الخاص
+    const centerName = currentUser.centerName || '';
+    if (centerName) {
+      sessionStorage.setItem('centerName', centerName);
+    }
+    loadInvoice();
+  } else {
+    // ❌ انتهت الجلسة أو غير موجودة
+    showAlert('⚠️ انتهت صلاحية الجلسة، يرجى تسجيل الدخول مرة أخرى', '⏰', 
+      '<button class="btn btn-primary" onclick="window.location.href=\'login.html\'">تسجيل الدخول</button>'
+    );
   }
-  if (!ud) { location.href = 'index.html'; return; }
-  try { currentUser = JSON.parse(ud); } catch { location.href = 'index.html'; return; }
-  loadInvoice();
 });
 
 window.goBack = goBack;
