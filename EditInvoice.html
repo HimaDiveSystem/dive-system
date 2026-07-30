@@ -783,15 +783,25 @@ async function loadInvoice() {
     const tripPrices = (tripPricesData?.prices) ? tripPricesData.prices : [];
     const tripsOpts = Array.isArray(uniqueTrips) ? uniqueTrips.map(t => `<option value="${esc(t.name)}" ${t.name === currentInvoice.trip ? 'selected' : ''}>${esc(t.name)}</option>`).join('') : '';
     
+    // ✅ ربط ديناميكي حسب أسماء البنود (بدون أسماء ثابتة)
     let tRows = '';
     if (tripData?.items && tripData.items.length > 0) {
-      const qtyFromInvoice = [
-        currentInvoice.sgl, currentInvoice.dbl, currentInvoice.trpl, currentInvoice.extra,
-        currentInvoice.camel, currentInvoice.dinner, currentInvoice.vipDinner,
-        currentInvoice.starGazing, currentInvoice.privateTrip, currentInvoice.privateTransfer
+      // ✅ الحقول المتوقعة من العمود H إلى Q في شيت Invoices
+      const invoiceFields = [
+        'sgl', 'dbl', 'trpl', 'extra', 
+        'camel', 'dinner', 'vipDinner', 
+        'starGazing', 'privateTrip', 'privateTransfer'
       ];
+      
+      // ✅ بناء خريطة ربط ديناميكية بين اسم البند والقيمة من currentInvoice
+      const qtyMap = {};
+      tripData.items.forEach((name, index) => {
+        const fieldName = invoiceFields[index] || '';
+        qtyMap[name] = currentInvoice[fieldName] || 0;
+      });
+      
       tRows = tripData.items.map((name, i) => {
-        const qty = qtyFromInvoice[i] || 0;
+        const qty = qtyMap[name] || 0;
         const price = tripPrices[i] || 0;
         return `<tr>
           <td style="font-weight:600">${esc(name)}</td>
@@ -802,43 +812,49 @@ async function loadInvoice() {
       }).join('');
     }
     
-const activeDate = parseDate(currentInvoice.activeDate);
-const today = new Date();
-today.setHours(0, 0, 0, 0);
-const isPastDate = activeDate && activeDate < today;
-
-// ✅ منع تعديل المدفوعات إذا مضى تاريخ التنفيذ
-const disablePayments = isPastDate || !canEdit;
-
-const restElement = document.getElementById('displayRest');
-const currentRest = restElement ? parseFloat(restElement.textContent) || 0 : (currentInvoice.rest || 0);
-
-currentInvoice.rest = currentRest;
-
-const disableCollection = (currentRest <= 0.01) || !canCollect;
-
-let collectionDisabledReason = '';
-if (currentRest <= 0.01) collectionDisabledReason = 'لا يوجد مبلغ متبقي';
-else if (!canCollect) collectionDisabledReason = 'ليس لديك صلاحية تحصيل';
-
-const warnHtml = isPastDate ? 
-  `<div class="warning-bar">⚠️ تاريخ التنفيذ (${currentInvoice.activeDate}) قد مضى — لا يمكن تعديل المدفوعات، ولكن يمكن التحصيل.</div>` : '';
-
-let collectorsOptions = '<option value="">-- اختر المحصل --</option>';
-if (allEmployees.length) {
-  allEmployees.forEach(emp => {
-    collectorsOptions += `<option value="${esc(emp.serial)}|${esc(emp.name)}">${esc(emp.name)} (${esc(emp.position || 'موظف')})</option>`;
-  });
-}
-
-const collectBtnHtml = (canCollect && currentRest > 0.01) ? 
-  `<button class="btn btn-success" id="collectionBtn" onclick="openCollectionModal()" title="${collectionDisabledReason}">💰 تحصيل (المتبقي: ${currentRest.toFixed(2)})</button>` : 
-  (canCollect ? `<button class="btn btn-success" id="collectionBtn" disabled style="opacity:0.5;cursor:not-allowed;" title="${collectionDisabledReason}">💰 تحصيل - ${collectionDisabledReason}</button>` : '');
-
-const saveBtnHtml = canSave ? 
-  `<button class="btn btn-primary" onclick="saveChanges()">💾 حفظ التعديلات</button>` : '';
+    // ✅ تصحيح منطق التاريخ - استخدام activeDate وليس issueDate
+    const activeDate = parseDate(currentInvoice.activeDate);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const isPastDate = activeDate && activeDate < today;
     
-   
+    // ✅ منع تعديل المدفوعات إذا مضى تاريخ التنفيذ
+    const disablePayments = isPastDate || !canEdit;
+    
+    // ✅ قراءة المتبقي من DOM بعد updateTotals()
+    const restElement = document.getElementById('displayRest');
+    const currentRest = restElement ? parseFloat(restElement.textContent) || 0 : (currentInvoice.rest || 0);
+    
+    // ✅ تحديث currentInvoice.rest بالقيمة الصحيحة
+    currentInvoice.rest = currentRest;
+    
+    const disableCollection = (currentRest <= 0.01) || !canCollect;
+    
+    // ✅ رسالة توضيحية لسبب تعطيل التحصيل
+    let collectionDisabledReason = '';
+    if (currentRest <= 0.01) collectionDisabledReason = 'لا يوجد مبلغ متبقي';
+    else if (!canCollect) collectionDisabledReason = 'ليس لديك صلاحية تحصيل';
+    
+    // ✅ رسالة تحذيرية إذا مضى تاريخ التنفيذ
+    const warnHtml = isPastDate ? 
+      `<div class="warning-bar">⚠️ تاريخ التنفيذ (${currentInvoice.activeDate}) قد مضى — لا يمكن تعديل المدفوعات، ولكن يمكن التحصيل.</div>` : '';
+    
+    // قائمة الموظفين لخيار المحصل
+    let collectorsOptions = '<option value="">-- اختر المحصل --</option>';
+    if (allEmployees.length) {
+      allEmployees.forEach(emp => {
+        collectorsOptions += `<option value="${esc(emp.serial)}|${esc(emp.name)}">${esc(emp.name)} (${esc(emp.position || 'موظف')})</option>`;
+      });
+    }
+    
+    // ✅ أزرار حسب الصلاحيات
+    const collectBtnHtml = (canCollect && currentRest > 0.01) ? 
+      `<button class="btn btn-success" id="collectionBtn" onclick="openCollectionModal()" title="${collectionDisabledReason}">💰 تحصيل (المتبقي: ${currentRest.toFixed(2)})</button>` : 
+      (canCollect ? `<button class="btn btn-success" id="collectionBtn" disabled style="opacity:0.5;cursor:not-allowed;" title="${collectionDisabledReason}">💰 تحصيل - ${collectionDisabledReason}</button>` : '');
+    
+    const saveBtnHtml = canSave ? 
+      `<button class="btn btn-primary" onclick="saveChanges()">💾 حفظ التعديلات</button>` : '';
+    
     const pdfBtnHtml = '';
     
     const formHtml = `
