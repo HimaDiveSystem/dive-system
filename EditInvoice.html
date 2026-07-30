@@ -367,14 +367,22 @@ function updateItemTotal(idx, price) {
 
 let currentCollectionRest = 0;
 async function openCollectionModal() {
-  if (!currentInvoice) return;
+  if (!currentInvoice) {
+    showAlert('⚠️ لا توجد فاتورة حالية');
+    return;
+  }
+  
   const rest = parseFloat(document.getElementById('displayRest')?.textContent) || 0;
-  if (rest <= 0.01) { showAlert('لا يوجد مبلغ متبقي للتحصيل'); return; }
+  if (rest <= 0.01) { 
+    showAlert('💰 لا يوجد مبلغ متبقي للتحصيل'); 
+    return; 
+  }
+  
   currentCollectionRest = rest;
   
-  // ✅ استخدام allEmployees الذي تم جلبه مسبقاً
+  // ✅ التأكد من وجود allEmployees
   let collectorsOptions = '<option value="">-- اختر المحصل --</option>';
-  if (allEmployees.length) {
+  if (allEmployees && allEmployees.length) {
     allEmployees.forEach(emp => {
       collectorsOptions += `<option value="${esc(emp.serial)}|${esc(emp.name)}">${esc(emp.name)} (${esc(emp.position || 'موظف')})</option>`;
     });
@@ -415,7 +423,34 @@ async function openCollectionModal() {
   document.getElementById('collectionModal').classList.add('open');
   updateCollectionSummary();
 }
-
+// ✅ دالة إنشاء PDF
+async function generatePDF() {
+  if (!currentInvoice) {
+    showAlert('⚠️ لا توجد فاتورة');
+    return;
+  }
+  
+  showLoader(true, 'جاري إنشاء PDF...');
+  try {
+    const result = await gas('saveAndGenerateSinglePDF_New', {
+      voucherNo: currentInvoice.voucherNo,
+      prices: JSON.stringify(currentInvoice.tripPrices || []),
+      total: currentInvoice.actualPrice || 0,
+      centerName: currentInvoice.centerName || currentUser?.centerName || ''
+    });
+    
+    showLoader(false);
+    
+    if (result?.success && result?.url) {
+      window.open(result.url, '_blank');
+    } else {
+      showAlert('❌ فشل إنشاء PDF: ' + (result?.message || 'خطأ غير معروف'));
+    }
+  } catch(err) {
+    showLoader(false);
+    showAlert('❌ خطأ: ' + err.message);
+  }
+}
 async function updateCollectionSummary() {
   const currency = currentInvoice?.invoiceCurrency || 'LE';
   const activeDate = document.getElementById('activeDate')?.value;
@@ -746,14 +781,17 @@ async function loadInvoice() {
       });
     }
     
-    // ✅ أزرار حسب الصلاحيات
+        // ✅ أزرار حسب الصلاحيات
     const collectBtnHtml = canCollect ? 
       `<button class="btn btn-success" id="collectionBtn" ${disableCollection ? 'disabled' : ''} onclick="openCollectionModal()">💰 تحصيل</button>` : '';
-    const saveBtnHtml = canSave ? 
-      `<button class="btn btn-primary" onclick="saveChanges()">💾 حفظ</button>` : '';
-    const pdfBtnHtml = canGeneratePDF ? 
-      `<button class="btn btn-info" onclick="generatePDF()" style="background:#3b82f6;color:white;">📄 PDF</button>` : '';
     
+    const saveBtnHtml = canSave ? 
+      `<button class="btn btn-primary" onclick="saveChanges()">💾 حفظ التعديلات</button>` : '';
+    
+    const pdfBtnHtml = canGeneratePDF ? 
+      `<button class="btn btn-info" onclick="generatePDF()" style="background:#3b82f6;color:white;border:none;padding:10px 20px;border-radius:30px;font-weight:bold;cursor:pointer;">📄 PDF</button>` : '';
+    
+    // ✅ عرض الأزرار في الـ HTML
     const formHtml = `
       ${warnHtml}
       <input type="hidden" id="centerName" value="${esc(currentInvoice.centerName || '')}">
@@ -848,13 +886,13 @@ async function loadInvoice() {
         </div>
       </div>
       
-      <div style="display:flex; gap:10px; justify-content:center; margin-top:20px; flex-wrap:wrap;">
-        ${collectBtnHtml}
-        ${saveBtnHtml}
-        ${pdfBtnHtml}
-        <button class="btn btn-danger" onclick="confirmExit()">❌ إلغاء</button>
-      </div>
-    `;
+       <div style="display:flex; gap:10px; justify-content:center; margin-top:20px; flex-wrap:wrap;">
+      ${collectBtnHtml}
+      ${saveBtnHtml}
+      ${pdfBtnHtml}
+      <button class="btn btn-danger" onclick="confirmExit()">❌ إلغاء</button>
+    </div>
+  `;
     
     document.querySelector('.loader').style.display = 'none';
     document.getElementById('formContent').style.display = 'block';
@@ -925,6 +963,7 @@ window.submitCollection = submitCollection;
 window.updateCollectionSummary = updateCollectionSummary;
 window.changeTrip = changeTrip;
 window.confirmExit = confirmExit;
+window.generatePDF = generatePDF; 
 </script>
 </body>
 </html>
