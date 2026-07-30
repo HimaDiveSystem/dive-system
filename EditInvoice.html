@@ -672,14 +672,14 @@ async function loadInvoice() {
   const referrer = document.referrer || '';
   if (referrer && !referrer.includes('login.html') && !referrer.includes('index.html')) {
     sessionStorage.setItem('returnUrl', referrer);
-    // ✅ استخدام Session API إذا كانت موجودة
     if (typeof Session !== 'undefined' && Session.set) {
       Session.set('returnUrl', referrer);
     } else if (typeof Session !== 'undefined' && Session.save) {
       Session.save('returnUrl', referrer);
     }
   }
-  // ✅ التحقق من الصلاحيات - تصحيح الأسماء
+  
+  // ✅ التحقق من الصلاحيات
   const permissions = currentUser?.permissions || [];
   const isAdmin = permissions.includes('Admin');
   
@@ -687,14 +687,18 @@ async function loadInvoice() {
   const canView = permissions.includes('ViewInvoices') || permissions.includes('ViewInvoice') || isAdmin;
   const canEdit = permissions.includes('EditInvoice') || isAdmin;
   const canCollect = permissions.includes('CollectInvoice') || isAdmin;
-  const canSave = permissions.includes('SaveInvoiceChanges') || isAdmin;
-  const canGeneratePDF = permissions.includes('GenerateInvoicePDF') || isAdmin;
+  
+  // ✅ تعديل canSave - إذا كان لديه EditInvoice فله صلاحية الحفظ أيضاً
+  const canSave = permissions.includes('SaveInvoiceChanges') || 
+                  permissions.includes('EditInvoice') || 
+                  isAdmin;
   
   // ✅ عرض الصلاحيات في console للتأكد
   console.log('🔍 Permissions:', permissions);
   console.log('🔍 canView:', canView);
   console.log('🔍 canEdit:', canEdit);
   console.log('🔍 canCollect:', canCollect);
+  console.log('🔍 canSave:', canSave);
   
   if (!canView) {
     showAlert('⚠️ ليس لديك صلاحية عرض الفاتورة', '🔒', 
@@ -702,7 +706,6 @@ async function loadInvoice() {
     );
     return;
   }
-  
 
   const params = new URLSearchParams(location.search);
   const voucherNo = params.get('voucherNo');
@@ -746,7 +749,7 @@ async function loadInvoice() {
       }
     }    
     
-    // ✅ جلب بيانات الرحلات (من الملف الرئيسي - عامة)
+    // ✅ جلب بيانات الرحلات
     const [tripData, tripPricesData, uniqueTrips] = await Promise.all([
       jsonpRequest('getTripData', { tripName: currentInvoice.trip, currency: currentInvoice.invoiceCurrency || 'LE' }),
       jsonpRequest('getTripPrices', { tripName: currentInvoice.trip, currency: currentInvoice.invoiceCurrency || 'LE', category: '' }),
@@ -780,7 +783,17 @@ async function loadInvoice() {
     today.setHours(0, 0, 0, 0);
     const isPastDate = issueDate && issueDate < today;
     const disablePayments = isPastDate || !canEdit;
-    const disableCollection = isPastDate || (currentInvoice.rest || 0) <= 0.01 || !canCollect;
+    
+    // ✅ التحقق من المتبقي بشكل صحيح
+    const currentRest = currentInvoice.rest || 0;
+    const disableCollection = isPastDate || currentRest <= 0.01 || !canCollect;
+    
+    // ✅ رسالة توضيحية لسبب تعطيل التحصيل
+    let collectionDisabledReason = '';
+    if (isPastDate) collectionDisabledReason = 'تاريخ الفاتورة مضى';
+    else if (currentRest <= 0.01) collectionDisabledReason = 'لا يوجد مبلغ متبقي';
+    else if (!canCollect) collectionDisabledReason = 'ليس لديك صلاحية تحصيل';
+    
     const warnHtml = isPastDate ? `<div class="warning-bar">⚠️ تاريخ الفاتورة (${currentInvoice.issueDate}) قد مضى — لا يمكن تعديل المدفوعات.</div>` : '';
     
     // قائمة الموظفين لخيار المحصل
@@ -791,17 +804,19 @@ async function loadInvoice() {
       });
     }
     
-        // ✅ أزرار حسب الصلاحيات
-    const collectBtnHtml = canCollect ? 
-      `<button class="btn btn-success" id="collectionBtn" ${disableCollection ? 'disabled' : ''} onclick="openCollectionModal()">💰 تحصيل</button>` : '';
+    // ✅ أزرار حسب الصلاحيات
+    // ✅ زر التحصيل - يظهر فقط إذا كان هناك مبلغ متبقي ولديه صلاحية
+    const collectBtnHtml = (canCollect && currentRest > 0.01 && !isPastDate) ? 
+      `<button class="btn btn-success" id="collectionBtn" onclick="openCollectionModal()" title="${collectionDisabledReason}">💰 تحصيل (المتبقي: ${currentRest.toFixed(2)})</button>` : 
+      (canCollect ? `<button class="btn btn-success" id="collectionBtn" disabled style="opacity:0.5;cursor:not-allowed;" title="${collectionDisabledReason}">💰 تحصيل - ${collectionDisabledReason}</button>` : '');
     
+    // ✅ زر حفظ التعديلات - يظهر إذا كان لديه صلاحية
     const saveBtnHtml = canSave ? 
       `<button class="btn btn-primary" onclick="saveChanges()">💾 حفظ التعديلات</button>` : '';
     
-    const pdfBtnHtml = canGeneratePDF ? 
-      `<button class="btn btn-info" onclick="generatePDF()" style="background:#3b82f6;color:white;border:none;padding:10px 20px;border-radius:30px;font-weight:bold;cursor:pointer;">📄 PDF</button>` : '';
+    // ❌ حذف زر PDF تماماً (لا حاجة له)
+    const pdfBtnHtml = '';
     
-    // ✅ عرض الأزرار في الـ HTML
     const formHtml = `
       ${warnHtml}
       <input type="hidden" id="centerName" value="${esc(currentInvoice.centerName || '')}">
@@ -896,13 +911,12 @@ async function loadInvoice() {
         </div>
       </div>
       
-       <div style="display:flex; gap:10px; justify-content:center; margin-top:20px; flex-wrap:wrap;">
-      ${collectBtnHtml}
-      ${saveBtnHtml}
-      ${pdfBtnHtml}
-      <button class="btn btn-danger" onclick="confirmExit()">❌ إلغاء</button>
-    </div>
-  `;
+      <div style="display:flex; gap:10px; justify-content:center; margin-top:20px; flex-wrap:wrap;">
+        ${collectBtnHtml}
+        ${saveBtnHtml}
+        <button class="btn btn-danger" onclick="confirmExit()">❌ إلغاء</button>
+      </div>
+    `;
     
     document.querySelector('.loader').style.display = 'none';
     document.getElementById('formContent').style.display = 'block';
