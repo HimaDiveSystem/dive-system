@@ -209,11 +209,11 @@ function jsonpRequest(action, params = {}, isPost = false) {
     params.action = action;
     params.callback = cbName;
     
-    // ✅ زيادة المهلة لرفع الصور
+    // ✅ زيادة المهلة للـ POST (120 ثانية) والـ GET (25 ثانية)
     const timeoutMs = isPost ? 120000 : 25000;
     
     if (isPost) {
-      // POST: لرفع الصور والبيانات الكبيرة
+      // ✅ POST: لرفع الصور والبيانات الكبيرة
       const form = document.createElement('form');
       form.method = 'POST';
       form.action = GAS_URL;
@@ -267,7 +267,7 @@ function jsonpRequest(action, params = {}, isPost = false) {
       setTimeout(() => form.remove(), 1000);
       
     } else {
-      // GET: JSONP للطلبات الصغيرة
+      // ✅ GET: JSONP للطلبات الصغيرة
       const qs = Object.entries(params).map(([k, v]) => k + '=' + encodeURIComponent(String(v ?? ''))).join('&');
       const url = GAS_URL + '?' + qs;
       const script = document.createElement('script');
@@ -631,16 +631,16 @@ async function saveChanges() {
   console.log('🔵 editedData:', editedData);
   showLoader(true, 'جاري حفظ التعديلات وإنشاء PDF...');
   try {
-    // ✅ إضافة centerName صراحةً
-    const updateParams = { ...editedData, centerName: currentInvoice.centerName };
-    await gas('updateInvoice', updateParams);
-    await gas('copyInvoiceToEdit', {
+   const updateParams = { ...editedData, centerName: currentInvoice.centerName };
+    await jsonpRequest('updateInvoice', updateParams, true); // ✅ isPost = true
+    
+    await jsonpRequest('copyInvoiceToEdit', {
       originalData: JSON.stringify(originalInvoice),
       editedData: JSON.stringify(editedData),
       userId: currentUser?.id || '',
       editSummary: 'تعديل الفاتورة',
-      centerName: currentInvoice.centerName  // ✅ أضف هذا
-    });
+      centerName: currentInvoice.centerName
+    }, true); // ✅ isPost = true
     
     const pdfResult = await gas('saveAndGenerateSinglePDF_New', {
       voucherNo: editedData.voucherNo,
@@ -675,26 +675,33 @@ async function saveChanges() {
 
 async function loadInvoice() {
   // ✅ تخزين الصفحة السابقة في returnUrl قبل أي شيء
-   const referrer = document.referrer || '';
+  const referrer = document.referrer || '';
   
   // ✅ تحديد الصفحة السابقة بدقة
   let returnPage = 'AccountantDashboard.html';
   
   if (referrer) {
-    // استخراج اسم الملف من الرابط
-    const urlParts = referrer.split('/');
-    const fileName = urlParts[urlParts.length - 1].split('?')[0];
-    
-    // ✅ التحقق من أن الصفحة هي BookingsByActiveDate أو BookingsToday
-    if (fileName.includes('BookingsByActiveDate') || fileName.includes('BookingsToday')) {
-      returnPage = fileName;
-    } else if (fileName && !fileName.includes('login.html') && !fileName.includes('index.html')) {
-      returnPage = fileName;
+    try {
+      // استخراج اسم الملف من الرابط
+      const urlParts = referrer.split('/');
+      const fileName = urlParts[urlParts.length - 1].split('?')[0];
+      
+      // ✅ التحقق من أن الصفحة هي BookingsByActiveDate أو BookingsToday
+      if (fileName.includes('BookingsByActiveDate') || 
+          fileName.includes('BookingsToday') ||
+          fileName.includes('Bookings')) {
+        returnPage = fileName;
+      } else if (fileName && !fileName.includes('login.html') && !fileName.includes('index.html')) {
+        returnPage = fileName;
+      }
+    } catch(e) {
+      console.warn('⚠️ فشل استخراج اسم الملف:', e);
     }
   }
   
   // ✅ تخزين returnUrl
   sessionStorage.setItem('returnUrl', returnPage);
+  console.log('🔍 returnUrl:', returnPage);
   
   // ✅ التحقق من الصلاحيات
   const permissions = currentUser?.permissions || [];
@@ -795,23 +802,27 @@ async function loadInvoice() {
       }).join('');
     }
     
-    const issueDate = parseDate(currentInvoice.issueDate);
+    // ✅ تصحيح منطق التاريخ - استخدام activeDate وليس issueDate
+    const activeDate = parseDate(currentInvoice.activeDate);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const isPastDate = issueDate && issueDate < today;
+    const isPastDate = activeDate && activeDate < today;
+    
+    // ✅ منع تعديل المدفوعات إذا مضى تاريخ التنفيذ
     const disablePayments = isPastDate || !canEdit;
     
-    // ✅ التحقق من المتبقي بشكل صحيح
+    // ✅ التحصيل مسموح به دائماً طالما هناك مبلغ متبقي وصلاحية
     const currentRest = currentInvoice.rest || 0;
-    const disableCollection = isPastDate || currentRest <= 0.01 || !canCollect;
+    const disableCollection = (currentRest <= 0.01) || !canCollect;
     
-    // ✅ رسالة توضيحية لسبب تعطيل التحصيل
+    // ✅ رسالة توضيحية لسبب تعطيل التحصيل (إذا كان معطلاً)
     let collectionDisabledReason = '';
-    if (isPastDate) collectionDisabledReason = 'تاريخ الفاتورة مضى';
-    else if (currentRest <= 0.01) collectionDisabledReason = 'لا يوجد مبلغ متبقي';
+    if (currentRest <= 0.01) collectionDisabledReason = 'لا يوجد مبلغ متبقي';
     else if (!canCollect) collectionDisabledReason = 'ليس لديك صلاحية تحصيل';
     
-    const warnHtml = isPastDate ? `<div class="warning-bar">⚠️ تاريخ الفاتورة (${currentInvoice.issueDate}) قد مضى — لا يمكن تعديل المدفوعات.</div>` : '';
+    // ✅ رسالة تحذيرية إذا مضى تاريخ التنفيذ
+    const warnHtml = isPastDate ? 
+      `<div class="warning-bar">⚠️ تاريخ التنفيذ (${currentInvoice.activeDate}) قد مضى — لا يمكن تعديل المدفوعات، ولكن يمكن التحصيل.</div>` : '';
     
     // قائمة الموظفين لخيار المحصل
     let collectorsOptions = '<option value="">-- اختر المحصل --</option>';
@@ -822,16 +833,16 @@ async function loadInvoice() {
     }
     
     // ✅ أزرار حسب الصلاحيات
-    // ✅ زر التحصيل - يظهر فقط إذا كان هناك مبلغ متبقي ولديه صلاحية
-    const collectBtnHtml = (canCollect && currentRest > 0.01 && !isPastDate) ? 
+    // ✅ زر التحصيل - يظهر إذا كان هناك مبلغ متبقي ولديه صلاحية
+    const collectBtnHtml = (canCollect && currentRest > 0.01) ? 
       `<button class="btn btn-success" id="collectionBtn" onclick="openCollectionModal()" title="${collectionDisabledReason}">💰 تحصيل (المتبقي: ${currentRest.toFixed(2)})</button>` : 
       (canCollect ? `<button class="btn btn-success" id="collectionBtn" disabled style="opacity:0.5;cursor:not-allowed;" title="${collectionDisabledReason}">💰 تحصيل - ${collectionDisabledReason}</button>` : '');
     
-    // ✅ زر حفظ التعديلات - يظهر إذا كان لديه صلاحية
+    // ✅ زر حفظ التعديلات
     const saveBtnHtml = canSave ? 
       `<button class="btn btn-primary" onclick="saveChanges()">💾 حفظ التعديلات</button>` : '';
     
-    // ❌ حذف زر PDF تماماً (لا حاجة له)
+    // ❌ حذف زر PDF
     const pdfBtnHtml = '';
     
     const formHtml = `
@@ -947,6 +958,7 @@ async function loadInvoice() {
     showAlert('خطأ: ' + err.message, '<button class="btn btn-primary" onclick="goBack()">رجوع</button>');
   }
 }
+  
 async function changeTrip() {
   const newTrip = document.getElementById('tripName')?.value;
   const currency = document.getElementById('invoiceCurrency')?.value;
