@@ -188,6 +188,7 @@ function goBack() {
 // ============================================================
 // ✅ POST Request باستخدام fetch مع text/plain (يمنع CORS Preflight)
 // ============================================================
+// ✅ postRequest المعدلة
 async function postRequest(action, params = {}) {
   // إضافة centerName تلقائياً
   if (currentInvoice && currentInvoice.centerName && !params.centerName) {
@@ -197,12 +198,16 @@ async function postRequest(action, params = {}) {
     params.centerName = currentUser.centerName;
   }
   
+  // ✅ إضافة action كمعامل منفصل (ليس داخل params)
   params.action = action;
+  
+  console.log('📤 postRequest - action:', action);
+  console.log('📤 postRequest - params:', params);
   
   try {
     const response = await fetch(GAS_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, 
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify(params)
     });
     
@@ -210,13 +215,15 @@ async function postRequest(action, params = {}) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
     
-    return await response.json();
+    const result = await response.json();
+    console.log('📥 postRequest - result:', result);
+    return result;
+    
   } catch(err) {
     console.error('❌ postRequest error:', err);
     throw err;
   }
 }
-
 // ============================================================
 // ✅ JSONP Request (يدعم GET و POST عبر iframe)
 // ============================================================
@@ -633,8 +640,13 @@ async function collectEditedData() {
   const items = [];
   const tripPrices = [];
   
+  // ✅ قراءة الكميات من جدول الرحلات
+  const itemQtys = [];
   for (let i = 0; i < 20; i++) {
-    const qty = parseFloat(document.getElementById(`qty_${i}`)?.value) || 0;
+    const qtyEl = document.getElementById(`qty_${i}`);
+    const qty = qtyEl ? parseFloat(qtyEl.value) || 0 : 0;
+    itemQtys.push(qty);
+    
     if (qty > 0) {
       const nameEl = document.querySelector(`#itemsBody tr:nth-child(${i+1}) td:first-child`);
       const name = nameEl ? nameEl.textContent.trim() : `بند ${i+1}`;
@@ -644,6 +656,18 @@ async function collectEditedData() {
     const priceEl = document.getElementById(`price_${i}`);
     tripPrices.push(priceEl ? parseFloat(priceEl.value) || 0 : 0);
   }
+  
+  // ✅ تعيين الكميات من جدول الرحلات إلى الحقول الصحيحة (الأعمدة H-Q)
+  const sgl = itemQtys[0] || 0;
+  const dbl = itemQtys[1] || 0;
+  const trpl = itemQtys[2] || 0;
+  const extra = itemQtys[3] || 0;
+  const camel = itemQtys[4] || 0;
+  const dinner = itemQtys[5] || 0;
+  const vipDinner = itemQtys[6] || 0;
+  const starGazing = itemQtys[7] || 0;
+  const privateTrip = itemQtys[8] || 0;
+  const privateTransfer = itemQtys[9] || 0;
   
   return {
     voucherNo: currentInvoice.voucherNo,
@@ -657,9 +681,24 @@ async function collectEditedData() {
     roomNo: document.getElementById('roomNo')?.value || '',
     trip: document.getElementById('tripName')?.value || '',
     invoiceCurrency: document.getElementById('invoiceCurrency')?.value || '',
+    
+    // ✅ الكميات من جدول الرحلات (الأعمدة H-Q)
+    sgl: sgl,
+    dbl: dbl,
+    trpl: trpl,
+    extra: extra,
+    camel: camel,
+    dinner: dinner,
+    vipDinner: vipDinner,
+    starGazing: starGazing,
+    privateTrip: privateTrip,
+    privateTransfer: privateTransfer,
+    
+    // ✅ الأعداد المنفصلة (العمود 48-50)
     adultCount: parseInt(document.getElementById('adultCount')?.value) || 0,
     childCount: parseInt(document.getElementById('childCount')?.value) || 0,
     infantCount: parseInt(document.getElementById('infantCount')?.value) || 0,
+    
     cashUSD: parseFloat(document.getElementById('cashUSD')?.value) || 0,
     cashEUR: parseFloat(document.getElementById('cashEUR')?.value) || 0,
     cashGBP: parseFloat(document.getElementById('cashGBP')?.value) || 0,
@@ -688,101 +727,70 @@ async function collectEditedData() {
 }
 
 async function shareInvoiceWhatsApp(voucherNo) {
-  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-
-  let waWindow = null;
-  if (!isMobile) {
-    waWindow = window.open('', 'diveSystemWhatsApp');
-    if (waWindow) {
-      try {
-        waWindow.document.write('<div style="font-family:sans-serif;padding:30px;text-align:center;color:#334155">⏳ جاري تجهيز رسالة واتساب...</div>');
-      } catch(e) {}
-    }
-  }
-
-  showLoader(true, '📱 جاري تجهيز واتساب...');
-
   try {
-    // ✅ استخدام postRequest لجلب الفاتورة
-    const invoice = await postRequest('getInvoiceByVoucher', {
+    showLoader(true, '📱 جاري تجهيز واتساب...');
+    
+    const invoice = await postRequest('getInvoiceByVoucher', { 
       voucherNo: voucherNo,
-      centerName: currentInvoice?.centerName || currentUser?.centerName
+      centerName: currentInvoice?.centerName || currentUser?.centerName 
     });
-
+    
     if (!invoice?.success) {
       showLoader(false);
-      if (waWindow && !waWindow.closed) waWindow.close();
       showAlert('❌ الفاتورة غير موجودة', '❌');
       return;
     }
-
+    
     const data = invoice.invoice;
-    const centerName = data.centerName || currentUser?.centerName || 'مركز الغوص';
-
+    const centerName = data.centerName || currentUser?.centerName || 'Scorpion Diving Center';
+    
     // ✅ تنظيف رقم الهاتف
     let phone = data.contactNo || '';
     phone = phone.replace(/[^0-9+]/g, '');
     if (phone.startsWith('0')) phone = '20' + phone.substring(1);
     if (!phone.startsWith('+')) phone = '+' + phone;
-    phone = phone.replace('+', ''); // wa.me لا يحتاج +
-
-    if (!phone) {
+    
+    if (!phone || phone === '+') {
       showLoader(false);
-      if (waWindow && !waWindow.closed) waWindow.close();
       showAlert('❌ لا يوجد رقم هاتف', '❌');
       return;
     }
-
+    
     const pdfUrl = data.invoicePdf || '';
-    const pdfLink = pdfUrl ? `%0A%0A📄 *رابط PDF:* ${pdfUrl}` : '';
-
-  const messageEn =
-  `Dear ${data.guestName || 'Guest'},%0A%0A` +
-  `Thank you for booking with ${centerName}.%0A%0A` +
-  `*Booking Confirmation*%0A` +
-  `Voucher No: ${data.voucherNo || ''}%0A` +
-  `Trip: ${data.trip || ''}%0A` +
-  `Date: ${data.activeDate || ''}${data.time ? ' at ' + data.time : ''}%0A` +
-  `Total Amount: ${data.actualPrice || 0} ${data.invoiceCurrency || 'USD'}%0A` +
-  `Balance Due: ${data.rest || 0} ${data.invoiceCurrency || 'USD'}%0A` +
-  `${pdfUrl ? '%0A📄 *PDF Link:* ' + pdfUrl : ''}%0A%0A` +
-  `We look forward to welcoming you soon! 🙏`;
-
+    const pdfLink = pdfUrl ? `%0A%0A📄 *PDF Link:* ${pdfUrl}` : '';
+    
+    // ✅ تعريف message (باللغة الإنجليزية)
+    const message = 
+      `Dear ${data.guestName || 'Guest'},%0A%0A` +
+      `Thank you for booking with ${centerName}.%0A%0A` +
+      `*Booking Confirmation*%0A` +
+      `Voucher No: ${data.voucherNo || ''}%0A` +
+      `Trip: ${data.trip || ''}%0A` +
+      `Date: ${data.activeDate || ''}${data.time ? ' at ' + data.time : ''}%0A` +
+      `Total Amount: ${data.actualPrice || 0} ${data.invoiceCurrency || 'USD'}%0A` +
+      `Balance Due: ${data.rest || 0} ${data.invoiceCurrency || 'USD'}%0A` +
+      `${pdfLink}%0A%0A` +
+      `We look forward to welcoming you soon! 🙏`;
+    
     const waAppUrl = `whatsapp://send?phone=${phone}&text=${message}`;
     const waWebUrl = `https://wa.me/${phone}?text=${message}`;
-
+    
     showLoader(false);
-
-    if (isMobile) {
-      // ✅ على الموبايل: نحاول فتح التطبيق أولاً
+    
+    if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
       window.location.href = waAppUrl;
       setTimeout(() => {
         if (!document.hidden) {
-          window.location.href = waWebUrl;
+          window.open(waWebUrl, '_blank');
         }
       }, 1500);
     } else {
-      // ✅ إعادة استخدام نفس التبويب (إن كان لا يزال مفتوحاً)
-      if (waWindow && !waWindow.closed) {
-        waWindow.location.href = waWebUrl;
-        waWindow.focus();
-      } else {
-        const fallbackWin = window.open(waWebUrl, 'diveSystemWhatsApp');
-        if (!fallbackWin) {
-          // ✅ المتصفح حظر النافذة — نعرض الرابط للنسخ
-          showAlert(
-            '⚠️ المتصفح منع فتح نافذة واتساب.<br>يرجى السماح بالنوافذ المنبثقة لهذا الموقع، أو انسخ الرابط التالي وافتحه يدوياً:<br><br>' +
-            `<input readonly style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px" value="${waWebUrl}" onclick="this.select()">`,
-            '⚠️'
-          );
-        }
-      }
+      window.open(waWebUrl, '_blank');
     }
-
+    
   } catch(err) {
     console.error('❌ shareInvoiceWhatsApp error:', err);
     showLoader(false);
-    if (waWindow && !waWindow.closed) waWindow.close();
     showAlert('❌ خطأ: ' + err.message, '❌');
   }
 }
@@ -820,17 +828,17 @@ async function shareInvoiceWhatsApp(voucherNo) {
     });
     
     showLoader(true, '📄 جاري إنشاء PDF...');
-    const pdfResult = await postRequest('saveAndGenerateSinglePDF_New', {
-      voucherNo: editedData.voucherNo,
-      prices: JSON.stringify(editedData.tripPrices || []),
-      total: editedData.actualPrice || 0,
-      centerName: currentInvoice.centerName || currentUser?.centerName || ''
-    });
-    
-    showLoader(false);
-    
-    let pdfUrl = (pdfResult && pdfResult.success && pdfResult.url) ? pdfResult.url : '';
-    console.log('📄 PDF URL from server:', pdfUrl);
+  const pdfResult = await postRequest('saveAndGenerateSinglePDF_New', {
+  voucherNo: editedData.voucherNo,
+  prices: JSON.stringify(editedData.tripPrices || []),
+  total: editedData.actualPrice || 0,
+  centerName: currentInvoice.centerName || currentUser?.centerName || ''
+});
+
+console.log('📄 pdfResult:', pdfResult);  // ✅ أضف هذا للتحقق
+
+let pdfUrl = (pdfResult && pdfResult.success && pdfResult.url) ? pdfResult.url : '';
+console.log('📄 PDF URL from server:', pdfUrl);
     
     const voucherNo = editedData.voucherNo;
     const waBtn = `<button class="btn btn-success" onclick="shareInvoiceWhatsApp('${voucherNo}')" style="margin:5px;background:#25D366;color:white;border:none;padding:10px 20px;border-radius:30px;font-weight:bold;cursor:pointer;">📱 واتساب</button>`;
