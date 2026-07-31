@@ -430,15 +430,15 @@ async function uploadSignatureImage(signatureData) {
 // ✅ دالة إنشاء PDF
 // ============================================================
 // ✅ دالة إنشاء PDF (باستخدام POST)
+// ✅ دالة إنشاء PDF (باستخدام POST)
 async function generatePDF() {
   if (!currentInvoice) {
     showAlert('⚠️ لا توجد فاتورة');
     return;
   }
   
-  showLoader(true, 'جاري إنشاء PDF...');
+  showLoader(true, '📄 جاري إنشاء PDF...');
   try {
-    // ✅ استخدام postRequest بدلاً من jsonpRequest
     const result = await postRequest('saveAndGenerateSinglePDF_New', {
       voucherNo: currentInvoice.voucherNo,
       prices: JSON.stringify(currentInvoice.tripPrices || []),
@@ -449,6 +449,7 @@ async function generatePDF() {
     showLoader(false);
     
     if (result?.success && result?.url) {
+      // ✅ فتح PDF في نافذة جديدة
       window.open(result.url, '_blank');
     } else {
       showAlert('❌ فشل إنشاء PDF: ' + (result?.message || 'خطأ غير معروف'));
@@ -690,41 +691,56 @@ async function collectEditedData() {
   };
 }
 
-// ✅ دالة إرسال الفاتورة عبر واتساب
 async function shareInvoiceWhatsApp(voucherNo) {
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+  let waWindow = null;
+  if (!isMobile) {
+    waWindow = window.open('', 'diveSystemWhatsApp');
+    if (waWindow) {
+      try {
+        waWindow.document.write('<div style="font-family:sans-serif;padding:30px;text-align:center;color:#334155">⏳ جاري تجهيز رسالة واتساب...</div>');
+      } catch(e) {}
+    }
+  }
+
+  showLoader(true, '📱 جاري تجهيز واتساب...');
+
   try {
-    showLoader(true, '📱 جاري تجهيز واتساب...');
-    
-    // ✅ استخدام postRequest بدلاً من jsonpRequest
-    const invoice = await postRequest('getInvoiceByVoucher', { 
+    // ✅ استخدام postRequest لجلب الفاتورة
+    const invoice = await postRequest('getInvoiceByVoucher', {
       voucherNo: voucherNo,
-      centerName: currentInvoice?.centerName || currentUser?.centerName 
+      centerName: currentInvoice?.centerName || currentUser?.centerName
     });
-    
+
     if (!invoice?.success) {
       showLoader(false);
+      if (waWindow && !waWindow.closed) waWindow.close();
       showAlert('❌ الفاتورة غير موجودة', '❌');
       return;
     }
-    
+
     const data = invoice.invoice;
     const centerName = data.centerName || currentUser?.centerName || 'مركز الغوص';
-    
+
+    // ✅ تنظيف رقم الهاتف
     let phone = data.contactNo || '';
     phone = phone.replace(/[^0-9+]/g, '');
     if (phone.startsWith('0')) phone = '20' + phone.substring(1);
     if (!phone.startsWith('+')) phone = '+' + phone;
-    
-    if (!phone || phone === '+') {
+    phone = phone.replace('+', ''); // wa.me لا يحتاج +
+
+    if (!phone) {
       showLoader(false);
+      if (waWindow && !waWindow.closed) waWindow.close();
       showAlert('❌ لا يوجد رقم هاتف', '❌');
       return;
     }
-    
+
     const pdfUrl = data.invoicePdf || '';
     const pdfLink = pdfUrl ? `%0A%0A📄 *رابط PDF:* ${pdfUrl}` : '';
-    
-    const message = 
+
+    const message =
       `مرحباً ${data.guestName || 'العميل'}،%0A%0A` +
       `شكراً لحجزك مع ${centerName}.%0A%0A` +
       `*تأكيد الحجز*%0A` +
@@ -735,37 +751,49 @@ async function shareInvoiceWhatsApp(voucherNo) {
       `المتبقي: ${data.rest || 0} ${data.invoiceCurrency || 'USD'}%0A` +
       `${pdfLink}%0A%0A` +
       `نحن في انتظاركم! 🙏`;
-    
+
     const waAppUrl = `whatsapp://send?phone=${phone}&text=${message}`;
     const waWebUrl = `https://wa.me/${phone}?text=${message}`;
-    
+
     showLoader(false);
-    
-    if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+
+    if (isMobile) {
+      // ✅ على الموبايل: نحاول فتح التطبيق أولاً
       window.location.href = waAppUrl;
       setTimeout(() => {
         if (!document.hidden) {
-          window.open(waWebUrl, '_blank');
+          window.location.href = waWebUrl;
         }
-      }, 2000);
+      }, 1500);
     } else {
-      window.open(waWebUrl, '_blank');
+      // ✅ إعادة استخدام نفس التبويب (إن كان لا يزال مفتوحاً)
+      if (waWindow && !waWindow.closed) {
+        waWindow.location.href = waWebUrl;
+        waWindow.focus();
+      } else {
+        const fallbackWin = window.open(waWebUrl, 'diveSystemWhatsApp');
+        if (!fallbackWin) {
+          // ✅ المتصفح حظر النافذة — نعرض الرابط للنسخ
+          showAlert(
+            '⚠️ المتصفح منع فتح نافذة واتساب.<br>يرجى السماح بالنوافذ المنبثقة لهذا الموقع، أو انسخ الرابط التالي وافتحه يدوياً:<br><br>' +
+            `<input readonly style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px" value="${waWebUrl}" onclick="this.select()">`,
+            '⚠️'
+          );
+        }
+      }
     }
-    
+
   } catch(err) {
     console.error('❌ shareInvoiceWhatsApp error:', err);
     showLoader(false);
+    if (waWindow && !waWindow.closed) waWindow.close();
     showAlert('❌ خطأ: ' + err.message, '❌');
   }
 }
 
-// ============================================================
-// ✅ دالة حفظ التعديلات (باستخدام POST)
-// ============================================================
-async function saveChanges() {
+  async function saveChanges() {
   console.log('🔵 saveChanges - START');
   
-  // ✅ التحقق من الصلاحية
   if (!canSave) {
     showAlert('⚠️ ليس لديك صلاحية حفظ التعديلات', '🔒');
     return;
@@ -776,20 +804,17 @@ async function saveChanges() {
   showLoader(true, 'جاري حفظ التعديلات وإنشاء PDF...');
   
   try {
-    // ✅ إضافة centerName
     const updateParams = { 
       ...editedData, 
       centerName: currentInvoice.centerName || currentUser?.centerName || ''
     };
     
-    // ✅ استخدام POST لحفظ التعديلات
     const updateResult = await postRequest('updateInvoice', updateParams);
     
     if (!updateResult?.success) {
       throw new Error(updateResult?.message || 'فشل حفظ التعديلات');
     }
     
-    // ✅ تسجيل التعديلات
     await postRequest('copyInvoiceToEdit', {
       originalData: JSON.stringify(originalInvoice),
       editedData: JSON.stringify(editedData),
@@ -798,7 +823,6 @@ async function saveChanges() {
       centerName: currentInvoice.centerName || currentUser?.centerName || ''
     });
     
-    // ✅ إنشاء PDF جديد (استخدام POST)
     showLoader(true, '📄 جاري إنشاء PDF...');
     const pdfResult = await postRequest('saveAndGenerateSinglePDF_New', {
       voucherNo: editedData.voucherNo,
@@ -809,12 +833,16 @@ async function saveChanges() {
     
     showLoader(false);
     
-    let pdfUrl = (pdfResult && pdfResult.url) ? pdfResult.url : '';
+    let pdfUrl = (pdfResult && pdfResult.success && pdfResult.url) ? pdfResult.url : '';
     console.log('📄 PDF URL from server:', pdfUrl);
     
     const voucherNo = editedData.voucherNo;
     const waBtn = `<button class="btn btn-success" onclick="shareInvoiceWhatsApp('${voucherNo}')" style="margin:5px;background:#25D366;color:white;border:none;padding:10px 20px;border-radius:30px;font-weight:bold;cursor:pointer;">📱 واتساب</button>`;
-    const pdfBtn = pdfUrl ? `<a href="${pdfUrl}" target="_blank" class="btn btn-primary" style="text-decoration:none; margin:5px;padding:10px 20px;border-radius:30px;background:#0f1f3d;color:#f5c842;font-weight:bold;">📄 PDF</a>` : '';
+    
+    // ✅ إذا لم يصل الرابط، أعطِ زر لإعادة توليد/فتح الـ PDF بدل إخفائه
+    const pdfBtn = pdfUrl 
+      ? `<a href="${pdfUrl}" target="_blank" class="btn btn-primary" style="text-decoration:none; margin:5px;padding:10px 20px;border-radius:30px;background:#0f1f3d;color:#f5c842;font-weight:bold;">📄 فتح PDF</a>`
+      : `<button class="btn btn-primary" onclick="generatePDF()" style="margin:5px;padding:10px 20px;border-radius:30px;background:#0f1f3d;color:#f5c842;font-weight:bold;cursor:pointer;">📄 إنشاء / فتح PDF</button>`;
     
     showAlert('✅ تم حفظ التعديلات بنجاح', '✅', 
       `${pdfBtn} ${waBtn} <button class="btn btn-primary" onclick="goBack()" style="margin:5px;padding:10px 20px;border-radius:30px;background:#0f1f3d;color:#f5c842;font-weight:bold;cursor:pointer;">🏠 رجوع</button>`
