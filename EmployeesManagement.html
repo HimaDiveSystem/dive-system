@@ -1091,13 +1091,81 @@ function displayFilteredTable() {
         <button class="btn-warning btn-sm" onclick="openEditModal('${emp.serial}')">✏️ تعديل</button>
         <button class="btn-primary btn-sm" onclick="viewHistory('${emp.serial}')">📜 سجل</button>
         ${showAtt ? `<button class="btn-info btn-sm" onclick="viewAttendance('${emp.serial}')">📅 حضور</button>` : ''}
+        <!-- ✅ زر واتساب - يظهر فقط إذا كان للموظف حساب ورقم هاتف -->
+        ${emp.hasAccount && emp.phone ? `<button class="btn-success btn-sm" onclick="sendLoginViaWhatsApp('${emp.serial}')" style="background:#25D366;color:white;border:none;padding:5px 12px;border-radius:20px;cursor:pointer;font-weight:600;font-size:11px;">📱 واتساب</button>` : ''}
       </td>
     </tr>`;
   });
   html += '</tbody></table></div>';
   document.getElementById('employeesTable').innerHTML = html;
 }
+/**
+ * ✅ إرسال بيانات الدخول عبر واتساب
+ */
+function sendLoginViaWhatsApp(serial) {
+  // ✅ تعطيل الزر مؤقتاً
+  const btn = event?.target;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ جاري...'; }
+  
+  try {
+    const emp = employees.find(e => e.serial === serial);
+    if (!emp) {
+      showToast('❌ الموظف غير موجود', 'error');
+      if (btn) { btn.disabled = false; btn.textContent = '📱 واتساب'; }
+      return;
+    }
+    
+    if (!emp.phone) {
+      showToast('⚠️ لا يوجد رقم هاتف للموظف', 'error');
+      if (btn) { btn.disabled = false; btn.textContent = '📱 واتساب'; }
+      return;
+    }
+    
+    if (!emp.hasAccount || !emp.email) {
+      showToast('⚠️ الموظف ليس لديه حساب نظام', 'error');
+      if (btn) { btn.disabled = false; btn.textContent = '📱 واتساب'; }
+      return;
+    }
+    
+    // ✅ تنسيق رقم الهاتف
+    let phone = emp.phone.replace(/[^0-9+]/g, '');
+    if (phone.startsWith('0')) phone = '20' + phone.substring(1);
+    if (!phone.startsWith('+')) phone = '+' + phone;
+    
+    // ✅ بناء الرسالة
+    const centerName = currentUser?.centerName || 'Dive Center';
+    const appUrl = window.location.origin + '/index.html';
+    
+    const msg = `🔐 *بيانات الدخول إلى نظام ${centerName}*
 
+👤 *الاسم:* ${emp.name}
+📧 *البريد الإلكتروني:* ${emp.email}
+🔑 *كلمة المرور:* ${emp.password || '123456'}
+
+📌 *الرقم الوظيفي:* ${emp.serial}
+🏢 *الوظيفة:* ${emp.position || 'موظف'}
+
+🔗 *رابط الدخول:* ${appUrl}
+
+⚠️ *يرجى تغيير كلمة المرور عند أول دخول.*`;
+
+    // ✅ فتح واتساب
+    const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+    window.open(url, '_blank');
+    
+    showToast(`📱 تم فتح واتساب لإرسال البيانات إلى ${emp.name}`, 'success');
+    
+  } catch(e) {
+    showToast('❌ خطأ: ' + e.message, 'error');
+    console.error('sendLoginViaWhatsApp error:', e);
+  } finally {
+    // ✅ إعادة تمكين الزر
+    if (btn) { 
+      btn.disabled = false; 
+      btn.textContent = '📱 واتساب'; 
+    }
+  }
+}
 function sortTable(col) {
   sortDirection = (sortColumn === col && sortDirection === 'asc') ? 'desc' : 'asc';
   sortColumn = col;
@@ -1169,72 +1237,95 @@ async function openAddModal() {
 // MODAL — فتح للتعديل
 // ══════════════════════════════════════════════════════════
 async function openEditModal(serial) {
-  const emp = employees.find(e => e.serial === serial);
-  if (!emp) return;
-  editingSerial = serial;
-
-  uploadedUrls = {
-    Employee: emp.imgPhoto || '',
-    IdFront: emp.imgIdFront || '',
-    IdBack: emp.imgIdBack || '',
-    Security: emp.imgSecurity || ''
-  };
-  pendingFiles = { Employee: null, IdFront: null, IdBack: null, Security: null };
-
-  resetForm();
-  document.getElementById('modalTitle').textContent = '✏️ تعديل بيانات الموظف';
-  document.getElementById('editBanner').style.display = 'block';
-  document.getElementById('editBannerName').textContent = emp.name + ' (' + emp.serial + ')';
-  document.getElementById('statusGroup').style.display = 'block';
-  document.getElementById('saveBtn').textContent = '💾 حفظ التعديلات';
-
-  await loadBranches();
-
-  document.getElementById('empName').value = emp.name || '';
-  document.getElementById('empPosition').value = emp.position || '';
-  selectedJobTitle = emp.position || '';
-  document.getElementById('empSalary').value = emp.monthlySalary || '';
-  document.getElementById('empPhone').value = emp.phone || '';
-  document.getElementById('empStartDate').value = toInputDate(emp.startDate);
-  document.getElementById('empPaymentSystem').value = emp.paymentSystem || 'مرتب فقط';
-  document.getElementById('empStatus').value = emp.status || 'نشط';
-  document.getElementById('empBranch').value = emp.branchId || '';
-
-  const hasAccount = emp.hasAccount && emp.email && emp.email.trim() !== '';
-  document.getElementById('empHasAccess').checked = hasAccount;
-  if (hasAccount) {
-    toggleSystemFields();
-    document.getElementById('empUsername').value = emp.username || '';
-    document.getElementById('empEmail').value = emp.email || '';
-    document.getElementById('empPassword').value = emp.password || '';
-    document.getElementById('empUserType').value = emp.userType || 'Employee';
-    document.getElementById('empAddress').value = emp.address || '';
-    document.getElementById('emailPreviewTxt').textContent = emp.email || '';
-    document.getElementById('emailInfo').classList.add('show');
+  // ✅ تعطيل زر التعديل
+  const btn = event?.target;
+  if (btn) { 
+    btn.disabled = true; 
+    btn.textContent = '⏳ جاري...'; 
   }
-
-  const icons = { Employee: '📸', IdFront: '🪪', IdBack: '🪪', Security: '🔍' };
-  Object.entries(uploadedUrls).forEach(([key, url]) => {
-    const prev = document.getElementById('prev' + key);
-    if (!prev) return;
-    if (url) {
-      prev.style.backgroundImage = `url("${getDriveDirectUrl(url)}")`;
-      prev.style.backgroundSize = 'contain';
-      prev.style.backgroundRepeat = 'no-repeat';
-      prev.style.backgroundPosition = 'center';
-      prev.classList.add('uploaded');
-      prev.innerHTML = '<div class="img-ok">✓ صورة محفوظة — اضغط للتغيير</div>';
-    } else {
-      prev.style.backgroundImage = '';
-      prev.classList.remove('uploaded');
-      prev.innerHTML = `<span class="img-ico">${icons[key]}</span><span class="img-lbl">اضغط للاختيار</span>`;
+  
+  try {
+    const emp = employees.find(e => e.serial === serial);
+    if (!emp) {
+      showToast('❌ الموظف غير موجود', 'error');
+      if (btn) { btn.disabled = false; btn.textContent = '✏️ تعديل'; }
+      return;
     }
-  });
+    
+    editingSerial = serial;
 
-  switchTab('basic', 0);
-  document.getElementById('empModal').classList.add('open');
+    uploadedUrls = {
+      Employee: emp.imgPhoto || '',
+      IdFront: emp.imgIdFront || '',
+      IdBack: emp.imgIdBack || '',
+      Security: emp.imgSecurity || ''
+    };
+    pendingFiles = { Employee: null, IdFront: null, IdBack: null, Security: null };
+
+    resetForm();
+    document.getElementById('modalTitle').textContent = '✏️ تعديل بيانات الموظف';
+    document.getElementById('editBanner').style.display = 'block';
+    document.getElementById('editBannerName').textContent = emp.name + ' (' + emp.serial + ')';
+    document.getElementById('statusGroup').style.display = 'block';
+    document.getElementById('saveBtn').textContent = '💾 حفظ التعديلات';
+
+    await loadBranches();
+
+    document.getElementById('empName').value = emp.name || '';
+    document.getElementById('empPosition').value = emp.position || '';
+    selectedJobTitle = emp.position || '';
+    document.getElementById('empSalary').value = emp.monthlySalary || '';
+    document.getElementById('empPhone').value = emp.phone || '';
+    document.getElementById('empStartDate').value = toInputDate(emp.startDate);
+    document.getElementById('empPaymentSystem').value = emp.paymentSystem || 'مرتب فقط';
+    document.getElementById('empStatus').value = emp.status || 'نشط';
+    document.getElementById('empBranch').value = emp.branchId || '';
+
+    const hasAccount = emp.hasAccount && emp.email && emp.email.trim() !== '';
+    document.getElementById('empHasAccess').checked = hasAccount;
+    if (hasAccount) {
+      toggleSystemFields();
+      document.getElementById('empUsername').value = emp.username || '';
+      document.getElementById('empEmail').value = emp.email || '';
+      document.getElementById('empPassword').value = emp.password || '';
+      document.getElementById('empUserType').value = emp.userType || 'Employee';
+      document.getElementById('empAddress').value = emp.address || '';
+      document.getElementById('emailPreviewTxt').textContent = emp.email || '';
+      document.getElementById('emailInfo').classList.add('show');
+    }
+
+    const icons = { Employee: '📸', IdFront: '🪪', IdBack: '🪪', Security: '🔍' };
+    Object.entries(uploadedUrls).forEach(([key, url]) => {
+      const prev = document.getElementById('prev' + key);
+      if (!prev) return;
+      if (url) {
+        prev.style.backgroundImage = `url("${getDriveDirectUrl(url)}")`;
+        prev.style.backgroundSize = 'contain';
+        prev.style.backgroundRepeat = 'no-repeat';
+        prev.style.backgroundPosition = 'center';
+        prev.classList.add('uploaded');
+        prev.innerHTML = '<div class="img-ok">✓ صورة محفوظة — اضغط للتغيير</div>';
+      } else {
+        prev.style.backgroundImage = '';
+        prev.classList.remove('uploaded');
+        prev.innerHTML = `<span class="img-ico">${icons[key]}</span><span class="img-lbl">اضغط للاختيار</span>`;
+      }
+    });
+
+    switchTab('basic', 0);
+    document.getElementById('empModal').classList.add('open');
+    
+  } catch(e) {
+    showToast('❌ خطأ: ' + e.message, 'error');
+    console.error('openEditModal error:', e);
+  } finally {
+    // ✅ إعادة تمكين الزر
+    if (btn) { 
+      btn.disabled = false; 
+      btn.textContent = '✏️ تعديل'; 
+    }
+  }
 }
-
 function closeModal() {
   document.getElementById('empModal').classList.remove('open');
   editingSerial = null;
@@ -1405,7 +1496,14 @@ if (hasPending) {
 // ══════════════════════════════════════════════════════════
 
 async function viewHistory(serial) {
+  // ✅ تعطيل جميع الأزرار في الصف
+  const row = document.querySelector(`tr:has(td:first-child:contains("${serial}"))`);
+  const btns = row ? row.querySelectorAll('button') : [];
+  btns.forEach(b => { b.disabled = true; b.textContent = '⏳ جاري...'; });
+  
   try {
+    showToast('⏳ جاري تحميل السجل...', 'info');
+    
     const [history, emp] = [
       await jsonpRequest('getSalaryHistory', { 
         serial, 
@@ -1435,6 +1533,7 @@ async function viewHistory(serial) {
           .history-table td { padding:6px; border-bottom:1px solid #e9ecef; }
           .salary-card { background:#f8f9fa; border-radius:10px; padding:12px; margin-bottom:12px; }
           .salary-date { font-size:11px; color:#6c757d; margin-top:4px; }
+          .emp-info-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
         </style>
     `;
     
@@ -1445,16 +1544,19 @@ async function viewHistory(serial) {
       </div>`;
     }
     
+    // ✅ إضافة جميع بيانات الموظف بما فيها تاريخ بدء العمل
     if (emp) {
       html += `
         <div style="background:#f8f9fa;border-radius:10px;padding:14px;margin-bottom:16px;">
-          <table class="history-table">
-            <tr><td style="width:40%"><b>📱 الهاتف:</b></td><td>${emp.phone || '—'}</td></tr>
-            <tr><td><b>🏢 الوظيفة:</b></td><td>${emp.position || '—'}</td></tr>
-            <tr><td><b>💰 نظام الحساب:</b></td><td>${emp.paymentSystem || '—'}</td></tr>
-            <tr><td><b>⚙️ الحالة:</b></td><td class="${emp.status === 'نشط' ? 'status-active' : 'status-inactive'}">${emp.status || '—'}</td></tr>
-            <tr><td><b>🏷️ الرقم الوظيفي:</b></td><td>${emp.serial || '—'}</td></tr>
-          </table>
+          <div class="emp-info-grid">
+            <div><b>📱 الهاتف:</b> ${emp.phone || '—'}</div>
+            <div><b>🏢 الوظيفة:</b> ${emp.position || '—'}</div>
+            <div><b>💰 نظام الحساب:</b> ${emp.paymentSystem || '—'}</div>
+            <div><b>⚙️ الحالة:</b> <span class="${emp.status === 'نشط' ? 'status-active' : 'status-inactive'}">${emp.status || '—'}</span></div>
+            <div><b>🏷️ الرقم الوظيفي:</b> ${emp.serial || '—'}</div>
+            <div><b>📅 تاريخ بدء العمل:</b> ${formatDateSimple(emp.startDate) || '—'}</div>
+            ${emp.hasAccount ? `<div><b>📧 البريد الإلكتروني:</b> ${emp.email || '—'}</div>` : ''}
+          </div>
         </div>
       `;
     }
@@ -1480,9 +1582,20 @@ async function viewHistory(serial) {
     
     html += `</div>`;
     showInfo(html);
+    
   } catch(e) { 
-    showToast('خطأ في السجل', 'error');
+    showToast('❌ خطأ في السجل: ' + e.message, 'error');
     console.error('viewHistory error:', e);
+  } finally {
+    // ✅ إعادة تمكين الأزرار
+    btns.forEach(b => { 
+      b.disabled = false; 
+      if (b.textContent.includes('جاري')) {
+        if (b.textContent.includes('سجل')) b.textContent = '📜 سجل';
+        else if (b.textContent.includes('تعديل')) b.textContent = '✏️ تعديل';
+        else if (b.textContent.includes('حضور')) b.textContent = '📅 حضور';
+      }
+    });
   }
 }
 function viewAttendance(serial) {
