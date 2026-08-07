@@ -2585,26 +2585,79 @@ async function refreshData() {
 // ═══════════════════════════════════════════════════════════════════
 
 document.addEventListener('DOMContentLoaded', async function() {
-  if (!Session.checkValidity()) {
-    window.location.href = 'index.html';
-    return;
-  }
-  
-  currentUser = Session.getUser();
-  if (!currentUser) {
-    window.location.href = 'index.html';
-    return;
-  }
-  
-  const allowedTypes = ['Admin'];
-  if (!Session.checkPermission(allowedTypes)) {
-    window.location.href = 'Dashboard.html';
-    return;
-  }
-  
-  await initDashboard();
-  
-  // ✅ ربط الأحداث - الأزرار في الشريط العلوي
+    // ✅ التحقق من صحة الجلسة
+    if (!Session.checkValidity()) {
+        window.location.href = 'index.html';
+        return;
+    }
+    
+    // ✅ جلب المستخدم من Session
+    currentUser = Session.getUser();
+    if (!currentUser) {
+        window.location.href = 'index.html';
+        return;
+    }
+    
+    // ✅ ✅ ✅ التأكد من وجود الصلاحيات
+    if (!currentUser.permissions || currentUser.permissions.length === 0) {
+        console.warn('⚠️ لا توجد صلاحيات، محاولة استعادتها...');
+        
+        // ✅ محاولة من sessionStorage
+        try {
+            const permStored = sessionStorage.getItem('userPermissions');
+            if (permStored) {
+                const perms = JSON.parse(permStored);
+                if (perms && perms.length > 0) {
+                    currentUser.permissions = perms;
+                    Session.save(currentUser);
+                    console.log('✅ تم استعادة الصلاحيات من sessionStorage');
+                }
+            }
+        } catch(e) {}
+        
+        // ✅ محاولة من localStorage
+        if (!currentUser.permissions || currentUser.permissions.length === 0) {
+            try {
+                const permStored = localStorage.getItem('userPermissions');
+                if (permStored) {
+                    const perms = JSON.parse(permStored);
+                    if (perms && perms.length > 0) {
+                        currentUser.permissions = perms;
+                        Session.save(currentUser);
+                        console.log('✅ تم استعادة الصلاحيات من localStorage');
+                    }
+                }
+            } catch(e) {}
+        }
+        
+        // ✅ محاولة من الخادم مباشرة
+        if (!currentUser.permissions || currentUser.permissions.length === 0) {
+            try {
+                console.log('📡 جلب الصلاحيات من الخادم...');
+                const result = await callGAS('getPermissionsForUser', { 
+                    userId: currentUser.id 
+                });
+                if (result && result.permissions && result.permissions.length > 0) {
+                    currentUser.permissions = result.permissions;
+                    Session.save(currentUser);
+                    console.log('✅ تم استعادة الصلاحيات من الخادم');
+                }
+            } catch(e) {
+                console.warn('⚠️ فشل جلب الصلاحيات من الخادم:', e);
+            }
+        }
+    }
+    
+    // ✅ التحقق من الصلاحية
+    const allowedTypes = ['Admin'];
+    if (!Session.checkPermission(allowedTypes)) {
+        window.location.href = 'Dashboard.html';
+        return;
+    }
+    
+    await initDashboard();
+    
+     // ✅ ربط الأحداث - الأزرار في الشريط العلوي
    
   // ✅ ربط الأحداث - الإحصائيات
   document.getElementById('sc-centers')?.addEventListener('click', showCenters);
