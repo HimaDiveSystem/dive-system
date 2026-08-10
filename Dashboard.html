@@ -2303,9 +2303,19 @@ async function loadActivitiesCheckboxes(sel = []) {
 }
 
 function ensureExtraFields() {
+  // ✅ التحقق من وجود الحقول مسبقاً
   if (document.getElementById('extraFields')) return;
+  
   const form = document.getElementById('centerForm');
-  const actions = document.querySelector('#centerForm .modal-actions');
+  if (!form) return;
+  
+  // ✅ البحث عن الـ modal-actions داخل النموذج
+  const actions = form.querySelector('.modal-actions');
+  if (!actions) {
+    console.warn('⚠️ modal-actions not found in centerForm');
+    return;
+  }
+  
   const extraDiv = document.createElement('div');
   extraDiv.id = 'extraFields';
   extraDiv.innerHTML = `
@@ -2324,12 +2334,25 @@ function ensureExtraFields() {
     </div>
     <div class="form-group"><label>سياسة الإلغاء</label><textarea id="cancelationPolicy" rows="2" placeholder="سياسة الإلغاء والاسترداد..."></textarea></div>
   `;
+  
+  // ✅ إدراج قبل الـ actions
   form.insertBefore(extraDiv, actions);
 }
 
 function ensureLogoUploadField() {
+  // ✅ التحقق من وجود الحقل مسبقاً
   if (document.getElementById('logoUploadField')) return;
+  
   const form = document.getElementById('centerForm');
+  if (!form) return;
+  
+  // ✅ البحث عن الـ modal-actions داخل النموذج
+  const actions = form.querySelector('.modal-actions');
+  if (!actions) {
+    console.warn('⚠️ modal-actions not found in centerForm');
+    return;
+  }
+  
   const logoDiv = document.createElement('div');
   logoDiv.className = 'form-group';
   logoDiv.id = 'logoUploadField';
@@ -2343,30 +2366,40 @@ function ensureLogoUploadField() {
     </div>
     <input type="hidden" id="centerLogoUrl" value="">
   `;
-  const actions = document.querySelector('#centerForm .modal-actions');
+  
   form.insertBefore(logoDiv, actions);
   
-  document.getElementById('centerLogoFile').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      document.getElementById('logoPreview').innerHTML = `<img src="${ev.target.result}" style="width:100%; height:100%; object-fit:cover;">`;
-    };
-    reader.readAsDataURL(file);
-    try {
-      const result = await uploadLogoInChunks(file, document.getElementById('centerId').value || 'new');
-      if (result?.success) {
-        document.getElementById('centerLogoUrl').value = result.url;
-        showAlert('✅ تم رفع اللوجو بنجاح');
-      } else {
-        showAlert('❌ فشل رفع اللوجو: ' + (result?.message || 'خطأ غير معروف'));
+  // ✅ إضافة مستمع الحدث لرفع الصورة
+  const fileInput = document.getElementById('centerLogoFile');
+  if (fileInput) {
+    fileInput.addEventListener('change', async function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      
+      const reader = new FileReader();
+      reader.onload = function(ev) {
+        const preview = document.getElementById('logoPreview');
+        if (preview) {
+          preview.innerHTML = `<img src="${ev.target.result}" style="width:100%; height:100%; object-fit:cover;">`;
+        }
+      };
+      reader.readAsDataURL(file);
+      
+      try {
+        const centerId = document.getElementById('centerId')?.value || 'new';
+        const result = await uploadLogoInChunks(file, centerId);
+        if (result?.success) {
+          document.getElementById('centerLogoUrl').value = result.url;
+          showAlert('✅ تم رفع اللوجو بنجاح');
+        } else {
+          showAlert('❌ فشل رفع اللوجو: ' + (result?.message || 'خطأ غير معروف'));
+        }
+      } catch(err) {
+        console.error('Upload error:', err);
+        showAlert('❌ خطأ في رفع اللوجو: ' + err.message);
       }
-    } catch(err) {
-      console.error('Upload error:', err);
-      showAlert('❌ خطأ في رفع اللوجو: ' + err.message);
-    }
-  });
+    });
+  }
 }
 
 function convertDateToInput(dateStr) {
@@ -2980,6 +3013,90 @@ if (typeof window.safeEscape === 'undefined') {
     return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   };
 }
+  // ============================================================
+// ✅ تعريف الدوال المفقودة في النطاق العام
+// ============================================================
+
+// ✅ دالة viewBranch
+window.viewBranch = function(id) {
+  const b = branches.find(x => x.id === id);
+  if (!b) {
+    showAlert('الفرع غير موجود');
+    return;
+  }
+  
+  document.getElementById('viewTitle').textContent = '🏛️ تفاصيل الفرع';
+  document.getElementById('viewBody').innerHTML = `
+    <p><strong>المعرف:</strong> ${safeEscape(b.id)}</p>
+    <p><strong>الفرع:</strong> ${safeEscape(b.name)}</p>
+    <p><strong>المركز:</strong> ${safeEscape(b.centerName)}</p>
+    <p><strong>المدير:</strong> ${safeEscape(b.manager) || '—'}</p>
+    <p><strong>الجوال:</strong> ${safeEscape(b.phone) || '—'}</p>
+    <p><strong>البريد:</strong> ${safeEscape(b.email) || '—'}</p>
+    <p><strong>العنوان:</strong> ${safeEscape(b.address) || '—'}</p>
+    <p><strong>الحالة:</strong> ${(b.isActive === 'TRUE' || b.isActive === true) ? 'نشط' : 'غير نشط'}</p>
+  `;
+  document.getElementById('viewModal').style.display = 'flex';
+};
+
+// ✅ دالة viewCenter (إذا كانت مفقودة)
+window.viewCenter = function(id) {
+  const c = centers.find(x => x.id === id);
+  if (!c) {
+    showAlert('المركز غير موجود');
+    return;
+  }
+  
+  let logoHtml = '';
+  if (c.centerLogo && c.centerLogo.trim() !== '') {
+    logoHtml = `<div style="text-align:center; margin:15px 0;">
+      <img src="${getDriveDirectUrl(c.centerLogo)}" style="max-width:150px; max-height:150px; border-radius:12px; border:1px solid #ddd; padding:5px; background:white;">
+    </div>`;
+  }
+  
+  document.getElementById('viewTitle').textContent = '🏢 تفاصيل المركز';
+  document.getElementById('viewBody').innerHTML = `
+    ${logoHtml}
+    <p><strong>المعرف:</strong> ${safeEscape(c.id)}</p>
+    <p><strong>المركز:</strong> ${safeEscape(c.name)}</p>
+    <p><strong>المالك:</strong> ${safeEscape(c.owner)}</p>
+    <p><strong>البريد:</strong> ${safeEscape(c.email) || '—'}</p>
+    <p><strong>الجوال:</strong> ${safeEscape(c.phone) || '—'}</p>
+    <p><strong>العنوان:</strong> ${safeEscape(c.address) || '—'}</p>
+    <p><strong>خطة الاشتراك:</strong> ${safeEscape(c.subscriptionPlan) || '—'}</p>
+    <p><strong>بداية الاشتراك:</strong> ${safeEscape(c.subscriptionStart) || '—'}</p>
+    <p><strong>انتهاء الاشتراك:</strong> ${safeEscape(c.subscriptionEnd) || '—'}</p>
+    <p><strong>أرقام التواصل:</strong> ${safeEscape(c.contactNumbers) || '—'}</p>
+    <p><strong>فئة المركز:</strong> ${safeEscape(c.centerCategory) || '—'}</p>
+    <p><strong>سياسة الإلغاء:</strong> ${safeEscape(c.cancelationPolicy) || '—'}</p>
+    <p><strong>الأنشطة:</strong> ${safeEscape(c.activities) || '—'}</p>
+    <p><strong>الحالة:</strong> ${(c.status === 'TRUE' || c.status === true) ? 'نشط' : 'غير نشط'}</p>
+  `;
+  document.getElementById('viewModal').style.display = 'flex';
+};
+
+// ✅ دالة viewUser (إذا كانت مفقودة)
+window.viewUser = function(id) {
+  const u = staff.find(x => x.id === id);
+  if (!u) {
+    showAlert('المستخدم غير موجود');
+    return;
+  }
+  
+  document.getElementById('viewTitle').textContent = '👤 تفاصيل المستخدم';
+  document.getElementById('viewBody').innerHTML = `
+    <p><strong>المعرف:</strong> ${safeEscape(u.id)}</p>
+    <p><strong>الاسم:</strong> ${safeEscape(u.name)}</p>
+    <p><strong>المركز:</strong> ${safeEscape(u.centerName) || '—'}</p>
+    <p><strong>الفرع:</strong> ${safeEscape(u.branchName) || 'المركز الرئيسي'}</p>
+    <p><strong>الدور:</strong> ${safeEscape(u.type) || '—'}</p>
+    <p><strong>الجوال:</strong> ${safeEscape(u.phone) || '—'}</p>
+    <p><strong>البريد الشخصي:</strong> ${safeEscape(u.email) || '—'}</p>
+    <p><strong>بريد تسجيل الدخول:</strong> ${safeEscape(u.loginEmail) || '—'}</p>
+    <p><strong>الحالة:</strong> ${u.isActive ? 'نشط' : 'غير نشط'}</p>
+  `;
+  document.getElementById('viewModal').style.display = 'flex';
+};
 </script>
 </body>
 </html>
