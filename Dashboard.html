@@ -1853,33 +1853,27 @@ function showPermissions() {
 }
   
 async function loadPermissionsTable() {
-  const container = document.getElementById('permissionsContainer');
-  if (!container) return;
-  
-  try {
-    let users = [];
-    const cached = localStorage.getItem('users');
-    if (cached) {
-      try {
-        users = JSON.parse(cached);
-        console.log('📦 استخدام البيانات من localStorage');
-      } catch(e) {}
+    const container = document.getElementById('permissionsContainer');
+    if (!container) return;
+
+    try {
+        // ✅ شاشة الصلاحيات حساسة: اجلب دائماً بيانات حديثة من الخادم
+        // ولا تعتمد على الكاش المحلي القديم
+        const result = await callGAS('getAllUsersWithPermissions');
+        const users = result?.data || [];
+
+        if (users.length > 0) {
+            // ✅ تحديث الكاش بعد جلب البيانات الجديدة
+            localStorage.setItem('users', JSON.stringify(users));
+            sessionStorage.setItem('users', JSON.stringify(users));
+            window.staff = users;
+            staff = users;
+        }
+
+        renderPermissionsTable(users);
+    } catch (e) {
+        container.innerHTML = `<div style="text-align:center;padding:40px;color:red;">❌ خطأ في تحميل البيانات: ${safeEscape(e.message)}</div>`;
     }
-    
-    if (!users || users.length === 0) {
-      const result = await callGAS('getAllUsersWithPermissions');
-      users = result?.data || [];
-      if (users.length > 0) {
-        localStorage.setItem('users', JSON.stringify(users));
-        sessionStorage.setItem('users', JSON.stringify(users));
-        window.staff = users;
-      }
-    }
-    
-    renderPermissionsTable(users);
-  } catch(e) {
-    container.innerHTML = `<div style="text-align:center;padding:40px;color:red;">❌ خطأ في تحميل البيانات: ${safeEscape(e.message)}</div>`;
-  }
 }
 
 function parsePermissions(perms) {
@@ -1948,7 +1942,11 @@ function renderPermissionsTable(users) {
     
     users.forEach(user => {
         let perms = parsePermissions(user.permissions);
-        if (user.type === 'Admin' && perms.length === 0) perms = ['* جميع الصلاحيات'];
+        
+        // ✅ استثناء Admin: إذا كانت الصلاحيات فارغة، عرض "* جميع الصلاحيات"
+        if (user.type === 'Admin' && perms.length === 0) {
+            perms = ['* جميع الصلاحيات'];
+        }
         
         let permLabels = '';
         if (perms.length > 0) {
@@ -1962,7 +1960,8 @@ function renderPermissionsTable(users) {
             }).join('');
             totalPermissions += perms.length;
         } else {
-            permLabels = '<span style="color:#94a3b8;font-size:11px;">—</span>';
+            // ✅ رسالة واضحة بدلاً من "—" الغامضة
+            permLabels = '<span style="color:#e67e22;font-size:11px;">⚠️ لا توجد صلاحيات محفوظة</span>';
         }
         
         const roleColors = {
