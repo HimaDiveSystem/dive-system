@@ -363,9 +363,132 @@ const CONFIG = {
   }
 };
 
-// ✅ منع الطلبات المتكررة
+// ✅ منع الطلبات المتكررة وإعادة التوجيه
 let _loginInProgress = false;
 let _redirecting = false;
+
+// ============================================================
+// ✅ API - JSONP مع طابور (Queue) لمنع التعارض بين العلامات
+// ============================================================
+
+// ✅ متغيرات عالمية لمنع التعارض
+let _jsonpInProgress = false;
+let _jsonpQueue = [];
+
+const API = {
+  // ✅ دالة JSONP مع طابور (Queue) لمنع التنفيذ المتزامن
+  jsonp(action, params) {
+    return new Promise((resolve, reject) => {
+      // ✅ إضافة الطلب إلى الطابور
+      _jsonpQueue.push({ action, params, resolve, reject });
+      
+      // ✅ محاولة تنفيذ الطلب التالي
+      this._processQueue();
+    });
+  },
+
+  // ✅ معالجة الطابور (طلب واحد في كل مرة)
+  _processQueue() {
+    // ✅ إذا كان هناك طلب قيد التنفيذ أو الطابور فارغ، توقف
+    if (_jsonpInProgress || _jsonpQueue.length === 0) return;
+    
+    // ✅ سحب الطلب الأول من الطابور
+    const task = _jsonpQueue.shift();
+    _jsonpInProgress = true;
+    
+    const { action, params, resolve, reject } = task;
+    
+    // ✅ إنشاء Callback فريد مع علامة زمنية عشوائية قوية
+    const callbackName = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
+    const url = new URL(CONFIG.GAS_URL);
+    url.searchParams.set('action', action);
+    url.searchParams.set('callback', callbackName);
+    url.searchParams.set('_t', Date.now() + '_' + Math.random().toString(36).substr(2, 4));
+    
+    Object.entries(params || {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null) {
+        url.searchParams.set(k, String(v));
+      }
+    });
+
+    console.log('📡 JSONP URL:', url.toString());
+
+    let script = null;
+    let timeoutId = null;
+    let isResolved = false;
+
+    // ✅ دالة التنظيف
+    const cleanup = () => {
+      _jsonpInProgress = false;
+      if (timeoutId) clearTimeout(timeoutId);
+      if (script && script.parentNode) {
+        try { script.parentNode.removeChild(script); } catch(e) {}
+      }
+      try { delete window[callbackName]; } catch(e) {}
+      
+      // ✅ معالجة الطلب التالي في الطابور
+      setTimeout(() => this._processQueue(), 100);
+    };
+
+    // ✅ تعريف الدالة في النطاق العام
+    window[callbackName] = function(data) {
+      if (isResolved) return;
+      isResolved = true;
+      console.log('📡 JSONP response:', data);
+      cleanup();
+      resolve(data);
+    };
+
+    // ✅ مهلة 20 ثانية
+    timeoutId = setTimeout(() => {
+      if (isResolved) return;
+      isResolved = true;
+      console.error('❌ JSONP Timeout for action:', action);
+      cleanup();
+      reject(new Error('انتهى وقت الاتصال'));
+    }, 20000);
+
+    // ✅ إنشاء عنصر script
+    script = document.createElement('script');
+    script.src = url.toString();
+    script.async = true;
+    
+    script.onerror = function() {
+      if (isResolved) return;
+      isResolved = true;
+      console.error('❌ JSONP Script load error for action:', action);
+      cleanup();
+      reject(new Error('فشل تحميل السكربت'));
+    };
+
+    document.head.appendChild(script);
+  },
+
+  // ✅ دالة تسجيل الدخول (مع منع الطلبات المتكررة)
+  async login(email, password) {
+    // ✅ منع طلبات تسجيل الدخول المتكررة (منع نقرات متعددة)
+    if (_loginInProgress) {
+      console.warn('⚠️ طلب تسجيل دخول قيد التنفيذ بالفعل');
+      return { success: false, message: 'طلب سابق قيد التنفيذ' };
+    }
+    
+    _loginInProgress = true;
+    try {
+      // ✅ تنظيف الطابور من الطلبات القديمة عند تسجيل الدخول
+      _jsonpQueue = [];
+      
+      const result = await this.jsonp('login', { email, password });
+      return result;
+    } catch(e) {
+      console.error('❌ Login error:', e);
+      return { success: false, message: e.message || 'تعذّر الاتصال بالخادم' };
+    } finally {
+      _loginInProgress = false;
+      // ✅ معالجة أي طلبات متراكمة
+      setTimeout(() => this._processQueue(), 200);
+    }
+  }
+};
 
 // ============================================================
 // ✅ Session (محسّن)
@@ -481,92 +604,6 @@ const Session = {
     const user = this.getUser();
     if (user && user.type) {
       this.save(user);
-    }
-  }
-};
-
-// ============================================================
-// ✅ API - JSONP (محسّن)
-// ============================================================
-const API = {
-  jsonp(action, params) {
-    return new Promise((resolve, reject) => {
-      const callbackName = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
-      const url = new URL(CONFIG.GAS_URL);
-      url.searchParams.set('action', action);
-      url.searchParams.set('callback', callbackName);
-      url.searchParams.set('_t', Date.now());
-      
-      Object.entries(params || {}).forEach(([k, v]) => {
-        if (v !== undefined && v !== null) {
-          url.searchParams.set(k, String(v));
-        }
-      });
-
-      console.log('📡 JSONP URL:', url.toString());
-
-      // ✅ منع تنفيذ أكثر من طلب JSONP في نفس الوقت
-      if (window._jsonpInProgress) {
-        console.warn('⚠️ طلب JSONP قيد التنفيذ بالفعل');
-        reject(new Error('طلب سابق قيد التنفيذ'));
-        return;
-      }
-      window._jsonpInProgress = true;
-
-      let script = null;
-      let timeoutId = null;
-
-      const cleanup = () => {
-        window._jsonpInProgress = false;
-        if (timeoutId) clearTimeout(timeoutId);
-        if (script && script.parentNode) {
-          try { script.parentNode.removeChild(script); } catch(e) {}
-        }
-        try { delete window[callbackName]; } catch(e) {}
-      };
-
-      window[callbackName] = function(data) {
-        console.log('📡 JSONP response:', data);
-        cleanup();
-        resolve(data);
-      };
-
-      timeoutId = setTimeout(() => {
-        console.error('❌ JSONP Timeout');
-        cleanup();
-        reject(new Error('انتهى وقت الاتصال'));
-      }, 30000);
-
-      script = document.createElement('script');
-      script.src = url.toString();
-      script.async = true;
-      
-      script.onerror = function() {
-        console.error('❌ JSONP Script load error');
-        cleanup();
-        reject(new Error('فشل تحميل السكربت'));
-      };
-
-      document.head.appendChild(script);
-    });
-  },
-
-  async login(email, password) {
-    // ✅ منع طلبات تسجيل الدخول المتكررة
-    if (_loginInProgress) {
-      console.warn('⚠️ طلب تسجيل دخول قيد التنفيذ بالفعل');
-      return { success: false, message: 'طلب سابق قيد التنفيذ' };
-    }
-    
-    _loginInProgress = true;
-    try {
-      const result = await this.jsonp('login', { email, password });
-      return result;
-    } catch(e) {
-      console.error('❌ Login error:', e);
-      return { success: false, message: e.message || 'تعذّر الاتصال بالخادم' };
-    } finally {
-      _loginInProgress = false;
     }
   }
 };
