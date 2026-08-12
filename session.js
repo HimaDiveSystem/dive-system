@@ -1,10 +1,14 @@
 // ============================================================
-// session.js - نظام إدارة الجلسة الموحد (مع جلسات معزولة)
+// session.js - نظام إدارة الجلسة الموحد (محسّن)
 // ============================================================
 
 const SESSION_CONFIG = {
     DURATION: 24 * 60 * 60 * 1000, // 24 ساعة
 };
+
+// ✅ منع إعادة التوجيه المتكرر
+let _redirecting = false;
+let _sessionInitializing = false;
 
 const Session = {
     // ✅ إنشاء معرف جلسة فريد لكل علامة تبويب
@@ -17,7 +21,7 @@ const Session = {
         return sessionId;
     },
 
-    // ✅ حفظ بيانات المستخدم مع معرف الجلسة
+    // ✅ حفظ بيانات المستخدم
     save(user) {
         if (!user) {
             console.warn('⚠️ محاولة حفظ مستخدم فارغ');
@@ -26,8 +30,6 @@ const Session = {
 
         try {
             const sessionId = this._getSessionId();
-            
-            // ✅ التأكد من وجود الصلاحيات
             const permissions = user.permissions || [];
             
             const userWithPermissions = {
@@ -37,7 +39,7 @@ const Session = {
                 expiry: Date.now() + SESSION_CONFIG.DURATION
             };
 
-            // ✅ تخزين في sessionStorage (مخصص لهذه العلامة)
+            // ✅ تخزين في sessionStorage
             sessionStorage.setItem('currentUser', JSON.stringify(userWithPermissions));
             sessionStorage.setItem('userPermissions', JSON.stringify(permissions));
             sessionStorage.setItem('userType', userWithPermissions.type || '');
@@ -47,54 +49,43 @@ const Session = {
             sessionStorage.setItem('centerName', userWithPermissions.centerName || '');
             sessionStorage.setItem('branchId', userWithPermissions.branchId || '');
 
-            // ✅ تخزين في localStorage (مشارك بين العلامات - للمستخدم النشط فقط)
+            // ✅ تخزين في localStorage
             const dataToStore = {
                 user: userWithPermissions,
                 expiry: Date.now() + SESSION_CONFIG.DURATION,
                 sessionId: sessionId
             };
             localStorage.setItem('currentUser_' + sessionId, JSON.stringify(dataToStore));
-            
-            // ✅ حفظ معرف الجلسة النشطة
             localStorage.setItem('activeSessionId', sessionId);
-            
-            // ✅ حفظ الصلاحيات بشكل منفصل في localStorage
             localStorage.setItem('userPermissions', JSON.stringify(permissions));
 
             console.log('✅ Session.save() - تم حفظ المستخدم:', userWithPermissions.name);
             console.log('📋 الصلاحيات المحفوظة:', permissions.length, 'صلاحية');
-            console.log('🆔 معرف الجلسة:', sessionId);
             
         } catch(e) {
             console.error('❌ Session.save() error:', e);
         }
     },
 
-    // ✅ جلب بيانات المستخدم الحالي (خاص بهذه العلامة)
+    // ✅ جلب بيانات المستخدم الحالي
     getUser() {
         try {
-            // ✅ 1. محاولة من sessionStorage (الأولوية للعلامة الحالية)
+            // ✅ 1. محاولة من sessionStorage
             const sessionUser = sessionStorage.getItem('currentUser');
             if (sessionUser) {
                 try {
                     const user = JSON.parse(sessionUser);
-                    
-                    // ✅ استعادة الصلاحيات من sessionStorage
                     const permStored = sessionStorage.getItem('userPermissions');
                     if (permStored && (!user.permissions || user.permissions.length === 0)) {
                         try {
                             user.permissions = JSON.parse(permStored);
-                            console.log('✅ تم استعادة الصلاحيات من sessionStorage');
                         } catch(e) {}
                     }
-                    
-                    console.log('✅ getUser() - من sessionStorage:', user.name);
-                    console.log('✅ getUser() - الصلاحيات:', user.permissions);
                     return user;
                 } catch(e) {}
             }
 
-            // ✅ 2. محاولة من localStorage (إذا كانت sessionStorage فارغة)
+            // ✅ 2. محاولة من localStorage
             const activeSessionId = localStorage.getItem('activeSessionId');
             if (activeSessionId) {
                 const storageKey = 'currentUser_' + activeSessionId;
@@ -104,13 +95,11 @@ const Session = {
                     if (data.expiry && Date.now() < data.expiry) {
                         const user = data.user || {};
                         
-                        // ✅ استعادة الصلاحيات
                         if (!user.permissions || user.permissions.length === 0) {
                             const permStored = localStorage.getItem('userPermissions');
                             if (permStored) {
                                 try {
                                     user.permissions = JSON.parse(permStored);
-                                    console.log('✅ تم استعادة الصلاحيات من localStorage');
                                 } catch(e) {}
                             }
                         }
@@ -124,8 +113,6 @@ const Session = {
                         sessionStorage.setItem('centerName', user.centerName || '');
                         sessionStorage.setItem('branchId', user.branchId || '');
                         
-                        console.log('✅ getUser() - من localStorage:', user.name);
-                        console.log('✅ getUser() - الصلاحيات:', user.permissions);
                         return user;
                     }
                 }
@@ -166,44 +153,49 @@ const Session = {
         }
     },
 
-    // ✅ التحقق من صحة الجلسة (مع التحقق من الصلاحيات)
+    // ✅ التحقق من صحة الجلسة
     checkValidity(redirectOnFail = true) {
-        const user = this.getUser();
-        
-        if (!user || !user.type) {
-            if (redirectOnFail) {
-                this.clear();
-                sessionStorage.setItem('intendedPage', window.location.pathname);
-                window.location.href = 'index.html';
+        try {
+            // ✅ منع التنفيذ المتكرر
+            if (_sessionInitializing) {
+                console.warn('⚠️ جلسة قيد التهيئة بالفعل');
+                return true;
             }
+            _sessionInitializing = true;
+
+            const user = this.getUser();
+            
+            if (!user || !user.type) {
+                if (redirectOnFail && !_redirecting) {
+                    _redirecting = true;
+                    this.clear();
+                    window.location.href = 'index.html';
+                }
+                _sessionInitializing = false;
+                return false;
+            }
+            
+            // ✅ التحقق من انتهاء الجلسة
+            if (user.expiry && Date.now() > user.expiry) {
+                console.warn('⚠️ الجلسة منتهية');
+                if (redirectOnFail && !_redirecting) {
+                    _redirecting = true;
+                    this.logout();
+                }
+                _sessionInitializing = false;
+                return false;
+            }
+            
+            // ✅ تمديد الجلسة
+            this.refresh();
+            _sessionInitializing = false;
+            return true;
+            
+        } catch(e) {
+            console.warn('⚠️ checkValidity error:', e);
+            _sessionInitializing = false;
             return false;
         }
-        
-        // ✅ التحقق من انتهاء الجلسة (24 ساعة)
-        if (user.expiry && Date.now() > user.expiry) {
-            console.warn('⚠️ checkValidity: الجلسة منتهية (أكثر من 24 ساعة)');
-            if (redirectOnFail) {
-                this.logout();
-            }
-            return false;
-        }
-        
-        // ✅ التحقق من وجود الصلاحيات
-        if (!user.permissions || user.permissions.length === 0) {
-            console.warn('⚠️ checkValidity: لا توجد صلاحيات، محاولة استعادتها...');
-            const storedPerms = sessionStorage.getItem('userPermissions');
-            if (storedPerms) {
-                try {
-                    user.permissions = JSON.parse(storedPerms);
-                    this.save(user);
-                    console.log('✅ checkValidity: تم استعادة الصلاحيات');
-                } catch(e) {}
-            }
-        }
-        
-        // ✅ تمديد الجلسة
-        this.refresh();
-        return true;
     },
 
     // ✅ التحقق من صلاحية محددة
@@ -215,22 +207,12 @@ const Session = {
         return user.permissions.includes(permission);
     },
 
-    // ✅ التحقق من صلاحية واحدة أو أكثر
-    checkPermissionAny(permissions) {
-        if (!permissions || permissions.length === 0) return true;
-        const user = this.getUser();
-        if (!user) return false;
-        if (user.type === 'Admin') return true;
-        if (!user.permissions || user.permissions.length === 0) return false;
-        return permissions.some(perm => user.permissions.includes(perm));
-    },
-
-    // ✅ التحقق من الصلاحية مع إعادة التوجيه
+    // ✅ التحقق من صلاحية مع إعادة التوجيه
     checkPermissionWithRedirect(allowedTypes, redirectOnFail = true) {
         const user = this.getUser();
         if (!user || !user.type) {
-            if (redirectOnFail) {
-                sessionStorage.setItem('intendedPage', window.location.pathname);
+            if (redirectOnFail && !_redirecting) {
+                _redirecting = true;
                 window.location.href = 'index.html';
             }
             return false;
@@ -239,20 +221,20 @@ const Session = {
         if (user.type === 'Admin') return true;
         if (allowedTypes.includes(user.type)) return true;
         
-        if (redirectOnFail) {
+        if (redirectOnFail && !_redirecting) {
+            _redirecting = true;
             window.location.href = 'index.html';
         }
         return false;
     },
 
-    // ✅ تسجيل الخروج (من هذه العلامة فقط)
+    // ✅ تسجيل الخروج
     logout() {
         const sessionId = sessionStorage.getItem('sessionId');
         if (sessionId) {
             localStorage.removeItem('currentUser_' + sessionId);
         }
         
-        // ✅ مسح جميع مفاتيح sessionStorage
         sessionStorage.removeItem('currentUser');
         sessionStorage.removeItem('userPermissions');
         sessionStorage.removeItem('sessionId');
@@ -262,30 +244,16 @@ const Session = {
         sessionStorage.removeItem('centerName');
         sessionStorage.removeItem('branchId');
         
-        // ✅ مسح activeSessionId إذا كانت هذه الجلسة النشطة
         const activeSessionId = localStorage.getItem('activeSessionId');
         if (activeSessionId === sessionId) {
             localStorage.removeItem('activeSessionId');
         }
         
         console.log('✅ Session.logout() - تم تسجيل الخروج');
-        window.location.href = 'index.html';
-    },
-
-    // ✅ مسح جميع الجلسات (للخروج الكامل)
-    logoutAll() {
-        // مسح جميع مفاتيح currentUser_
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (key && key.startsWith('currentUser_')) {
-                localStorage.removeItem(key);
-            }
+        if (!_redirecting) {
+            _redirecting = true;
+            window.location.href = 'index.html';
         }
-        localStorage.removeItem('activeSessionId');
-        localStorage.removeItem('userPermissions');
-        sessionStorage.clear();
-        console.log('✅ Session.logoutAll() - تم تسجيل الخروج من جميع الجلسات');
-        window.location.href = 'index.html';
     },
 
     // ✅ مسح البيانات
@@ -306,24 +274,22 @@ const Session = {
         }
     },
     
-    // ✅ الحصول على الصلاحيات فقط (للوصول السريع)
+    // ✅ الحصول على الصلاحيات
     getPermissions() {
         const user = this.getUser();
         if (!user) return [];
         if (user.type === 'Admin') {
-            // ✅ Admin لديه كل الصلاحيات
-            const allPermissions = [
+            return [
                 'ManageAll', 'ManageCenters', 'ManageBranches', 'ManageUsers',
                 'ManagePermissions', 'ViewExpiringSubscriptions', 'ViewStats',
                 'AddCustomerSupplier', 'EditCustomerSupplier', 'ViewCustomersSuppliers',
                 'DeleteCustomerSupplier', 'UpdateCustomerPrices'
             ];
-            return allPermissions;
         }
         return user.permissions || [];
     },
     
-    // ✅ تحديث الصلاحيات فقط
+    // ✅ تحديث الصلاحيات
     updatePermissions(permissions) {
         const user = this.getUser();
         if (!user) return false;
