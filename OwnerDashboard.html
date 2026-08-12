@@ -966,7 +966,16 @@ async function saveUserPermissions(e) {
 
 async function loadBranches() {
   const ca = document.getElementById('contentArea');
+  if (!ca) return;
+  
+  // ✅ منع إعادة التحميل إذا كان نفس المحتوى
+  if (ca.dataset.currentView === 'branches') {
+    console.log('⏭️ بالفعل في عرض الفروع');
+    return;
+  }
+  
   ca.innerHTML = '<div style="text-align:center;padding:40px;">⏳ جاري تحميل الفروع...</div>';
+  ca.dataset.currentView = 'branches';
 
   try {
     const data = await callGAS('getBranchesByCenter', { centerId: currentUser.centerId });
@@ -975,7 +984,6 @@ async function loadBranches() {
     ca.innerHTML = `<div style="text-align:center;padding:40px;color:red;">❌ فشل تحميل الفروع: ${safeEscape(e.message)}</div>`;
   }
 }
-
 function displayBranches(data) {
   const arr = Array.isArray(data) ? data : (data.branches || []);
   
@@ -987,10 +995,9 @@ function displayBranches(data) {
     return;
   }
   
- html += `<div class="table-wrap"><table><thead><tr>
-  <th>الاسم</th><th>الفرع</th><th>الوظيفة</th><th>الجوال</th><th>الحالة</th>
-  <th>الإجراءات</th>
-</tr></thead><tbody>`;
+  html += `<div class="table-wrap"><table><thead><tr>
+    <th>اسم الفرع</th><th>المدير</th><th>الجوال</th><th>الحالة</th>
+  </tr></thead><tbody>`;
   
   arr.forEach(b => {
     const active = b.isActive === 'TRUE' || b.isActive === true;
@@ -1008,12 +1015,20 @@ function displayBranches(data) {
 
 async function loadStaff() {
   const ca = document.getElementById('contentArea');
+  if (!ca) return;
+  
+  // ✅ منع إعادة التحميل إذا كان نفس المحتوى
+  if (ca.dataset.currentView === 'staff') {
+    console.log('⏭️ بالفعل في عرض الموظفين');
+    return;
+  }
+  
   ca.innerHTML = '<div style="text-align:center;padding:40px;">⏳ جاري تحميل الموظفين...</div>';
+  ca.dataset.currentView = 'staff';
 
   try {
     const data = await callGAS('getStaffByCenter', { centerId: currentUser.centerId });
-    // ✅ تخزين في staff
-    staff = Array.isArray(data) ? data : (data.staff || []);
+    staff = Array.isArray(data) ? data : [];
     displayStaff(staff);
   } catch(e) {
     ca.innerHTML = `<div style="text-align:center;padding:40px;color:red;">❌ فشل تحميل الموظفين: ${safeEscape(e.message)}</div>`;
@@ -1033,31 +1048,36 @@ function displayStaff(data) {
     return;
   }
   
+  // ✅ إضافة عمود الإجراءات في رأس الجدول (6 أعمدة)
   html += `<div class="table-wrap"><table><thead><tr>
-    <th>الاسم</th><th>الفرع</th><th>الوظيفة</th><th>الجوال</th><th>الحالة</th>
+    <th>الاسم</th>
+    <th>الفرع</th>
+    <th>الوظيفة</th>
+    <th>الجوال</th>
+    <th>الحالة</th>
+    <th>الإجراءات</th>  <!-- ✅ هذا العمود كان مفقوداً -->
   </tr></thead><tbody>`;
   
   arr.forEach(u => {
-   html += `<tr>
-  <td><strong>${safeEscape(u.name)}</strong></td>
-  <td>${safeEscape(u.branchName || 'الرئيسي')}</td>
-  <td>${safeEscape(u.type || 'موظف')}</td>
-  <td dir="ltr">${safeEscape(u.phone || '-')}</td>
-  <td><span class="status-badge ${u.isActive ? 'status-active' : 'status-inactive'}">${u.isActive ? 'نشط' : 'غير نشط'}</span></td>
-  <td>
-    <div class="action-buttons" style="display:flex; gap:4px; flex-wrap:wrap; justify-content:center; align-items:center;">
-      <button class="action-btn" onclick="sendEmployeeCredentials('${u.id}')" style="padding:4px 10px; border:none; border-radius:16px; cursor:pointer; font-size:10px; font-weight:700; color:white; background:#25D366; min-width:30px; text-align:center;">
-        📱 إرسال
-      </button>
-    </div>
-  </td>
-</tr>`;
+    html += `<tr>
+      <td><strong>${safeEscape(u.name)}</strong></td>
+      <td>${safeEscape(u.branchName || 'الرئيسي')}</td>
+      <td>${safeEscape(u.type || 'موظف')}</td>
+      <td dir="ltr">${safeEscape(u.phone || '-')}</td>
+      <td><span class="status-badge ${u.isActive ? 'status-active' : 'status-inactive'}">${u.isActive ? 'نشط' : 'غير نشط'}</span></td>
+      <td>
+        <div class="action-buttons" style="display:flex; gap:4px; flex-wrap:wrap; justify-content:center; align-items:center;">
+          <button class="action-btn" onclick="sendEmployeeCredentials('${u.id}')" style="padding:4px 10px; border:none; border-radius:16px; cursor:pointer; font-size:10px; font-weight:700; color:white; background:#25D366; min-width:30px; text-align:center;">
+            📱 إرسال
+          </button>
+        </div>
+      </td>
+    </tr>`;
   });
   
   html += '</tbody></table></div></div>';
   document.getElementById('contentArea').innerHTML = html;
 }
-
 async function loadStats() {
   if (!currentUser?.centerId) return;
 
@@ -1101,68 +1121,58 @@ async function loadStats() {
 // ═══════════════════════════════════════════════════════════════════
 
 function sendEmployeeCredentials(userId) {
-    // ✅ البحث عن الموظف في staff (من getStaffByCenter)
     const user = staff.find(u => u.id === userId);
     if (!user) {
         showAlert('❌ User not found');
-        console.error('❌ User not found in staff:', userId);
-        console.log('📋 staff list:', staff);
         return;
     }
     
-    console.log('📋 User data:', user); // ✅ للتحقق من البيانات
-    
-    // ✅ التحقق من وجود رقم هاتف
-    const userPhone = user.phone || user.Phone || '';
-    if (!userPhone) {
+    if (!user.phone) {
         showAlert('⚠️ User has no phone number');
         return;
     }
     
-    // ✅ جلب البريد الإلكتروني (جرب عدة حقول)
-    const userEmail = user.email || user.Email || user.loginEmail || '';
+    const userEmail = user.email || '';
     if (!userEmail) {
         showAlert('⚠️ User has no email address');
-        console.log('📋 User data (no email):', user);
         return;
     }
     
-    // ✅ جلب كلمة المرور
-    const userPassword = user.password || user.Password || user.loginPassword || '123456';
-    
-    // ✅ جلب الاسم
-    const userName = user.name || user.Name || user.UserFullName || user.fullName || '—';
-    
-    // ✅ جلب الدور
-    const userRole = user.type || user.Type || user.UserType || 'Employee';
-    
-    // ✅ تنسيق رقم الهاتف
-    let phone = userPhone.replace(/[^0-9+]/g, '');
+    let phone = user.phone.replace(/[^0-9+]/g, '');
     if (phone.startsWith('0')) phone = '20' + phone.substring(1);
     if (!phone.startsWith('+')) phone = '+' + phone;
     
-    // ✅ بناء الرسالة (ENGLISH)
     const appUrl = 'https://himadivesystem.github.io/dive-system/';
-    const centerName = currentUser?.centerName || currentUser?.CenterName || 'Dive System';
+    const centerName = currentUser?.centerName || 'Dive System';
+    const password = user.password || '123456';
     
-    const msg = `🔐 *Login Credentials for ${centerName}*
+    // ✅ ✅ ✅ رسالة احترافية مع رموز جميلة
+    const msg = `🌊 *Welcome to ${centerName} Dive System* 🌊
 
-👤 *Name:* ${userName}
+━━━━━━━━━━━━━━━━━━━━━━
+🔐 *YOUR LOGIN CREDENTIALS*
+━━━━━━━━━━━━━━━━━━━━━━
+
+👤 *Full Name:* ${user.name || '—'}
 📧 *Email:* ${userEmail}
-🔑 *Password:* ${userPassword}
+🔑 *Password:* ${password}
 
-📌 *Role:* ${userRole}
+📌 *Role:* ${user.type || 'Employee'}
 🏢 *Center:* ${centerName}
 
-🔗 *Login Link:* ${appUrl}
+━━━━━━━━━━━━━━━━━━━━━━
+🔗 *Login Link:*
+${appUrl}
+━━━━━━━━━━━━━━━━━━━━━━
 
-⚠️ *Please change your password after first login.*`;
+⚠️ *Please change your password after first login.*
 
-    // ✅ فتح واتساب
+🌊 *Thank you for choosing Dive System* 🐠`;
+
     const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
     window.open(url, '_blank');
     
-    showAlert(`📱 WhatsApp opened to send credentials to ${userName}`);
+    showAlert(`📱 WhatsApp opened to send credentials to ${user.name}`);
 }
   // ═══════════════════════════════════════════════════════════════════
 // ✅ دالة الخروج الاحترافية
