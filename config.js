@@ -42,16 +42,12 @@ let _callTimeoutId = null;
 
 function callGAS(action, params = {}) {
   return new Promise((resolve, reject) => {
-    // ✅ إضافة الطلب إلى الطابور
     _callQueue.push({ action, params, resolve, reject });
-    
-    // ✅ محاولة تنفيذ الطلب التالي
     _processQueue();
   });
 }
 
 function _processQueue() {
-  // ✅ إذا كان هناك طلب قيد التنفيذ أو الطابور فارغ، توقف
   if (_callInProgress) {
     console.log('⏳ طلب قيد التنفيذ، انتظار...');
     return;
@@ -62,20 +58,17 @@ function _processQueue() {
     return;
   }
   
-  // ✅ سحب الطلب الأول من الطابور
   const task = _callQueue.shift();
   _callInProgress = true;
   
   const { action, params, resolve, reject } = task;
   
-  // ✅ إنشاء Callback فريد
   const callbackName = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
   const url = new URL(CONFIG.GAS_URL);
   url.searchParams.set('action', action);
   url.searchParams.set('callback', callbackName);
   url.searchParams.set('_t', Date.now() + '_' + Math.random().toString(36).substr(2, 4));
   
-  // ✅ إضافة المعاملات
   Object.entries(params).forEach(([k, v]) => {
     if (v !== undefined && v !== null) {
       url.searchParams.set(k, String(v));
@@ -86,52 +79,58 @@ function _processQueue() {
 
   let script = null;
   let isResolved = false;
-
-  // ✅ دالة التنظيف - لا تستدعي _processQueue مباشرة لتجنب التكرار
-  const cleanup = () => {
-    _callInProgress = false;
-    if (script && script.parentNode) {
-      try { script.parentNode.removeChild(script); } catch(e) {}
-    }
-    try { delete window[callbackName]; } catch(e) {}
-    
-    // ✅ معالجة الطلب التالي بعد تنظيف كامل
-    if (_callTimeoutId) {
-      clearTimeout(_callTimeoutId);
-      _callTimeoutId = null;
-    }
-    _callTimeoutId = setTimeout(() => {
-      _callTimeoutId = null;
-      _processQueue();
-    }, 200);
-  };
+  let timeoutId = null;
 
   // ✅ تعريف الدالة في النطاق العام
   window[callbackName] = function(data) {
     if (isResolved) return;
     isResolved = true;
     console.log('📡 callGAS response for', action, ':', data);
+    clearTimeout(timeoutId);
     cleanup();
     resolve(data);
   };
 
-  // ✅ مهلة 30 ثانية
-  const timeoutId = setTimeout(() => {
+  // ✅ دالة التنظيف (تُستدعى مرة واحدة فقط)
+  const cleanup = () => {
+    if (_callInProgress === false) return; // ✅ منع التنفيذ المتكرر
+    _callInProgress = false;
+    
+    if (script && script.parentNode) {
+      try { script.parentNode.removeChild(script); } catch(e) {}
+    }
+    try { delete window[callbackName]; } catch(e) {}
+    
+    if (_callTimeoutId) {
+      clearTimeout(_callTimeoutId);
+      _callTimeoutId = null;
+    }
+    
+    // ✅ معالجة الطلب التالي بعد تأخير بسيط
+    _callTimeoutId = setTimeout(() => {
+      _callTimeoutId = null;
+      _processQueue();
+    }, 150);
+  };
+
+  // ✅ مهلة 20 ثانية
+  timeoutId = setTimeout(() => {
     if (isResolved) return;
     isResolved = true;
     console.error('❌ callGAS Timeout for action:', action);
     cleanup();
     reject(new Error('انتهى وقت الاتصال'));
-  }, 30000);
+  }, 20000);
 
   // ✅ إنشاء عنصر script
   script = document.createElement('script');
   script.src = url.toString();
   script.async = true;
   
+  // ✅ onload: لا تفعل شيئاً لأن callback هو من سيتعامل مع النتيجة
   script.onload = function() {
     console.log('✅ script loaded for action:', action);
-    // ✅ المهلة ستتعامل مع الـ Timeout إذا لم يتم استدعاء callback
+    // ✅ لا نستدعي cleanup هنا لأن callback هو من يستدعيها
   };
   
   script.onerror = function() {
@@ -143,7 +142,6 @@ function _processQueue() {
     reject(new Error('فشل تحميل السكربت'));
   };
 
-  // ✅ إضافة إلى body
   document.body.appendChild(script);
 }
 
@@ -153,7 +151,6 @@ function _processQueue() {
 
 function checkUserPermission(permission) {
   try {
-    // ✅ محاولة من Session
     if (typeof Session !== 'undefined' && Session.getUser) {
       const user = Session.getUser();
       if (!user) return false;
@@ -166,7 +163,6 @@ function checkUserPermission(permission) {
       return perms.includes(permission);
     }
     
-    // ✅ محاولة من localStorage
     const stored = localStorage.getItem('currentUser');
     if (stored) {
       const data = JSON.parse(stored);
