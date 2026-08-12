@@ -32,12 +32,13 @@ const CONFIG = {
 };
 
 // ============================================================
-// ✅ callGAS - يستخدم JSONP فقط (بدون fetch لتجنب CORS)
+// ✅ callGAS - يستخدم JSONP فقط مع طابور محسّن
 // ============================================================
 
 // ✅ منع الطلبات المتكررة
 let _callInProgress = false;
 let _callQueue = [];
+let _callTimeoutId = null;
 
 function callGAS(action, params = {}) {
   return new Promise((resolve, reject) => {
@@ -51,7 +52,15 @@ function callGAS(action, params = {}) {
 
 function _processQueue() {
   // ✅ إذا كان هناك طلب قيد التنفيذ أو الطابور فارغ، توقف
-  if (_callInProgress || _callQueue.length === 0) return;
+  if (_callInProgress) {
+    console.log('⏳ طلب قيد التنفيذ، انتظار...');
+    return;
+  }
+  
+  if (_callQueue.length === 0) {
+    console.log('📭 الطابور فارغ');
+    return;
+  }
   
   // ✅ سحب الطلب الأول من الطابور
   const task = _callQueue.shift();
@@ -76,33 +85,38 @@ function _processQueue() {
   console.log('📡 callGAS JSONP URL:', url.toString());
 
   let script = null;
-  let timeoutId = null;
   let isResolved = false;
 
-  // ✅ دالة التنظيف
+  // ✅ دالة التنظيف - لا تستدعي _processQueue مباشرة لتجنب التكرار
   const cleanup = () => {
     _callInProgress = false;
-    if (timeoutId) clearTimeout(timeoutId);
     if (script && script.parentNode) {
       try { script.parentNode.removeChild(script); } catch(e) {}
     }
     try { delete window[callbackName]; } catch(e) {}
     
-    // ✅ معالجة الطلب التالي في الطابور
-    setTimeout(() => _processQueue(), 100);
+    // ✅ معالجة الطلب التالي بعد تنظيف كامل
+    if (_callTimeoutId) {
+      clearTimeout(_callTimeoutId);
+      _callTimeoutId = null;
+    }
+    _callTimeoutId = setTimeout(() => {
+      _callTimeoutId = null;
+      _processQueue();
+    }, 200);
   };
 
   // ✅ تعريف الدالة في النطاق العام
   window[callbackName] = function(data) {
     if (isResolved) return;
     isResolved = true;
-    console.log('📡 callGAS response:', data);
+    console.log('📡 callGAS response for', action, ':', data);
     cleanup();
     resolve(data);
   };
 
   // ✅ مهلة 30 ثانية
-  timeoutId = setTimeout(() => {
+  const timeoutId = setTimeout(() => {
     if (isResolved) return;
     isResolved = true;
     console.error('❌ callGAS Timeout for action:', action);
@@ -115,22 +129,24 @@ function _processQueue() {
   script.src = url.toString();
   script.async = true;
   
-  // ✅ ✅ ✅ إضافة onload للتحقق من تحميل السكربت
   script.onload = function() {
-    console.log('✅ script loaded successfully for action:', action);
+    console.log('✅ script loaded for action:', action);
+    // ✅ المهلة ستتعامل مع الـ Timeout إذا لم يتم استدعاء callback
   };
   
   script.onerror = function() {
     if (isResolved) return;
     isResolved = true;
+    clearTimeout(timeoutId);
     console.error('❌ callGAS Script load error for action:', action);
     cleanup();
     reject(new Error('فشل تحميل السكربت'));
   };
 
-  // ✅ ✅ ✅ التعديل المهم: إضافة إلى body (وليس head)
+  // ✅ إضافة إلى body
   document.body.appendChild(script);
 }
+
 // ============================================================
 // ✅ دالة مساعدة للتحقق من الصلاحيات
 // ============================================================
@@ -144,7 +160,6 @@ function checkUserPermission(permission) {
       if (user.type === 'Admin') return true;
       
       const perms = user.permissions || [];
-      // ✅ إذا كان لديه ManageAll أو ManagePermissions، لديه كل الصلاحيات
       if (perms.includes('ManageAll')) return true;
       if (perms.includes('ManagePermissions')) return true;
       
