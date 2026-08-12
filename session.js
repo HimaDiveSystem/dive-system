@@ -2,6 +2,12 @@
 // session.js - نظام إدارة الجلسة الموحد (محسّن)
 // ============================================================
 
+// ✅ منع التنفيذ المتزامن للجلسات
+if (window._sessionProcessing) {
+    console.warn('⚠️ جلسة قيد المعالجة بالفعل، تجاهل...');
+} else {
+    window._sessionProcessing = true;
+
 const SESSION_CONFIG = {
     DURATION: 24 * 60 * 60 * 1000, // 24 ساعة
 };
@@ -302,3 +308,7 @@ const Session = {
 if (typeof window !== 'undefined') {
     window.Session = Session;
 }
+
+// ✅ نهاية منع التنفيذ المتزامن
+window._sessionProcessing = false;
+} // نهاية if (window._sessionProcessing)
