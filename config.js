@@ -115,6 +115,11 @@ function _processQueue() {
   script.src = url.toString();
   script.async = true;
   
+  // ✅ ✅ ✅ إضافة onload للتحقق من تحميل السكربت
+  script.onload = function() {
+    console.log('✅ script loaded successfully for action:', action);
+  };
+  
   script.onerror = function() {
     if (isResolved) return;
     isResolved = true;
@@ -123,10 +128,9 @@ function _processQueue() {
     reject(new Error('فشل تحميل السكربت'));
   };
 
-  // ✅ إضافة إلى head (أفضل من body)
-  document.head.appendChild(script);
+  // ✅ ✅ ✅ التعديل المهم: إضافة إلى body (وليس head)
+  document.body.appendChild(script);
 }
-
 // ============================================================
 // ✅ دالة مساعدة للتحقق من الصلاحيات
 // ============================================================
