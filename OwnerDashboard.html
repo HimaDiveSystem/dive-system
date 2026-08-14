@@ -1146,42 +1146,48 @@ function displayStaff(data) {
 }
   
 async function loadStats() {
-  if (!currentUser?.centerId) return;
+    if (!currentUser?.centerId) return;
 
-  try {
-    const [branches, staff] = await Promise.all([
-      callGAS('getOwnerBranchesCount', { centerId: currentUser.centerId }),
-      callGAS('getOwnerStaffCount', { centerId: currentUser.centerId })
-    ]);
+    try {
+        // ✅ استخدام getStaffByCenter للحصول على العدد الصحيح
+        const staffData = await callGAS('getStaffByCenter', { centerId: currentUser.centerId });
+        const staffCount = Array.isArray(staffData) ? staffData.length : 0;
+        
+        // ✅ تحديث staff
+        staff = Array.isArray(staffData) ? staffData : [];
+        
+        const [branches] = await Promise.all([
+            callGAS('getOwnerBranchesCount', { centerId: currentUser.centerId })
+        ]);
 
-    document.getElementById('cnt-branches').textContent = typeof branches === 'number' ? branches : 0;
-    document.getElementById('cnt-staff').textContent = typeof staff === 'number' ? staff : 0;
-    
-    // ✅ جلب عدد فواتير اليوم
-    try {
-      const today = new Date();
-      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      const dateStr = String(today.getDate()).padStart(2,'0') + '/' + months[today.getMonth()] + '/' + today.getFullYear();
-      const invoices = await callGAS('getInvoicesByDate', { dateStr: dateStr, centerName: currentUser.centerName });
-      const count = Array.isArray(invoices) ? invoices.length : 0;
-      document.getElementById('cnt-invoices').textContent = count;
+        document.getElementById('cnt-branches').textContent = typeof branches === 'number' ? branches : 0;
+        document.getElementById('cnt-staff').textContent = staffCount;  // ✅ العدد الصحيح 14
+        
+        // ✅ جلب عدد فواتير اليوم
+        try {
+            const today = new Date();
+            const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            const dateStr = String(today.getDate()).padStart(2,'0') + '/' + months[today.getMonth()] + '/' + today.getFullYear();
+            const invoices = await callGAS('getInvoicesByDate', { dateStr: dateStr, centerName: currentUser.centerName });
+            const count = Array.isArray(invoices) ? invoices.length : 0;
+            document.getElementById('cnt-invoices').textContent = count;
+        } catch(e) {
+            console.warn('⚠️ فشل جلب فواتير اليوم:', e);
+        }
+        
+        // ✅ جلب عدد التنبيهات
+        try {
+            const notifData = await callGAS('getAllInvoicesEdit');
+            if (Array.isArray(notifData)) {
+                const cnt = notifData.filter(n => !n.isRead).length;
+                document.getElementById('cnt-notif').textContent = cnt;
+            }
+        } catch(e) {
+            console.warn('⚠️ فشل جلب التنبيهات:', e);
+        }
     } catch(e) {
-      console.warn('⚠️ فشل جلب فواتير اليوم:', e);
+        console.warn('⚠️ loadStats error:', e);
     }
-    
-    // ✅ جلب عدد التنبيهات
-    try {
-      const notifData = await callGAS('getAllInvoicesEdit');
-      if (Array.isArray(notifData)) {
-        const cnt = notifData.filter(n => !n.isRead).length;
-        document.getElementById('cnt-notif').textContent = cnt;
-      }
-    } catch(e) {
-      console.warn('⚠️ فشل جلب التنبيهات:', e);
-    }
-  } catch(e) {
-    console.warn('⚠️ loadStats error:', e);
-  }
 }
 // ═══════════════════════════════════════════════════════════════════
 // ✅ Send Employee Login Credentials via WhatsApp (English)
@@ -1268,6 +1274,7 @@ function toggleEmployeeStatus(userId) {
     showAlert('✅ تم تغيير الحالة بنجاح', () => {
         const ca = document.getElementById('contentArea');
         if (ca) ca.dataset.currentView = '';  // ✅ إعادة تعيين
+        loadStats();
         loadStaff();
     });
 } else {
@@ -1332,7 +1339,8 @@ async function saveEmployeeEdit(e) {
               ca.dataset.currentView = '';  // ✅ إعادة تعيين للسماح بإعادة التحميل
           }
             showAlert('✅ تم تحديث بيانات الموظف بنجاح', () => {
-                loadStaff(); // إعادة تحميل الجدول
+               loadStats();
+               loadStaff(); // إعادة تحميل الجدول
             });
         } else {
             showAlert('❌ ' + (result?.message || 'فشل التحديث'));
@@ -1361,7 +1369,8 @@ async function saveEmployeeEdit(e) {
                 showAlert('✅ تم حذف الموظف بنجاح', () => {
                     const ca = document.getElementById('contentArea');
                     if (ca) ca.dataset.currentView = '';
-                    loadStaff();
+                    loadStats();
+                   loadStaff();
                 });
             } else {
                 showAlert('❌ ' + (result?.message || 'فشل الحذف'));
