@@ -1048,25 +1048,38 @@ function displayStaff(data) {
     return;
   }
   
-  // ✅ إضافة عمود الإجراءات في رأس الجدول (6 أعمدة)
   html += `<div class="table-wrap"><table><thead><tr>
     <th>الاسم</th>
     <th>الفرع</th>
     <th>الوظيفة</th>
     <th>الجوال</th>
     <th>الحالة</th>
-    <th>الإجراءات</th>  <!-- ✅ هذا العمود كان مفقوداً -->
+    <th>الإجراءات</th>
   </tr></thead><tbody>`;
   
   arr.forEach(u => {
+    const isActive = u.isActive === true || u.isActive === 'true' || u.isActive === 'TRUE';
+    const statusText = isActive ? 'نشط' : 'غير نشط';
+    const statusClass = isActive ? 'status-active' : 'status-inactive';
+    
     html += `<tr>
       <td><strong>${safeEscape(u.name)}</strong></td>
       <td>${safeEscape(u.branchName || 'الرئيسي')}</td>
       <td>${safeEscape(u.type || 'موظف')}</td>
       <td dir="ltr">${safeEscape(u.phone || '-')}</td>
-      <td><span class="status-badge ${u.isActive ? 'status-active' : 'status-inactive'}">${u.isActive ? 'نشط' : 'غير نشط'}</span></td>
+      <td>
+        <span class="status-badge ${statusClass}" style="cursor:pointer;" onclick="toggleEmployeeStatus('${u.id}')">
+          ${statusText} 🔄
+        </span>
+      </td>
       <td>
         <div class="action-buttons" style="display:flex; gap:4px; flex-wrap:wrap; justify-content:center; align-items:center;">
+          <button class="action-btn edit" onclick="editEmployee('${u.id}')" style="padding:4px 10px; border:none; border-radius:16px; cursor:pointer; font-size:10px; font-weight:700; color:white; background:#3498db; min-width:30px; text-align:center;">
+            ✏️ تعديل
+          </button>
+          <button class="action-btn delete" onclick="deleteEmployee('${u.id}')" style="padding:4px 10px; border:none; border-radius:16px; cursor:pointer; font-size:10px; font-weight:700; color:white; background:#e74c3c; min-width:30px; text-align:center;">
+            🗑️ حذف
+          </button>
           <button class="action-btn" onclick="sendEmployeeCredentials('${u.id}')" style="padding:4px 10px; border:none; border-radius:16px; cursor:pointer; font-size:10px; font-weight:700; color:white; background:#25D366; min-width:30px; text-align:center;">
             📱 إرسال
           </button>
@@ -1078,6 +1091,7 @@ function displayStaff(data) {
   html += '</tbody></table></div></div>';
   document.getElementById('contentArea').innerHTML = html;
 }
+  
 async function loadStats() {
   if (!currentUser?.centerId) return;
 
@@ -1173,6 +1187,73 @@ ${appUrl}
     window.open(url, '_blank');
     
     showAlert(`📱 WhatsApp opened to send credentials to ${user.name}`);
+}
+  // ═══════════════════════════════════════════════════════════════════
+// ✅ إدارة الموظفين (تعديل، حذف، تغيير الحالة)
+// ═══════════════════════════════════════════════════════════════════
+
+// ✅ تغيير حالة الموظف (نشط / غير نشط)
+function toggleEmployeeStatus(userId) {
+    const user = staff.find(u => u.id === userId);
+    if (!user) {
+        showAlert('❌ المستخدم غير موجود');
+        return;
+    }
+    
+    const currentStatus = user.isActive === true || user.isActive === 'true' || user.isActive === 'TRUE';
+    const newStatus = !currentStatus;
+    const statusText = newStatus ? 'نشط' : 'غير نشط';
+    
+    showConfirm(`تغيير حالة الموظف "${user.name}" إلى ${statusText}؟`, async function() {
+        try {
+            const result = await callGAS('updateUser', {
+                id: userId,
+                isActive: newStatus ? 'true' : 'false'
+            });
+            
+            if (result?.success) {
+                showAlert('✅ تم تغيير الحالة بنجاح', () => {
+                    loadStaff(); // إعادة تحميل الجدول
+                });
+            } else {
+                showAlert('❌ ' + (result?.message || 'فشل تغيير الحالة'));
+            }
+        } catch(e) {
+            showAlert('❌ خطأ في الاتصال: ' + e.message);
+        }
+    });
+}
+
+// ✅ تعديل بيانات الموظف (توجيه إلى صفحة إدارة الموظفين)
+function editEmployee(userId) {
+    // ✅ تخزين معرف الموظف في sessionStorage ليتم استخدامه في صفحة EmployeesManagement
+    sessionStorage.setItem('editEmployeeId', userId);
+    window.location.href = 'EmployeesManagement.html';
+}
+
+// ✅ حذف الموظف
+function deleteEmployee(userId) {
+    const user = staff.find(u => u.id === userId);
+    if (!user) {
+        showAlert('❌ المستخدم غير موجود');
+        return;
+    }
+    
+    showConfirm(`⚠️ هل أنت متأكد من حذف الموظف "${user.name}" نهائياً؟`, async function() {
+        try {
+            const result = await callGAS('deleteUser', { userId: userId });
+            
+            if (result?.success) {
+                showAlert('✅ تم حذف الموظف بنجاح', () => {
+                    loadStaff(); // إعادة تحميل الجدول
+                });
+            } else {
+                showAlert('❌ ' + (result?.message || 'فشل الحذف'));
+            }
+        } catch(e) {
+            showAlert('❌ خطأ في الاتصال: ' + e.message);
+        }
+    });
 }
   // ═══════════════════════════════════════════════════════════════════
 // ✅ دالة الخروج الاحترافية
@@ -1451,6 +1532,9 @@ window.goTo = goTo;
 window.staff = staff;
 window.closeModal = closeModal;
 window.showAlert = showAlert;
+window.toggleEmployeeStatus = toggleEmployeeStatus;
+window.editEmployee = editEmployee;
+window.deleteEmployee = deleteEmployee;
 window.showConfirm = showConfirm;
 window.sendEmployeeCredentials = sendEmployeeCredentials;
 window.safeEscape = safeEscape;
