@@ -554,6 +554,8 @@ function hideElementsByPermissions() {
 // ✅ إضافة متغيرات وإعدادات
 // ============================================================
 
+// ✅ منع إعادة التحميل المتكررة
+let _isLoading = false;
 let allAccounts = [];
 let selectedAccount = null;
 let isEdit = false;
@@ -698,18 +700,89 @@ function validatePhoneNumber(phone) {
 // ✅ عرض الجدول (مع صلاحيات)
 // ============================================================
 async function loadAccounts() {
+  // ✅ منع التكرار
+  if (_isLoading) {
+    console.warn('⚠️ جاري التحميل بالفعل، تجاهل...');
+    return;
+  }
+  _isLoading = true;
+  
   const btns = document.querySelectorAll('.action-bar .btn');
   btns.forEach(b => { b.disabled = true; b.style.opacity = '0.6'; });
   
   try {
-     const user = Session.getUser();
+    // ✅ التأكد من وجود المستخدم مع centerName
+    let user = Session.getUser();
+    
+    // ✅ إذا لم يكن هناك مستخدم، حاول الاستعادة من localStorage
     if (!user) {
-      console.error('❌ لا يوجد مستخدم في Session');
-      showAlert('يرجى تسجيل الدخول مرة أخرى', '⚠️');
+      console.warn('⚠️ لا يوجد مستخدم في Session، محاولة الاستعادة...');
+      try {
+        const stored = localStorage.getItem('currentUser');
+        if (stored) {
+          const data = JSON.parse(stored);
+          if (data.user) {
+            user = data.user;
+            Session.save(user);
+            console.log('✅ تم استعادة المستخدم من localStorage');
+          }
+        }
+      } catch(e) {
+        console.warn('⚠️ فشل استعادة المستخدم:', e);
+      }
+    }
+    
+    // ✅ إذا لم ينجح، أعد التوجيه
+    if (!user) {
+      console.error('❌ لا يوجد مستخدم صالح، جاري التوجيه...');
+      _isLoading = false;
       window.location.href = 'index.html';
       return;
     }
     
+    // ✅ التأكد من وجود centerName
+    if (!user.centerName) {
+      console.warn('⚠️ centerName مفقود، محاولة الاستعادة...');
+      try {
+        const stored = localStorage.getItem('currentUser');
+        if (stored) {
+          const data = JSON.parse(stored);
+          if (data.user && data.user.centerName) {
+            user.centerName = data.user.centerName;
+            Session.save(user);
+            console.log('✅ تم استعادة centerName:', user.centerName);
+          }
+        }
+      } catch(e) {
+        console.warn('⚠️ فشل استعادة centerName:', e);
+      }
+    }
+    
+    // ✅ إذا لا يزال centerName مفقوداً، استخدم قيمة افتراضية مؤقتة
+    if (!user.centerName) {
+      console.warn('⚠️ centerName لا يزال مفقوداً، استخدام قيمة افتراضية...');
+      // ✅ محاولة استخراج centerName من localStorage مرة أخرى
+      try {
+        const stored = localStorage.getItem('currentUser');
+        if (stored) {
+          const data = JSON.parse(stored);
+          if (data.user && data.user.centerName) {
+            user.centerName = data.user.centerName;
+          } else if (data.centerName) {
+            user.centerName = data.centerName;
+          }
+        }
+      } catch(e) {}
+      
+      // ✅ إذا لا يزال مفقوداً، استخدم قيمة افتراضية
+      if (!user.centerName) {
+        user.centerName = 'Scorpion';
+        console.log('⚠️ استخدام centerName افتراضي: Scorpion');
+      }
+      Session.save(user);
+    }
+    
+    // ✅ تعيين المستخدم الحالي
     currentUser = user;
     loggedInUser = user;
     
@@ -718,24 +791,9 @@ async function loadAccounts() {
     console.log('📡 loadAccounts - centerName:', user.centerName);
   
     const centerName = user.centerName || '';
-    if (!centerName) {
-      console.warn('⚠️ لا يوجد centerName للمستخدم');
-      // محاولة استعادة من localStorage
-      try {
-        const stored = localStorage.getItem('currentUser');
-        if (stored) {
-          const data = JSON.parse(stored);
-          if (data.user && data.user.centerName) {
-            user.centerName = data.user.centerName;
-            currentUser.centerName = data.user.centerName;
-            console.log('✅ تم استعادة centerName من localStorage:', data.user.centerName);
-          }
-        }
-      } catch(e) {}
-    }
     
     const res = await gas('getAllSuppliersCustomers', { 
-      centerName: user.centerName || currentUser?.centerName || '' 
+      centerName: centerName
     });
     
     console.log('📡 loadAccounts - response:', res);
@@ -767,12 +825,14 @@ async function loadAccounts() {
     renderTable();
     showAlert('فشل تحميل البيانات: ' + e.message, '❌');
   } finally {
+    _isLoading = false;
     btns.forEach(b => { 
       b.disabled = false; 
       b.style.opacity = '1';
     });
   }
 }
+
 function selectRow(id) {
   selectedAccount = allAccounts.find(a => a.customerId === id) || null;
   renderTable();
