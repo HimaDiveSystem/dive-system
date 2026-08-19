@@ -204,7 +204,9 @@ const Session = {
         }
     },
 
-    // ✅ التحقق من صلاحية محددة
+    // ============================================================
+    // ✅ دالة checkPermission - للتحقق من صلاحية فردية (نص واحد)
+    // ============================================================
     checkPermission(permission) {
         const user = this.getUser();
         if (!user) return false;
@@ -213,7 +215,33 @@ const Session = {
         return user.permissions.includes(permission);
     },
 
-    // ✅ التحقق من صلاحية مع إعادة التوجيه
+    // ============================================================
+    // ✅ دالة checkMultiplePermissions - للتحقق من عدة صلاحيات (مصفوفة)
+    // ============================================================
+    checkMultiplePermissions(permissions) {
+        if (!Array.isArray(permissions) || permissions.length === 0) return false;
+        const user = this.getUser();
+        if (!user) return false;
+        if (user.type === 'Admin') return true;
+        if (!user.permissions || user.permissions.length === 0) return false;
+        // ✅ تتحقق مما إذا كان المستخدم لديه أي من الصلاحيات المطلوبة
+        return permissions.some(p => user.permissions.includes(p));
+    },
+
+    // ============================================================
+    // ✅ دالة checkUserType - للتحقق من نوع المستخدم (جديدة)
+    // ============================================================
+    checkUserType(allowedTypes) {
+        const user = this.getUser();
+        if (!user || !user.type) return false;
+        if (user.type === 'Admin') return true;
+        if (!Array.isArray(allowedTypes)) return user.type === allowedTypes;
+        return allowedTypes.includes(user.type);
+    },
+
+    // ============================================================
+    // ✅ دالة checkPermissionWithRedirect - للتحقق مع إعادة توجيه
+    // ============================================================
     checkPermissionWithRedirect(allowedTypes, redirectOnFail = true) {
         const user = this.getUser();
         if (!user || !user.type) {
