@@ -1263,7 +1263,6 @@ async function getPreviousDayBalance() {
   }
 }
 async function loadData(force = false) {
-  // ✅ منع التحميل المتكرر
   if (isLoadingData) {
     console.log('⏳ جاري التحميل بالفعل، تخطي...');
     return;
@@ -1284,7 +1283,6 @@ async function loadData(force = false) {
 
   const targetBranch = selectedBranch;
 
-  // ✅ التحقق من أن التاريخ ليس أكبر من آخر تاريخ مسجل
   if (lastCashDateStr && isDateAfterLastCashDate(currentDateISO)) {
     showDateWarning(currentDateISO);
     return;
@@ -1296,132 +1294,33 @@ async function loadData(force = false) {
   document.getElementById('mainContent').innerHTML = '<div class="load-state"><div class="spinner"></div><br>جاري تحميل بيانات ' + currentDateISO + '...</div>';
 
   try {
-    // ✅ ✅ ✅ جلب الفواتير حسب تاريخ الإصدار
-    console.log(`📡 جلب الفواتير لـ ${currentDateISO} في فرع ${targetBranch}`);
-    
-    const invoicesResult = await callGAS('getInvoicesByIssueDate', {
+    // ✅ طلب واحد فقط يجلب كل البيانات
+    const result = await callGAS('getCashRegisterDayData', {
       dateStr: currentDateISO,
       branchName: targetBranch,
       centerName: currentUser?.centerName || ''
     });
 
-    // ✅ ✅ ✅ تحويل بيانات الفواتير إلى مجاميع
-    let invoiceTotals = { USD: 0, EUR: 0, GBP: 0, LE: 0, VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0 };
-    let invoiceCount = 0;
-
-    if (invoicesResult?.success && Array.isArray(invoicesResult.data)) {
-      console.log(`✅ تم جلب ${invoicesResult.data.length} فاتورة`);
-      
-      invoicesResult.data.forEach(inv => {
-        const usd = parseFloat(inv.cashUSD || 0);
-        const eur = parseFloat(inv.cashEUR || 0);
-        const gbp = parseFloat(inv.cashGBP || 0);
-        const le = parseFloat(inv.cashLE || 0);
-        
-        const visaUSD = parseFloat(inv.visaUSD || 0);
-        const visaEUR = parseFloat(inv.visaEUR || 0);
-        const visaGBP = parseFloat(inv.visaGBP || 0);
-        const visaLE = parseFloat(inv.visaLE || 0);
-
-        console.log(`📊 فاتورة ${inv.voucherNo}: $${usd} | €${eur} | £${gbp} | LE${le} | Visa$${visaUSD}`);
-
-        invoiceTotals.USD += usd;
-        invoiceTotals.EUR += eur;
-        invoiceTotals.GBP += gbp;
-        invoiceTotals.LE += le;
-        invoiceTotals.VUSD += visaUSD;
-        invoiceTotals.VEUR += visaEUR;
-        invoiceTotals.VGBP += visaGBP;
-        invoiceTotals.VLE += visaLE;
-        
-        invoiceCount++;
-      });
-
-      Object.keys(invoiceTotals).forEach(k => invoiceTotals[k] = roundTwo(invoiceTotals[k]));
-    } else {
-      console.warn('⚠️ لا توجد فواتير أو خطأ:', invoicesResult?.message);
+    if (!result.success) {
+      throw new Error(result.message);
     }
 
-    console.log('📊 مجاميع الفواتير:', invoiceTotals);
+    const invoiceTotals = result.invoices || {};
+    const revenueTotals = result.revenues || {};
+    const expenseTotals = result.expenses || {};
+    const invoiceCount = result.invoiceCount || 0;
+    const revenueCount = result.revenueCount || 0;
+    const expenseCount = result.expenseCount || 0;
+    previousDayBalance = result.previousBalance || { USD:0, EUR:0, GBP:0, LE:0, VUSD:0, VEUR:0, VGBP:0, VLE:0 };
+    previousDateISO = result.previousDateISO || '';
 
-    // ✅ ✅ ✅ جلب رصيد الأمس
-    await getPreviousDayBalance();
-
-    // ✅ ✅ ✅ جلب الإيرادات الأخرى (Other Revenues)
-    let revenueTotals = { USD: 0, EUR: 0, GBP: 0, LE: 0, VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0 };
-    let revenueCount = 0;
-
-    try {
-      console.log(`📡 جلب الإيرادات لـ ${currentDateISO} في فرع ${targetBranch}`);
-      const revenuesResult = await callGAS('getRevenuesByDateOnly', {
-        dateStr: currentDateISO,
-        branchName: targetBranch,
-        centerName: currentUser?.centerName || ''
-      });
-
-      if (revenuesResult?.success && Array.isArray(revenuesResult.data)) {
-        console.log(`✅ تم جلب ${revenuesResult.data.length} إيراد`);
-        revenuesResult.data.forEach(rev => {
-          revenueTotals.USD += parseFloat(rev.USD) || 0;
-          revenueTotals.EUR += parseFloat(rev.EUR) || 0;
-          revenueTotals.GBP += parseFloat(rev.GBP) || 0;
-          revenueTotals.LE += parseFloat(rev.LE) || 0;
-          revenueTotals.VUSD += parseFloat(rev.VisaUSD) || 0;
-          revenueTotals.VEUR += parseFloat(rev.VisaEUR) || 0;
-          revenueTotals.VGBP += parseFloat(rev.VisaGBP) || 0;
-          revenueTotals.VLE += parseFloat(rev.VisaLE) || 0;
-          revenueCount++;
-        });
-        Object.keys(revenueTotals).forEach(k => revenueTotals[k] = roundTwo(revenueTotals[k]));
-      }
-    } catch(e) {
-      console.warn('⚠️ لا توجد بيانات إيرادات:', e);
-    }
-
-    console.log('📊 مجاميع الإيرادات:', revenueTotals);
-
-    // ✅ ✅ ✅ جلب المصروفات
-    let expenseTotals = { USD: 0, EUR: 0, GBP: 0, LE: 0, VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0 };
-    let expenseCount = 0;
-
-    try {
-      console.log(`📡 جلب المصروفات لـ ${currentDateISO} في فرع ${targetBranch}`);
-      const expensesResult = await callGAS('getExpensesByDateOnly', {
-        dateStr: currentDateISO,
-        branchName: targetBranch,
-        centerName: currentUser?.centerName || ''
-      });
-
-      if (expensesResult?.success && Array.isArray(expensesResult.data)) {
-        console.log(`✅ تم جلب ${expensesResult.data.length} مصروف`);
-        expensesResult.data.forEach(exp => {
-          expenseTotals.USD += parseFloat(exp.USD) || 0;
-          expenseTotals.EUR += parseFloat(exp.EUR) || 0;
-          expenseTotals.GBP += parseFloat(exp.GBP) || 0;
-          expenseTotals.LE += parseFloat(exp.LE) || 0;
-          expenseTotals.VUSD += parseFloat(exp.VisaUSD) || 0;
-          expenseTotals.VEUR += parseFloat(exp.VisaEUR) || 0;
-          expenseTotals.VGBP += parseFloat(exp.VisaGBP) || 0;
-          expenseTotals.VLE += parseFloat(exp.VisaLE) || 0;
-          expenseCount++;
-        });
-        Object.keys(expenseTotals).forEach(k => expenseTotals[k] = roundTwo(expenseTotals[k]));
-      }
-    } catch(e) {
-      console.warn('⚠️ لا توجد بيانات مصروفات:', e);
-    }
-
-    console.log('📊 مجاميع المصروفات:', expenseTotals);
-
-    // ✅ ✅ ✅ حساب Daily Income = Invoices + Revenues
+    // ✅ حساب Daily Income = Invoices + Revenues
     const dailyIncome = {};
     Object.keys(invoiceTotals).forEach(key => {
       dailyIncome[key] = roundTwo((invoiceTotals[key] || 0) + (revenueTotals[key] || 0));
     });
 
-    console.log('📊 Daily Income:', dailyIncome);
-
-    // ✅ ✅ ✅ حساب Today Total = Previous Balance + Daily Income
+    // ✅ حساب Today Total = Previous Balance + Daily Income
     const todayTotal = {};
     Object.keys(previousDayBalance).forEach(key => {
       const prev = previousDayBalance[key] || 0;
@@ -1429,17 +1328,13 @@ async function loadData(force = false) {
       todayTotal[key] = roundTwo(prev + inc);
     });
 
-    console.log('📊 Today Total:', todayTotal);
-
-    // ✅ ✅ ✅ الرصيد النهائي = Today Total - Expenses
+    // ✅ الرصيد النهائي = Today Total - Expenses
     const finalBalance = {};
     Object.keys(todayTotal).forEach(key => {
       finalBalance[key] = roundTwo((todayTotal[key] || 0) - (expenseTotals[key] || 0));
     });
 
-    console.log('📊 الرصيد النهائي:', finalBalance);
-
-    // ✅ ✅ ✅ تحديث systemTotals
+    // ✅ تحديث systemTotals
     systemTotals = {
       invoices: invoiceTotals,
       revenues: revenueTotals,
@@ -1451,12 +1346,25 @@ async function loadData(force = false) {
       accumulatedBalance: finalBalance
     };
 
-    console.log('📊 systemTotals:', systemTotals);
-    console.log('✅ تم تحميل البيانات بنجاح لـ ' + currentDateISO);
-
-    // ✅ ✅ ✅ عرض الصفحة
+    // ✅ عرض الصفحة
     renderPage(invoiceCount, revenueCount, expenseCount);
-    loadSavedCount();
+    
+    // ✅ تحميل الجرد المحفوظ (إن وجد)
+    if (result.savedCount) {
+      savedCountData = result.savedCount;
+      // ملء الحقول من البيانات المحفوظة
+      if (savedCountData.notes) {
+        const n = document.getElementById('countNotes');
+        if (n) n.value = savedCountData.notes;
+      }
+      markSavedStatus();
+      const lbl = document.getElementById('lastSaveLabel');
+      if (lbl && savedCountData.savedAt) {
+        const t = new Date(savedCountData.savedAt).toLocaleTimeString('en', {hour:'2-digit', minute:'2-digit'});
+        lbl.textContent = '✅ Last saved: ' + t;
+      }
+    }
+
     showToast(`✅ تم تحميل ${invoiceCount} فاتورة, ${revenueCount} إيراد, ${expenseCount} مصروف`, 'success', 2500);
 
   } catch(e) {
