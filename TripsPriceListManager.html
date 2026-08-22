@@ -855,7 +855,10 @@
 // ============================================================
 console.log('🚀 TripsPriceListManager loaded');
 console.log('CONFIG.GAS_URL:', CONFIG.GAS_URL);
-
+let sortConfig = {
+    column: 'name',        // العمود الحالي للفرز: 'name' | 'category' | 'items' | 'cost'
+    direction: 'asc'       // اتجاه الفرز: 'asc' | 'desc'
+};
 let currentUser = null;
 let allCategories = [];
 let allTrips = [];
@@ -2206,72 +2209,154 @@ async function loadTripsListData() {
     }
 }
 function filterTripsList() {
-  const searchInput = document.getElementById('tripSearch');
-  const container = document.getElementById('tripsListContainer');
-  
-  if (!searchInput || !container || !window.allTripsList) return;
-  
-  const searchText = searchInput.value.toLowerCase();
-  const filtered = window.allTripsList.filter(trip => 
-    trip.name.toLowerCase().includes(searchText) || 
-    (trip.category && trip.category.toLowerCase().includes(searchText))
-  );
-  displayFilteredTrips(filtered);
+    const searchInput = document.getElementById('tripSearch');
+    const container = document.getElementById('tripsListContainer');
+    
+    if (!searchInput || !container || !window.allTripsList) return;
+    
+    const searchText = searchInput.value.toLowerCase();
+    const filtered = window.allTripsList.filter(trip => 
+        trip.name.toLowerCase().includes(searchText) || 
+        (trip.category && trip.category.toLowerCase().includes(searchText))
+    );
+    
+    // ✅ تطبيق الفرز بعد التصفية (يتم داخل displayFilteredTrips)
+    displayFilteredTrips(filtered);
 }
 
 function displayFilteredTrips(trips) {
-  const container = document.getElementById('tripsListContainer');
-  if (!container) return;
-  
-  if (!trips || trips.length === 0) {
-    container.innerHTML = '<div style="text-align: center; padding: 50px; color: #666;">🔍 لا توجد نتائج مطابقة للبحث</div>';
-    return;
-  }
-  
-  let html = `
-    <div class="trips-table-container">
-      <table class="trips-table">
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>اسم الرحلة</th>
-            <th>الفئة</th>
-            <th>عدد البنود</th>
-            <th>تكلفة؟</th>
-            <th>الإجراءات</th>
-          </tr>
-        </thead>
-        <tbody>
-  `;
-  
-  trips.forEach((trip, idx) => {
-    // ✅ استخدام totalItems مباشرة من بيانات الرحلة
-    const totalItems = trip.totalItems || 0;
-    const hasCostIcon = trip.hasCost ? '✅ نعم' : '❌ لا';
-    html += `
-      <tr>
-        <td>${idx + 1}</td>
-        <td><strong>${escapeHtml(trip.name)}</strong></td>
-        <td>${escapeHtml(trip.category || '-')}</td>
-        <td>${totalItems}</td>
-        <td>${hasCostIcon}</td>
-        <td>
-          <button class="btn-secondary" onclick="editTripFromList('${escapeHtml(trip.name)}')" style="padding: 6px 15px; border-radius: 30px; font-size: 12px; border: 1px solid #ced4da; background: #e9ecef; cursor: pointer;">
-            ✏️ تعديل
-          </button>
-        </td>
-      </tr>
+    const container = document.getElementById('tripsListContainer');
+    if (!container) return;
+    
+    // ✅ تطبيق الفرز أولاً
+    const sortedTrips = sortTrips(trips);
+    
+    if (!sortedTrips || sortedTrips.length === 0) {
+        container.innerHTML = '<div style="text-align: center; padding: 50px; color: #666;">🔍 لا توجد نتائج مطابقة للبحث</div>';
+        return;
+    }
+    
+    // ✅ تحديد اتجاه السهم لكل عمود
+    const getSortIcon = (column) => {
+        if (sortConfig.column === column) {
+            return sortConfig.direction === 'asc' ? ' ↑' : ' ↓';
+        }
+        return ' ⇅';
+    };
+    
+    let html = `
+        <div style="margin-bottom: 15px; font-size: 14px; color: #666; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <span>📊 عدد الرحلات: <strong>${sortedTrips.length}</strong></span>
+            <span style="font-size: 12px; color: #999;">🔄 اضغط على عنوان العمود للفرز</span>
+        </div>
+        <div class="trips-table-container">
+            <table class="trips-table">
+                <thead>
+                    <tr>
+                        <th style="cursor: pointer; user-select: none; min-width: 40px;" onclick="setSortColumn('index')">#</th>
+                        <th style="cursor: pointer; user-select: none; min-width: 120px;" onclick="setSortColumn('name')">اسم الرحلة${getSortIcon('name')}</th>
+                        <th style="cursor: pointer; user-select: none; min-width: 100px;" onclick="setSortColumn('category')">الفئة${getSortIcon('category')}</th>
+                        <th style="cursor: pointer; user-select: none; min-width: 80px;" onclick="setSortColumn('items')">عدد البنود${getSortIcon('items')}</th>
+                        <th style="cursor: pointer; user-select: none; min-width: 80px;" onclick="setSortColumn('cost')">تكلفة؟${getSortIcon('cost')}</th>
+                        <th style="min-width: 80px;">الإجراءات</th>
+                    </tr>
+                </thead>
+                <tbody>
     `;
-  });
-  
-  html += `
-        </tbody>
-      </table>
-    </div>
-  `;
-  
-  container.innerHTML = html;
+    
+    sortedTrips.forEach((trip, idx) => {
+        const totalItems = trip.totalItems || 0;
+        const hasCostIcon = trip.hasCost ? '✅ نعم' : '❌ لا';
+        html += `
+            <tr>
+                <td>${idx + 1}</td>
+                <td><strong>${escapeHtml(trip.name)}</strong></td>
+                <td>${escapeHtml(trip.category || '-')}</td>
+                <td>${totalItems}</td>
+                <td>${hasCostIcon}</td>
+                <td>
+                    <button class="btn-secondary" onclick="editTripFromList('${escapeHtml(trip.name)}')" style="padding: 6px 15px; border-radius: 30px; font-size: 12px; border: 1px solid #ced4da; background: #e9ecef; cursor: pointer;">
+                        ✏️ تعديل
+                    </button>
+                </td>
+            </tr>
+        `;
+    });
+    
+    html += `
+                </tbody>
+            </table>
+        </div>
+    `;
+    
+    container.innerHTML = html;
 }
+
+  // ============================================================
+// SORT FUNCTION
+// ============================================================
+function sortTrips(trips) {
+    if (!trips || trips.length === 0) return trips;
+    
+    const { column, direction } = sortConfig;
+    const multiplier = direction === 'asc' ? 1 : -1;
+    
+    return [...trips].sort((a, b) => {
+        let valA, valB;
+        
+        switch(column) {
+            case 'name':
+                valA = (a.name || '').toLowerCase();
+                valB = (b.name || '').toLowerCase();
+                return valA.localeCompare(valB, 'ar') * multiplier;
+                
+            case 'category':
+                valA = (a.category || '').toLowerCase();
+                valB = (b.category || '').toLowerCase();
+                return valA.localeCompare(valB, 'ar') * multiplier;
+                
+            case 'items':
+                valA = parseInt(a.totalItems) || 0;
+                valB = parseInt(b.totalItems) || 0;
+                return (valA - valB) * multiplier;
+                
+            case 'cost':
+                valA = a.hasCost ? 1 : 0;
+                valB = b.hasCost ? 1 : 0;
+                return (valA - valB) * multiplier;
+                
+            case 'index':
+            default:
+                return 0; // يحافظ على الترتيب الأصلي
+        }
+    });
+}
+
+// ============================================================
+// SET SORT COLUMN - تبديل اتجاه الفرز عند النقر
+// ============================================================
+function setSortColumn(column) {
+    if (column === 'index') return; // لا فرز للرقم التسلسلي
+    
+    if (sortConfig.column === column) {
+        // نفس العمود → عكس الاتجاه
+        sortConfig.direction = sortConfig.direction === 'asc' ? 'desc' : 'asc';
+    } else {
+        // عمود جديد → تصاعدي
+        sortConfig.column = column;
+        sortConfig.direction = 'asc';
+    }
+    
+    // ✅ إعادة عرض القائمة مع الفرز الجديد
+    const searchInput = document.getElementById('tripSearch');
+    const searchText = searchInput ? searchInput.value.toLowerCase() : '';
+    const filtered = window.allTripsList.filter(trip => 
+        trip.name.toLowerCase().includes(searchText) || 
+        (trip.category && trip.category.toLowerCase().includes(searchText))
+    );
+    displayFilteredTrips(filtered);
+}
+  
 function editTripFromList(tripName) {
   showTab('edit');
   
