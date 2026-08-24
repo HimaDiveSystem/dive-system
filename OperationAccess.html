@@ -1162,7 +1162,7 @@ function jsonpRequest(action, params = {}) {
     const qs = Object.entries(params).map(([k, v]) => k + '=' + encodeURIComponent(String(v ?? ''))).join('&');
     const url = CONFIG.GAS_URL + '?' + qs;  // ✅ استخدام CONFIG.GAS_URL
     const script = document.createElement('script');
-    const timeout = setTimeout(() => { cleanup(); reject(new Error('Request timeout')); }, 30000);
+    const timeout = setTimeout(() => { cleanup(); reject(new Error('Request timeout')); }, 60000);
     const cleanup = () => { clearTimeout(timeout); delete window[cbName]; script.remove(); };
     window[cbName] = (data) => { cleanup(); resolve(data); };
     script.onerror = () => { cleanup(); reject(new Error('Network error')); };
@@ -1782,17 +1782,22 @@ async function loadInvoicesForDateRange(fromDateStr, toDateStr) {
             if (Array.isArray(result)) {
                 invoices = result;
             }
-        } else {
-            // ✅ نطاق زمني: جلب كل الفواتير ثم التصفية (مرة واحدة فقط)
-            const result = await gas('getAllInvoices', {
-                includeCollection: 'true',
-                centerName: currentUser?.centerName
-            });
-            if (Array.isArray(result)) {
-                invoices = result;
-            }
-        }
-        
+       } else {
+    // ✅ نطاق زمني: جلب الفواتير ضمن النطاق فقط (وليس كل الفواتير)
+    const selectedTrips = getSelectedTrips();
+    const tripFilter = selectedTrips.length === 1 ? selectedTrips[0] : '';
+    
+    const result = await gas('getInvoicesByDateRangeOnly', {
+        fromDate: fromDateStr,
+        toDate: toDateStr,
+        branchName: currentUser?.branchName || '',
+        centerName: currentUser?.centerName,
+        tripFilter: tripFilter
+    });
+    if (Array.isArray(result)) {
+        invoices = result;
+    }
+}        
         // ✅ تصفية الفواتير حسب رحلات Diving
         if (currentUser && !['Admin', 'Owner', 'Accountant', 'FinancialManager'].includes(currentUser.type)) {
             invoices = invoices.filter(inv => {
@@ -5919,36 +5924,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
         console.log('✅ Current user loaded:', currentUser.name);
         
-        // ✅ تحميل بيانات أساسية فقط (السيارات، المراكب، المدربين) - هذه خفيفة
-        await loadBranches();
-        document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
-        
-        // ✅ تحميل أسماء رحلات Diving
-        await loadDivingTripNames();
-        
-        // ✅ تحميل السيارات (خفيفة)
-        try {
-            const vehiclesResult = await gas('getVehicles', { centerName: currentUser?.centerName });
-            if (Array.isArray(vehiclesResult)) {
-                cachedVehicles = vehiclesResult;
-            }
-        } catch(e) { /* تجاهل */ }
-        
-        // ✅ تحميل المراكب (خفيفة)
-        try {
-            const boatsResult = await gas('getBoats', { centerName: currentUser?.centerName });
-            if (Array.isArray(boatsResult)) {
-                cachedBoats = boatsResult;
-            }
-        } catch(e) { /* تجاهل */ }
-        
-        // ✅ تحميل المدربين (خفيفة)
-        try {
-            const instructorsResult = await gas('getInstructors', { centerName: currentUser?.centerName });
-            if (Array.isArray(instructorsResult)) {
-                cachedInstructors = instructorsResult;
-            }
-        } catch(e) { /* تجاهل */ }
+       // ✅ تحميل البيانات بالتوازي (أسرع بكثير)
+document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
+
+const [branchesRes, tripNamesRes, vehiclesResult, boatsResult, instructorsResult] = await Promise.all([
+    loadBranches(),
+    loadDivingTripNames(),
+    gas('getVehicles', { centerName: currentUser?.centerName }).catch(() => []),
+    gas('getBoats', { centerName: currentUser?.centerName }).catch(() => []),
+    gas('getInstructors', { centerName: currentUser?.centerName }).catch(() => [])
+]);
+
+if (Array.isArray(vehiclesResult)) cachedVehicles = vehiclesResult;
+if (Array.isArray(boatsResult)) cachedBoats = boatsResult;
+if (Array.isArray(instructorsResult)) cachedInstructors = instructorsResult;
         
         // ✅ عرض رسالة الترحيب
         const today = new Date();
