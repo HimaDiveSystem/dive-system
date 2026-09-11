@@ -1167,20 +1167,50 @@ function jsonpRequest(action, params = {}) {
     params.action = action;
     params.callback = cbName;
     const qs = Object.entries(params).map(([k, v]) => k + '=' + encodeURIComponent(String(v ?? ''))).join('&');
-    const url = CONFIG.GAS_URL + '?' + qs;  // ✅ استخدام CONFIG.GAS_URL
+    const url = CONFIG.GAS_URL + '?' + qs;
+    
     const script = document.createElement('script');
-    const timeout = setTimeout(() => { cleanup(); reject(new Error('Request timeout')); }, 60000);
-    const cleanup = () => { clearTimeout(timeout); delete window[cbName]; script.remove(); };
-    window[cbName] = (data) => { cleanup(); resolve(data); };
-    script.onerror = () => { cleanup(); reject(new Error('Network error')); };
-   script.src = CONFIG.GAS_URL + '?' + qs;
+    let isResolved = false;
+    
+    const timeout = setTimeout(() => {
+      if (!isResolved) {
+        isResolved = true;
+        // ✅ لا نحذف window[cbName] - نتركه ليتلقى الرد المتأخر
+        clearTimeout(timeout);
+        try { script.remove(); } catch(e) {}
+        reject(new Error('Request timeout'));
+      }
+    }, 90000);  // ✅ زيادة المهلة إلى 90 ثانية
+    
+    // ✅ لا نحذف window[cbName] عند cleanup - فقط نمنع resolve المتكرر
+    window[cbName] = (data) => {
+      if (isResolved) {
+        console.log('⏰ رد متأخر - تم تجاهله');
+        return;
+      }
+      isResolved = true;
+      clearTimeout(timeout);
+      try { script.remove(); } catch(e) {}
+      resolve(data);
+    };
+    
+    script.onerror = () => {
+      if (!isResolved) {
+        isResolved = true;
+        clearTimeout(timeout);
+        try { script.remove(); } catch(e) {}
+        reject(new Error('Network error'));
+      }
+    };
+    
+    script.src = url;
     document.head.appendChild(script);
   });
 }
 
 function gas(action, params = {}) {
   return new Promise((resolve, reject) => {
-    const timeoutId = setTimeout(() => reject(new Error('Request timeout')), 60000);  // ✅ 60 ثانية
+    const timeoutId = setTimeout(() => reject(new Error('Request timeout')), 90000);
     jsonpRequest(action, params).then(resolve).catch(reject).finally(() => clearTimeout(timeoutId));
   });
 }
@@ -1725,8 +1755,13 @@ function getSelectedTrips() {
   return hasAllTrips || selected.length === 0 ? [] : selected;
 }
 function applyFilters() {
+  if (isLoadingInvoices) {
+        console.log('⚠️ isLoadingInvoices عالقة - إعادة تعيين قسرية');
+        isLoadingInvoices = false;
+    }
+    
     const fromDateStr = document.getElementById('filterFromDateTxt')?.value || '';
-    const toDateStr = document.getElementById('filterToDateTxt')?.value || '';
+  const toDateStr = document.getElementById('filterToDateTxt')?.value || '';
     
     // ✅ إذا لم يتم اختيار تاريخ، اعرض رسالة ولا تفعل شيئاً
     if (!fromDateStr || !toDateStr) {
@@ -2758,6 +2793,32 @@ async function openAssignBoats(voucherNo) {
     const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
     if (!invoice) return;
 
+    // ✅ التحقق من وجود cachedBoats
+    if (!cachedBoats || cachedBoats.length === 0) {
+        showToast('⚠️ جاري تحميل المراكب...', 'info');
+        try {
+            const boatsResult = await gas('getBoats', { centerName: currentUser?.centerName });
+            let boatsList = [];
+            if (Array.isArray(boatsResult)) {
+                boatsList = boatsResult;
+            } else if (boatsResult?.success && Array.isArray(boatsResult.data)) {
+                boatsList = boatsResult.data;
+            } else if (boatsResult?.data && Array.isArray(boatsResult.data)) {
+                boatsList = boatsResult.data;
+            }
+            if (boatsList.length > 0) {
+                cachedBoats = boatsList;
+                console.log('✅ Boats loaded on demand:', cachedBoats.length);
+            } else {
+                showToast('⚠️ لا توجد مراكب متاحة', 'error');
+                return;
+            }
+        } catch(e) {
+            showToast('❌ فشل تحميل المراكب', 'error');
+            return;
+        }
+    }
+
     if (selectedBoats.length === 0) {
         showToast('⚠️ اختر المراكب أولاً من زر ⛵ Boats', 'error');
         return;
@@ -2883,38 +2944,62 @@ async function openAssignBoats(voucherNo) {
 }
   
 async function saveBoatAssignment() {
+  // ✅ تعريف saveBtn في البداية
+  const saveBtn = document.querySelector('#assignBoatsModal .btn-primary');
+  if (saveBtn && saveBtn.disabled) {
+    console.log('⚠️ Save already in progress, ignoring...');
+    return;
+  }
+  
   let selectedBoatsData = [];
   document.querySelectorAll('#assignBoatsModal .assign-select:checked').forEach(cb => {
     const boatId = cb.getAttribute('data-id');
     const adult = parseInt(document.querySelector(`.assign-adult[data-id="${boatId}"]`).value) || 0;
     const child = parseInt(document.querySelector(`.assign-child[data-id="${boatId}"]`).value) || 0;
     const infant = parseInt(document.querySelector(`.assign-infant[data-id="${boatId}"]`).value) || 0;
-    if (adult+child+infant === 0) return;
-    selectedBoatsData.push({ boatId, adults: adult, children: child, infants: infant, totalSeats: adult+child+infant });
+    if (adult + child + infant === 0) return;
+    selectedBoatsData.push({ 
+      boatId, 
+      adults: adult, 
+      children: child, 
+      infants: infant, 
+      totalSeats: adult + child + infant 
+    });
   });
- if (selectedBoatsData.length === 0) { showToast('⚠️ اختر مركب', 'error'); return; }
+  
+  if (selectedBoatsData.length === 0) { 
+    showToast('⚠️ اختر مركب', 'error'); 
+    return; 
+  }
   
   if (saveBtn) {
     saveBtn.disabled = true;
-    saveBtn.textContent = '⏳ جاري الحفظ...';  // ✅ إضافة
+    saveBtn.textContent = '⏳ جاري الحفظ...';
   }
   
-  const result = await gas('assignBoatsToInvoice', { 
-    voucherNo: currentAssignVoucher, 
-    boatsData: JSON.stringify(selectedBoatsData), 
-    centerName: currentUser?.centerName 
-  });
-  
-  if (result?.success) { 
-    updateLocalInvoice(currentAssignVoucher, 'BoatsUsed', JSON.stringify(selectedBoatsData)); 
-    renderTable(); 
-    showToast('✅ تم حفظ المراكب', 'success'); 
-    closeModal('assignBoatsModal'); 
-  } else showToast('❌ فشل الحفظ', 'error');
-  
-  if (saveBtn) {
-    saveBtn.disabled = false;
-    saveBtn.textContent = '✅ حفظ';  // ✅ إضافة
+  try {
+    const result = await gas('assignBoatsToInvoice', { 
+      voucherNo: currentAssignVoucher, 
+      boatsData: JSON.stringify(selectedBoatsData), 
+      centerName: currentUser?.centerName 
+    });
+    
+    if (result?.success) { 
+      updateLocalInvoice(currentAssignVoucher, 'BoatsUsed', JSON.stringify(selectedBoatsData)); 
+      renderTable(); 
+      showToast('✅ تم حفظ المراكب', 'success'); 
+      closeModal('assignBoatsModal'); 
+    } else {
+      showToast('❌ فشل الحفظ: ' + (result?.message || 'Unknown error'), 'error');
+    }
+  } catch(e) {
+    console.error('❌ saveBoatAssignment error:', e);
+    showToast('❌ خطأ: ' + e.message, 'error');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = '✅ حفظ';
+    }
   }
 }
 
@@ -5259,11 +5344,17 @@ async function loadBranches() {
     let branches = [];
     
     if (currentUser.centerId) {
-      const result = await gas('getBranchesByCenterId', { centerId: currentUser.centerId });
-      if (result && Array.isArray(result)) {
-        branches = result;
-      } else if (result && result.success && Array.isArray(result.data)) {
-        branches = result.data;
+      // ✅ try/catch منفصل
+      try {
+        const result = await gas('getBranchesByCenterId', { centerId: currentUser.centerId });
+        if (result && Array.isArray(result)) {
+          branches = result;
+        } else if (result && result.success && Array.isArray(result.data)) {
+          branches = result.data;
+        }
+      } catch(branchErr) {
+        console.warn('⚠️ getBranchesByCenterId غير متاح:', branchErr.message);
+        branches = [];
       }
     }
     
@@ -5280,7 +5371,6 @@ async function loadBranches() {
     
     window.branchesList = branches;
     
-    // ✅ إزالة المستمع القديم قبل إضافة مستمع جديد
     const newSelect = select.cloneNode(true);
     select.parentNode.replaceChild(newSelect, select);
     
@@ -5300,14 +5390,13 @@ async function loadBranches() {
         showToast('🌍 تم التبديل إلى جميع الفروع', 'success');
       }
       
-      // ✅ إعادة تحميل الفواتير مع الفرع الجديد
       lastFilterParams = '';
       invoicesLoaded = false;
       await loadInvoices();
       applyFilters();
     });
   } catch(e) {
-    console.warn('loadBranches error:', e);
+    console.warn('⚠️ loadBranches error (غير حرج):', e.message);
   }
 }
 
