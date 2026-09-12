@@ -444,27 +444,73 @@ function getUserFromUrl() {
 // ============================================================
 // JSONP REQUEST (للاتصال بـ Apps Script من GitHub Pages)
 // ============================================================
-function jsonpRequest(action, params = {}) {
+function jsonpRequest(action, params = {}, retryCount = 0) {
   return new Promise((resolve, reject) => {
     const cbName = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
     
-    // ✅ استخدام Session للحصول على بيانات المستخدم
     const user = Session.getUser();
     if (user?.centerName && !params.centerName) params.centerName = user.centerName;
     if (user?.centerId && !params.centerId) params.centerId = user.centerId;
     
-    // ✅ استخدام CONFIG.GAS_URL
     params.action = action;
     params.callback = cbName;
     const qs = Object.entries(params).map(([k, v]) => k + '=' + encodeURIComponent(String(v ?? ''))).join('&');
     const url = CONFIG.GAS_URL + '?' + qs;
     
-    const script = document.createElement('script');
-    const timeout = setTimeout(() => { cleanup(); reject(new Error('Request timeout')); }, 30000);
-    const cleanup = () => { clearTimeout(timeout); delete window[cbName]; script.remove(); };
+    console.log(`📡 [${action}] Attempt ${retryCount + 1}`);
     
-    window[cbName] = (data) => { cleanup(); resolve(data); };
-    script.onerror = () => { cleanup(); reject(new Error('Network error')); };
+    const script = document.createElement('script');
+    let isResolved = false;
+    
+    // ✅ مهلة 45 ثانية لكل محاولة
+    const timeout = setTimeout(() => {
+      if (!isResolved) {
+        isResolved = true;
+        cleanup();
+        
+        // ✅ إعادة المحاولة
+        if (retryCount < 2) {
+          console.warn(`⏰ [${action}] Timeout, retrying (${retryCount + 2}/3)...`);
+          setTimeout(() => {
+            jsonpRequest(action, params, retryCount + 1).then(resolve).catch(reject);
+          }, 1500);
+        } else {
+          reject(new Error('Request timeout after 3 attempts'));
+        }
+      }
+    }, 45000);
+    
+    const cleanup = () => {
+      clearTimeout(timeout);
+      try { delete window[cbName]; } catch(e) {}
+      try { script.remove(); } catch(e) {}
+    };
+    
+    window[cbName] = (data) => {
+      if (isResolved) return;
+      isResolved = true;
+      console.log(`✅ [${action}] Success`);
+      cleanup();
+      resolve(data);
+    };
+    
+    script.onerror = () => {
+      if (!isResolved) {
+        isResolved = true;
+        cleanup();
+        
+        // ✅ إعادة المحاولة
+        if (retryCount < 2) {
+          console.warn(`❌ [${action}] Network error, retrying (${retryCount + 2}/3)...`);
+          setTimeout(() => {
+            jsonpRequest(action, params, retryCount + 1).then(resolve).catch(reject);
+          }, 1500);
+        } else {
+          reject(new Error('Network error after 3 attempts'));
+        }
+      }
+    };
+    
     script.src = url;
     document.head.appendChild(script);
   });
@@ -473,6 +519,7 @@ function jsonpRequest(action, params = {}) {
 function gas(action, params = {}) {
   return jsonpRequest(action, params);
 }
+
 
 // ============================================================
 // LOAD DATA
