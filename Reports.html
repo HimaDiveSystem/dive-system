@@ -343,7 +343,7 @@ body {
   </div>
   <div class="filter-group" id="vehicleFilterGroup" style="display: none;">
   <label>🚗 Vehicle</label>
-  <select id="filterVehicle" onchange="loadReport()">
+   <select id="filterVehicle" onchange="filterByVehicle()">
     <option value="">All Vehicles</option>
   </select>
 </div>
@@ -1151,17 +1151,23 @@ async function loadVehiclesFilter() {
       return;
     }
     
-    // ✅ مسح الخيارات القديمة (ما عدا "All Vehicles")
+    // ✅ حفظ القيمة الحالية قبل المسح
+    const currentValue = select.value;
+    
+    // ✅ مسح الخيارات القديمة
     select.innerHTML = '<option value="">All Vehicles</option>';
     
     if (vehicles && vehicles.length > 0) {
       vehicles.forEach(vehicle => {
         const option = document.createElement('option');
         option.value = vehicle.id;
-        option.textContent = `${vehicle.id} - ${vehicle.licensePlate || vehicle.LicensePlate || ''}`;
+        option.textContent = `${vehicle.id} - ${vehicle.licensePlate || ''}`;
         select.appendChild(option);
       });
       console.log(`✅ Loaded ${vehicles.length} vehicles into filter`);
+      
+      // ✅ استعادة القيمة السابقة إن وجدت
+      if (currentValue) select.value = currentValue;
     } else {
       console.log('⚠️ No vehicles found for this center');
     }
@@ -1175,24 +1181,21 @@ async function loadReport() {
   
   const fromDate = document.getElementById('filterFromDate').value;
   const toDate = document.getElementById('filterToDate').value;
+  const vehicleFilter = document.getElementById('filterVehicle')?.value || '';  // ✅ قيمة الفلتر
   
-  // ✅ جلب فلتر السيارة
-  const vehicleFilter = document.getElementById('filterVehicle').value;
-  
-  // ✅ استخدام centerName من الجلسة
   const centerName = currentUser?.centerName || '';
-  
-  // ✅ تمرير centerName لجميع الدوال
   const vehicles = await getVehicles(centerName);
   let reportData = [];
   let html = '';
   
   try {
-    // تقرير السيارات (ركاب)
     if (currentTab === 'vehicles') {
+      // ✅ تأكد من أن القائمة مملوءة
+      await loadVehiclesFilter();
+      
       reportData = await generateVehiclesReport(allInvoices, fromDate, toDate, vehicles, centerName);
       
-      // ✅ فلترة حسب السيارة المحددة
+      // ✅ فلترة حسب السيارة
       if (vehicleFilter) {
         reportData = reportData.filter(r => r.vehicleId === vehicleFilter);
       }
@@ -1200,11 +1203,11 @@ async function loadReport() {
       html = renderVehiclesTable(reportData);
       document.getElementById('vehicleFilterGroup').style.display = 'flex';
     }
-    // تقرير سيارات العدّة (Logistics)
     else if (currentTab === 'logistics') {
+      await loadVehiclesFilter();  // ✅
+      
       reportData = await generateLogisticsReport(fromDate, toDate, vehicles, centerName);
       
-      // ✅ فلترة حسب السيارة المحددة
       if (vehicleFilter) {
         reportData = reportData.filter(r => r.vehicleId === vehicleFilter);
       }
@@ -1212,11 +1215,11 @@ async function loadReport() {
       html = renderLogisticsTable(reportData);
       document.getElementById('vehicleFilterGroup').style.display = 'flex';
     }
-    // تقرير التكلفة اليومية
     else if (currentTab === 'cost') {
+      await loadVehiclesFilter();  // ✅
+      
       reportData = await generateDailyCostReport(fromDate, toDate, centerName);
       
-      // ✅ فلترة حسب السيارة المحددة
       if (vehicleFilter) {
         reportData = reportData.filter(r => r.vehicleId === vehicleFilter);
       }
@@ -1224,33 +1227,24 @@ async function loadReport() {
       html = renderDailyCostTable(reportData);
       document.getElementById('vehicleFilterGroup').style.display = 'flex';
     }
-       // تقرير المراكب
     else if (currentTab === 'boats') {
       reportData = await generateBoatsReport(fromDate, toDate, centerName);
       html = renderBoatsTable(reportData);
       document.getElementById('vehicleFilterGroup').style.display = 'none';
     }
-    // تقرير المدربين
     else if (currentTab === 'instructors') {
       reportData = await generateInstructorsReport(fromDate, toDate, centerName);
       html = renderInstructorsTable(reportData);
       document.getElementById('vehicleFilterGroup').style.display = 'none';
     }
-    // تقرير العملاء
     else if (currentTab === 'customers') {
       reportData = await generateCustomersReport(allInvoices, centerName);
       html = renderCustomersTable(reportData);
       document.getElementById('vehicleFilterGroup').style.display = 'none';
     }
-    // تبويب غير معروف
-    else {
-      html = '<div class="loader">⚠️ Unknown report type: ' + escapeHtml(currentTab) + '</div>';
-      document.getElementById('vehicleFilterGroup').style.display = 'none';
-    }
     
     container.innerHTML = html;
     
-    // ✅ تحديث الملخص (بعد التأكد من وجود reportData)
     if (reportData && reportData.length > 0) {
       updateSummary(reportData, currentTab);
     } else {
@@ -1263,6 +1257,7 @@ async function loadReport() {
     document.getElementById('summaryContainer').style.display = 'none';
   }
 }
+ 
   // ============================================================
 // BOATS REPORT - نسخة واحدة فقط
 // ============================================================
@@ -1357,7 +1352,18 @@ async function generateBoatsReport(fromDate, toDate) {
   console.log('📊 Aggregated boats report:', reportData.length);
   return reportData;
 }
-
+// ✅ دالة فلترة سريعة عند تغيير السيارة
+function filterByVehicle() {
+  const vehicleFilter = document.getElementById('filterVehicle')?.value || '';
+  
+  // إذا كانت القائمة فارغة، لا تفعل شيئاً
+  if (!document.getElementById('reportContainer').querySelector('table')) {
+    return;
+  }
+  
+  // إعادة تحميل التقرير فقط
+  loadReport();
+}
 function renderBoatsTable(data) {
   if (!data.length) return '<div class="loader">🚫 No boat data found</div>';
   
