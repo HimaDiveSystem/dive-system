@@ -359,9 +359,9 @@ body {
 <div id="summaryContainer" class="summary-card" style="display: none;"></div>
 <div class="tbl-wrap" id="reportContainer"><div class="loader"><div class="spinner"></div>Loading...</div></div>
   <!-- ====== FOOTER ====== -->
-  <div class="footer">
-    <span>© 2025 <strong style="color:#1e2b4f;">🌊 Dive System</strong> — جميع الحقوق محفوظة</span>
-  </div>
+<div class="footer">
+  <span>© 2025 <strong style="color:#1e2b4f;">🌊 Dive System</strong> — جميع الحقوق محفوظة</span>
+</div>
 <script>
 // ============================================================
 // CONFIGURATION - تعمل مع GitHub Pages و Apps Script
@@ -403,16 +403,28 @@ function escapeHtml(str) {
 }
 
 function goBack() {
-  if (currentUser) Session.save(currentUser);
-  const dashboards = CONFIG.DASHBOARD_PAGES || {
-     'Owner': 'OwnerDashboard.html',
-    'Sales': 'SalesDashboard.html',
-    'Accountant': 'AccountantDashboard.html',
-    'OperationManager': 'OperationManager.html',
-    'OperationSupervisor': 'OperationSupervisor.html'
-  };
-  const userType = currentUser?.type || 'Accountant';
-  window.location.href = dashboards[userType] || 'index.html';
+  // ✅ تحديث الجلسة
+  if (currentUser) {
+    currentUser.lastActivity = new Date().toISOString();
+    Session.save(currentUser);
+  }
+  
+  // ✅ التحقق من الصفحة السابقة
+  const previousPage = localStorage.getItem('previousPage');
+  const lastPage = sessionStorage.getItem('lastVisitedPage');
+  
+  if (previousPage && previousPage !== window.location.href) {
+    localStorage.removeItem('previousPage');
+    window.location.href = previousPage;
+  } else if (lastPage && lastPage !== window.location.href) {
+    sessionStorage.removeItem('lastVisitedPage');
+    window.location.href = lastPage;
+  } else if (window.history.length > 1) {
+    window.history.back();
+  } else {
+    const defaultPage = CONFIG.DASHBOARD_PAGES?.[currentUser?.type || 'Accountant'] || 'AccountantDashboard.html';
+    window.location.href = defaultPage;
+  }
 }
 
 // ============================================================
@@ -1083,72 +1095,6 @@ async function loadReport() {
   
   const fromDate = document.getElementById('filterFromDate').value;
   const toDate = document.getElementById('filterToDate').value;
-  const vehicles = await getVehicles();
-  let reportData = [];
-  let html = '';
-  
-  try {
-    // تقرير السيارات (ركاب)
-    if (currentTab === 'vehicles') {
-      reportData = await generateVehiclesReport(allInvoices, fromDate, toDate, vehicles);
-      html = renderVehiclesTable(reportData);
-      document.getElementById('vehicleFilterGroup').style.display = 'flex';
-    }
-    // تقرير سيارات العدّة (Logistics)
-    else if (currentTab === 'logistics') {
-      reportData = await generateLogisticsReport(fromDate, toDate, vehicles);
-      html = renderLogisticsTable(reportData);
-      document.getElementById('vehicleFilterGroup').style.display = 'flex';
-    }
-    // تقرير التكلفة اليومية
-    else if (currentTab === 'cost') {
-      reportData = await generateDailyCostReport(fromDate, toDate);
-      html = renderDailyCostTable(reportData);
-      document.getElementById('vehicleFilterGroup').style.display = 'flex';
-    }
-   // في قسم loadReport، تأكد من أن الأجزاء مرتبة بشكل صحيح:
-else if (currentTab === 'boats') {
-  reportData = await generateBoatsReport(fromDate, toDate);
-  html = renderBoatsTable(reportData);  // ✅ يجب أن يكون هكذا
-  document.getElementById('vehicleFilterGroup').style.display = 'none';
-}
-else if (currentTab === 'instructors') {
-  reportData = await generateInstructorsReport(fromDate, toDate);
-  html = renderInstructorsTable(reportData);
-  document.getElementById('vehicleFilterGroup').style.display = 'none';
-}
-    // تقرير العملاء
-    else if (currentTab === 'customers') {
-      reportData = await generateCustomersReport(allInvoices);
-      html = renderCustomersTable(reportData);
-      document.getElementById('vehicleFilterGroup').style.display = 'none';
-    }
-    // تبويب غير معروف
-    else {
-      html = '<div class="loader">⚠️ Unknown report type: ' + escapeHtml(currentTab) + '</div>';
-      document.getElementById('vehicleFilterGroup').style.display = 'none';
-    }
-    
-    container.innerHTML = html;
-    
-    // ✅ تحديث الملخص (بعد التأكد من وجود reportData)
-    if (reportData && reportData.length > 0) {
-      updateSummary(reportData, currentTab);
-    } else {
-      document.getElementById('summaryContainer').style.display = 'none';
-    }
-    
-  } catch(e) {
-    console.error('loadReport error:', e);
-    container.innerHTML = `<div class="loader">❌ Error: ${escapeHtml(e.message)}</div>`;
-    document.getElementById('summaryContainer').style.display = 'none';
-  }
-}async function loadReport() {
-  const container = document.getElementById('reportContainer');
-  container.innerHTML = '<div class="loader"><div class="spinner"></div>Loading data...</div>';
-  
-  const fromDate = document.getElementById('filterFromDate').value;
-  const toDate = document.getElementById('filterToDate').value;
   
   // ✅ استخدام centerName من الجلسة
   const centerName = currentUser?.centerName || '';
@@ -1580,110 +1526,7 @@ function resetFilters() {
 function exportToExcel() {
   showToast('Excel export coming soon...', 'info');
 }
-  // ============================================================
-// INSTRUCTORS REPORT
-// ============================================================
-async function generateInstructorsReport(invoices) {
-  const instructorsMap = new Map();
-  
-  for (const inv of invoices) {
-    const date = inv.activeDate || inv.ActiveDate || '';
-    const tripName = inv.trip || inv.Trip || '';
-    
-    let execInstructors = [];
-    try { execInstructors = JSON.parse(inv.InstructorsExecution || '[]'); } catch(e) {}
-    
-    for (const inst of execInstructors) {
-      if (!inst.instructorId) continue;
-      
-      if (!instructorsMap.has(inst.instructorId)) {
-        instructorsMap.set(inst.instructorId, {
-          instructorId: inst.instructorId,
-          name: inst.instructorName || inst.instructorId,
-          activities: [],
-          upSellTotal: 0,
-          upSellCount: 0
-        });
-      }
-      
-      const instructor = instructorsMap.get(inst.instructorId);
-      
-      if (inst.activities && inst.activities.length > 0) {
-        for (const act of inst.activities) {
-          instructor.activities.push({
-            date: date,
-            tripName: tripName,
-            activityName: act.displayName || act.activityName,
-            quantity: act.quantity || 0,
-            voucherNo: inv.voucherNo
-          });
-        }
-      } else {
-        if (inst.diver) instructor.activities.push({ date, tripName, activityName: 'Diver', quantity: inst.diver, voucherNo: inv.voucherNo });
-        if (inst.course) instructor.activities.push({ date, tripName, activityName: 'Course', quantity: inst.course, voucherNo: inv.voucherNo });
-        if (inst.intro) instructor.activities.push({ date, tripName, activityName: 'Intro', quantity: inst.intro, voucherNo: inv.voucherNo });
-      }
-    }
-    
-    let upSellData = [];
-    try { upSellData = JSON.parse(inv.InstructorsUpSell || '[]'); } catch(e) {}
-    
-    for (const upsell of upSellData) {
-      if (upsell.instructorId) {
-        if (!instructorsMap.has(upsell.instructorId)) {
-          instructorsMap.set(upsell.instructorId, {
-            instructorId: upsell.instructorId,
-            name: upsell.instructorName || upsell.instructorId,
-            activities: [],
-            upSellTotal: 0,
-            upSellCount: 0
-          });
-        }
-        const instructor = instructorsMap.get(upsell.instructorId);
-        instructor.upSellTotal += upsell.totalAmount || 0;
-        instructor.upSellCount++;
-      }
-    }
-  }
-  
-  const reportData = [];
-  for (const instructor of instructorsMap.values()) {
-    for (const activity of instructor.activities) {
-      reportData.push({
-        instructorId: instructor.instructorId,
-        instructorName: instructor.name,
-        date: activity.date,
-        tripName: activity.tripName,
-        activityName: activity.activityName,
-        quantity: activity.quantity,
-        voucherNo: activity.voucherNo,
-        upSellTotal: instructor.upSellTotal,
-        upSellCount: instructor.upSellCount
-      });
-    }
-    if (instructor.activities.length === 0 && instructor.upSellTotal > 0) {
-      reportData.push({
-        instructorId: instructor.instructorId,
-        instructorName: instructor.name,
-        date: '—',
-        tripName: '—',
-        activityName: '💰 UpSell Only',
-        quantity: 0,
-        voucherNo: '',
-        upSellTotal: instructor.upSellTotal,
-        upSellCount: instructor.upSellCount
-      });
-    }
-  }
-  
-  reportData.sort((a, b) => {
-    const dateA = parseDateFromString(a.date)?.getTime() || 0;
-    const dateB = parseDateFromString(b.date)?.getTime() || 0;
-    return dateB - dateA;
-  });
-  
-  return reportData;
-}
+ 
  async function loadTripsForFilter() {
   try {
     const result = await gas('getAllInvoices', { includeCollection: 'true' });
@@ -1857,88 +1700,7 @@ async function getBoatCostPerTrip(boatId) {
 }
 
 
-  // ============================================================
-// INSTRUCTORS REPORT - للإصلاح
-// ============================================================
-async function generateInstructorsReport(invoices, fromDate, toDate) {
-  // جلب بيانات المدربين من الخادم
-  const instructors = await getInstructors();
-  console.log('📊 Instructors loaded:', instructors.length);
-  
-  // جلب سجلات المدربين اليومية
-  const instructorLogs = await getInstructorDailyLogs(fromDate, toDate);
-  console.log('📊 Instructor logs:', instructorLogs.length);
-  
-  const instructorsMap = new Map();
-  
-  for (const log of instructorLogs) {
-    const date = log.Date || log.date || '';
-    const instructorId = log.InstructorID || log.instructorId || '';
-    const tripName = log.Trip || log.trip || '';
-    const activityType = log.ActivityType || log.activityType || '';
-    const quantity = parseInt(log.Quantity || log.quantity || 0);
-    const upSellAmount = parseFloat(log.UpSellAmount || log.upSellAmount || 0);
-    
-    if (!date || !instructorId) continue;
-    
-    if (!instructorsMap.has(instructorId)) {
-      const instructor = instructors.find(i => i.id === instructorId);
-      instructorsMap.set(instructorId, {
-        instructorId: instructorId,
-        instructorName: instructor?.name || instructorId,
-        activities: [],
-        upSellTotal: 0,
-        upSellCount: 0
-      });
-    }
-    
-    const instructor_data = instructorsMap.get(instructorId);
-    
-    if (activityType && quantity > 0) {
-      instructor_data.activities.push({
-        date: date,
-        tripName: tripName,
-        activityName: activityType,
-        quantity: quantity
-      });
-    }
-    
-    if (upSellAmount > 0) {
-      instructor_data.upSellTotal += upSellAmount;
-      instructor_data.upSellCount++;
-    }
-  }
-  
-  const reportData = [];
-  for (const instructor of instructorsMap.values()) {
-    for (const activity of instructor.activities) {
-      reportData.push({
-        instructorId: instructor.instructorId,
-        instructorName: instructor.instructorName,
-        date: activity.date,
-        tripName: activity.tripName,
-        activityName: activity.activityName,
-        quantity: activity.quantity,
-        upSellTotal: instructor.upSellTotal,
-        upSellCount: instructor.upSellCount
-      });
-    }
-    if (instructor.activities.length === 0 && instructor.upSellTotal > 0) {
-      reportData.push({
-        instructorId: instructor.instructorId,
-        instructorName: instructor.instructorName,
-        date: '—',
-        tripName: '—',
-        activityName: '💰 UpSell Only',
-        quantity: 0,
-        upSellTotal: instructor.upSellTotal,
-        upSellCount: instructor.upSellCount
-      });
-    }
-  }
-  
-  return reportData;
-}
+ 
 // ============================================================
 // INITIALIZATION
 // ============================================================
@@ -2011,7 +1773,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 function checkUserPermission(userId, permission) {
   const user = Session.getUser();
   if (!user) return false;
-   if (user.type === 'Admin' || user.type === 'Owner' || user.type === 'Accountant') return true;
+  
+  // ✅ الصلاحيات الكاملة
+  const fullAccessTypes = ['Admin', 'Owner', 'Accountant', 'FinancialManager', 'OperationsManager', 'OperationsSupervisor'];
+  if (fullAccessTypes.includes(user.type)) return true;
+  
+  // ✅ التحقق من الصلاحيات الخاصة
   return (user.permissions || []).includes(permission);
 }
 </script>
