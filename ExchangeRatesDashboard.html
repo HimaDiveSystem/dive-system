@@ -558,7 +558,7 @@ async function onDateTextChange() {
   
   const datePattern = /^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/;
   if (!datePattern.test(displayDate)) {
-    showAlert('صيغة التاريخ غير صحيحة. استخدم الصيغة: dd/MMM/yyyy (مثال: 15/Jun/2026)');
+    showAlert('صيغة التاريخ غير صحيحة. استخدم الصيغة: dd/MMM/yyyy');
     return;
   }
   
@@ -573,31 +573,58 @@ async function onDateTextChange() {
   }
 
   try {
-    const r = await jsonp('getExchangeRateByDateStr', {
-      dateStr: displayDate,
-      centerName: currentUser?.centerName || ''
-    });
+    // ✅ تحقق من الذاكرة أولاً
+    let found = false;
+    let rateData = null;
     
-    if (r && r.found) {
-      setVal('bUSD', r.bankUSD);
-      setVal('bEUR', r.bankEUR);
-      setVal('bGBP', r.bankGBP);
-      setVal('bLE', r.bankLE || 1);
-      setVal('bVUSD', r.bankVUSD);
-      setVal('bVEUR', r.bankVEUR);
-      setVal('bVGBP', r.bankVGBP);
-      setVal('bVLE', r.bankVLE);
-      setVal('sUSD', r.salesUSD);
-      setVal('sEUR', r.salesEUR);
-      setVal('sGBP', r.salesGBP);
-      setVal('sLE', r.salesLE || 1);
-      setVal('sVUSD', r.salesVUSD);
-      setVal('sVEUR', r.salesVEUR);
-      setVal('sVGBP', r.salesVGBP);
-      setVal('sVLE', r.salesVLE);
+    if (dashboardCache && dashboardCache.rates) {
+      rateData = dashboardCache.rates.find(r => r.date === displayDate);
+      if (rateData) {
+        console.log('✅ تم العثور على التاريخ في الذاكرة');
+        found = true;
+      }
+    }
+    
+    // ✅ إذا لم يوجد في الذاكرة، اطلب من الخادم
+    if (!found) {
+      console.log('📡 Searching on server...');
+      const r = await jsonp('getExchangeRateByDateStr', {
+        dateStr: displayDate,
+        centerName: currentUser?.centerName || ''
+      });
+      
+      if (r && r.found) {
+        found = true;
+        rateData = {
+          bUSD: r.bankUSD, bEUR: r.bankEUR, bGBP: r.bankGBP, bLE: r.bankLE,
+          bVUSD: r.bankVUSD, bVEUR: r.bankVEUR, bVGBP: r.bankVGBP, bVLE: r.bankVLE,
+          sUSD: r.salesUSD, sEUR: r.salesEUR, sGBP: r.salesGBP, sLE: r.salesLE,
+          sVUSD: r.salesVUSD, sVEUR: r.salesVEUR, sVGBP: r.salesVGBP, sVLE: r.salesVLE
+        };
+      }
+    }
+    
+    if (found && rateData) {
+      setVal('bUSD', rateData.bUSD);
+      setVal('bEUR', rateData.bEUR);
+      setVal('bGBP', rateData.bGBP);
+      setVal('bLE', rateData.bLE || 1);
+      setVal('bVUSD', rateData.bVUSD);
+      setVal('bVEUR', rateData.bVEUR);
+      setVal('bVGBP', rateData.bVGBP);
+      setVal('bVLE', rateData.bVLE);
+      setVal('sUSD', rateData.sUSD);
+      setVal('sEUR', rateData.sEUR);
+      setVal('sGBP', rateData.sGBP);
+      setVal('sLE', rateData.sLE || 1);
+      setVal('sVUSD', rateData.sVUSD);
+      setVal('sVEUR', rateData.sVEUR);
+      setVal('sVGBP', rateData.sVGBP);
+      setVal('sVLE', rateData.sVLE);
+      
       if (st) {
         st.className = 'date-status found';
-        st.textContent = '✅ تاريخ موجود — سيتم التحديث';
+        st.textContent = '✅ تاريخ موجود';
       }
     } else {
       clearFields();
@@ -607,13 +634,13 @@ async function onDateTextChange() {
       }
     }
   } catch(e) {
+    console.error('onDateTextChange error:', e);
     if (st) {
       st.className = 'date-status not-found';
       st.textContent = '⚠️ خطأ في الاتصال';
     }
   }
 }
-
 // ============================================================
 // AUTO CALCULATE
 // ============================================================
@@ -931,26 +958,72 @@ async function addMissingDates(targetDateStr, lastDateStr) {
 // ============================================================
 // LOAD LAST DATE
 // ============================================================
-async function loadLastDate() {
+async function showAllRates() {
+  const content = document.getElementById('mainContent');
+  content.innerHTML = '<div class="loader"></div>';
+  
   try {
-    const r = await jsonp('getLastExchangeDate', {
-      centerName: currentUser?.centerName || ''
-    });
-    const raw = r?.date || r || null;
-    lastDateDisplay = raw || getTodayFormatted();
-    const el = document.getElementById('lastDateLbl');
-    if (el) el.textContent = lastDateDisplay;
-    
-    const dateInput = document.getElementById('rateDateText');
-    if (dateInput && !dateInput.value) {
-      dateInput.value = getTodayFormatted();
-      setTimeout(() => onDateTextChange(), 100);
+    // ✅ استخدام الذاكرة المؤقتة
+    if (!dashboardCache) {
+      await loadLastDate();
     }
+    
+    const rates = dashboardCache?.rates || [];
+    
+    if (!rates.length) {
+      content.innerHTML = '<div class="empty">لا توجد بيانات</div>';
+      return;
+    }
+    
+    let html = `<div class="table-outer"><div class="table-scroll">
+      <table class="rates-table">
+        <thead>
+          <tr>
+            <th rowspan="2" style="vertical-align:middle;">📅 التاريخ</th>
+            <th colspan="4">🏦 أسعار البنك</th>
+            <th colspan="4">💳 فيزا البنك</th>
+            <th class="sep-h" rowspan="2">—</th>
+            <th colspan="4">📊 أسعار العمولة</th>
+            <th colspan="4">💳 فيزا العمولة</th>
+          </tr>
+          <tr>
+            <th>USD</th><th>EUR</th><th>GBP</th><th>EGP</th>
+            <th>V.USD</th><th>V.EUR</th><th>V.GBP</th><th>V.EGP</th>
+            <th class="sep-h"></th>
+            <th>USD</th><th>EUR</th><th>GBP</th><th>EGP</th>
+            <th>V.USD</th><th>V.EUR</th><th>V.GBP</th><th>V.EGP</th>
+          </tr>
+        </thead>
+        <tbody>`;
+    
+    for (const r of rates) {
+      html += `<tr>
+        <td class="date-td">${escapeHtml(r.date)}</td>
+        <td>${formatRate(r.bUSD)}</td>
+        <td>${formatRate(r.bEUR)}</td>
+        <td>${formatRate(r.bGBP)}</td>
+        <td>${formatRate(r.bLE)}</td>
+        <td>${formatRate(r.bVUSD)}</td>
+        <td>${formatRate(r.bVEUR)}</td>
+        <td>${formatRate(r.bVGBP)}</td>
+        <td>${formatRate(r.bVLE)}</td>
+        <td class="sep-td">—</td>
+        <td>${formatRate(r.sUSD)}</td>
+        <td>${formatRate(r.sEUR)}</td>
+        <td>${formatRate(r.sGBP)}</td>
+        <td>${formatRate(r.sLE)}</td>
+        <td>${formatRate(r.sVUSD)}</td>
+        <td>${formatRate(r.sVEUR)}</td>
+        <td>${formatRate(r.sVGBP)}</td>
+        <td>${formatRate(r.sVLE)}</td>
+      </tr>`;
+    }
+    
+    html += '</tbody></table></div></div>';
+    content.innerHTML = html;
+    
   } catch(e) {
-    console.error('loadLastDate error:', e);
-    lastDateDisplay = getTodayFormatted();
-    const el = document.getElementById('lastDateLbl');
-    if (el) el.textContent = lastDateDisplay;
+    content.innerHTML = `<div class="empty">خطأ: ${escapeHtml(e.message)}</div>`;
   }
 }
 
@@ -1047,13 +1120,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     location.href = 'index.html';
     return;
   }
-    // ✅ التحقق من الصلاحية (ManageExchangeRates) - النسخة المُصححة
+  
+  // ✅ التحقق من الصلاحية (ManageExchangeRates) - النسخة المُصححة
   const allowedPermissions = ['ManageExchangeRates', 'Admin', 'Owner', 'Accountant'];
   const userPermissions = currentUser.permissions || [];
   const hasPermission = 
-    allowedPermissions.includes(currentUser.type) ||  // Admin/Owner/Accountant
-    userPermissions.includes('ManageExchangeRates') || // لديه الصلاحية مباشرة
-    userPermissions.includes('Admin');                 // صلاحية كاملة
+    allowedPermissions.includes(currentUser.type) ||
+    userPermissions.includes('ManageExchangeRates') ||
+    userPermissions.includes('Admin');
   
   console.log('🔐 Permission check:', {
     userType: currentUser.type,
@@ -1072,6 +1146,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     `;
     return;
   }
+  
+  // ✅ عرض اسم المستخدم
   document.getElementById('userNameDisplay').textContent = currentUser.name || '—';
   
   // ✅ عرض تبويب الإضافة أولاً (لإنشاء العناصر)
@@ -1081,20 +1157,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ✅ انتظار بسيط لضمان وجود العناصر
   await new Promise(resolve => setTimeout(resolve, 200));
   
-  // ✅ الآن حمّل آخر تاريخ (العنصر موجود)
-  console.log('📅 Loading last date...');
+  // ✅ الآن حمّل بيانات الداشبورد (lastDate + rates معاً)
+  console.log('📅 Loading dashboard data...');
   await loadLastDate();
   
-  // ✅ ثم حمّل أسعار اليوم الحالي
- // ✅ حمّل اليوم فقط عند الطلب
-const dateInput = document.getElementById('rateDateText');
-if (dateInput) {
-  console.log('🔄 Loading today rates (delayed)...');
-  setTimeout(() => onDateTextChange(), 500);  // ← تأخير بسيط
-}
+  // ✅ ثم حمّل أسعار اليوم الحالي (مع تأخير بسيط)
+  const dateInput = document.getElementById('rateDateText');
+  if (dateInput) {
+    console.log('🔄 Loading today rates (delayed)...');
+    setTimeout(() => onDateTextChange(), 500);
+  }
   
   console.log('✅ Initialization complete');
-  });  
+});
 </script>
 </body>
 </html>
