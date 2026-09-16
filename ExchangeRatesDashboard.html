@@ -159,7 +159,6 @@ if (!Session.checkValidity()) {
 // ============================================================
 function jsonp(action, params = {}) {
   return new Promise((resolve, reject) => {
-    // ✅ استخدام Session.getUser()
     const user = Session.getUser();
     if (user && user.centerName && !params.centerName) {
       params.centerName = user.centerName;
@@ -180,23 +179,35 @@ function jsonp(action, params = {}) {
     
     const url = CONFIG.GAS_URL + '?' + qs;
     const script = document.createElement('script');
+    
+    // ✅ حفظ مرجع للـ cleanup
+    let isResolved = false;
+    
     const timeout = setTimeout(() => {
-      cleanup();
-      reject(new Error('انتهت مهلة الاتصال'));
+      if (!isResolved) {
+        isResolved = true;
+        cleanup();
+        reject(new Error('انتهت مهلة الاتصال'));
+      }
     }, 30000);
     
     const cleanup = () => {
       clearTimeout(timeout);
-      delete window[cb];
+      try { delete window[cb]; } catch(e) {}
       if (script.parentNode) script.remove();
     };
     
+    // ✅ دالة الاستجابة
     window[cb] = (data) => {
+      if (isResolved) return;
+      isResolved = true;
       cleanup();
       resolve(data);
     };
     
     script.onerror = () => {
+      if (isResolved) return;
+      isResolved = true;
       cleanup();
       reject(new Error('خطأ في الاتصال'));
     };
@@ -205,7 +216,6 @@ function jsonp(action, params = {}) {
     document.head.appendChild(script);
   });
 }
-
 // ✅ مرادف للتوافق
 function gas(action, params = {}) {
   return jsonp(action, params);
@@ -1036,10 +1046,29 @@ document.addEventListener('DOMContentLoaded', async () => {
     location.href = 'index.html';
     return;
   }
-   // ✅ التحقق من الصلاحية (ManageExchangeRates)
-  const allowedPermissions = ['ManageExchangeRates', 'Admin', 'Owner'];
-  if (!Session.checkPermission(allowedPermissions, true)) {
-    // سيتم إعادة التوجيه تلقائياً
+    // ✅ التحقق من الصلاحية (ManageExchangeRates) - النسخة المُصححة
+  const allowedPermissions = ['ManageExchangeRates', 'Admin', 'Owner', 'Accountant'];
+  const userPermissions = currentUser.permissions || [];
+  const hasPermission = 
+    allowedPermissions.includes(currentUser.type) ||  // Admin/Owner/Accountant
+    userPermissions.includes('ManageExchangeRates') || // لديه الصلاحية مباشرة
+    userPermissions.includes('Admin');                 // صلاحية كاملة
+  
+  console.log('🔐 Permission check:', {
+    userType: currentUser.type,
+    hasPermission: hasPermission,
+    permissionsCount: userPermissions.length
+  });
+  
+  if (!hasPermission) {
+    console.warn('⚠️ ليس لديك صلاحية');
+    document.getElementById('mainContent').innerHTML = `
+      <div style="padding:40px;text-align:center;color:#dc2626;font-weight:bold;">
+        <div style="font-size:60px;">🚫</div>
+        <div style="font-size:20px;margin-top:15px;">ليس لديك صلاحية لعرض أسعار الصرف</div>
+        <div style="font-size:14px;color:#666;margin-top:10px;">يرجى التواصل مع الإدارة</div>
+      </div>
+    `;
     return;
   }
   document.getElementById('userNameDisplay').textContent = currentUser.name || '—';
