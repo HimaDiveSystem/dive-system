@@ -147,19 +147,46 @@
     .a-icon{font-size:44px;margin-bottom:12px;}
     .a-msg{color:var(--navy);font-size:14px;font-weight:700;margin-bottom:18px;white-space:pre-wrap;line-height:1.6;}
     .a-btn{padding:9px 24px;border:none;border-radius:30px;background:var(--navy);color:var(--gold);font-weight:700;font-size:13px;cursor:pointer;font-family:'Cairo',sans-serif;}
-
+      .pdf-btn{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:26px;height:26px;border-radius:6px;
+  background:var(--orange);color:white;
+  text-decoration:none;font-size:12px;
+  transition:all .2s;
+}
+.pdf-btn:hover{background:#c2410c;transform:scale(1.1);}
+.pdf-btn.disabled{background:#cbd5e1;cursor:not-allowed;}
+    .tbl td.acts-cell{
+  max-width:200px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  text-align:left;
+  font-size:10px;
+}
     /* ===== Footer ===== */
     .footer{text-align:center;padding:16px 0 6px;color:#94a3b8;font-size:11px;border-top:1px solid #e2e8f0;margin-top:20px;}
+/* ===== Print ===== */
+@page {
+  size: A4 landscape;  /* ✅ وضعية أفقية */
+  margin: 5mm;
+}
 
-    /* ===== Print ===== */
-    @media print {
-      body{background:white;padding:0;}
-      .header,.filter-bar,.summary-strip,.footer,.no-print{display:none !important;}
-      .trip-card{box-shadow:none;border:1px solid #ccc;page-break-inside:avoid;margin-bottom:14px;}
-      .tbl thead th{background:#1a3260 !important;color:#f5c842 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-      .trip-header{background:#1a3260 !important;color:#f5c842 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-    }
-
+@media print {
+  body{background:white;padding:0;}
+  .header,.filter-bar,.summary-strip,.footer,.no-print{display:none !important;}
+  .trip-card{box-shadow:none;border:1px solid #ccc;page-break-inside:avoid;margin-bottom:14px;}
+  .tbl thead th{background:#1a3260 !important;color:#f5c842 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  .trip-header{background:#1a3260 !important;color:#f5c842 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  
+  /* ✅ تحسين الطباعة */
+  .tbl{font-size:9px !important;min-width:auto !important;}
+  .tbl thead th{padding:5px 3px !important;font-size:9px !important;}
+  .tbl tbody td{padding:4px 3px !important;font-size:9px !important;}
+  .tbl tfoot td{padding:5px 3px !important;font-size:9px !important;}
+  .trip-card{page-break-inside:auto;}
+}
+    
     @media(max-width:640px){
       .filter-bar{flex-direction:column;align-items:stretch;}
       .fg{width:100%;}
@@ -327,7 +354,15 @@ function fmtTime(t) {
   const m = String(t).match(/(\d{1,2}):(\d{2})/);
   return m ? String(m[1]).padStart(2,'0') + ':' + m[2] : String(t).substring(0,5);
 }
-
+// ✅ تحويل رقم الهاتف إلى نص صريح (لمنع Excel/Sheets من تحويله لصيغة علمية)
+function formatPhoneAsText(phone) {
+  if (!phone) return '';
+  // ✅ إزالة علامة = من البداية إن وجدت
+  let p = String(phone).replace(/^=/, '').trim();
+  // ✅ إزالة أي أحرف غير رقمية و +
+  p = p.replace(/[^\d+]/g, '');
+  return p;
+}
 function safeNum(val) {
   const num = parseFloat(val);
   return (num !== 0 && !isNaN(num)) ? num : '';
@@ -542,55 +577,31 @@ function renderTrips(groups, tripItemsMap = {}) {
 // RENDER TRIP CARD
 // ============================================================
 function renderTripCard(tripName, invoices, index, tripItems) {
-  // ============================================================
   // ✅ 1. تحديد بنود الرحلة
-  // ============================================================
-  // ✅ استخدام البنود الفعلية من TripDefinitions
-  // إذا لم تكن متوفرة، استخدم أسماء افتراضية
   const itemNames = (Array.isArray(tripItems) && tripItems.length > 0) 
     ? tripItems 
     : ['Item1', 'Item2', 'Item3', 'Item4', 'Item5', 'Item6', 'Item7', 'Item8', 'Item9', 'Item10'];
   
-  // ✅ الحقول المقابلة في الفاتورة (بالترتيب)
-  // Item1 → sgl, Item2 → dbl, Item3 → trpl, Item4 → extra, Item5 → camel,
-  // Item6 → dinner, Item7 → vipDinner, Item8 → starGazing, Item9 → privateTrip, Item10 → privateTransfer
   const quantityFields = [
-    'sgl',           // Item1
-    'dbl',           // Item2
-    'trpl',          // Item3
-    'extra',         // Item4
-    'camel',         // Item5
-    'dinner',        // Item6
-    'vipDinner',     // Item7
-    'starGazing',    // Item8
-    'privateTrip',   // Item9
-    'privateTransfer'// Item10
+    'sgl', 'dbl', 'trpl', 'extra', 'camel',
+    'dinner', 'vipDinner', 'starGazing', 'privateTrip', 'privateTransfer'
   ];
   
-  // ============================================================
   // ✅ 2. حساب إجماليات كل بند
-  // ============================================================
   const itemTotals = {};
   for (let i = 0; i < itemNames.length && i < quantityFields.length; i++) {
-    itemTotals[i] = invoices.reduce((sum, inv) => {
-      return sum + (parseFloat(inv[quantityFields[i]]) || 0);
-    }, 0);
+    itemTotals[i] = invoices.reduce((sum, inv) => sum + (parseFloat(inv[quantityFields[i]]) || 0), 0);
   }
   
-  // ✅ الإجمالي العام للـ Rest
   let totalRest = invoices.reduce((sum, inv) => sum + (parseFloat(inv.rest) || 0), 0);
   
-  // ============================================================
-  // ✅ 3. بناء رؤوس أعمدة البنود
-  // ============================================================
+  // ✅ 3. رؤوس الأعمدة
   let itemsHeaders = '';
   for (let i = 0; i < itemNames.length && i < 10; i++) {
     itemsHeaders += `<th>${escHtml(itemNames[i])}</th>`;
   }
   
-  // ============================================================
-  // ✅ 4. بناء بطاقة الرحلة
-  // ============================================================
+  // ✅ 4. بناء البطاقة
   let html = `
     <div class="trip-card">
       <div class="trip-header">
@@ -615,23 +626,25 @@ function renderTripCard(tripName, invoices, index, tripItems) {
               <th>Hotel / Room</th>
               <th>Contact</th>
               ${itemsHeaders}
+              <th>Activities</th>
               <th>Supplier</th>
               <th>Customer</th>
+              <th>Sales Name</th>
               <th>Currency</th>
               <th>Rest</th>
               <th>State</th>
+              <th class="no-print">PDF</th>
             </tr>
           </thead>
           <tbody>
   `;
   
-  // ============================================================
-  // ✅ 5. بناء صفوف الفواتير
-  // ============================================================
+  // ✅ 5. صفوف الفواتير
   invoices.forEach((inv, idx) => {
     const rest = parseFloat(inv.rest) || 0;
     const currency = (inv.invoiceCurrency || '').trim();
     const state = (inv.state || '').toLowerCase();
+    const activitiesText = inv.activitiesText || '';
     
     let stateClass = 'st-pending';
     let stateLabel = '⏳ Pending';
@@ -642,12 +655,17 @@ function renderTripCard(tripName, invoices, index, tripItems) {
     const restClass = rest > 0 ? 'num-col' : 'zero-col';
     const restDisplay = rest > 0 ? rest.toFixed(2) + ' ' + currency : '✓';
     
-    // ✅ بناء خلايا البنود
+    // ✅ بنود الرحلة
     let itemsCells = '';
     for (let i = 0; i < itemNames.length && i < quantityFields.length; i++) {
       const qty = parseFloat(inv[quantityFields[i]]) || 0;
       itemsCells += `<td>${qty > 0 ? qty : '—'}</td>`;
     }
+    
+    // ✅ PDF Button
+    const pdfBtn = (inv.invoicePdf && inv.invoicePdf.startsWith('http'))
+      ? `<a href="${escHtml(inv.invoicePdf)}" target="_blank" class="pdf-btn" title="Open PDF">📄</a>`
+      : `<span class="pdf-btn disabled" title="No PDF">—</span>`;
     
     html += `
       <tr>
@@ -657,20 +675,23 @@ function renderTripCard(tripName, invoices, index, tripItems) {
         <td>${escHtml(inv.guestName || '—')}</td>
         <td>${escHtml(inv.nationality || '—')}</td>
         <td>${escHtml(inv.hotel || '—')} / ${escHtml(inv.roomNo || '—')}</td>
-        <td>${escHtml(formatPhoneNumber(inv.contactNo || ''))}</td>
+        <td class="phone-cell">${escHtml(formatPhoneAsText(inv.contactNo || ''))}</td>
         ${itemsCells}
+        <td class="acts-cell" title="${escHtml(activitiesText)}">
+          ${escHtml(activitiesText.substring(0, 60))}${activitiesText.length > 60 ? '...' : ''}
+        </td>
         <td>${escHtml(inv.supplier || '—')}</td>
         <td>${escHtml(inv.customer || '—')}</td>
+        <td>${escHtml(inv.salesName || '—')}</td>
         <td>${escHtml(currency)}</td>
         <td class="${restClass}">${restDisplay}</td>
         <td><span class="${stateClass}">${stateLabel}</span></td>
+        <td class="no-print">${pdfBtn}</td>
       </tr>
     `;
   });
   
-  // ============================================================
   // ✅ 6. صف الإجماليات
-  // ============================================================
   let totalsCells = '';
   for (let i = 0; i < itemNames.length && i < quantityFields.length; i++) {
     totalsCells += `<td>${itemTotals[i] || 0}</td>`;
@@ -682,9 +703,10 @@ function renderTripCard(tripName, invoices, index, tripItems) {
             <tr>
               <td colspan="7">📊 TOTAL (${invoices.length} Bookings)</td>
               ${totalsCells}
-              <td colspan="4"></td>
+              <td colspan="7"></td>
               <td>${totalRest.toFixed(2)}</td>
               <td></td>
+              <td class="no-print"></td>
             </tr>
           </tfoot>
         </table>
