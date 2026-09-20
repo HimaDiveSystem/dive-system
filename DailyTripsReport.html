@@ -209,7 +209,6 @@
 <div class="summary-strip no-print" id="summaryStrip" style="display:none;">
   <div class="sum-item"><div class="lbl">Total Trips</div><div class="val" id="sumTrips">0</div></div>
   <div class="sum-item"><div class="lbl">Total Bookings</div><div class="val" id="sumBookings">0</div></div>
-  <div class="sum-item"><div class="lbl">Total Passengers</div><div class="val" id="sumPax">0</div></div>
   <div class="sum-item"><div class="lbl">Total Rest</div><div class="val" id="sumRest">0</div></div>
 </div>
 
@@ -360,7 +359,19 @@ function goBack() {
   if (currentUser) Session.save(currentUser);
   window.location.href = DASH[currentUser?.type] || 'AccountantDashboard.html';
 }
-
+// ✅ جلب بنود الرحلة من TripDefinitions
+async function getTripItems(tripName, centerName) {
+  try {
+    const result = await gas('getTripItemsByName', {
+      tripName: tripName,
+      centerName: centerName
+    });
+    return Array.isArray(result) ? result : [];
+  } catch(e) {
+    console.error('getTripItems error:', e);
+    return [];
+  }
+}
 // ============================================================
 // LOAD REPORT
 // ============================================================
@@ -411,11 +422,28 @@ async function loadReport() {
     // ✅ تجميع حسب الرحلة
     groupedTrips = groupByTrip(filtered);
     
+    // ✅ ✅ ✅ جلب بنود جميع الرحلات مسبقاً
+    const uniqueTrips = Object.keys(groupedTrips);
+    console.log(`📋 جلب بنود ${uniqueTrips.length} رحلة...`);
+    
+    const tripItemsMap = {};
+    await Promise.all(uniqueTrips.map(async (tripName) => {
+      try {
+        // داخل loadReport
+const items = await getTripItems(tripName, currentUser?.centerName || '');
+        tripItemsMap[tripName] = Array.isArray(items) ? items : [];
+        console.log(`  ✅ ${tripName}: ${tripItemsMap[tripName].length} بند`);
+      } catch(e) {
+        console.error(`  ❌ فشل جلب بنود ${tripName}:`, e);
+        tripItemsMap[tripName] = [];
+      }
+    }));
+    
     // ✅ حساب الإحصائيات
     summaryData = calculateSummary(groupedTrips);
     
-    // ✅ عرض
-    renderTrips(groupedTrips);
+    // ✅ عرض - تمرير tripItemsMap
+    renderTrips(groupedTrips, tripItemsMap);
     renderSummary(summaryData);
     
   } catch(e) {
@@ -459,7 +487,6 @@ function groupByTrip(invoices) {
 function calculateSummary(groups) {
   const totalTrips = Object.keys(groups).length;
   let totalBookings = 0;
-  let totalPax = 0;
   let totalRest = 0;
   
   for (const tripName in groups) {
@@ -467,12 +494,7 @@ function calculateSummary(groups) {
     totalBookings += invoices.length;
     
     for (const inv of invoices) {
-      const adults = parseFloat(inv.adultCount || 0) || 0;
-      const children = parseFloat(inv.childCount || 0) || 0;
-      const infants = parseFloat(inv.infantCount || 0) || 0;
-      totalPax += adults + children + infants;
-      
-      const rest = parseFloat(inv.rest || 0) || 0;
+      const rest = parseFloat(inv.rest) || 0;
       totalRest += rest;
     }
   }
@@ -480,18 +502,15 @@ function calculateSummary(groups) {
   return {
     totalTrips: totalTrips,
     totalBookings: totalBookings,
-    totalPax: totalPax,
     totalRest: totalRest.toFixed(2)
   };
 }
-
 // ============================================================
 // RENDER SUMMARY
 // ============================================================
 function renderSummary(summary) {
   document.getElementById('sumTrips').textContent = summary.totalTrips;
   document.getElementById('sumBookings').textContent = summary.totalBookings;
-  document.getElementById('sumPax').textContent = summary.totalPax;
   document.getElementById('sumRest').textContent = summary.totalRest;
   document.getElementById('summaryStrip').style.display = 'grid';
 }
@@ -499,7 +518,7 @@ function renderSummary(summary) {
 // ============================================================
 // RENDER TRIPS
 // ============================================================
-function renderTrips(groups) {
+function renderTrips(groups, tripItemsMap = {}) {
   const content = document.getElementById('content');
   
   if (!Object.keys(groups).length) {
@@ -513,26 +532,65 @@ function renderTrips(groups) {
   for (const tripName in groups) {
     tripIndex++;
     const invoices = groups[tripName];
-    html += renderTripCard(tripName, invoices, tripIndex);
+    const tripItems = tripItemsMap[tripName] || [];
+    html += renderTripCard(tripName, invoices, tripIndex, tripItems);
   }
   
   content.innerHTML = html;
 }
-
 // ============================================================
 // RENDER TRIP CARD
 // ============================================================
-function renderTripCard(tripName, invoices, index) {
-  // ✅ حساب إحصائيات الرحلة
-  let tripAdults = 0, tripChildren = 0, tripInfants = 0, tripRest = 0;
-  for (const inv of invoices) {
-    tripAdults += parseFloat(inv.adultCount || 0) || 0;
-    tripChildren += parseFloat(inv.childCount || 0) || 0;
-    tripInfants += parseFloat(inv.infantCount || 0) || 0;
-    tripRest += parseFloat(inv.rest || 0) || 0;
-  }
-  const totalPax = tripAdults + tripChildren + tripInfants;
+function renderTripCard(tripName, invoices, index, tripItems) {
+  // ============================================================
+  // ✅ 1. تحديد بنود الرحلة
+  // ============================================================
+  // ✅ استخدام البنود الفعلية من TripDefinitions
+  // إذا لم تكن متوفرة، استخدم أسماء افتراضية
+  const itemNames = (Array.isArray(tripItems) && tripItems.length > 0) 
+    ? tripItems 
+    : ['Item1', 'Item2', 'Item3', 'Item4', 'Item5', 'Item6', 'Item7', 'Item8', 'Item9', 'Item10'];
   
+  // ✅ الحقول المقابلة في الفاتورة (بالترتيب)
+  // Item1 → sgl, Item2 → dbl, Item3 → trpl, Item4 → extra, Item5 → camel,
+  // Item6 → dinner, Item7 → vipDinner, Item8 → starGazing, Item9 → privateTrip, Item10 → privateTransfer
+  const quantityFields = [
+    'sgl',           // Item1
+    'dbl',           // Item2
+    'trpl',          // Item3
+    'extra',         // Item4
+    'camel',         // Item5
+    'dinner',        // Item6
+    'vipDinner',     // Item7
+    'starGazing',    // Item8
+    'privateTrip',   // Item9
+    'privateTransfer'// Item10
+  ];
+  
+  // ============================================================
+  // ✅ 2. حساب إجماليات كل بند
+  // ============================================================
+  const itemTotals = {};
+  for (let i = 0; i < itemNames.length && i < quantityFields.length; i++) {
+    itemTotals[i] = invoices.reduce((sum, inv) => {
+      return sum + (parseFloat(inv[quantityFields[i]]) || 0);
+    }, 0);
+  }
+  
+  // ✅ الإجمالي العام للـ Rest
+  let totalRest = invoices.reduce((sum, inv) => sum + (parseFloat(inv.rest) || 0), 0);
+  
+  // ============================================================
+  // ✅ 3. بناء رؤوس أعمدة البنود
+  // ============================================================
+  let itemsHeaders = '';
+  for (let i = 0; i < itemNames.length && i < 10; i++) {
+    itemsHeaders += `<th>${escHtml(itemNames[i])}</th>`;
+  }
+  
+  // ============================================================
+  // ✅ 4. بناء بطاقة الرحلة
+  // ============================================================
   let html = `
     <div class="trip-card">
       <div class="trip-header">
@@ -542,8 +600,7 @@ function renderTripCard(tripName, invoices, index) {
         </div>
         <div class="trip-stats">
           <span class="stat">📋 Bookings: <span class="n">${invoices.length}</span></span>
-          <span class="stat">👥 Pax: <span class="n">${totalPax}</span></span>
-          <span class="stat">💰 Rest: <span class="n">${tripRest.toFixed(2)}</span></span>
+          <span class="stat">💰 Rest: <span class="n">${totalRest.toFixed(2)}</span></span>
         </div>
       </div>
       <div class="tbl-scroll">
@@ -557,13 +614,9 @@ function renderTripCard(tripName, invoices, index) {
               <th>Nationality</th>
               <th>Hotel / Room</th>
               <th>Contact</th>
-              <th>Adults</th>
-              <th>Children</th>
-              <th>Infants</th>
-              <th>Total Pax</th>
+              ${itemsHeaders}
               <th>Supplier</th>
               <th>Customer</th>
-              <th>Activities</th>
               <th>Currency</th>
               <th>Rest</th>
               <th>State</th>
@@ -572,12 +625,11 @@ function renderTripCard(tripName, invoices, index) {
           <tbody>
   `;
   
+  // ============================================================
+  // ✅ 5. بناء صفوف الفواتير
+  // ============================================================
   invoices.forEach((inv, idx) => {
-    const adults = parseFloat(inv.adultCount || 0) || 0;
-    const children = parseFloat(inv.childCount || 0) || 0;
-    const infants = parseFloat(inv.infantCount || 0) || 0;
-    const totalPaxRow = adults + children + infants;
-    const rest = parseFloat(inv.rest || 0) || 0;
+    const rest = parseFloat(inv.rest) || 0;
     const currency = (inv.invoiceCurrency || '').trim();
     const state = (inv.state || '').toLowerCase();
     
@@ -590,6 +642,13 @@ function renderTripCard(tripName, invoices, index) {
     const restClass = rest > 0 ? 'num-col' : 'zero-col';
     const restDisplay = rest > 0 ? rest.toFixed(2) + ' ' + currency : '✓';
     
+    // ✅ بناء خلايا البنود
+    let itemsCells = '';
+    for (let i = 0; i < itemNames.length && i < quantityFields.length; i++) {
+      const qty = parseFloat(inv[quantityFields[i]]) || 0;
+      itemsCells += `<td>${qty > 0 ? qty : '—'}</td>`;
+    }
+    
     html += `
       <tr>
         <td>${idx + 1}</td>
@@ -599,13 +658,9 @@ function renderTripCard(tripName, invoices, index) {
         <td>${escHtml(inv.nationality || '—')}</td>
         <td>${escHtml(inv.hotel || '—')} / ${escHtml(inv.roomNo || '—')}</td>
         <td>${escHtml(formatPhoneNumber(inv.contactNo || ''))}</td>
-        <td>${adults || '—'}</td>
-        <td>${children || '—'}</td>
-        <td>${infants || '—'}</td>
-        <td><strong>${totalPaxRow}</strong></td>
+        ${itemsCells}
         <td>${escHtml(inv.supplier || '—')}</td>
         <td>${escHtml(inv.customer || '—')}</td>
-        <td class="acts-cell">${escHtml(inv.activitiesText || '—')}</td>
         <td>${escHtml(currency)}</td>
         <td class="${restClass}">${restDisplay}</td>
         <td><span class="${stateClass}">${stateLabel}</span></td>
@@ -613,18 +668,22 @@ function renderTripCard(tripName, invoices, index) {
     `;
   });
   
-  // ✅ صف الإجماليات
+  // ============================================================
+  // ✅ 6. صف الإجماليات
+  // ============================================================
+  let totalsCells = '';
+  for (let i = 0; i < itemNames.length && i < quantityFields.length; i++) {
+    totalsCells += `<td>${itemTotals[i] || 0}</td>`;
+  }
+  
   html += `
           </tbody>
           <tfoot>
             <tr>
               <td colspan="7">📊 TOTAL (${invoices.length} Bookings)</td>
-              <td>${tripAdults}</td>
-              <td>${tripChildren}</td>
-              <td>${tripInfants}</td>
-              <td><strong>${totalPax}</strong></td>
-              <td colspan="5"></td>
-              <td>${tripRest.toFixed(2)}</td>
+              ${totalsCells}
+              <td colspan="4"></td>
+              <td>${totalRest.toFixed(2)}</td>
               <td></td>
             </tr>
           </tfoot>
@@ -635,11 +694,10 @@ function renderTripCard(tripName, invoices, index) {
   
   return html;
 }
-
 // ============================================================
 // APPLY SEARCH
 // ============================================================
-function applySearch() {
+async function applySearch() {
   // إعادة الفلترة من allInvoices
   const searchTerm = document.getElementById('filterSearch').value.trim().toLowerCase();
   let filtered = allInvoices;
@@ -657,10 +715,25 @@ function applySearch() {
   
   groupedTrips = groupByTrip(filtered);
   summaryData = calculateSummary(groupedTrips);
-  renderTrips(groupedTrips);
+  
+  // ✅ جلب بنود الرحلات
+  const uniqueTrips = Object.keys(groupedTrips);
+  const tripItemsMap = {};
+  await Promise.all(uniqueTrips.map(async (tripName) => {
+    try {
+      const items = await gas('getTripItemsByName', {
+        tripName: tripName,
+        centerName: currentUser?.centerName || ''
+      });
+      tripItemsMap[tripName] = Array.isArray(items) ? items : [];
+    } catch(e) {
+      tripItemsMap[tripName] = [];
+    }
+  }));
+  
+  renderTrips(groupedTrips, tripItemsMap);
   renderSummary(summaryData);
 }
-
 // ============================================================
 // RESET FILTERS
 // ============================================================
@@ -675,7 +748,7 @@ function resetFilters() {
 // ============================================================
 // EXPORT TO EXCEL
 // ============================================================
-function exportToExcel() {
+async function exportToExcel() {
   if (!allInvoices.length) {
     showAlert('لا توجد بيانات للتصدير', '⚠️');
     return;
@@ -684,6 +757,23 @@ function exportToExcel() {
   const dateStr = document.getElementById('filterDate').value;
   const [y, m, d] = dateStr.split('-');
   const activeDate = String(d).padStart(2,'0') + '/' + MN[+m - 1] + '/' + y;
+  
+  // ✅ جلب بنود الرحلات
+  const uniqueTrips = Object.keys(groupedTrips);
+  const tripItemsMap = {};
+  await Promise.all(uniqueTrips.map(async (tripName) => {
+    try {
+      const items = await gas('getTripItemsByName', {
+        tripName: tripName,
+        centerName: currentUser?.centerName || ''
+      });
+      tripItemsMap[tripName] = Array.isArray(items) ? items : [];
+    } catch(e) {
+      tripItemsMap[tripName] = [];
+    }
+  }));
+  
+  const quantityFields = ['sgl','dbl','trpl','extra','camel','dinner','vipDinner','starGazing','privateTrip','privateTransfer'];
   
   let html = `
     <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
@@ -699,36 +789,47 @@ function exportToExcel() {
     <body>
       <h2 style="text-align:center;">📅 Daily Trips Report - ${activeDate}</h2>
       <p style="text-align:center;">Center: ${escHtml(currentUser?.centerName || '')}</p>
-      <p style="text-align:center;">Total Trips: ${summaryData.totalTrips} | Total Bookings: ${summaryData.totalBookings} | Total Pax: ${summaryData.totalPax}</p>
+      <p style="text-align:center;">Total Trips: ${summaryData.totalTrips} | Total Bookings: ${summaryData.totalBookings} | Total Rest: ${summaryData.totalRest}</p>
   `;
   
   for (const tripName in groupedTrips) {
     const invoices = groupedTrips[tripName];
+    const itemNames = tripItemsMap[tripName] || [];
     
-    let tripAdults = 0, tripChildren = 0, tripInfants = 0, tripRest = 0;
-    invoices.forEach(inv => {
-      tripAdults += parseFloat(inv.adultCount || 0) || 0;
-      tripChildren += parseFloat(inv.childCount || 0) || 0;
-      tripInfants += parseFloat(inv.infantCount || 0) || 0;
-      tripRest += parseFloat(inv.rest || 0) || 0;
-    });
+    // ✅ رؤوس البنود الديناميكية
+    let itemsHeaders = '';
+    for (let i = 0; i < itemNames.length && i < 10; i++) {
+      itemsHeaders += `<th>${escHtml(itemNames[i])}</th>`;
+    }
+    
+    // ✅ إجماليات البنود
+    const itemTotals = {};
+    for (let i = 0; i < itemNames.length && i < quantityFields.length; i++) {
+      itemTotals[i] = invoices.reduce((sum, inv) => sum + (parseFloat(inv[quantityFields[i]]) || 0), 0);
+    }
+    
+    let tripRest = invoices.reduce((sum, inv) => sum + (parseFloat(inv.rest) || 0), 0);
     
     html += `
       <table border="1">
-        <tr><td colspan="16" class="trip-title">🏝️ ${escHtml(tripName)} (${invoices.length} Bookings)</td></tr>
+        <tr><td colspan="${8 + itemNames.length + 3}" class="trip-title">🏝️ ${escHtml(tripName)} (${invoices.length} Bookings)</td></tr>
         <tr>
           <th>#</th><th>Voucher</th><th>Time</th><th>Guest Name</th><th>Nationality</th>
-          <th>Hotel</th><th>Room</th><th>Contact</th><th>Adults</th><th>Children</th>
-          <th>Infants</th><th>Total Pax</th><th>Supplier</th><th>Customer</th>
-          <th>Activities</th><th>Rest</th>
+          <th>Hotel</th><th>Room</th><th>Contact</th>
+          ${itemsHeaders}
+          <th>Supplier</th><th>Customer</th><th>Rest</th>
         </tr>
     `;
     
     invoices.forEach((inv, idx) => {
-      const adults = parseFloat(inv.adultCount || 0) || 0;
-      const children = parseFloat(inv.childCount || 0) || 0;
-      const infants = parseFloat(inv.infantCount || 0) || 0;
-      const rest = parseFloat(inv.rest || 0) || 0;
+      let itemsCells = '';
+      for (let i = 0; i < itemNames.length && i < quantityFields.length; i++) {
+        const qty = parseFloat(inv[quantityFields[i]]) || 0;
+        itemsCells += `<td>${qty > 0 ? qty : ''}</td>`;
+      }
+      const rest = parseFloat(inv.rest) || 0;
+      const currency = (inv.invoiceCurrency || '').trim();
+      
       html += `
         <tr>
           <td>${idx + 1}</td>
@@ -739,22 +840,25 @@ function exportToExcel() {
           <td>${escHtml(inv.hotel || '')}</td>
           <td>${escHtml(inv.roomNo || '')}</td>
           <td>${escHtml(formatPhoneNumber(inv.contactNo || ''))}</td>
-          <td>${adults}</td><td>${children}</td><td>${infants}</td>
-          <td>${adults + children + infants}</td>
+          ${itemsCells}
           <td>${escHtml(inv.supplier || '')}</td>
           <td>${escHtml(inv.customer || '')}</td>
-          <td>${escHtml(inv.activitiesText || '')}</td>
-          <td>${rest.toFixed(2)} ${escHtml((inv.invoiceCurrency || '').trim())}</td>
+          <td>${rest.toFixed(2)} ${escHtml(currency)}</td>
         </tr>
       `;
     });
     
+    // ✅ صف الإجماليات
+    let totalsCells = '';
+    for (let i = 0; i < itemNames.length && i < quantityFields.length; i++) {
+      totalsCells += `<td>${itemTotals[i] || 0}</td>`;
+    }
+    
     html += `
         <tr class="summary">
           <td colspan="8">TOTAL</td>
-          <td>${tripAdults}</td><td>${tripChildren}</td><td>${tripInfants}</td>
-          <td>${tripAdults + tripChildren + tripInfants}</td>
-          <td colspan="4"></td>
+          ${totalsCells}
+          <td colspan="2"></td>
           <td>${tripRest.toFixed(2)}</td>
         </tr>
       </table>
