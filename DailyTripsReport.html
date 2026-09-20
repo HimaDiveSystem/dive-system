@@ -167,8 +167,9 @@
     /* ===== Footer ===== */
     .footer{text-align:center;padding:16px 0 6px;color:#94a3b8;font-size:11px;border-top:1px solid #e2e8f0;margin-top:20px;}
 /* ===== Print ===== */
+/* ✅ @page يجب أن يكون خارج @media */
 @page {
-  size: A4 landscape;  /* ✅ وضعية أفقية */
+  size: A4 landscape;
   margin: 5mm;
 }
 
@@ -179,7 +180,6 @@
   .tbl thead th{background:#1a3260 !important;color:#f5c842 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
   .trip-header{background:#1a3260 !important;color:#f5c842 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
   
-  /* ✅ تحسين الطباعة */
   .tbl{font-size:9px !important;min-width:auto !important;}
   .tbl thead th{padding:5px 3px !important;font-size:9px !important;}
   .tbl tbody td{padding:4px 3px !important;font-size:9px !important;}
@@ -210,9 +210,14 @@
 <!-- ===== Filter Bar ===== -->
 <div class="filter-bar no-print">
   <div class="fg">
-    <label>📅 Active Date</label>
-    <input type="date" class="fc" id="filterDate" onchange="loadReport()">
-  </div>
+  <label>📅 From Date</label>
+  <input type="date" class="fc" id="filterFromDate" onchange="loadReport()">
+</div>
+
+<div class="fg">
+  <label>📅 To Date</label>
+  <input type="date" class="fc" id="filterToDate" onchange="loadReport()">
+</div>
 
   <div class="fg">
     <label>🏢 Branch</label>
@@ -229,7 +234,7 @@
   <button class="btn btn-go" onclick="loadReport()">📊 Show Report</button>
   <button class="btn btn-reset" onclick="resetFilters()">🔄 Reset</button>
   <button class="btn btn-export" onclick="exportToExcel()">📎 Export Excel</button>
-  <button class="btn btn-print" onclick="window.print()">🖨️ Print</button>
+ <button class="btn btn-print" onclick="printReport()">🖨️ Print</button>
 </div>
 
 <!-- ===== Summary Strip ===== -->
@@ -371,7 +376,21 @@ function safeNum(val) {
 function safeVal(val) {
   return (val !== undefined && val !== null && val !== '') ? val : '';
 }
-
+function printReport() {
+  // ✅ إضافة style مؤقت قبل الطباعة
+  const style = document.createElement('style');
+  style.id = 'print-landscape';
+  style.innerHTML = '@page { size: A4 landscape; margin: 5mm; }';
+  document.head.appendChild(style);
+  
+  window.print();
+  
+  // إزالة بعد الطباعة
+  setTimeout(() => {
+    const el = document.getElementById('print-landscape');
+    if (el) el.remove();
+  }, 1000);
+}
 function formatPhoneNumber(phone) {
   if (!phone) return '';
   let p = String(phone).trim();
@@ -411,30 +430,35 @@ async function getTripItems(tripName, centerName) {
 // LOAD REPORT
 // ============================================================
 async function loadReport() {
-  const dateStr = document.getElementById('filterDate').value;
-  if (!dateStr) {
-    showAlert('الرجاء اختيار التاريخ', '⚠️');
+  const fromDate = document.getElementById('filterFromDate').value;
+  const toDate = document.getElementById('filterToDate').value;
+  
+  if (!fromDate || !toDate) {
+    showAlert('الرجاء اختيار تاريخ البداية والنهاية', '⚠️');
     return;
   }
   
   // تحويل yyyy-mm-dd إلى dd/MMM/yyyy
-  const [y, m, d] = dateStr.split('-');
-  const activeDate = String(d).padStart(2,'0') + '/' + MN[+m - 1] + '/' + y;
+  const [fy, fm, fd] = fromDate.split('-');
+  const [ty, tm, td] = toDate.split('-');
+  const fromDateStr = String(fd).padStart(2,'0') + '/' + MN[+fm - 1] + '/' + fy;
+  const toDateStr = String(td).padStart(2,'0') + '/' + MN[+tm - 1] + '/' + ty;
   
   const content = document.getElementById('content');
   content.innerHTML = '<div class="loader-wrap"><div class="spinner"></div>جاري التحميل...</div>';
   document.getElementById('summaryStrip').style.display = 'none';
   
   try {
-    // ✅ استخدام دالة getInvoicesByDate لجلب فواتير التاريخ فقط (سريع!)
-    const invoices = await gas('getInvoicesByDate', {
-      dateStr: activeDate,
+    // ✅ استخدام getInvoicesByDateRangeOnly لجلب فواتير النطاق
+    const invoices = await gas('getInvoicesByDateRangeOnly', {
+      fromDate: fromDateStr,
+      toDate: toDateStr,
       centerName: currentUser?.centerName || '',
       branchName: document.getElementById('filterBranch').value || ''
     });
     
     if (!Array.isArray(invoices) || !invoices.length) {
-      content.innerHTML = '<div class="no-data">🚫 لا توجد رحلات في هذا التاريخ</div>';
+      content.innerHTML = '<div class="no-data">🚫 لا توجد رحلات في هذه الفترة</div>';
       return;
     }
     
@@ -457,27 +481,19 @@ async function loadReport() {
     // ✅ تجميع حسب الرحلة
     groupedTrips = groupByTrip(filtered);
     
-    // ✅ ✅ ✅ جلب بنود جميع الرحلات مسبقاً
+    // ✅ جلب بنود الرحلات
     const uniqueTrips = Object.keys(groupedTrips);
-    console.log(`📋 جلب بنود ${uniqueTrips.length} رحلة...`);
-    
     const tripItemsMap = {};
     await Promise.all(uniqueTrips.map(async (tripName) => {
       try {
-        // داخل loadReport
-const items = await getTripItems(tripName, currentUser?.centerName || '');
+        const items = await getTripItems(tripName, currentUser?.centerName || '');
         tripItemsMap[tripName] = Array.isArray(items) ? items : [];
-        console.log(`  ✅ ${tripName}: ${tripItemsMap[tripName].length} بند`);
       } catch(e) {
-        console.error(`  ❌ فشل جلب بنود ${tripName}:`, e);
         tripItemsMap[tripName] = [];
       }
     }));
     
-    // ✅ حساب الإحصائيات
     summaryData = calculateSummary(groupedTrips);
-    
-    // ✅ عرض - تمرير tripItemsMap
     renderTrips(groupedTrips, tripItemsMap);
     renderSummary(summaryData);
     
@@ -486,7 +502,6 @@ const items = await getTripItems(tripName, currentUser?.centerName || '');
     content.innerHTML = `<div class="no-data">❌ خطأ: ${escHtml(e.message)}</div>`;
   }
 }
-
 // ============================================================
 // GROUP BY TRIP
 // ============================================================
@@ -760,13 +775,16 @@ async function applySearch() {
 // RESET FILTERS
 // ============================================================
 function resetFilters() {
-  const today = new Date().toISOString().split('T')[0];
-  document.getElementById('filterDate').value = today;
+  const today = new Date();
+  const weekAgo = new Date();
+  weekAgo.setDate(today.getDate() - 7);
+  
+  document.getElementById('filterFromDate').value = weekAgo.toISOString().split('T')[0];
+  document.getElementById('filterToDate').value = today.toISOString().split('T')[0];
   document.getElementById('filterBranch').value = '';
   document.getElementById('filterSearch').value = '';
   loadReport();
 }
-
 // ============================================================
 // EXPORT TO EXCEL
 // ============================================================
@@ -776,10 +794,13 @@ async function exportToExcel() {
     return;
   }
   
-  const dateStr = document.getElementById('filterDate').value;
-  const [y, m, d] = dateStr.split('-');
-  const activeDate = String(d).padStart(2,'0') + '/' + MN[+m - 1] + '/' + y;
-  
+ const fromDate = document.getElementById('filterFromDate').value;
+const toDate = document.getElementById('filterToDate').value;
+const [fy, fm, fd] = fromDate.split('-');
+const [ty, tm, td] = toDate.split('-');
+const fromDateStr = String(fd).padStart(2,'0') + '/' + MN[+fm - 1] + '/' + fy;
+const toDateStr = String(td).padStart(2,'0') + '/' + MN[+tm - 1] + '/' + ty;
+const activeDate = fromDateStr + ' → ' + toDateStr;  
   // ✅ جلب بنود الرحلات
   const uniqueTrips = Object.keys(groupedTrips);
   const tripItemsMap = {};
@@ -798,10 +819,24 @@ async function exportToExcel() {
   const quantityFields = ['sgl','dbl','trpl','extra','camel','dinner','vipDinner','starGazing','privateTrip','privateTransfer'];
   
   let html = `
-    <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
-    <head>
-      <meta charset="UTF-8">
-      <style>
+  <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+  <head>
+    <meta charset="UTF-8">
+    <!--[if gte mso 9]>
+    <xml>
+      <x:ExcelWorkbook>
+        <x:ExcelWorksheets>
+          <x:ExcelWorksheet>
+            <x:Name>Daily Trips</x:Name>
+            <x:WorksheetOptions>
+              <x:DisplayGridlines/>
+            </x:WorksheetOptions>
+          </x:ExcelWorksheet>
+        </x:ExcelWorksheets>
+      </x:ExcelWorkbook>
+    </xml>
+    <![endif]-->
+    <style>
         th{background:#1a3260;color:#f5c842;padding:8px;border:1px solid #ccc;font-weight:bold;}
         td{padding:6px;border:1px solid #ccc;}
         .trip-title{background:#0f1f3d;color:#f5c842;font-size:16px;font-weight:bold;padding:12px;text-align:center;}
@@ -861,7 +896,7 @@ async function exportToExcel() {
           <td>${escHtml(inv.nationality || '')}</td>
           <td>${escHtml(inv.hotel || '')}</td>
           <td>${escHtml(inv.roomNo || '')}</td>
-          <td>${escHtml(formatPhoneNumber(inv.contactNo || ''))}</td>
+          <td style="mso-number-format:'\@'; text-align:center;">${escHtml(formatPhoneAsText(inv.contactNo || ''))}</td>
           ${itemsCells}
           <td>${escHtml(inv.supplier || '')}</td>
           <td>${escHtml(inv.customer || '')}</td>
@@ -955,10 +990,12 @@ document.addEventListener('DOMContentLoaded', async function() {
   // عرض اسم المستخدم
   document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
   
-  // تعيين التاريخ الافتراضي (اليوم)
-  const today = new Date().toISOString().split('T')[0];
-  document.getElementById('filterDate').value = today;
-  
+ const today = new Date();
+const weekAgo = new Date();
+weekAgo.setDate(today.getDate() - 7);
+
+document.getElementById('filterToDate').value = today.toISOString().split('T')[0];
+document.getElementById('filterFromDate').value = weekAgo.toISOString().split('T')[0];  
   // تحميل الفروع
   await loadBranches();
   
