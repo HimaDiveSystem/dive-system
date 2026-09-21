@@ -298,6 +298,42 @@
   display: flex;
   justify-content: stretch;
 }
+    /* ✅ رؤوس الأعمدة القابلة للترتيب */
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  padding-right: 22px;
+  transition: background-color 0.2s;
+}
+
+th.sortable:hover {
+  background-color: #e3f2fd;
+}
+
+/* ✅ مؤشر الترتيب */
+th.sortable::after {
+  content: '⇅';
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: #999;
+  opacity: 0.6;
+}
+
+th.sortable.sort-asc::after {
+  content: '▲';
+  color: #1976d2;
+  opacity: 1;
+}
+
+th.sortable.sort-desc::after {
+  content: '▼';
+  color: #1976d2;
+  opacity: 1;
+}
 .dropdown-footer .btn { width: 100%; justify-content: center; padding: 10px; font-size: 13px; }
 @media (max-width: 640px) {
   .dropdown-menu { min-width: 260px; max-width: 320px; }
@@ -704,6 +740,239 @@ function validateDateRange(fromDate, toDate) {
   return true;
 }
 // ============================================================
+// ✅ نظام الترتيب حسب الأعمدة (بدون data-sort-value)
+// ============================================================
+
+let sortState = {
+  column: null,
+  direction: 'asc'
+};
+
+// ✅ أنواع الأعمدة حسب الفهرس
+const COLUMN_TYPES = {
+  1:  'voucher',    // Voucher - ترتيب نصي مع أرقام
+  2:  'date',       // Active Date
+  3:  'time',       // Time
+  4:  'string',     // Guest Name
+  5:  'string',     // Nationality
+  6:  'string',     // Hotel / Room
+  7:  'number',     // Adult
+  8:  'number',     // Child
+  9:  'number',     // Inf
+  10: 'number',     // 1 Intro
+  11: 'number',     // 2 Intro
+  12: 'number',     // Diver
+  13: 'number',     // C.D.
+  14: 'number',     // S.R.
+  15: 'string',     // Trip / Activities
+  16: 'string',     // Supplier
+  17: 'string',     // Customer
+  18: 'string',     // Sales Name
+  19: 'string',     // Currency
+  20: 'number',     // Rest
+  21: 'string',     // State
+  22: 'string'      // PDF (no-sort عادة)
+};
+
+// ✅ تحويل القيمة حسب نوع العمود
+function parseSortValue(value, type) {
+  if (value === null || value === undefined) {
+    return type === 'number' ? -Infinity : '';
+  }
+  
+  const str = String(value).trim();
+  if (!str) return type === 'number' ? -Infinity : '';
+  
+  // ✅ الأرقام
+  if (type === 'number') {
+    // إزالة الفواصل والرموز ما عدا الأرقام والنقطة والسالب
+    const cleaned = str.replace(/[^\d.\-]/g, '');
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? -Infinity : num;
+  }
+  
+  // ✅ التواريخ (dd/mm/yyyy أو dd-mm-yyyy)
+  if (type === 'date') {
+    // جرّب dd/mm/yyyy أولاً
+    const dmy = str.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
+    if (dmy) {
+      let d = parseInt(dmy[1], 10);
+      let m = parseInt(dmy[2], 10) - 1;
+      let y = parseInt(dmy[3], 10);
+      if (y < 100) y += 2000;  // 24 → 2024
+      const date = new Date(y, m, d);
+      return isNaN(date.getTime()) ? 0 : date.getTime();
+    }
+    // جرّب yyyy-mm-dd (ISO)
+    const iso = str.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
+    if (iso) {
+      const date = new Date(
+        parseInt(iso[1], 10),
+        parseInt(iso[2], 10) - 1,
+        parseInt(iso[3], 10)
+      );
+      return isNaN(date.getTime()) ? 0 : date.getTime();
+    }
+    // جرّب Date.parse كخيار أخير
+    const ts = Date.parse(str);
+    return isNaN(ts) ? 0 : ts;
+  }
+  
+  // ✅ الأوقات (HH:MM أو HH:MM:SS)
+  if (type === 'time') {
+    // قد يكون بصيغة 12 ساعة مع AM/PM
+    const ampm = str.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|ص|م)?/i);
+    if (ampm) {
+      let h = parseInt(ampm[1], 10);
+      const m = parseInt(ampm[2], 10) || 0;
+      const s = parseInt(ampm[3], 10) || 0;
+      const period = (ampm[4] || '').toUpperCase();
+      
+      if ((period === 'PM' || period === 'م') && h < 12) h += 12;
+      if ((period === 'AM' || period === 'ص') && h === 12) h = 0;
+      
+      return h * 3600 + m * 60 + s;
+    }
+    return 0;
+  }
+  
+  // ✅ رقم الفاتورة (Voucher) — ترتيب طبيعي مع أرقام
+  if (type === 'voucher') {
+    // إزالة المسافات
+    return str;
+  }
+  
+  // ✅ نص عادي
+  return str;
+}
+
+// ✅ مقارنة قيمتين
+function compareValues(a, b, type) {
+  const va = parseSortValue(a, type);
+  const vb = parseSortValue(b, type);
+  
+  if (type === 'string' || type === 'voucher') {
+    // ✅ ترتيب طبيعي (natural sort): INV-2 قبل INV-10
+    return String(va).localeCompare(String(vb), 'ar', {
+      numeric: true,
+      sensitivity: 'base'
+    });
+  }
+  
+  if (va < vb) return -1;
+  if (va > vb) return 1;
+  return 0;
+}
+
+// ✅ ترتيب الجدول حسب العمود
+function sortTableByColumn(columnIndex, table) {
+  const tbody = table.querySelector('tbody');
+  if (!tbody) return;
+  
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  if (rows.length === 0) return;
+  
+  // تحديد الاتجاه
+  let direction = 'asc';
+  if (sortState.column === columnIndex && sortState.direction === 'asc') {
+    direction = 'desc';
+  }
+  sortState.column = columnIndex;
+  sortState.direction = direction;
+  
+  const type = COLUMN_TYPES[columnIndex] || 'string';
+  
+  // ترتيب الصفوف
+  rows.sort((rowA, rowB) => {
+    const cellA = rowA.cells[columnIndex];
+    const cellB = rowB.cells[columnIndex];
+    if (!cellA || !cellB) return 0;
+    
+    const valA = cellA.textContent || '';
+    const valB = cellB.textContent || '';
+    
+    const cmp = compareValues(valA, valB, type);
+    return direction === 'asc' ? cmp : -cmp;
+  });
+  
+  // إعادة إدراج الصفوف
+  rows.forEach(row => tbody.appendChild(row));
+  
+  // إعادة ترقيم عمود #
+  renumberRows(tbody);
+  
+  // تحديث مؤشرات الرأس
+  updateSortIndicators(table, columnIndex, direction);
+  
+  console.log(`✅ ترتيب: عمود ${columnIndex} (${direction})`);
+}
+
+// ✅ إعادة ترقيم العمود الأول
+function renumberRows(tbody) {
+  const rows = tbody.querySelectorAll('tr');
+  rows.forEach((row, idx) => {
+    if (row.cells[0]) {
+      // فقط إذا كانت الخلية تحتوي رقماً صرفاً
+      const txt = row.cells[0].textContent.trim();
+      if (/^\d+$/.test(txt)) {
+        row.cells[0].textContent = idx + 1;
+      }
+    }
+  });
+}
+
+// ✅ تحديث مؤشرات الرأس
+function updateSortIndicators(table, columnIndex, direction) {
+  const headers = table.querySelectorAll('thead th');
+  headers.forEach((th, idx) => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (idx === columnIndex) {
+      th.classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
+    }
+  });
+}
+
+// ✅ تفعيل الترتيب على كل الجداول
+function enableColumnSorting() {
+  const tables = document.querySelectorAll('#content table');
+  
+  if (!tables.length) {
+    console.warn('⚠️ لا توجد جداول لتفعيل الترتيب');
+    return;
+  }
+  
+  let totalColumns = 0;
+  
+  tables.forEach(table => {
+    const headers = table.querySelectorAll('thead th');
+    
+    headers.forEach((th, idx) => {
+      // تجاهل عمود #
+      if (idx === 0) return;
+      // تجاهل الأعمدة المميزة بـ no-sort
+      if (th.classList.contains('no-sort')) return;
+      // تجاهل عمود PDF
+      const headerText = th.textContent.trim().toLowerCase();
+      if (headerText === 'pdf' || headerText.includes('تحميل')) return;
+      
+      th.classList.add('sortable');
+      th.setAttribute('title', 'اضغط للترتيب');
+      
+      // إزالة المستمع القديم
+      if (th._sortHandler) {
+        th.removeEventListener('click', th._sortHandler);
+      }
+      
+      th._sortHandler = () => sortTableByColumn(idx, table);
+      th.addEventListener('click', th._sortHandler);
+      
+      totalColumns++;
+    });
+  });
+  
+  console.log(`✅ تم تفعيل الترتيب على ${totalColumns} عمود في ${tables.length} جدول`);
+}
+// ============================================================
 // LOAD REPORT
 // ============================================================
 async function loadReport() {
@@ -765,6 +1034,9 @@ async function loadReport() {
     summaryData = calculateSummary(groupedTrips);
     renderTrips(groupedTrips, tripItemsMap);
     renderSummary(summaryData);
+    
+    // ✅ ✅ ✅ تفعيل الترتيب بعد بناء الجداول
+    setTimeout(() => enableColumnSorting(), 100);
     
   } catch(e) {
     console.error('loadReport error:', e);
