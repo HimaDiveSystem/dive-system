@@ -654,6 +654,29 @@ async function loadReport() {
     content.innerHTML = `<div class="no-data">❌ خطأ: ${escHtml(e.message)}</div>`;
   }
 }
+  // ============================================================
+// ✅ تحويل dd/MMM/yyyy إلى كائن Date
+// ============================================================
+function parseActiveDateToObj(dateStr) {
+  if (!dateStr) return new Date(0);  // أقدم تاريخ ممكن
+  
+  const months = {
+    'jan': 0, 'feb': 1, 'mar': 2, 'apr': 3, 'may': 4, 'jun': 5,
+    'jul': 6, 'aug': 7, 'sep': 8, 'oct': 9, 'nov': 10, 'dec': 11
+  };
+  
+  const match = String(dateStr).match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
+  if (!match) return new Date(0);
+  
+  const day = parseInt(match[1]);
+  const monthKey = match[2].toLowerCase();
+  const year = parseInt(match[3]);
+  const month = months[monthKey];
+  
+  if (month === undefined) return new Date(0);
+  
+  return new Date(year, month, day);
+}
 // ============================================================
 // GROUP BY TRIP
 // ============================================================
@@ -672,11 +695,51 @@ function groupByTrip(invoices) {
   // ✅ ترتيب الرحلات أبجدياً
   const sorted = {};
   Object.keys(groups).sort().forEach(tripName => {
-    // ✅ ترتيب الفواتير داخل كل رحلة حسب الوقت
+    // ✅ ✅ ✅ الترتيب الزمني الدقيق للفواتير داخل كل رحلة
     sorted[tripName] = groups[tripName].sort((a, b) => {
-      const ta = String(a.time || a.Time || '').trim();
-      const tb = String(b.time || b.Time || '').trim();
-      return ta.localeCompare(tb);
+      
+      // 1️⃣ الترتيب حسب Active Date (زمني وليس نصي)
+      const dateA = parseActiveDateToObj(a.activeDate);
+      const dateB = parseActiveDateToObj(b.activeDate);
+      const dateCompare = dateA.getTime() - dateB.getTime();
+      if (dateCompare !== 0) return dateCompare;
+      
+      // 2️⃣ الترتيب حسب الوقت (زمني وليس نصي)
+      const timeA = String(a.time || a.Time || '').trim();
+      const timeB = String(b.time || b.Time || '').trim();
+      
+      // ✅ تحويل الوقت إلى دقائق للمقارنة الزمنية
+      const timeToMinutes = (t) => {
+        const m = t.match(/(\d{1,2}):(\d{2})/);
+        if (!m) return 9999;  // الفواتير بدون وقت تُرتَّب في النهاية
+        return parseInt(m[1]) * 60 + parseInt(m[2]);
+      };
+      
+      const timeCompare = timeToMinutes(timeA) - timeToMinutes(timeB);
+      if (timeCompare !== 0) return timeCompare;
+      
+      // 3️⃣ الترتيب النصي حسب Sales Name
+      const salesA = String(a.salesName || '').trim().toLowerCase();
+      const salesB = String(b.salesName || '').trim().toLowerCase();
+      const salesCompare = salesA.localeCompare(salesB, 'ar');
+      if (salesCompare !== 0) return salesCompare;
+      
+      // 4️⃣ الترتيب النصي حسب Supplier
+      const supplierA = String(a.supplier || '').trim().toLowerCase();
+      const supplierB = String(b.supplier || '').trim().toLowerCase();
+      const supplierCompare = supplierA.localeCompare(supplierB, 'ar');
+      if (supplierCompare !== 0) return supplierCompare;
+      
+      // 5️⃣ الترتيب النصي حسب Customer
+      const customerA = String(a.customer || '').trim().toLowerCase();
+      const customerB = String(b.customer || '').trim().toLowerCase();
+      const customerCompare = customerA.localeCompare(customerB, 'ar');
+      if (customerCompare !== 0) return customerCompare;
+      
+      // 6️⃣ إذا تساوَى كل شيء، رتّب حسب VoucherNo
+      const voucherA = String(a.voucherNo || '').trim();
+      const voucherB = String(b.voucherNo || '').trim();
+      return voucherA.localeCompare(voucherB);
     });
   });
   
@@ -790,6 +853,7 @@ function renderTripCard(tripName, invoices, index, tripItems) {
             <tr>
               <th>#</th>
               <th>Voucher</th>
+              <th>Active Date</th>
               <th>Time</th>
               <th>Guest Name</th>
               <th>Nationality</th>
@@ -841,6 +905,7 @@ function renderTripCard(tripName, invoices, index, tripItems) {
       <tr>
         <td>${idx + 1}</td>
         <td><span class="vlink">${escHtml(inv.voucherNo || '')}</span></td>
+        <td>${escHtml(inv.activeDate || '—')}</td>
         <td>${escHtml(fmtTime(inv.time || ''))}</td>
         <td>${escHtml(inv.guestName || '—')}</td>
         <td>${escHtml(inv.nationality || '—')}</td>
@@ -867,18 +932,18 @@ function renderTripCard(tripName, invoices, index, tripItems) {
     totalsCells += `<td>${itemTotals[i] || 0}</td>`;
   }
   
-  html += `
-          </tbody>
-          <tfoot>
-            <tr>
-              <td colspan="7">📊 TOTAL (${invoices.length} Bookings)</td>
-              ${totalsCells}
-              <td colspan="7"></td>
-              <td>${totalRest.toFixed(2)}</td>
-              <td></td>
-              <td class="no-print"></td>
-            </tr>
-          </tfoot>
+ html += `
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="8">📊 TOTAL (${invoices.length} Bookings)</td>
+          ${totalsCells}
+          <td colspan="7"></td>
+          <td>${totalRest.toFixed(2)}</td>
+          <td></td>
+          <td class="no-print"></td>
+        </tr>
+        </tfoot>
         </table>
       </div>
     </div>
@@ -1182,13 +1247,14 @@ async function exportToExcelWithGroups(groups, tripsToInclude) {
       return sum + (parseFloat(inv.rest) || 0);
     }, 0);
     
-    const totalCols = 9 + itemNames.length + 3;
+    const totalCols = 10 + itemNames.length + 3;
     
     html += '<table border="1">';
     html += '<tr><td colspan="' + totalCols + '" class="trip-title">' + escHtml(tripName) + ' (' + invoices.length + ' Bookings)</td></tr>';
     html += '<tr>';
     html += '<th>#</th>';
     html += '<th>Voucher</th>';
+    html += '<th>Active Date</th>'; 
     html += '<th>Time</th>';
     html += '<th>Guest Name</th>';
     html += '<th>Nationality</th>';
@@ -1217,6 +1283,7 @@ async function exportToExcelWithGroups(groups, tripsToInclude) {
       html += '<tr>';
       html += '<td>' + (idx + 1) + '</td>';
       html += '<td>' + escHtml(inv.voucherNo || '') + '</td>';
+      html += '<td>' + escHtml(inv.activeDate || '') + '</td>'; 
       html += '<td>' + escHtml(fmtTime(inv.time || '')) + '</td>';
       html += '<td>' + escHtml(inv.guestName || '') + '</td>';
       html += '<td>' + escHtml(inv.nationality || '') + '</td>';
@@ -1239,7 +1306,7 @@ async function exportToExcelWithGroups(groups, tripsToInclude) {
     }
     
     html += '<tr class="summary">';
-    html += '<td colspan="8">TOTAL</td>';
+    html += '<td colspan="9">TOTAL</td>';
     html += totalsCells;
     html += '<td colspan="4"></td>';
     html += '<td>' + tripRest.toFixed(2) + '</td>';
@@ -1395,13 +1462,14 @@ async function exportToExcel() {
       return sum + (parseFloat(inv.rest) || 0);
     }, 0);
     
-    const totalCols = 9 + itemNames.length + 3;
+    const totalCols = 10 + itemNames.length + 3;
     
     html += '<table border="1">';
     html += '<tr><td colspan="' + totalCols + '" class="trip-title">' + escHtml(tripName) + ' (' + invoices.length + ' Bookings)</td></tr>';
     html += '<tr>';
     html += '<th>#</th>';
     html += '<th>Voucher</th>';
+    html += '<th>Active Date</th>';
     html += '<th>Time</th>';
     html += '<th>Guest Name</th>';
     html += '<th>Nationality</th>';
@@ -1430,6 +1498,7 @@ async function exportToExcel() {
       html += '<tr>';
       html += '<td>' + (idx + 1) + '</td>';
       html += '<td>' + escHtml(inv.voucherNo || '') + '</td>';
+      html += '<td>' + escHtml(inv.activeDate || '') + '</td>';
       html += '<td>' + escHtml(fmtTime(inv.time || '')) + '</td>';
       html += '<td>' + escHtml(inv.guestName || '') + '</td>';
       html += '<td>' + escHtml(inv.nationality || '') + '</td>';
@@ -1452,7 +1521,7 @@ async function exportToExcel() {
     }
     
     html += '<tr class="summary">';
-    html += '<td colspan="8">TOTAL</td>';
+    html += '<td colspan="9">TOTAL</td>';
     html += totalsCells;
     html += '<td colspan="4"></td>';
     html += '<td>' + tripRest.toFixed(2) + '</td>';
