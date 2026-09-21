@@ -519,7 +519,10 @@ th.sortable.sort-desc::after {
 <div class="summary-strip no-print" id="summaryStrip" style="display:none;">
   <div class="sum-item"><div class="lbl">Total Trips</div><div class="val" id="sumTrips">0</div></div>
   <div class="sum-item"><div class="lbl">Total Bookings</div><div class="val" id="sumBookings">0</div></div>
-  <div class="sum-item"><div class="lbl">Total Rest</div><div class="val" id="sumRest">0</div></div>
+  <div class="sum-item">
+  <div class="lbl">Total Rest</div>
+  <div class="val" id="sumRest">0</div>
+</div>
 </div>
 
 <!-- ===== Content ===== -->
@@ -1358,7 +1361,7 @@ function groupByTrip(invoices) {
 function calculateSummary(groups) {
   const totalTrips = Object.keys(groups).length;
   let totalBookings = 0;
-  let totalRest = 0;
+  const restByCurrency = {};   // ✅ { USD: 1250, EUR: 320, ... }
   
   for (const tripName in groups) {
     const invoices = groups[tripName];
@@ -1366,14 +1369,24 @@ function calculateSummary(groups) {
     
     for (const inv of invoices) {
       const rest = parseFloat(inv.rest) || 0;
-      totalRest += rest;
+      if (rest === 0) continue;   // ✅ تخطي الصفر
+      
+      // ✅ توحيد العملة
+      let currency = String(inv.invoiceCurrency || '').trim().toUpperCase();
+      if (!currency) currency = 'غير محدد';
+      currency = normalizeCurrency(currency);
+      
+      // ✅ تراكم حسب العملة
+      if (!restByCurrency[currency]) restByCurrency[currency] = 0;
+      restByCurrency[currency] += rest;
     }
   }
   
   return {
     totalTrips: totalTrips,
     totalBookings: totalBookings,
-    totalRest: totalRest.toFixed(2)
+    restByCurrency: restByCurrency,   // ✅ كائن العملات
+    totalRest: Object.values(restByCurrency).reduce((a, b) => a + b, 0).toFixed(2)  // للتوافق
   };
 }
 // ============================================================
@@ -1382,10 +1395,41 @@ function calculateSummary(groups) {
 function renderSummary(summary) {
   document.getElementById('sumTrips').textContent = summary.totalTrips;
   document.getElementById('sumBookings').textContent = summary.totalBookings;
-  document.getElementById('sumRest').textContent = summary.totalRest;
+  
+  // ✅ عرض المتبقي حسب العملة
+  const restEl = document.getElementById('sumRest');
+  
+  if (summary.restByCurrency && Object.keys(summary.restByCurrency).length > 0) {
+    // ✅ بناء HTML للعملات
+    const priority = ['USD', 'EUR', 'GBP', 'EGP', 'SAR', 'AED', 'KWD', 'CHF'];
+    const currencies = Object.keys(summary.restByCurrency).sort((a, b) => {
+      const ia = priority.indexOf(a);
+      const ib = priority.indexOf(b);
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      if (ia !== -1) return -1;
+      if (ib !== -1) return 1;
+      return a.localeCompare(b);
+    });
+    
+    const itemsHTML = currencies.map(cur => {
+      const amount = summary.restByCurrency[cur];
+      return `<span style="display:inline-block;margin:0 3px;font-size:13px;">
+        <b>${cur}:</b> ${formatMoney(amount)}
+      </span>`;
+    }).join('');
+    
+    restEl.innerHTML = itemsHTML;
+    restEl.style.fontSize = '14px';
+    restEl.style.display = 'flex';
+    restEl.style.flexWrap = 'wrap';
+    restEl.style.justifyContent = 'center';
+    restEl.style.gap = '8px';
+  } else {
+    restEl.textContent = '0.00';
+  }
+  
   document.getElementById('summaryStrip').style.display = 'grid';
 }
-
 // ============================================================
 // RENDER TRIPS
 // ============================================================
