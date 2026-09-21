@@ -433,6 +433,8 @@ let summaryData = {};
 // ✅ حالة الفلتر
 let excelSelectedTrips = new Set();
 let printSelectedTripsSet = new Set();  // ✅ اسم جديد
+// ✅ كاش بنود الرحلات (لمنع الطلبات المتكررة)
+const tripItemsCache = new Map();
 // ============================================================
 // SESSION CHECK
 // ============================================================
@@ -577,6 +579,76 @@ async function getTripItems(tripName, centerName) {
     return [];
   }
 }
+  // ============================================================
+// ✅ جلب بنود الرحلات (بكاش + طلب دفعي)
+// ============================================================
+async function fetchTripItemsForTrips(tripNames) {
+  const result = {};
+  const missingTrips = [];
+  
+  // ✅ 1. التحقق من الكاش أولاً
+  for (const tripName of tripNames) {
+    if (tripItemsCache.has(tripName)) {
+      result[tripName] = tripItemsCache.get(tripName);
+    } else {
+      missingTrips.push(tripName);
+    }
+  }
+  
+  // ✅ 2. إذا كانت جميع الرحلات في الكاش، ارجع فوراً
+  if (missingTrips.length === 0) {
+    console.log(`⚡ fetchTripItemsForTrips: جميع ${tripNames.length} رحلة من الكاش`);
+    return result;
+  }
+  
+  // ✅ 3. محاولة الطلب الدفعي (طلب واحد)
+  try {
+    console.log(`📡 fetchTripItemsForTrips: جلب ${missingTrips.length} رحلة (طلب دفعي)`);
+    
+    const batchResult = await gas('getTripItemsBatch', {
+      tripNames: JSON.stringify(missingTrips),
+      centerName: currentUser?.centerName || ''
+    });
+    
+    // ✅ التحقق من أن النتيجة صحيحة (Object وليس مصفوفة)
+    if (batchResult && typeof batchResult === 'object' && !Array.isArray(batchResult)) {
+      for (const tripName of missingTrips) {
+        const items = Array.isArray(batchResult[tripName]) ? batchResult[tripName] : [];
+        tripItemsCache.set(tripName, items);  // ✅ حفظ في الكاش
+        result[tripName] = items;
+      }
+      console.log(`✅ fetchTripItemsForTrips: تم جلب ${missingTrips.length} رحلة (دفعة واحدة)`);
+      return result;
+    }
+    
+    // ❌ إذا فشلت الطريقة الدفعية، استخدم fallback
+    console.warn('⚠️ getTripItemsBatch لم تُرجع Object صحيح، العودة للطريقة الفردية');
+  } catch(batchErr) {
+    console.warn('⚠️ getTripItemsBatch فشل:', batchErr.message);
+  }
+  
+  // ✅ 4. Fallback: الطريقة الفردية (إذا لم تكن getTripItemsBatch موجودة)
+  console.log(`📡 fetchTripItemsForTrips: ${missingTrips.length} طلب فردي (Fallback)`);
+  await Promise.all(missingTrips.map(async (tripName) => {
+    try {
+      const items = await getTripItems(tripName, currentUser?.centerName || '');
+      tripItemsCache.set(tripName, items);
+      result[tripName] = items;
+    } catch(e) {
+      console.error(`❌ فشل جلب ${tripName}:`, e);
+      result[tripName] = [];
+      tripItemsCache.set(tripName, []);
+    }
+  }));
+  
+  return result;
+}
+
+// ✅ دالة مسح الكاش (عند تغيير المركز أو الحاجة)
+function clearTripItemsCache() {
+  tripItemsCache.clear();
+  console.log('🗑️ تم مسح كاش بنود الرحلات');
+}
 // ============================================================
 // LOAD REPORT
 // ============================================================
@@ -589,7 +661,6 @@ async function loadReport() {
     return;
   }
   
-  // تحويل yyyy-mm-dd إلى dd/MMM/yyyy
   const [fy, fm, fd] = fromDate.split('-');
   const [ty, tm, td] = toDate.split('-');
   const fromDateStr = String(fd).padStart(2,'0') + '/' + MN[+fm - 1] + '/' + fy;
@@ -600,7 +671,6 @@ async function loadReport() {
   document.getElementById('summaryStrip').style.display = 'none';
   
   try {
-    // ✅ استخدام getInvoicesByDateRangeOnly لجلب فواتير النطاق
     const invoices = await gas('getInvoicesByDateRangeOnly', {
       fromDate: fromDateStr,
       toDate: toDateStr,
@@ -615,7 +685,6 @@ async function loadReport() {
     
     allInvoices = invoices;
     
-    // ✅ تطبيق الفلتر على البحث (إن وجد)
     const searchTerm = document.getElementById('filterSearch').value.trim().toLowerCase();
     let filtered = invoices;
     if (searchTerm) {
@@ -629,21 +698,12 @@ async function loadReport() {
       });
     }
     
-    // ✅ تجميع حسب الرحلة
     groupedTrips = groupByTrip(filtered);
     
-    // ✅ جلب بنود الرحلات
+    // ✅ ✅ ✅ استخدام الدالة الموحدة (كاش + طلب دفعي)
     const uniqueTrips = Object.keys(groupedTrips);
-    const tripItemsMap = {};
-    await Promise.all(uniqueTrips.map(async (tripName) => {
-      try {
-        const items = await getTripItems(tripName, currentUser?.centerName || '');
-        tripItemsMap[tripName] = Array.isArray(items) ? items : [];
-      } catch(e) {
-        tripItemsMap[tripName] = [];
-      }
-    }));
-    // ✅ حفظ في متغير عام لاستخدامه في الطباعة
+    const tripItemsMap = await fetchTripItemsForTrips(uniqueTrips);
+    
     window._tripItemsMap = tripItemsMap;
     summaryData = calculateSummary(groupedTrips);
     renderTrips(groupedTrips, tripItemsMap);
@@ -658,7 +718,7 @@ async function loadReport() {
 // ✅ تحويل dd/MMM/yyyy إلى كائن Date
 // ============================================================
 function parseActiveDateToObj(dateStr) {
-  if (!dateStr) return new Date(0);  // أقدم تاريخ ممكن
+  if (!dateStr) return new Date(9999, 11, 31);  // ✅ في النهاية
   
   const months = {
     'jan': 0, 'feb': 1, 'mar': 2, 'apr': 3, 'may': 4, 'jun': 5,
@@ -666,14 +726,14 @@ function parseActiveDateToObj(dateStr) {
   };
   
   const match = String(dateStr).match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
-  if (!match) return new Date(0);
+  if (!match) return new Date(9999, 11, 31);
   
   const day = parseInt(match[1]);
   const monthKey = match[2].toLowerCase();
   const year = parseInt(match[3]);
   const month = months[monthKey];
   
-  if (month === undefined) return new Date(0);
+  if (month === undefined) return new Date(9999, 11, 31);
   
   return new Date(year, month, day);
 }
@@ -685,61 +745,44 @@ function groupByTrip(invoices) {
   
   for (const inv of invoices) {
     const tripName = (inv.trip || inv.Trip || 'Unassigned Trip').trim() || 'Unassigned Trip';
-    
-    if (!groups[tripName]) {
-      groups[tripName] = [];
-    }
+    if (!groups[tripName]) groups[tripName] = [];
     groups[tripName].push(inv);
   }
   
-  // ✅ ترتيب الرحلات أبجدياً
   const sorted = {};
   Object.keys(groups).sort().forEach(tripName => {
-    // ✅ ✅ ✅ الترتيب الزمني الدقيق للفواتير داخل كل رحلة
     sorted[tripName] = groups[tripName].sort((a, b) => {
-      
-      // 1️⃣ الترتيب حسب Active Date (زمني وليس نصي)
-      const dateA = parseActiveDateToObj(a.activeDate);
-      const dateB = parseActiveDateToObj(b.activeDate);
-      const dateCompare = dateA.getTime() - dateB.getTime();
+      // 1️⃣ Active Date (زمني)
+      const dateCompare = parseActiveDateToObj(a.activeDate).getTime() 
+                        - parseActiveDateToObj(b.activeDate).getTime();
       if (dateCompare !== 0) return dateCompare;
       
-      // 2️⃣ الترتيب حسب الوقت (زمني وليس نصي)
-      const timeA = String(a.time || a.Time || '').trim();
-      const timeB = String(b.time || b.Time || '').trim();
-      
-      // ✅ تحويل الوقت إلى دقائق للمقارنة الزمنية
+      // 2️⃣ Time (زمني)
       const timeToMinutes = (t) => {
-        const m = t.match(/(\d{1,2}):(\d{2})/);
-        if (!m) return 9999;  // الفواتير بدون وقت تُرتَّب في النهاية
+        const m = String(t || '').match(/(\d{1,2}):(\d{2})/);
+        if (!m) return 9999;
         return parseInt(m[1]) * 60 + parseInt(m[2]);
       };
-      
-      const timeCompare = timeToMinutes(timeA) - timeToMinutes(timeB);
+      const timeCompare = timeToMinutes(a.time) - timeToMinutes(b.time);
       if (timeCompare !== 0) return timeCompare;
       
-      // 3️⃣ الترتيب النصي حسب Sales Name
-      const salesA = String(a.salesName || '').trim().toLowerCase();
-      const salesB = String(b.salesName || '').trim().toLowerCase();
-      const salesCompare = salesA.localeCompare(salesB, 'ar');
+      // 3️⃣ Sales Name (نصي عربي)
+      const salesCompare = String(a.salesName || '').trim()
+                            .localeCompare(String(b.salesName || '').trim(), 'ar');
       if (salesCompare !== 0) return salesCompare;
       
-      // 4️⃣ الترتيب النصي حسب Supplier
-      const supplierA = String(a.supplier || '').trim().toLowerCase();
-      const supplierB = String(b.supplier || '').trim().toLowerCase();
-      const supplierCompare = supplierA.localeCompare(supplierB, 'ar');
-      if (supplierCompare !== 0) return supplierCompare;
+      // 4️⃣ Supplier (نصي عربي)
+      const suppCompare = String(a.supplier || '').trim()
+                           .localeCompare(String(b.supplier || '').trim(), 'ar');
+      if (suppCompare !== 0) return suppCompare;
       
-      // 5️⃣ الترتيب النصي حسب Customer
-      const customerA = String(a.customer || '').trim().toLowerCase();
-      const customerB = String(b.customer || '').trim().toLowerCase();
-      const customerCompare = customerA.localeCompare(customerB, 'ar');
-      if (customerCompare !== 0) return customerCompare;
+      // 5️⃣ Customer (نصي عربي)
+      const custCompare = String(a.customer || '').trim()
+                           .localeCompare(String(b.customer || '').trim(), 'ar');
+      if (custCompare !== 0) return custCompare;
       
-      // 6️⃣ إذا تساوَى كل شيء، رتّب حسب VoucherNo
-      const voucherA = String(a.voucherNo || '').trim();
-      const voucherB = String(b.voucherNo || '').trim();
-      return voucherA.localeCompare(voucherB);
+      // 6️⃣ Voucher No (احتياطي)
+      return String(a.voucherNo || '').localeCompare(String(b.voucherNo || ''));
     });
   });
   
@@ -955,7 +998,6 @@ function renderTripCard(tripName, invoices, index, tripItems) {
 // APPLY SEARCH
 // ============================================================
 async function applySearch() {
-  // إعادة الفلترة من allInvoices
   const searchTerm = document.getElementById('filterSearch').value.trim().toLowerCase();
   let filtered = allInvoices;
   
@@ -973,20 +1015,10 @@ async function applySearch() {
   groupedTrips = groupByTrip(filtered);
   summaryData = calculateSummary(groupedTrips);
   
-  // ✅ جلب بنود الرحلات
+  // ✅ ✅ ✅ استخدام الدالة الموحدة
   const uniqueTrips = Object.keys(groupedTrips);
-  const tripItemsMap = {};
-  await Promise.all(uniqueTrips.map(async (tripName) => {
-    try {
-      const items = await gas('getTripItemsByName', {
-        tripName: tripName,
-        centerName: currentUser?.centerName || ''
-      });
-      tripItemsMap[tripName] = Array.isArray(items) ? items : [];
-    } catch(e) {
-      tripItemsMap[tripName] = [];
-    }
-  }));
+  const tripItemsMap = await fetchTripItemsForTrips(uniqueTrips);
+  
   window._tripItemsMap = tripItemsMap;
   renderTrips(groupedTrips, tripItemsMap);
   renderSummary(summaryData);
@@ -1003,6 +1035,10 @@ function resetFilters() {
   document.getElementById('filterToDate').value = today.toISOString().split('T')[0];
   document.getElementById('filterBranch').value = '';
   document.getElementById('filterSearch').value = '';
+  
+  // ✅ مسح الكاش (اختياري - لضمان بيانات حديثة)
+  clearTripItemsCache();
+  
   loadReport();
 }
   // ============================================================
@@ -1183,18 +1219,8 @@ async function exportToExcelWithGroups(groups, tripsToInclude) {
   const activeDate = fromDateStr + ' إلى ' + toDateStr;
   
   // ✅ جلب بنود الرحلات المحددة فقط
-  const tripItemsMap = {};
-  await Promise.all(tripsToInclude.map(async (tripName) => {
-    try {
-      const items = await gas('getTripItemsByName', {
-        tripName: tripName,
-        centerName: currentUser?.centerName || ''
-      });
-      tripItemsMap[tripName] = Array.isArray(items) ? items : [];
-    } catch(e) {
-      tripItemsMap[tripName] = [];
-    }
-  }));
+ // ✅ ✅ ✅ استخدام الدالة الموحدة
+const tripItemsMap = await fetchTripItemsForTrips(tripsToInclude);
   
   const quantityFields = ['sgl','dbl','trpl','extra','camel','dinner','vipDinner','starGazing','privateTrip','privateTransfer'];
   
@@ -1410,18 +1436,8 @@ async function exportToExcel() {
   
   // ✅ جلب بنود الرحلات
   const uniqueTrips = Object.keys(groupedTrips);
-  const tripItemsMap = {};
-  await Promise.all(uniqueTrips.map(async (tripName) => {
-    try {
-      const items = await gas('getTripItemsByName', {
-        tripName: tripName,
-        centerName: currentUser?.centerName || ''
-      });
-      tripItemsMap[tripName] = Array.isArray(items) ? items : [];
-    } catch(e) {
-      tripItemsMap[tripName] = [];
-    }
-  }));
+  // ✅ ✅ ✅ استخدام الدالة الموحدة
+const tripItemsMap = await fetchTripItemsForTrips(uniqueTrips);
   
   const quantityFields = ['sgl','dbl','trpl','extra','camel','dinner','vipDinner','starGazing','privateTrip','privateTransfer'];
   
