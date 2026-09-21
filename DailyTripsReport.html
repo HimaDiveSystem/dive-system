@@ -334,6 +334,77 @@ th.sortable.sort-desc::after {
   color: #1976d2;
   opacity: 1;
 }
+    /* ✅ ملخص المتبقي حسب العملة */
+.trip-remaining-summary {
+  background: linear-gradient(135deg, #f5f7fa 0%, #e8eef5 100%);
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin: 8px 0 14px 0;
+  border-right: 4px solid #1976d2;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+
+.remaining-title {
+  font-size: 13px;
+  font-weight: bold;
+  color: #455a64;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.currency-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.currency-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  border: 2px solid #ccc;
+  background: #fff;
+  font-size: 13px;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.currency-badge:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(0,0,0,0.1);
+}
+
+.currency-code {
+  font-weight: bold;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0,0,0,0.05);
+}
+
+.currency-amount {
+  font-weight: bold;
+  font-size: 14px;
+  font-family: 'Courier New', monospace;
+}
+
+/* ✅ للشاشات الصغيرة */
+@media (max-width: 600px) {
+  .currency-badges {
+    gap: 6px;
+  }
+  .currency-badge {
+    padding: 4px 10px;
+    font-size: 12px;
+  }
+  .currency-amount {
+    font-size: 13px;
+  }
+}
 .dropdown-footer .btn { width: 100%; justify-content: center; padding: 10px; font-size: 13px; }
 @media (max-width: 640px) {
   .dropdown-menu { min-width: 260px; max-width: 320px; }
@@ -972,6 +1043,167 @@ function enableColumnSorting() {
   
   console.log(`✅ تم تفعيل الترتيب على ${totalColumns} عمود في ${tables.length} جدول`);
 }
+ // ============================================================
+// ✅ حساب المتبقي حسب كل عملة
+// ============================================================
+
+/**
+ * يحسب إجمالي المتبقي لكل عملة
+ * @param {Array} invoices - مصفوفة الفواتير
+ * @returns {Object} - { USD: 1250, EUR: 320, ... }
+ */
+function calculateRemainingByCurrency(invoices) {
+  const totals = {};
+  
+  if (!Array.isArray(invoices)) return totals;
+  
+  invoices.forEach(inv => {
+    // ✅ العملة
+    let currency = String(inv.invoiceCurrency || '').trim().toUpperCase();
+    if (!currency) currency = 'غير محدد';
+    currency = normalizeCurrency(currency);
+    
+    // ✅ المتبقي (row[0] = rest)
+    const remaining = parseNumberSafe(inv.rest);
+    
+    // ✅ تخطي القيم الصفرية لتقليل الفوضى
+    if (remaining === 0) return;
+    
+    // ✅ تراكم
+    if (!totals[currency]) totals[currency] = 0;
+    totals[currency] += remaining;
+  });
+  
+  return totals;
+}
+
+/**
+ * توحيد أسماء العملات
+ */
+function normalizeCurrency(cur) {
+  const cleaned = String(cur || '').replace(/\s+/g, '').toUpperCase();
+  
+  const map = {
+    'USD': 'USD', 'US$': 'USD', '$': 'USD', 'DOLLAR': 'USD',
+    'DOLLARS': 'USD', 'دولار': 'USD', 'دولارامريكي': 'USD',
+    
+    'EUR': 'EUR', '€': 'EUR', 'EURO': 'EUR', 'EUROS': 'EUR',
+    'يورو': 'EUR', 'يوروأوروبي': 'EUR',
+    
+    'GBP': 'GBP', '£': 'GBP', 'POUND': 'GBP', 'POUNDS': 'GBP',
+    'STERLING': 'GBP', 'جنيه': 'GBP', 'جنيهإسترليني': 'GBP',
+    'إسترليني': 'GBP', 'استرليني': 'GBP',
+    
+    'EGP': 'EGP', 'LE': 'EGP', 'ج.م': 'EGP', 'ج.م.': 'EGP',
+    'جنيهمصري': 'EGP', 'EGYPTIANPOUND': 'EGP',
+    
+    'SAR': 'SAR', 'ريال': 'SAR', 'ر.س': 'SAR', 'SR': 'SAR',
+    'SAR': 'SAR', 'ريالسعودي': 'SAR',
+    
+    'AED': 'AED', 'درهم': 'AED', 'د.إ': 'AED', 'AED': 'AED',
+    'درهمإماراتي': 'AED',
+    
+    'KWD': 'KWD', 'دينار': 'KWD', 'د.ك': 'KWD',
+    
+    'CHF': 'CHF', 'فرنك': 'CHF', 'فرنكسويسري': 'CHF',
+    
+    'JPY': 'JPY', '¥': 'JPY', 'ين': 'JPY',
+    
+    'TRY': 'TRY', '₺': 'TRY', 'ليرة': 'TRY',
+    
+    'RUB': 'RUB', '₽': 'RUB', 'روبل': 'RUB'
+  };
+  
+  // إزالة النقاط من النهاية
+  const key = cleaned.replace(/\.+$/, '');
+  return map[key] || map[cleaned] || cleaned;
+}
+
+/**
+ * تحويل آمن إلى رقم
+ */
+function parseNumberSafe(val) {
+  if (val === null || val === undefined || val === '') return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  const cleaned = String(val).replace(/[^\d.\-]/g, '');
+  const num = parseFloat(cleaned);
+  return isNaN(num) ? 0 : num;
+}
+
+/**
+ * تنسيق المبلغ
+ */
+function formatMoney(amount) {
+  const num = parseNumberSafe(amount);
+  return num.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
+
+/**
+ * بناء HTML لملخص المتبقي حسب العملات
+ * @param {Object} totals - { USD: 1250, EUR: 320, ... }
+ */
+function buildRemainingByCurrencyHTML(totals) {
+  const currencies = Object.keys(totals).filter(c => totals[c] !== 0);
+  
+  if (currencies.length === 0) return '';
+  
+  // ✅ ترتيب العملات حسب الأولوية
+  const priority = ['USD', 'EUR', 'GBP', 'EGP', 'SAR', 'AED', 'KWD', 'CHF'];
+  currencies.sort((a, b) => {
+    const ia = priority.indexOf(a);
+    const ib = priority.indexOf(b);
+    if (ia !== -1 && ib !== -1) return ia - ib;
+    if (ia !== -1) return -1;
+    if (ib !== -1) return 1;
+    return a.localeCompare(b);
+  });
+  
+  // ✅ ألوان لكل عملة
+  const colors = {
+    'USD': '#2e7d32',
+    'EUR': '#1565c0',
+    'GBP': '#6a1b9a',
+    'EGP': '#ef6c00',
+    'SAR': '#00838f',
+    'AED': '#ad1457',
+    'KWD': '#4e342e',
+    'CHF': '#c62828',
+    'JPY': '#b71c1c',
+    'TRY': '#00695c',
+    'RUB': '#283593',
+    'غير محدد': '#607d8b'
+  };
+  
+  const itemsHTML = currencies.map(cur => {
+    const amount = totals[cur];
+    const color = colors[cur] || '#37474f';
+    const isNegative = amount < 0;
+    const sign = isNegative ? '⚠️ ' : '';
+    
+    return `
+      <div class="currency-badge" style="border-color:${color}; background:${color}12;">
+        <span class="currency-code" style="color:${color}; background:${color}25;">${cur}</span>
+        <span class="currency-amount" style="color:${color};">
+          ${sign}${formatMoney(Math.abs(amount))}
+        </span>
+      </div>
+    `;
+  }).join('');
+  
+  return `
+    <div class="trip-remaining-summary">
+      <div class="remaining-title">
+        💰 المتبقي حسب العملة
+      </div>
+      <div class="currency-badges">
+        ${itemsHTML}
+      </div>
+    </div>
+  `;
+}
 // ============================================================
 // LOAD REPORT
 // ============================================================
@@ -1170,18 +1402,26 @@ function renderTrips(groups, tripItemsMap = {}) {
     tripIndex++;
     const invoices = groups[tripName];
     const tripItems = tripItemsMap[tripName] || [];
-    html += renderTripCard(tripName, invoices, tripIndex, tripItems);
+    
+    // ✅ حساب المتبقي حسب العملة
+    const remainingTotals = calculateRemainingByCurrency(invoices);
+    
+    // ✅ بناء HTML للملخص (سيُرجع '' إذا لا يوجد متبقي)
+    const remainingHTML = buildRemainingByCurrencyHTML(remainingTotals);
+    
+    html += renderTripCard(tripName, invoices, tripIndex, tripItems, remainingHTML);
   }
   
   content.innerHTML = html;
+  
   // ✅ إعادة تعيين الرحلات المحددة
-excelSelectedTrips.clear();
-printSelectedTripsSet.clear();
+  excelSelectedTrips.clear();
+  printSelectedTripsSet.clear();
 }
 // ============================================================
 // RENDER TRIP CARD
 // ============================================================
-function renderTripCard(tripName, invoices, index, tripItems) {
+function renderTripCard(tripName, invoices, index, tripItems, remainingHTML = '') {
   // ✅ 1. تحديد بنود الرحلة
   const itemNames = (Array.isArray(tripItems) && tripItems.length > 0) 
     ? tripItems 
@@ -1216,9 +1456,11 @@ function renderTripCard(tripName, invoices, index, tripItems) {
         </div>
         <div class="trip-stats">
           <span class="stat">📋 Bookings: <span class="n">${invoices.length}</span></span>
-          <span class="stat">💰 Rest: <span class="n">${totalRest.toFixed(2)}</span></span>
         </div>
       </div>
+      
+      ${remainingHTML}
+      
       <div class="tbl-scroll">
         <table class="tbl">
           <thead>
@@ -1304,17 +1546,17 @@ function renderTripCard(tripName, invoices, index, tripItems) {
     totalsCells += `<td>${itemTotals[i] || 0}</td>`;
   }
   
- html += `
-      </tbody>
-      <tfoot>
-        <tr>
-          <td colspan="8">📊 TOTAL (${invoices.length} Bookings)</td>
-          ${totalsCells}
-          <td colspan="7"></td>
-          <td>${totalRest.toFixed(2)}</td>
-          <td></td>
-          <td class="no-print"></td>
-        </tr>
+  html += `
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="8">📊 TOTAL (${invoices.length} Bookings)</td>
+            ${totalsCells}
+            <td colspan="7"></td>
+            <td>${totalRest.toFixed(2)}</td>
+            <td></td>
+            <td class="no-print"></td>
+          </tr>
         </tfoot>
         </table>
       </div>
