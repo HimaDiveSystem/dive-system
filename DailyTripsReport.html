@@ -447,7 +447,7 @@ if (typeof Session !== 'undefined' && Session.checkValidity) {
 // ============================================================
 // JSONP
 // ============================================================
-function gas(action, params = {}) {
+function gas(action, params = {}, retryCount = 0) {
   return new Promise((resolve, reject) => {
     const user = Session.getUser();
     if (user && user.centerName && !params.centerName) {
@@ -473,32 +473,61 @@ function gas(action, params = {}) {
       }
     });
     
+    console.log(`📡 [${action}] Attempt ${retryCount + 1}...`);
+    
+    let isResolved = false;
+    const script = document.createElement('script');
+    
+    // ✅ مهلة 120 ثانية
+    const timeout = setTimeout(() => {
+      if (isResolved) return;
+      isResolved = true;
+      cleanup();
+      
+      // ✅ إعادة المحاولة
+      if (retryCount < 2) {
+        console.warn(`⏰ [${action}] Timeout, retrying (${retryCount + 2}/3)...`);
+        setTimeout(() => {
+          gas(action, params, retryCount + 1).then(resolve).catch(reject);
+        }, 1500);
+      } else {
+        reject(new Error('Timeout after 3 attempts: ' + action));
+      }
+    }, 120000);
+    
+    const cleanup = () => {
+      clearTimeout(timeout);
+      try { delete window[callbackName]; } catch(e) {}
+      try { if (script.parentNode) script.parentNode.removeChild(script); } catch(e) {}
+    };
+    
     window[callbackName] = function(data) {
-      delete window[callbackName];
-      if (script.parentNode) script.parentNode.removeChild(script);
+      if (isResolved) return;
+      isResolved = true;
+      console.log(`✅ [${action}] Success`);
+      cleanup();
       resolve(data);
     };
     
-    const script = document.createElement('script');
-    script.src = url.toString();
     script.onerror = function() {
-      delete window[callbackName];
-      if (script.parentNode) script.parentNode.removeChild(script);
-      reject(new Error('JSONP failed: ' + action));
+      if (isResolved) return;
+      isResolved = true;
+      cleanup();
+      
+      if (retryCount < 2) {
+        console.warn(`❌ [${action}] Network error, retrying (${retryCount + 2}/3)...`);
+        setTimeout(() => {
+          gas(action, params, retryCount + 1).then(resolve).catch(reject);
+        }, 1500);
+      } else {
+        reject(new Error('Network error after 3 attempts: ' + action));
+      }
     };
     
+    script.src = url.toString();
     document.body.appendChild(script);
-    
-    setTimeout(() => {
-      if (window[callbackName]) {
-        delete window[callbackName];
-        if (script.parentNode) script.parentNode.removeChild(script);
-        reject(new Error('Timeout: ' + action));
-      }
-    }, 45000);
   });
 }
-
 // ============================================================
 // UTILITIES
 // ============================================================
@@ -649,6 +678,31 @@ function clearTripItemsCache() {
   tripItemsCache.clear();
   console.log('🗑️ تم مسح كاش بنود الرحلات');
 }
+  // ✅ التحقق من النطاق الزمني
+function validateDateRange(fromDate, toDate) {
+  const from = new Date(fromDate);
+  const to = new Date(toDate);
+  
+  if (isNaN(from) || isNaN(to)) {
+    showAlert('تواريخ غير صحيحة', '⚠️');
+    return false;
+  }
+  
+  if (from > to) {
+    showAlert('تاريخ البداية يجب أن يكون قبل تاريخ النهاية', '⚠️');
+    return false;
+  }
+  
+  const diffDays = Math.ceil((to - from) / (1000 * 60 * 60 * 24));
+  
+  if (diffDays > 180) {
+    showAlert(`⚠️ النطاق الزمني كبير جداً (${diffDays} يوم)\nقد يستغرق التحميل وقتاً أطول.`, '⚠️');
+  } else if (diffDays > 90) {
+    console.log(`ℹ️ النطاق الزمني: ${diffDays} يوم`);
+  }
+  
+  return true;
+}
 // ============================================================
 // LOAD REPORT
 // ============================================================
@@ -660,6 +714,9 @@ async function loadReport() {
     showAlert('الرجاء اختيار تاريخ البداية والنهاية', '⚠️');
     return;
   }
+  
+  // ✅ التحقق من النطاق
+  if (!validateDateRange(fromDate, toDate)) return;
   
   const [fy, fm, fd] = fromDate.split('-');
   const [ty, tm, td] = toDate.split('-');
