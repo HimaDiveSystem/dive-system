@@ -1820,7 +1820,52 @@ async function exportToExcelSelected() {
   // ✅ استدعاء الدالة الأساسية مع الرحلات المفلترة
   await exportToExcelWithGroups(filteredGroups, selectedTrips);
 }
-
+/**
+ * ✅ بناء HTML لعرض المتبقي حسب العملة داخل خلية Excel
+ * @param {Object} restByCurrency - { USD: 1250, EUR: 320, ... }
+ */
+function buildExcelCurrencySummary(restByCurrency) {
+  const currencies = Object.keys(restByCurrency).filter(c => restByCurrency[c] !== 0);
+  
+  if (currencies.length === 0) return '—';
+  
+  // ✅ ترتيب حسب الأولوية
+  const priority = ['USD', 'EUR', 'GBP', 'EGP', 'SAR', 'AED', 'KWD', 'CHF'];
+  currencies.sort((a, b) => {
+    const ia = priority.indexOf(a);
+    const ib = priority.indexOf(b);
+    if (ia !== -1 && ib !== -1) return ia - ib;
+    if (ia !== -1) return -1;
+    if (ib !== -1) return 1;
+    return a.localeCompare(b);
+  });
+  
+  // ✅ ألوان لكل عملة
+  const colors = {
+    'USD': '#2e7d32',
+    'EUR': '#1565c0',
+    'GBP': '#6a1b9a',
+    'EGP': '#ef6c00',
+    'SAR': '#00838f',
+    'AED': '#ad1457',
+    'KWD': '#4e342e',
+    'CHF': '#c62828',
+    'JPY': '#b71c1c',
+    'TRY': '#00695c',
+    'RUB': '#283593',
+    'غير محدد': '#607d8b'
+  };
+  
+  // ✅ كل عملة في سطر منفصل (لتجنب مشاكل Excel مع HTML المعقد)
+  const lines = currencies.map(cur => {
+    const amount = restByCurrency[cur];
+    const color = colors[cur] || '#37474f';
+    const sign = amount < 0 ? '⚠ ' : '';
+    return `<span style="color:${color}; font-weight:bold;">${cur}: ${sign}${formatMoney(Math.abs(amount))}</span>`;
+  });
+  
+  return lines.join('<br>');
+}
 // ============================================================
 // EXPORT TO EXCEL (مع دعم الفلترة)
 // ============================================================
@@ -1833,9 +1878,7 @@ async function exportToExcelWithGroups(groups, tripsToInclude) {
   const toDateStr = String(td).padStart(2,'0') + '/' + MN[+tm - 1] + '/' + ty;
   const activeDate = fromDateStr + ' إلى ' + toDateStr;
   
-  // ✅ جلب بنود الرحلات المحددة فقط
- // ✅ ✅ ✅ استخدام الدالة الموحدة
-const tripItemsMap = await fetchTripItemsForTrips(tripsToInclude);
+  const tripItemsMap = await fetchTripItemsForTrips(tripsToInclude);
   
   const quantityFields = ['sgl','dbl','trpl','extra','camel','dinner','vipDinner','starGazing','privateTrip','privateTransfer'];
   
@@ -1855,10 +1898,12 @@ const tripItemsMap = await fetchTripItemsForTrips(tripsToInclude);
   html += '<meta charset="UTF-8">';
   html += '<style>';
   html += 'th{background:#1a3260;color:#f5c842;padding:8px;border:1px solid #ccc;font-weight:bold;}';
-  html += 'td{padding:6px;border:1px solid #ccc;}';
+  html += 'td{padding:6px;border:1px solid #ccc;vertical-align:middle;}';
   html += '.trip-title{background:#0f1f3d;color:#f5c842;font-size:16px;font-weight:bold;padding:12px;text-align:center;}';
   html += '.summary{background:#dbeafe;font-weight:bold;}';
+  html += '.summary td{vertical-align:middle;}';
   html += '.phone-cell{mso-number-format:"\\@";}';
+  html += '.currency-cell{font-size:11px;line-height:1.5;text-align:left;}';
   html += '</style>';
   html += '</head>';
   html += '<body>';
@@ -1884,9 +1929,9 @@ const tripItemsMap = await fetchTripItemsForTrips(tripsToInclude);
       }, 0);
     }
     
-    let tripRest = invoices.reduce(function(sum, inv) {
-      return sum + (parseFloat(inv.rest) || 0);
-    }, 0);
+    // ✅ حساب المتبقي حسب العملة — مرة واحدة فقط
+    const restByCurrency = calculateRemainingByCurrency(invoices);
+    const currencySummaryHTML = buildExcelCurrencySummary(restByCurrency);
     
     const totalCols = 10 + itemNames.length + 3;
     
@@ -1950,7 +1995,7 @@ const tripItemsMap = await fetchTripItemsForTrips(tripsToInclude);
     html += '<td colspan="9">TOTAL</td>';
     html += totalsCells;
     html += '<td colspan="4"></td>';
-    html += '<td>' + tripRest.toFixed(2) + '</td>';
+    html += '<td class="currency-cell">' + currencySummaryHTML + '</td>';
     html += '</tr>';
     html += '</table>';
     html += '<br>';
@@ -1968,7 +2013,6 @@ const tripItemsMap = await fetchTripItemsForTrips(tripsToInclude);
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
-
 // ============================================================
 // PRINT SELECTED TRIPS
 // ============================================================
@@ -2033,7 +2077,7 @@ function printSelectedTrips() {
   }, 200);
 }
 // ============================================================
-// EXPORT TO EXCEL
+// EXPORT TO EXCEL (بدون فلترة)
 // ============================================================
 async function exportToExcel() {
   if (!allInvoices.length) {
@@ -2049,10 +2093,8 @@ async function exportToExcel() {
   const toDateStr = String(td).padStart(2,'0') + '/' + MN[+tm - 1] + '/' + ty;
   const activeDate = fromDateStr + ' إلى ' + toDateStr;
   
-  // ✅ جلب بنود الرحلات
   const uniqueTrips = Object.keys(groupedTrips);
-  // ✅ ✅ ✅ استخدام الدالة الموحدة
-const tripItemsMap = await fetchTripItemsForTrips(uniqueTrips);
+  const tripItemsMap = await fetchTripItemsForTrips(uniqueTrips);
   
   const quantityFields = ['sgl','dbl','trpl','extra','camel','dinner','vipDinner','starGazing','privateTrip','privateTransfer'];
   
@@ -2062,16 +2104,18 @@ const tripItemsMap = await fetchTripItemsForTrips(uniqueTrips);
   html += '<meta charset="UTF-8">';
   html += '<style>';
   html += 'th{background:#1a3260;color:#f5c842;padding:8px;border:1px solid #ccc;font-weight:bold;}';
-  html += 'td{padding:6px;border:1px solid #ccc;}';
+  html += 'td{padding:6px;border:1px solid #ccc;vertical-align:middle;}';
   html += '.trip-title{background:#0f1f3d;color:#f5c842;font-size:16px;font-weight:bold;padding:12px;text-align:center;}';
   html += '.summary{background:#dbeafe;font-weight:bold;}';
+  html += '.summary td{vertical-align:middle;}';
   html += '.phone-cell{mso-number-format:"\\@";}';
+  html += '.currency-cell{font-size:11px;line-height:1.5;text-align:left;}';
   html += '</style>';
   html += '</head>';
   html += '<body>';
   html += '<h2 style="text-align:center;">Daily Trips Report - ' + activeDate + '</h2>';
   html += '<p style="text-align:center;">Center: ' + escHtml(currentUser?.centerName || '') + '</p>';
-  html += '<p style="text-align:center;">Total Trips: ' + summaryData.totalTrips + ' | Total Bookings: ' + summaryData.totalBookings + ' | Total Rest: ' + summaryData.totalRest + '</p>';
+  html += '<p style="text-align:center;">Total Trips: ' + summaryData.totalTrips + ' | Total Bookings: ' + summaryData.totalBookings + '</p>';
   
   for (const tripName in groupedTrips) {
     const invoices = groupedTrips[tripName];
@@ -2089,9 +2133,9 @@ const tripItemsMap = await fetchTripItemsForTrips(uniqueTrips);
       }, 0);
     }
     
-    let tripRest = invoices.reduce(function(sum, inv) {
-      return sum + (parseFloat(inv.rest) || 0);
-    }, 0);
+    // ✅ حساب المتبقي حسب العملة
+    const restByCurrency = calculateRemainingByCurrency(invoices);
+    const currencySummaryHTML = buildExcelCurrencySummary(restByCurrency);
     
     const totalCols = 10 + itemNames.length + 3;
     
@@ -2155,7 +2199,7 @@ const tripItemsMap = await fetchTripItemsForTrips(uniqueTrips);
     html += '<td colspan="9">TOTAL</td>';
     html += totalsCells;
     html += '<td colspan="4"></td>';
-    html += '<td>' + tripRest.toFixed(2) + '</td>';
+    html += '<td class="currency-cell">' + currencySummaryHTML + '</td>';
     html += '</tr>';
     html += '</table>';
     html += '<br>';
