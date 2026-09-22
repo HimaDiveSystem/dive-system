@@ -1882,15 +1882,27 @@ async function exportToExcelWithGroups(groups, tripsToInclude) {
   
   const quantityFields = ['sgl','dbl','trpl','extra','camel','dinner','vipDinner','starGazing','privateTrip','privateTransfer'];
   
-  // ✅ حساب الإحصائيات للرحلات المحددة فقط
+  // ✅ حساب الإحصائيات
   let totalBookings = 0;
-  let totalRest = 0;
   tripsToInclude.forEach(tripName => {
     if (groups[tripName]) {
       totalBookings += groups[tripName].length;
-      totalRest += groups[tripName].reduce((sum, inv) => sum + (parseFloat(inv.rest) || 0), 0);
     }
   });
+  
+  // ✅ حساب المتبقي حسب العملة لكل الرحلات المحددة
+  let overallRestByCurrency = {};
+  tripsToInclude.forEach(tripName => {
+    if (groups[tripName]) {
+      const tripRest = calculateRemainingByCurrency(groups[tripName]);
+      Object.keys(tripRest).forEach(cur => {
+        if (!overallRestByCurrency[cur]) overallRestByCurrency[cur] = 0;
+        overallRestByCurrency[cur] += tripRest[cur];
+      });
+    }
+  });
+  
+  const overallCurrencyHTML = buildExcelCurrencySummary(overallRestByCurrency);
   
   let html = '';
   html += '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">';
@@ -1909,7 +1921,10 @@ async function exportToExcelWithGroups(groups, tripsToInclude) {
   html += '<body>';
   html += '<h2 style="text-align:center;">Daily Trips Report - ' + activeDate + '</h2>';
   html += '<p style="text-align:center;">Center: ' + escHtml(currentUser?.centerName || '') + '</p>';
-  html += '<p style="text-align:center;">Total Trips: ' + tripsToInclude.length + ' | Total Bookings: ' + totalBookings + ' | Total Rest: ' + totalRest.toFixed(2) + '</p>';
+  html += '<p style="text-align:center;">Total Trips: ' + tripsToInclude.length + ' | Total Bookings: ' + totalBookings + '</p>';
+  html += '<p style="text-align:center; font-weight:bold;">💰 Total Rest by Currency:</p>';
+  html += '<p style="text-align:center;">' + overallCurrencyHTML + '</p>';
+  html += '<hr>';
   
   for (const tripName of tripsToInclude) {
     const invoices = groups[tripName];
@@ -1929,7 +1944,7 @@ async function exportToExcelWithGroups(groups, tripsToInclude) {
       }, 0);
     }
     
-    // ✅ حساب المتبقي حسب العملة — مرة واحدة فقط
+    // ✅ حساب المتبقي حسب العملة لهذه الرحلة
     const restByCurrency = calculateRemainingByCurrency(invoices);
     const currencySummaryHTML = buildExcelCurrencySummary(restByCurrency);
     
@@ -2098,6 +2113,18 @@ async function exportToExcel() {
   
   const quantityFields = ['sgl','dbl','trpl','extra','camel','dinner','vipDinner','starGazing','privateTrip','privateTransfer'];
   
+  // ✅ حساب المتبقي حسب العملة لكل الرحلات
+  let overallRestByCurrency = {};
+  Object.keys(groupedTrips).forEach(tripName => {
+    const tripRest = calculateRemainingByCurrency(groupedTrips[tripName]);
+    Object.keys(tripRest).forEach(cur => {
+      if (!overallRestByCurrency[cur]) overallRestByCurrency[cur] = 0;
+      overallRestByCurrency[cur] += tripRest[cur];
+    });
+  });
+  
+  const overallCurrencyHTML = buildExcelCurrencySummary(overallRestByCurrency);
+  
   let html = '';
   html += '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">';
   html += '<head>';
@@ -2116,6 +2143,9 @@ async function exportToExcel() {
   html += '<h2 style="text-align:center;">Daily Trips Report - ' + activeDate + '</h2>';
   html += '<p style="text-align:center;">Center: ' + escHtml(currentUser?.centerName || '') + '</p>';
   html += '<p style="text-align:center;">Total Trips: ' + summaryData.totalTrips + ' | Total Bookings: ' + summaryData.totalBookings + '</p>';
+  html += '<p style="text-align:center; font-weight:bold;">💰 Total Rest by Currency:</p>';
+  html += '<p style="text-align:center;">' + overallCurrencyHTML + '</p>';
+  html += '<hr>';
   
   for (const tripName in groupedTrips) {
     const invoices = groupedTrips[tripName];
