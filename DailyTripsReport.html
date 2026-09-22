@@ -1866,6 +1866,40 @@ function buildExcelCurrencySummary(restByCurrency) {
   
   return lines.join('<br>');
 }
+  /**
+ * ✅ نسخة أفقية (صف واحد) لعرض العملات في Excel
+ */
+function buildExcelCurrencySummaryInline(restByCurrency) {
+  const currencies = Object.keys(restByCurrency).filter(c => restByCurrency[c] !== 0);
+  
+  if (currencies.length === 0) return '—';
+  
+  const priority = ['USD', 'EUR', 'GBP', 'EGP', 'SAR', 'AED', 'KWD', 'CHF'];
+  currencies.sort((a, b) => {
+    const ia = priority.indexOf(a);
+    const ib = priority.indexOf(b);
+    if (ia !== -1 && ib !== -1) return ia - ib;
+    if (ia !== -1) return -1;
+    if (ib !== -1) return 1;
+    return a.localeCompare(b);
+  });
+  
+  const colors = {
+    'USD': '#2e7d32', 'EUR': '#1565c0', 'GBP': '#6a1b9a',
+    'EGP': '#ef6c00', 'SAR': '#00838f', 'AED': '#ad1457',
+    'KWD': '#4e342e', 'CHF': '#c62828', 'JPY': '#b71c1c',
+    'TRY': '#00695c', 'RUB': '#283593', 'غير محدد': '#607d8b'
+  };
+  
+  const items = currencies.map(cur => {
+    const amount = restByCurrency[cur];
+    const color = colors[cur] || '#37474f';
+    const sign = amount < 0 ? '⚠ ' : '';
+    return `<span style="color:${color}; font-weight:bold;">${cur}: ${sign}${formatMoney(Math.abs(amount))}</span>`;
+  });
+  
+  return items.join(' &nbsp;|&nbsp; ');
+}
 // ============================================================
 // EXPORT TO EXCEL (مع دعم الفلترة)
 // ============================================================
@@ -1890,7 +1924,7 @@ async function exportToExcelWithGroups(groups, tripsToInclude) {
     }
   });
   
-  // ✅ حساب المتبقي حسب العملة لكل الرحلات المحددة
+  // ✅ حساب المتبقي الإجمالي حسب العملة
   let overallRestByCurrency = {};
   tripsToInclude.forEach(tripName => {
     if (groups[tripName]) {
@@ -1902,29 +1936,31 @@ async function exportToExcelWithGroups(groups, tripsToInclude) {
     }
   });
   
-  const overallCurrencyHTML = buildExcelCurrencySummary(overallRestByCurrency);
+  const overallCurrencyInline = buildExcelCurrencySummaryInline(overallRestByCurrency);
   
   let html = '';
   html += '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">';
   html += '<head>';
   html += '<meta charset="UTF-8">';
   html += '<style>';
+  html += 'table{border-collapse:collapse;}';
   html += 'th{background:#1a3260;color:#f5c842;padding:8px;border:1px solid #ccc;font-weight:bold;}';
   html += 'td{padding:6px;border:1px solid #ccc;vertical-align:middle;}';
   html += '.trip-title{background:#0f1f3d;color:#f5c842;font-size:16px;font-weight:bold;padding:12px;text-align:center;}';
   html += '.summary{background:#dbeafe;font-weight:bold;}';
   html += '.summary td{vertical-align:middle;}';
   html += '.phone-cell{mso-number-format:"\\@";}';
-  html += '.currency-cell{font-size:11px;line-height:1.5;text-align:left;}';
   html += '</style>';
   html += '</head>';
   html += '<body>';
-  html += '<h2 style="text-align:center;">Daily Trips Report - ' + activeDate + '</h2>';
-  html += '<p style="text-align:center;">Center: ' + escHtml(currentUser?.centerName || '') + '</p>';
-  html += '<p style="text-align:center;">Total Trips: ' + tripsToInclude.length + ' | Total Bookings: ' + totalBookings + '</p>';
-  html += '<p style="text-align:center; font-weight:bold;">💰 Total Rest by Currency:</p>';
-  html += '<p style="text-align:center;">' + overallCurrencyHTML + '</p>';
-  html += '<hr>';
+  
+  // ✅ رأس Excel (3 صفوف فقط)
+  html += '<table border="0" style="width:100%;">';
+  html += '<tr><td style="text-align:center; font-size:18px; font-weight:bold; background:#0f1f3d; color:#f5c842; padding:14px;">Daily Trips Report - ' + activeDate + '</td></tr>';
+  html += '<tr><td style="text-align:center; background:#f1f5f9; padding:8px; font-weight:bold;">Center: ' + escHtml(currentUser?.centerName || '') + ' &nbsp;|&nbsp; Total Trips: ' + tripsToInclude.length + ' &nbsp;|&nbsp; Total Bookings: ' + totalBookings + '</td></tr>';
+  html += '<tr><td style="text-align:center; background:#dbeafe; padding:8px; font-weight:bold;">💰 Total Rest: ' + overallCurrencyInline + '</td></tr>';
+  html += '</table>';
+  html += '<br>';
   
   for (const tripName of tripsToInclude) {
     const invoices = groups[tripName];
@@ -1946,7 +1982,10 @@ async function exportToExcelWithGroups(groups, tripsToInclude) {
     
     // ✅ حساب المتبقي حسب العملة لهذه الرحلة
     const restByCurrency = calculateRemainingByCurrency(invoices);
-    const currencySummaryHTML = buildExcelCurrencySummary(restByCurrency);
+    const currencySummaryHTML = buildExcelCurrencySummaryInline(restByCurrency);
+    
+    const itemCount = Math.min(itemNames.length, 10);
+    const totalRestCols = 9 + itemCount;  // 9 (بدايات) + items
     
     const totalCols = 10 + itemNames.length + 3;
     
@@ -2006,11 +2045,15 @@ async function exportToExcelWithGroups(groups, tripsToInclude) {
       totalsCells += '<td>' + (itemTotals[i] || 0) + '</td>';
     }
     
+    // ✅ صف الإجماليات — المتبقي في البداية (يمتد)
     html += '<tr class="summary">';
-    html += '<td colspan="9">TOTAL</td>';
+    html += '<td colspan="' + totalRestCols + '" style="text-align:left; padding:8px;">';
+    html += '<b>📊 TOTAL (' + invoices.length + ' Bookings)</b> &nbsp;&nbsp;&nbsp; ';
+    html += '<b>💰 Rest:</b> ' + currencySummaryHTML;
+    html += '</td>';
     html += totalsCells;
     html += '<td colspan="4"></td>';
-    html += '<td class="currency-cell">' + currencySummaryHTML + '</td>';
+    html += '<td><b>TOTAL</b></td>';
     html += '</tr>';
     html += '</table>';
     html += '<br>';
@@ -2113,7 +2156,7 @@ async function exportToExcel() {
   
   const quantityFields = ['sgl','dbl','trpl','extra','camel','dinner','vipDinner','starGazing','privateTrip','privateTransfer'];
   
-  // ✅ حساب المتبقي حسب العملة لكل الرحلات
+  // ✅ حساب المتبقي الإجمالي حسب العملة
   let overallRestByCurrency = {};
   Object.keys(groupedTrips).forEach(tripName => {
     const tripRest = calculateRemainingByCurrency(groupedTrips[tripName]);
@@ -2123,29 +2166,31 @@ async function exportToExcel() {
     });
   });
   
-  const overallCurrencyHTML = buildExcelCurrencySummary(overallRestByCurrency);
+  const overallCurrencyInline = buildExcelCurrencySummaryInline(overallRestByCurrency);
   
   let html = '';
   html += '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">';
   html += '<head>';
   html += '<meta charset="UTF-8">';
   html += '<style>';
+  html += 'table{border-collapse:collapse;}';
   html += 'th{background:#1a3260;color:#f5c842;padding:8px;border:1px solid #ccc;font-weight:bold;}';
   html += 'td{padding:6px;border:1px solid #ccc;vertical-align:middle;}';
   html += '.trip-title{background:#0f1f3d;color:#f5c842;font-size:16px;font-weight:bold;padding:12px;text-align:center;}';
   html += '.summary{background:#dbeafe;font-weight:bold;}';
   html += '.summary td{vertical-align:middle;}';
   html += '.phone-cell{mso-number-format:"\\@";}';
-  html += '.currency-cell{font-size:11px;line-height:1.5;text-align:left;}';
   html += '</style>';
   html += '</head>';
   html += '<body>';
-  html += '<h2 style="text-align:center;">Daily Trips Report - ' + activeDate + '</h2>';
-  html += '<p style="text-align:center;">Center: ' + escHtml(currentUser?.centerName || '') + '</p>';
-  html += '<p style="text-align:center;">Total Trips: ' + summaryData.totalTrips + ' | Total Bookings: ' + summaryData.totalBookings + '</p>';
-  html += '<p style="text-align:center; font-weight:bold;">💰 Total Rest by Currency:</p>';
-  html += '<p style="text-align:center;">' + overallCurrencyHTML + '</p>';
-  html += '<hr>';
+  
+  // ✅ رأس Excel (3 صفوف فقط)
+  html += '<table border="0" style="width:100%;">';
+  html += '<tr><td style="text-align:center; font-size:18px; font-weight:bold; background:#0f1f3d; color:#f5c842; padding:14px;">Daily Trips Report - ' + activeDate + '</td></tr>';
+  html += '<tr><td style="text-align:center; background:#f1f5f9; padding:8px; font-weight:bold;">Center: ' + escHtml(currentUser?.centerName || '') + ' &nbsp;|&nbsp; Total Trips: ' + summaryData.totalTrips + ' &nbsp;|&nbsp; Total Bookings: ' + summaryData.totalBookings + '</td></tr>';
+  html += '<tr><td style="text-align:center; background:#dbeafe; padding:8px; font-weight:bold;">💰 Total Rest: ' + overallCurrencyInline + '</td></tr>';
+  html += '</table>';
+  html += '<br>';
   
   for (const tripName in groupedTrips) {
     const invoices = groupedTrips[tripName];
@@ -2165,7 +2210,10 @@ async function exportToExcel() {
     
     // ✅ حساب المتبقي حسب العملة
     const restByCurrency = calculateRemainingByCurrency(invoices);
-    const currencySummaryHTML = buildExcelCurrencySummary(restByCurrency);
+    const currencySummaryHTML = buildExcelCurrencySummaryInline(restByCurrency);
+    
+    const itemCount = Math.min(itemNames.length, 10);
+    const totalRestCols = 9 + itemCount;
     
     const totalCols = 10 + itemNames.length + 3;
     
@@ -2225,11 +2273,15 @@ async function exportToExcel() {
       totalsCells += '<td>' + (itemTotals[i] || 0) + '</td>';
     }
     
+    // ✅ صف الإجماليات
     html += '<tr class="summary">';
-    html += '<td colspan="9">TOTAL</td>';
+    html += '<td colspan="' + totalRestCols + '" style="text-align:left; padding:8px;">';
+    html += '<b>📊 TOTAL (' + invoices.length + ' Bookings)</b> &nbsp;&nbsp;&nbsp; ';
+    html += '<b>💰 Rest:</b> ' + currencySummaryHTML;
+    html += '</td>';
     html += totalsCells;
     html += '<td colspan="4"></td>';
-    html += '<td class="currency-cell">' + currencySummaryHTML + '</td>';
+    html += '<td><b>TOTAL</b></td>';
     html += '</tr>';
     html += '</table>';
     html += '<br>';
