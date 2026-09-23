@@ -48,64 +48,130 @@
     // ----------------------------------------------------------
     // 2️⃣ حفظ بيانات المستخدم
     // ----------------------------------------------------------
-    save(user) {
-      if (!user) {
-        console.warn('⚠️ Session.save: محاولة حفظ مستخدم فارغ');
-        return;
-      }
-      
-      try {
-        const sessionId = this._getSessionId();
-        const permissions = user.permissions || [];
-        
-        const userWithMeta = {
-          ...user,
-          permissions: permissions,
-          sessionId: sessionId,
-          expiry: Date.now() + SESSION_CONFIG.DURATION
-        };
-        
-        // ✅ 1. تخزين في sessionStorage (لكل تبويب)
-        sessionStorage.setItem('currentUser', JSON.stringify(userWithMeta));
-        sessionStorage.setItem('userPermissions', JSON.stringify(permissions));
-        sessionStorage.setItem('userType', userWithMeta.type || '');
-        sessionStorage.setItem('userId', userWithMeta.id || '');
-        sessionStorage.setItem('userName', userWithMeta.name || '');
-        sessionStorage.setItem('centerName', userWithMeta.centerName || '');
-        sessionStorage.setItem('branchId', userWithMeta.branchId || '');
-        
-        // ✅ 2. تخزين في localStorage (مشترك بين التبويبات)
-        const dataToStore = {
-          user: userWithMeta,
-          expiry: Date.now() + SESSION_CONFIG.DURATION,
-          sessionId: sessionId
-        };
-        localStorage.setItem('currentUser_' + sessionId, JSON.stringify(dataToStore));
-        localStorage.setItem('activeSessionId', sessionId);
-        localStorage.setItem('userPermissions', JSON.stringify(permissions));
-        
-        console.log('✅ Session.save() - تم حفظ المستخدم:', userWithMeta.name);
-        console.log('📋 الصلاحيات المحفوظة:', permissions.length, 'صلاحية');
-        
-      } catch(e) {
-        console.error('❌ Session.save() error:', e);
-      }
-    },
+   // ═══════════════════════════════════════════════════════════════
+// save - حفظ المستخدم (نسخة محسّنة - تنظف القديم)
+// ═══════════════════════════════════════════════════════════════
+save(user) {
+  if (!user) {
+    console.warn('⚠️ Session.save: محاولة حفظ مستخدم فارغ');
+    return;
+  }
+  
+  try {
+    // ✅ 1. إعادة تعيين _redirecting
+    if (typeof _redirecting !== 'undefined') {
+      window._redirecting = false;
+    }
+    
+    // ✅ 2. مسح كل الجلسات القديمة أولاً
+    const oldKeys = Object.keys(localStorage).filter(key => 
+      key.startsWith('currentUser_') || 
+      key === 'currentUser' ||
+      key === 'activeSessionId'
+    );
+    oldKeys.forEach(key => {
+      console.log(`🗑️ حذف مفتاح قديم: ${key}`);
+      localStorage.removeItem(key);
+    });
+    
+    // ✅ 3. امسح sessionStorage القديم
+    sessionStorage.clear();
+    
+    // ✅ 4. إنشاء sessionId جديد
+    const sessionId = 'tab_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
+    sessionStorage.setItem('sessionId', sessionId);
+    
+    const permissions = user.permissions || [];
+    
+    const userWithMeta = {
+      ...user,
+      permissions: permissions,
+      sessionId: sessionId,
+      expiry: Date.now() + SESSION_CONFIG.DURATION
+    };
+    
+    // ✅ 5. تخزين في sessionStorage
+    sessionStorage.setItem('currentUser', JSON.stringify(userWithMeta));
+    sessionStorage.setItem('userPermissions', JSON.stringify(permissions));
+    sessionStorage.setItem('userType', userWithMeta.type || '');
+    sessionStorage.setItem('userId', userWithMeta.id || '');
+    sessionStorage.setItem('userName', userWithMeta.name || '');
+    sessionStorage.setItem('centerName', userWithMeta.centerName || '');
+    sessionStorage.setItem('branchId', userWithMeta.branchId || '');
+    
+    // ✅ 6. تخزين في localStorage (بمفتاح sessionId فقط)
+    const dataToStore = {
+      user: userWithMeta,
+      expiry: Date.now() + SESSION_CONFIG.DURATION,
+      sessionId: sessionId
+    };
+    localStorage.setItem('currentUser_' + sessionId, JSON.stringify(dataToStore));
+    localStorage.setItem('activeSessionId', sessionId);
+    localStorage.setItem('userPermissions', JSON.stringify(permissions));
+    
+    console.log('✅ Session.save() - تم حفظ المستخدم:', userWithMeta.name);
+    console.log('   📌 النوع:', userWithMeta.type);
+    console.log('   📋 الصلاحيات:', permissions.length, 'صلاحية');
+    console.log('   🆔 sessionId:', sessionId);
+    
+  } catch(e) {
+    console.error('❌ Session.save() error:', e);
+  }
+},
     
     // ----------------------------------------------------------
     // 3️⃣ جلب بيانات المستخدم الحالي
     // ----------------------------------------------------------
-    getUser() {
+   // ═══════════════════════════════════════════════════════════════
+// getUser - جلب المستخدم الحالي (نسخة محسّنة)
+// ═══════════════════════════════════════════════════════════════
+getUser() {
+  try {
+    // ✅ 1. محاولة من sessionStorage أولاً (الأسرع والأدق)
+    const sessionUser = sessionStorage.getItem('currentUser');
+    if (sessionUser) {
       try {
-        // ✅ 1. محاولة من sessionStorage (الأسرع - للتبويب الحالي)
-        const sessionUser = sessionStorage.getItem('currentUser');
-        if (sessionUser) {
-          try {
-            const user = JSON.parse(sessionUser);
+        const user = JSON.parse(sessionUser);
+        
+        // ✅ التحقق من انتهاء الصلاحية
+        if (user.expiry && Date.now() > user.expiry) {
+          console.warn('⚠️ Session.getUser: الجلسة منتهية');
+          this.clear();
+          return null;
+        }
+        
+        // ✅ استرجاع الصلاحيات إذا كانت مفقودة
+        if (!user.permissions || user.permissions.length === 0) {
+          const permStored = sessionStorage.getItem('userPermissions');
+          if (permStored) {
+            try {
+              user.permissions = JSON.parse(permStored);
+            } catch(e) {}
+          }
+        }
+        
+        return user;
+      } catch(e) {
+        console.warn('⚠️ Session.getUser: فشل تحليل sessionStorage:', e);
+      }
+    }
+    
+    // ✅ 2. محاولة من localStorage (فقط بمفتاح sessionId)
+    const activeSessionId = localStorage.getItem('activeSessionId');
+    if (activeSessionId) {
+      const storageKey = 'currentUser_' + activeSessionId;
+      const stored = localStorage.getItem(storageKey);
+      
+      if (stored) {
+        try {
+          const data = JSON.parse(stored);
+          
+          if (data.expiry && Date.now() < data.expiry) {
+            const user = data.user || {};
             
-            // ✅ استرجاع الصلاحيات إذا كانت مفقودة
+            // ✅ استرجاع الصلاحيات
             if (!user.permissions || user.permissions.length === 0) {
-              const permStored = sessionStorage.getItem('userPermissions');
+              const permStored = localStorage.getItem('userPermissions');
               if (permStored) {
                 try {
                   user.permissions = JSON.parse(permStored);
@@ -113,67 +179,69 @@
               }
             }
             
-            // ✅ التحقق من انتهاء الصلاحية
-            if (user.expiry && Date.now() > user.expiry) {
-              console.warn('⚠️ Session.getUser: الجلسة منتهية');
-              this.clear();
-              return null;
-            }
+            // ✅ نسخ إلى sessionStorage لهذا التبويب
+            sessionStorage.setItem('currentUser', JSON.stringify(user));
+            sessionStorage.setItem('userPermissions', JSON.stringify(user.permissions || []));
+            sessionStorage.setItem('userType', user.type || '');
+            sessionStorage.setItem('userId', user.id || '');
+            sessionStorage.setItem('userName', user.name || '');
+            sessionStorage.setItem('centerName', user.centerName || '');
+            sessionStorage.setItem('branchId', user.branchId || '');
             
             return user;
-          } catch(e) {
-            console.warn('⚠️ Session.getUser: فشل تحليل sessionStorage:', e);
           }
+        } catch(e) {
+          console.warn('⚠️ Session.getUser: فشل تحليل localStorage:', e);
         }
-        
-        // ✅ 2. محاولة من localStorage (للتبويبات الأخرى)
-        const activeSessionId = localStorage.getItem('activeSessionId');
-        if (activeSessionId) {
-          const storageKey = 'currentUser_' + activeSessionId;
-          const stored = localStorage.getItem(storageKey);
-          
-          if (stored) {
-            try {
-              const data = JSON.parse(stored);
-              
-              if (data.expiry && Date.now() < data.expiry) {
-                const user = data.user || {};
-                
-                // ✅ استرجاع الصلاحيات إذا كانت مفقودة
-                if (!user.permissions || user.permissions.length === 0) {
-                  const permStored = localStorage.getItem('userPermissions');
-                  if (permStored) {
-                    try {
-                      user.permissions = JSON.parse(permStored);
-                    } catch(e) {}
-                  }
-                }
-                
-                // ✅ نسخ إلى sessionStorage لهذا التبويب
-                sessionStorage.setItem('currentUser', JSON.stringify(user));
-                sessionStorage.setItem('userPermissions', JSON.stringify(user.permissions || []));
-                sessionStorage.setItem('userType', user.type || '');
-                sessionStorage.setItem('userId', user.id || '');
-                sessionStorage.setItem('userName', user.name || '');
-                sessionStorage.setItem('centerName', user.centerName || '');
-                sessionStorage.setItem('branchId', user.branchId || '');
-                
-                return user;
-              }
-            } catch(e) {
-              console.warn('⚠️ Session.getUser: فشل تحليل localStorage:', e);
-            }
-          }
-        }
-        
-        // ✅ 3. محاولة الطوارئ (استعادة من sessionStorage)
-        return this._restoreFromSession();
-        
-      } catch(e) {
-        console.error('❌ Session.getUser() error:', e);
-        return this._restoreFromSession();
       }
-    },
+    }
+    
+    // ✅ 3. حذف المفاتيح القديمة (تنظيف تلقائي)
+    // ⚠️ هذا جديد: يحذف `currentUser` بدون sessionId (نسخة قديمة)
+    const oldKey = localStorage.getItem('currentUser');
+    if (oldKey) {
+      try {
+        const oldData = JSON.parse(oldKey);
+        // إذا كان المفتاح القديم يحتوي على بيانات صالحة، انقلها للشكل الجديد
+        if (oldData && oldData.user && oldData.expiry && Date.now() < oldData.expiry) {
+          console.log('⚠️ Session.getUser: وجدت مفتاح currentUser قديم - سيتم ترحيله');
+          
+          const sessionId = this._getSessionId();
+          const migratedData = {
+            user: { ...oldData.user, sessionId: sessionId, expiry: oldData.expiry },
+            expiry: oldData.expiry,
+            sessionId: sessionId
+          };
+          
+          // انقل للمفتاح الجديد
+          localStorage.setItem('currentUser_' + sessionId, JSON.stringify(migratedData));
+          localStorage.setItem('activeSessionId', sessionId);
+          
+          // احذف المفتاح القديم
+          localStorage.removeItem('currentUser');
+          console.log('✅ تم ترحيل المفتاح القديم');
+          
+          // أعد المحاولة
+          return migratedData.user;
+        } else {
+          // مفتاح قديم منتهي - احذفه
+          localStorage.removeItem('currentUser');
+          console.log('🗑️ تم حذف مفتاح currentUser قديم (منتهي)');
+        }
+      } catch(e) {
+        // مفتاح قديم تالف - احذفه
+        localStorage.removeItem('currentUser');
+      }
+    }
+    
+    // ✅ 4. محاولة الطوارئ
+    return this._restoreFromSession();
+    
+  } catch(e) {
+    console.error('❌ Session.getUser() error:', e);
+    return this._restoreFromSession();
+  }
+},
     
     // ----------------------------------------------------------
     // 4️⃣ استعادة طارئة (Fallback)
