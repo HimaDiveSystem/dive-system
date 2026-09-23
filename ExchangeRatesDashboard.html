@@ -986,119 +986,193 @@ async function addMissingDates(targetDateStr, lastDateStr) {
 }
 
 // ============================================================
-// LOAD LAST DATE
+// SHOW ALL RATES (مع فلترة التواريخ)
 // ============================================================
+
 async function showAllRates() {
   const content = document.getElementById('mainContent');
-  content.innerHTML = '<div class="loader"></div>';
+  
+  // ✅ حساب تواريخ الشهر الحالي
+  const today = new Date();
+  const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+  const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  
+  const fromDateISO = firstDay.toISOString().split('T')[0]; // yyyy-mm-dd
+  const toDateISO = lastDay.toISOString().split('T')[0];
+  
+  // ✅ عرض الواجهة مع حقلي التاريخ
+  content.innerHTML = `
+    <div style="background: #f0f4fa; border-radius: 16px; padding: 18px 22px; margin-bottom: 20px;">
+      <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <label style="font-weight: 700; color: #1e2b4f; font-size: 13px;">📅 من تاريخ</label>
+          <input type="date" id="ratesFromDate" value="${fromDateISO}"
+                 style="padding: 10px 14px; border: 2px solid #d0ddeb; border-radius: 12px; font-size: 14px; font-weight: 600; color: #1e2b4f; min-width: 160px;">
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <label style="font-weight: 700; color: #1e2b4f; font-size: 13px;">📅 إلى تاريخ</label>
+          <input type="date" id="ratesToDate" value="${toDateISO}"
+                 style="padding: 10px 14px; border: 2px solid #d0ddeb; border-radius: 12px; font-size: 14px; font-weight: 600; color: #1e2b4f; min-width: 160px;">
+        </div>
+        <button onclick="loadFilteredRates()" 
+                style="background: #1e2b4f; color: #ffd966; border: none; padding: 11px 24px; border-radius: 40px; font-weight: 700; font-size: 14px; cursor: pointer; align-self: flex-end; margin-top: 18px;">
+          🔍 عرض
+        </button>
+        <button onclick="resetRatesFilter()" 
+                style="background: #e9f0fa; color: #1e2b4f; border: none; padding: 11px 24px; border-radius: 40px; font-weight: 700; font-size: 14px; cursor: pointer; align-self: flex-end; margin-top: 18px;">
+          🔄 إعادة تعيين
+        </button>
+      </div>
+    </div>
+    <div id="ratesTableContainer">
+      <div class="loader"></div>
+    </div>
+  `;
+  
+  // ✅ تحميل البيانات مباشرة
+  await loadFilteredRates();
+}
+
+// ============================================================
+// إعادة تعيين فلتر التواريخ
+// ============================================================
+
+function resetRatesFilter() {
+  const today = new Date();
+  const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+  const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  
+  document.getElementById('ratesFromDate').value = firstDay.toISOString().split('T')[0];
+  document.getElementById('ratesToDate').value = lastDay.toISOString().split('T')[0];
+  
+  loadFilteredRates();
+}
+
+// ============================================================
+// تحميل الأسعار بناءً على الفلتر
+// ============================================================
+
+async function loadFilteredRates() {
+  const fromDateInput = document.getElementById('ratesFromDate')?.value || '';
+  const toDateInput = document.getElementById('ratesToDate')?.value || '';
+  const container = document.getElementById('ratesTableContainer');
+  
+  if (!fromDateInput || !toDateInput) {
+    showAlert('الرجاء تحديد تاريخ البداية والنهاية');
+    return;
+  }
+  
+  // ✅ تحويل التواريخ إلى كائنات Date للمقارنة
+  const fromDate = new Date(fromDateInput);
+  const toDate = new Date(toDateInput);
+  
+  // ✅ التحقق 1: تاريخ النهاية أصغر من البداية
+  if (toDate < fromDate) {
+    showAlert('⚠️ تاريخ النهاية يجب أن يكون بعد تاريخ البداية أو مساوياً له');
+    return;
+  }
+  
+  // ✅ التحقق 2: إذا كان نطاق التواريخ كبيراً
+  const diffDays = Math.ceil((toDate - fromDate) / (1000 * 60 * 60 * 24));
+  if (diffDays > 180) {
+    showAlert(`⚠️ النطاق الزمني كبير جداً (${diffDays} يوم)\nسيستغرق التحميل وقتاً أطول.`);
+  }
+  
+  // ✅ التحقق 3: إذا كان تاريخ البداية أكبر من آخر تاريخ في الجدول
+  if (lastDateDisplay && lastDateDisplay !== '—') {
+    const lastDateObj = parseDateFromDisplay(lastDateDisplay);
+    if (lastDateObj && fromDate > lastDateObj) {
+      const shouldAdd = await checkDateAndPrompt(
+        formatDateToDisplay(fromDate), 
+        lastDateDisplay
+      );
+      if (!shouldAdd) return;
+    }
+  }
+  
+  // ✅ تحويل التواريخ إلى صيغة dd/MMM/yyyy
+  const fromDateStr = formatDateToDisplay(fromDate);
+  const toDateStr = formatDateToDisplay(toDate);
+  
+  if (container) container.innerHTML = '<div class="loader"></div>';
   
   try {
-    // ✅ استخدام الذاكرة المؤقتة
-    if (!dashboardCache) {
-      await loadLastDate();
-    }
+    console.log(`📅 عرض الأسعار من ${fromDateStr} إلى ${toDateStr}`);
     
-    const rates = dashboardCache?.rates || [];
+    // ✅ إرسال التواريخ للخادم
+    const rates = await jsonp('getExchangeRatesInRange', {
+      fromDate: fromDateStr,
+      toDate: toDateStr,
+      centerName: currentUser?.centerName || ''
+    });
     
-    if (!rates.length) {
-      content.innerHTML = '<div class="empty">لا توجد بيانات</div>';
+    if (!rates || !rates.length) {
+      if (container) {
+        container.innerHTML = `
+          <div class="empty">
+            <div style="font-size: 60px; margin-bottom: 15px;">📭</div>
+            <div style="font-size: 16px; font-weight: 600;">لا توجد أسعار في هذه الفترة</div>
+            <div style="font-size: 13px; color: #94a3b8; margin-top: 10px;">
+              من ${fromDateStr} إلى ${toDateStr}
+            </div>
+          </div>
+        `;
+      }
       return;
     }
     
-    let html = `<div class="table-outer"><div class="table-scroll">
-      <table class="rates-table">
-        <thead>
-          <tr>
-            <th rowspan="2" style="vertical-align:middle;">📅 التاريخ</th>
-            <th colspan="4">🏦 أسعار البنك</th>
-            <th colspan="4">💳 فيزا البنك</th>
-            <th class="sep-h" rowspan="2">—</th>
-            <th colspan="4">📊 أسعار العمولة</th>
-            <th colspan="4">💳 فيزا العمولة</th>
-          </tr>
-          <tr>
-            <th>USD</th><th>EUR</th><th>GBP</th><th>EGP</th>
-            <th>V.USD</th><th>V.EUR</th><th>V.GBP</th><th>V.EGP</th>
-            <th class="sep-h"></th>
-            <th>USD</th><th>EUR</th><th>GBP</th><th>EGP</th>
-            <th>V.USD</th><th>V.EUR</th><th>V.GBP</th><th>V.EGP</th>
-          </tr>
-        </thead>
-        <tbody>`;
-    
-    for (const r of rates) {
-      html += `<tr>
-        <td class="date-td">${escapeHtml(r.date)}</td>
-        <td>${formatRate(r.bUSD)}</td>
-        <td>${formatRate(r.bEUR)}</td>
-        <td>${formatRate(r.bGBP)}</td>
-        <td>${formatRate(r.bLE)}</td>
-        <td>${formatRate(r.bVUSD)}</td>
-        <td>${formatRate(r.bVEUR)}</td>
-        <td>${formatRate(r.bVGBP)}</td>
-        <td>${formatRate(r.bVLE)}</td>
-        <td class="sep-td">—</td>
-        <td>${formatRate(r.sUSD)}</td>
-        <td>${formatRate(r.sEUR)}</td>
-        <td>${formatRate(r.sGBP)}</td>
-        <td>${formatRate(r.sLE)}</td>
-        <td>${formatRate(r.sVUSD)}</td>
-        <td>${formatRate(r.sVEUR)}</td>
-        <td>${formatRate(r.sVGBP)}</td>
-        <td>${formatRate(r.sVLE)}</td>
-      </tr>`;
-    }
-    
-    html += '</tbody></table></div></div>';
-    content.innerHTML = html;
+    // ✅ عرض الجدول
+    renderRatesTable(rates, fromDateStr, toDateStr);
     
   } catch(e) {
-    content.innerHTML = `<div class="empty">خطأ: ${escapeHtml(e.message)}</div>`;
+    console.error('❌ loadFilteredRates error:', e);
+    if (container) {
+      container.innerHTML = `<div class="empty">❌ خطأ: ${escapeHtml(e.message)}</div>`;
+    }
   }
 }
 
 // ============================================================
-// SHOW ALL RATES (FIXED - pageData is not defined)
+// عرض جدول الأسعار
 // ============================================================
-async function showAllRates() {
-  const content = document.getElementById('mainContent');
-  content.innerHTML = '<div class="loader"></div>';
+
+function renderRatesTable(rates, fromDate, toDate) {
+  const container = document.getElementById('ratesTableContainer');
   
-  try {
-       const rates = await jsonp('getAllExchangeRatesNew', {
-      centerName: currentUser?.centerName || '',
-      limit: 60  // ✅ آخر 60 يوم فقط
-    });
-    
-    if (!rates || !rates.length) {
-      content.innerHTML = '<div class="empty">لا توجد بيانات</div>';
-      return;
-    }
-    
-    let html = `<div class="table-outer"><div class="table-scroll">
-      <table class="rates-table">
-        <thead>
-          <tr>
-            <th rowspan="2" style="vertical-align:middle;">📅 التاريخ</th>
-            <th colspan="4">🏦 أسعار البنك</th>
-            <th colspan="4">💳 فيزا البنك</th>
-            <th class="sep-h" rowspan="2">—</th>
-            <th colspan="4">📊 أسعار العمولة</th>
-            <th colspan="4">💳 فيزا العمولة</th>
-          </tr>
-          <tr>
-            <th>USD</th><th>EUR</th><th>GBP</th><th>EGP</th>
-            <th>V.USD</th><th>V.EUR</th><th>V.GBP</th><th>V.EGP</th>
-            <th class="sep-h"></th>
-            <th>USD</th><th>EUR</th><th>GBP</th><th>EGP</th>
-            <th>V.USD</th><th>V.EUR</th><th>V.GBP</th><th>V.EGP</th>
-          </tr>
-        </thead>
-        <tbody>`;
-    
-    // ✅ التصحيح: استخدام المتغير rates مباشرة (وليس pageData)
-    for (const r of rates) {
-      html += `<tr>
+  // ✅ عرض عدد النتائج
+  let html = `
+    <div style="text-align: center; padding: 10px; color: #64748b; font-size: 13px; font-weight: 600; margin-bottom: 10px;">
+      📊 ${rates.length} يوم — من ${fromDate} إلى ${toDate}
+    </div>
+    <div class="table-outer">
+      <div class="table-scroll">
+        <table class="rates-table">
+          <thead>
+            <tr>
+              <th rowspan="2" style="vertical-align:middle;">📅 التاريخ</th>
+              <th colspan="4">🏦 أسعار البنك</th>
+              <th colspan="4">💳 فيزا البنك</th>
+              <th class="sep-h" rowspan="2">—</th>
+              <th colspan="4">📊 أسعار العمولة</th>
+              <th colspan="4">💳 فيزا العمولة</th>
+            </tr>
+            <tr>
+              <th>USD</th><th>EUR</th><th>GBP</th><th>EGP</th>
+              <th>V.USD</th><th>V.EUR</th><th>V.GBP</th><th>V.EGP</th>
+              <th class="sep-h"></th>
+              <th>USD</th><th>EUR</th><th>GBP</th><th>EGP</th>
+              <th>V.USD</th><th>V.EUR</th><th>V.GBP</th><th>V.EGP</th>
+            </tr>
+          </thead>
+          <tbody>
+  `;
+  
+  // ✅ الترتيب: الأحدث أولاً
+  const sortedRates = [...rates].reverse();
+  
+  for (const r of sortedRates) {
+    html += `
+      <tr>
         <td class="date-td">${escapeHtml(r.date)}</td>
         <td>${formatRate(r.bUSD)}</td>
         <td>${formatRate(r.bEUR)}</td>
@@ -1117,16 +1191,20 @@ async function showAllRates() {
         <td>${formatRate(r.sVEUR)}</td>
         <td>${formatRate(r.sVGBP)}</td>
         <td>${formatRate(r.sVLE)}</td>
-      </tr>`;
-    }
-    
-    html += '</tbody></table></div></div>';
-    content.innerHTML = html;
-    
-  } catch(e) {
-    content.innerHTML = `<div class="empty">خطأ: ${escapeHtml(e.message)}</div>`;
+      </tr>
+    `;
   }
+  
+  html += `
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  
+  if (container) container.innerHTML = html;
 }
+
 
 // ============================================================
 // INITIALIZATION
