@@ -1105,9 +1105,25 @@ document.addEventListener('DOMContentLoaded', async () => {
 // ============================================================
 async function loadAllCategories() {
   try {
-    allCategories = await jsonp('getAllCategories') || [];
+    const result = await jsonp('getAllCategories');
+    
+    // ✅ التعامل مع جميع أشكال الاستجابة
+    if (Array.isArray(result)) {
+      allCategories = result;
+    } else if (result && Array.isArray(result.data)) {
+      allCategories = result.data;
+    } else if (result && result.success === false) {
+      console.warn('⚠️ getAllCategories returned error:', result.message);
+      allCategories = [];
+    } else {
+      allCategories = [];
+    }
+    
+    console.log('✅ تم تحميل', allCategories.length, 'فئة');
+    
   } catch(e) { 
-    console.error('loadAllCategories error:', e);
+    console.error('❌ loadAllCategories error:', e);
+    allCategories = [];  // ✅ مهم جداً: لا تتركها undefined
   }
 }
 
@@ -1117,8 +1133,7 @@ async function loadAllCategories() {
 
 let tripsCache = null;
 let tripsCacheTime = 0;
-const CACHE_DURATION = 5 * 60 * 1000; // 5 دقائق
-
+const CACHE_DURATION = 0;
 async function loadAllTrips(forceRefresh = false) {
     const now = Date.now();
     
@@ -1131,12 +1146,24 @@ async function loadAllTrips(forceRefresh = false) {
     try {
         console.log('📡 جلب الرحلات من الخادم...');
         const result = await jsonp('getAllTrips', { 
-            includeItems: 'false',  // ✅ فقط الأسماء والفئات
+            includeItems: 'false',
             centerName: currentUser?.centerName || '' 
         });
         
-        allTrips = Array.isArray(result) ? result : [];
-        allTrips.sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+        // ✅ التعامل مع جميع أشكال الاستجابة
+        if (Array.isArray(result)) {
+            allTrips = result;
+        } else if (result && Array.isArray(result.data)) {
+            allTrips = result.data;
+        } else {
+            allTrips = [];
+        }
+        
+        allTrips.sort((a, b) => {
+            const nameA = (a.name || '').toLowerCase();
+            const nameB = (b.name || '').toLowerCase();
+            return nameA.localeCompare(nameB, 'ar');
+        });
         
         tripsCache = allTrips;
         tripsCacheTime = now;
@@ -1145,8 +1172,9 @@ async function loadAllTrips(forceRefresh = false) {
         return allTrips;
         
     } catch(e) { 
-        console.error('loadAllTrips error:', e);
+        console.error('❌ loadAllTrips error:', e);
         allTrips = [];
+        tripsCache = [];
         return allTrips;
     }
 }
@@ -1223,20 +1251,28 @@ function renderAddEditForm() {
   const content = document.getElementById('mainContent');
   const title = isEditMode ? '✏️ تعديل رحلة موجودة' : '➕ إضافة رحلة جديدة';
   
-  const tripNameField = isEditMode ? `
-    <div class="trip-input-group">
-      <input type="text" id="tripName" class="form-control" list="tripsList" placeholder="اختر أو اكتب اسم الرحلة" value="${escapeHtml(currentTrip.name)}" style="direction: ltr; text-align: left;">
-      <button class="btn-load" onclick="loadTrip()"><span>📥</span> تحميل</button>
-      <datalist id="tripsList">
-        ${allTrips.map(t => `<option value="${escapeHtml(t.name)}">`).join('')}
-      </datalist>
-    </div>
-  ` : `
-    <input type="text" id="tripName" class="form-control" list="tripsList" placeholder="أدخل اسم الرحلة الجديدة" value="${escapeHtml(currentTrip.name)}" style="direction: ltr; text-align: left;">
-    <datalist id="tripsList">
-      ${allTrips.map(t => `<option value="${escapeHtml(t.name)}">`).join('')}
-    </datalist>
-  `;
+ const tripNameField = isEditMode ? `
+  <div class="trip-input-group">
+    <input type="text" id="tripName" class="form-control" list="tripsList" 
+           placeholder="اختر أو اكتب اسم الرحلة" 
+           value="${escapeHtml(currentTrip.name)}" 
+           style="direction: ltr; text-align: left;">
+    <button class="btn-load" onclick="loadTrip()">
+      <span>📥</span> تحميل
+    </button>
+  </div>
+  <datalist id="tripsList">
+    ${Array.isArray(allTrips) ? allTrips.map(t => `<option value="${escapeHtml(t.name)}">`).join('') : ''}
+  </datalist>
+` : `
+  <input type="text" id="tripName" class="form-control" list="tripsList" 
+         placeholder="أدخل اسم الرحلة الجديدة" 
+         value="${escapeHtml(currentTrip.name)}" 
+         style="direction: ltr; text-align: left;">
+  <datalist id="tripsList">
+    ${Array.isArray(allTrips) ? allTrips.map(t => `<option value="${escapeHtml(t.name)}">`).join('') : ''}
+  </datalist>
+`;
   
   content.innerHTML = `
     <div class="card">
@@ -1246,8 +1282,8 @@ function renderAddEditForm() {
           <label class="required">الفئة</label>
           <input type="text" id="tripCategory" class="form-control" list="categoriesList" placeholder="اختر أو اكتب فئة جديدة" value="${escapeHtml(currentTrip.category)}" style="direction: ltr; text-align: left;">
           <datalist id="categoriesList">
-            ${allCategories.map(c => `<option value="${escapeHtml(c)}">`).join('')}
-          </datalist>
+          ${Array.isArray(allCategories) ? allCategories.map(c => `<option value="${escapeHtml(c)}">`).join('') : ''}
+        </datalist>
         </div>
         <div class="form-group">
           <label class="required">اسم الرحلة</label>
