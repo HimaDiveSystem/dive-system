@@ -336,11 +336,22 @@ function jsonpRequest(action, params = {}, isPost = false) {
 async function getRate(dateStr) {
   if (!dateStr) return null;
   if (exRatesCache[dateStr]) return exRatesCache[dateStr];
-  try { 
-    // ✅ استخدام postRequest بدلاً من jsonpRequest
-    const r = await postRequest('getExchangeRate', { dateStr }); 
-    if (r) { exRatesCache[dateStr] = r; return r; } 
-  } catch(e) {}
+  try {
+    // ✅ استخدام jsonpRequest (GET) بدلاً من postRequest (POST)
+    const r = await jsonpRequest('getExchangeRate', { 
+      dateStr: dateStr,
+      centerName: currentInvoice?.centerName || currentUser?.centerName || ''
+    });
+    
+    if (r && r.success !== false && (r.cash || r.bUSD !== undefined)) {
+      exRatesCache[dateStr] = r;
+      console.log('✅ getRate نجح:', r);
+      return r;
+    }
+    console.warn('⚠️ getRate: استجابة غير صالحة', r);
+  } catch(e) {
+    console.warn('⚠️ getRate failed:', e.message);
+  }
   return null;
 }
 
@@ -363,11 +374,10 @@ function calcTotalFromItems() {
 }
 
 async function updateTotals() {
-  const itemsTotal = calcTotalFromItems();
-  const discount = parseFloat(document.getElementById('discount')?.value) || 0;
   const currency = document.getElementById('invoiceCurrency')?.value || currentInvoice?.invoiceCurrency || 'LE';
   const activeDate = document.getElementById('activeDate')?.value;
   
+  // ✅ 1. جمع المدفوعات من الحقول
   const cU = parseFloat(document.getElementById('cashUSD')?.value) || 0;
   const cE = parseFloat(document.getElementById('cashEUR')?.value) || 0;
   const cG = parseFloat(document.getElementById('cashGBP')?.value) || 0;
@@ -377,29 +387,91 @@ async function updateTotals() {
   const vG = parseFloat(document.getElementById('visaGBP')?.value) || 0;
   const vL = parseFloat(document.getElementById('visaLE')?.value) || 0;
   
+  const discount = parseFloat(document.getElementById('discount')?.value) || 0;
+  
+  // ✅ 2. حساب المدفوعات الفعلية (بالتحويل)
   let paid = 0;
+  let rateOk = false;
+  
   if (activeDate && (cU + cE + cG + cL + vU + vE + vG + vL) > 0) {
     const raw = await getRate(activeDate);
     const r = rateFields(raw);
-    if (r) {
+    if (r && raw && raw.success !== false && raw.cash && raw.cash.USD > 0) {
+      rateOk = true;
       const totalLE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
                       vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
       if (currency === '$') paid = totalLE / r.cash.USD;
       else if (currency === '€') paid = totalLE / r.cash.EUR;
       else if (currency === '£') paid = totalLE / r.cash.GBP;
       else paid = totalLE;
-    } else paid = cU + cE + cG + cL + vU + vE + vG + vL;
-  } else paid = cU + cE + cG + cL + vU + vE + vG + vL;
+    }
+  } else {
+    paid = cU + cE + cG + cL + vU + vE + vG + vL;
+    rateOk = true;
+  }
   
   paid = R2(paid);
-  const rest = R2(Math.max(0, itemsTotal - discount - paid));
   
-  document.getElementById('displayActualPrice').textContent = itemsTotal.toFixed(2);
+  // ✅ 3. حساب الإجمالي من البنود (للتعديل الحي)
+  const itemsTotalFromFields = calcTotalFromItems();
+  
+  // ✅ 4. تحديد actualPrice النهائي
+  let finalActualPrice;
+  
+  if (currentInvoice && currentInvoice._serverActualPrice !== undefined) {
+    // هل تم تعديل الكميات؟
+    const qtyFields = ['qty_0', 'qty_1', 'qty_2', 'qty_3', 'qty_4', 
+                       'qty_5', 'qty_6', 'qty_7', 'qty_8', 'qty_9'];
+    const serverQtys = [
+      currentInvoice.sgl, currentInvoice.dbl, currentInvoice.trpl, currentInvoice.extra,
+      currentInvoice.camel, currentInvoice.dinner, currentInvoice.vipDinner, currentInvoice.starGazing,
+      currentInvoice.privateTrip, currentInvoice.privateTransfer
+    ];
+    
+    const hasQtyChanged = qtyFields.some((id, idx) => {
+      const field = document.getElementById(id);
+      const fieldVal = field ? parseFloat(field.value) || 0 : 0;
+      const serverVal = parseFloat(serverQtys[idx]) || 0;
+      return fieldVal !== serverVal;
+    });
+    
+    const hasPaymentChanged = 
+      (parseFloat(currentInvoice.cashUSD) || 0) !== cU ||
+      (parseFloat(currentInvoice.cashEUR) || 0) !== cE ||
+      (parseFloat(currentInvoice.cashGBP) || 0) !== cG ||
+      (parseFloat(currentInvoice.cashLE) || 0) !== cL ||
+      (parseFloat(currentInvoice.visaUSD) || 0) !== vU ||
+      (parseFloat(currentInvoice.visaEUR) || 0) !== vE ||
+      (parseFloat(currentInvoice.visaGBP) || 0) !== vG ||
+      (parseFloat(currentInvoice.visaLE) || 0) !== vL;
+    
+    const hasDiscountChanged = (parseFloat(currentInvoice.discount) || 0) !== discount;
+    
+    if (hasQtyChanged || hasPaymentChanged || hasDiscountChanged) {
+      // ✅ المستخدم عدّل شيئاً → أعد الحساب
+      console.log('🔵 تم تعديل البيانات، إعادة الحساب من tripPrices');
+      finalActualPrice = itemsTotalFromFields;
+    } else {
+      // ✅ لم يتم تعديل شيء → استخدم actualPrice من السيرفر
+      console.log('🟢 لا توجد تعديلات، استخدام actualPrice من السيرفر:', currentInvoice._serverActualPrice);
+      finalActualPrice = currentInvoice._serverActualPrice;
+    }
+  } else {
+    // لا يوجد مرجع سيرفر، احسب من الحقول
+    finalActualPrice = itemsTotalFromFields;
+  }
+  
+  // ✅ 5. حساب rest النهائي
+  const rest = R2(Math.max(0, finalActualPrice - discount - paid));
+  
+  // ✅ 6. عرض القيم
+  document.getElementById('displayActualPrice').textContent = finalActualPrice.toFixed(2);
   document.getElementById('displayPaymentPrice').textContent = paid.toFixed(2);
   document.getElementById('displayRest').textContent = rest.toFixed(2);
   
+  // ✅ 7. تحديث currentInvoice للاستخدام في التحصيل
   if (currentInvoice) {
-    currentInvoice.actualPrice = itemsTotal;
+    currentInvoice.actualPrice = finalActualPrice;
     currentInvoice.paymentPrice = paid;
     currentInvoice.discount = discount;
     currentInvoice.rest = rest;
@@ -469,12 +541,35 @@ async function generatePDF() {
 let currentCollectionRest = 0;
 
 async function openCollectionModal() {
-  if (!currentInvoice) {
-    showAlert('⚠️ لا توجد فاتورة حالية');
-    return;
+  if (!currentInvoice) { showAlert('⚠️ لا توجد فاتورة'); return; }
+  
+  // ✅ جلب أحدث قيم من السيرفر
+  try {
+    const refreshed = await postRequest('getInvoiceByVoucher', {
+      voucherNo: currentInvoice.voucherNo,
+      centerName: currentInvoice.centerName || currentUser?.centerName
+    });
+    
+    if (refreshed?.success && refreshed.invoice) {
+      const freshRest = parseFloat(refreshed.invoice.rest) || 0;
+      currentInvoice.rest = freshRest;
+      currentInvoice.paymentPrice = parseFloat(refreshed.invoice.paymentPrice) || 0;
+      currentInvoice.actualPrice = parseFloat(refreshed.invoice.actualPrice) || 0;
+      currentInvoice.discount = parseFloat(refreshed.invoice.discount) || 0;
+      
+      console.log('✅ تم تحديث الفاتورة من السيرفر:', {
+        actualPrice: currentInvoice.actualPrice,
+        paymentPrice: currentInvoice.paymentPrice,
+        discount: currentInvoice.discount,
+        rest: currentInvoice.rest,
+        check: currentInvoice.paymentPrice + currentInvoice.discount + currentInvoice.rest
+      });
+    }
+  } catch(e) {
+    console.warn('⚠️ فشل جلب الفاتورة المحدثة:', e.message);
   }
   
-  const rest = parseFloat(document.getElementById('displayRest')?.textContent) || 0;
+  const rest = parseFloat(currentInvoice.rest) || 0;
   if (rest <= 0.01) { 
     showAlert('💰 لا يوجد مبلغ متبقي للتحصيل'); 
     return; 
@@ -1039,10 +1134,26 @@ async function loadInvoice() {
     const isPastDate = activeDate && activeDate < today;
     const disablePayments = isPastDate || !canEdit;
     
-    // ✅ قراءة المتبقي
-    const restElement = document.getElementById('displayRest');
-    const currentRest = restElement ? parseFloat(restElement.textContent) || 0 : (currentInvoice.rest || 0);
-    currentInvoice.rest = currentRest;
+   // ✅ استخدام القيم من السيرفر مباشرة (مصدر الحقيقة)
+const serverActualPrice = parseFloat(currentInvoice.actualPrice) || 0;
+const serverPaymentPrice = parseFloat(currentInvoice.paymentPrice) || 0;
+const serverDiscount = parseFloat(currentInvoice.discount) || 0;
+const serverRest = parseFloat(currentInvoice.rest) || 0;
+
+console.log('📊 قيم السيرفر:', {
+  actualPrice: serverActualPrice,
+  paymentPrice: serverPaymentPrice,
+  discount: serverDiscount,
+  rest: serverRest,
+  check: serverPaymentPrice + serverDiscount + serverRest
+});
+
+// ✅ حفظها في currentInvoice
+currentInvoice._serverActualPrice = serverActualPrice;
+currentInvoice._serverPaymentPrice = serverPaymentPrice;
+currentInvoice._serverRest = serverRest;
+currentInvoice._serverDiscount = serverDiscount;
+currentInvoice.rest = serverRest;
     
     const disableCollection = (currentRest <= 0.01) || !canCollect;
     
@@ -1061,11 +1172,11 @@ async function loadInvoice() {
     }
     
     // ✅ أزرار
+    const currencyForBtn = currentInvoice.invoiceCurrency || 'LE';
     const collectBtnHtml = (canCollect && currentRest > 0.01) ? 
-      `<button class="btn btn-success" id="collectionBtn" onclick="openCollectionModal()" title="${collectionDisabledReason}">💰 تحصيل (المتبقي: ${currentRest.toFixed(2)})</button>` : 
-      (canCollect ? `<button class="btn btn-success" id="collectionBtn" disabled style="opacity:0.5;cursor:not-allowed;" title="${collectionDisabledReason}">💰 تحصيل - ${collectionDisabledReason}</button>` : '');
-    
-    const saveBtnHtml = canSave ? 
+    `<button class="btn btn-success" id="collectionBtn" onclick="openCollectionModal()" title="${collectionDisabledReason}">💰 تحصيل (المتبقي: ${currentRest.toFixed(2)} ${currencyForBtn})</button>` : 
+    (canCollect ? `<button class="btn btn-success" id="collectionBtn" disabled style="opacity:0.5;cursor:not-allowed;">💰 تحصيل - ${collectionDisabledReason}</button>` : '');    
+      const saveBtnHtml = canSave ? 
       `<button class="btn btn-primary" onclick="saveChanges()">💾 حفظ التعديلات</button>` : '';
     
     const formHtml = `
