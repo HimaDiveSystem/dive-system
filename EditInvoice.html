@@ -389,95 +389,97 @@ async function updateTotals() {
   
   const discount = parseFloat(document.getElementById('discount')?.value) || 0;
   
-  // ✅ 2. حساب المدفوعات الفعلية (بالتحويل)
-  let paid = 0;
-  let rateOk = false;
+  // ✅ 2. هل تم تعديل أي شيء؟
+  const hasPaymentChanged = 
+    (parseFloat(currentInvoice?.cashUSD) || 0) !== cU ||
+    (parseFloat(currentInvoice?.cashEUR) || 0) !== cE ||
+    (parseFloat(currentInvoice?.cashGBP) || 0) !== cG ||
+    (parseFloat(currentInvoice?.cashLE) || 0) !== cL ||
+    (parseFloat(currentInvoice?.visaUSD) || 0) !== vU ||
+    (parseFloat(currentInvoice?.visaEUR) || 0) !== vE ||
+    (parseFloat(currentInvoice?.visaGBP) || 0) !== vG ||
+    (parseFloat(currentInvoice?.visaLE) || 0) !== vL;
   
-  if (activeDate && (cU + cE + cG + cL + vU + vE + vG + vL) > 0) {
-    const raw = await getRate(activeDate);
-    const r = rateFields(raw);
-    if (r && raw && raw.success !== false && raw.cash && raw.cash.USD > 0) {
-      rateOk = true;
-      const totalLE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
-                      vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
-      if (currency === '$') paid = totalLE / r.cash.USD;
-      else if (currency === '€') paid = totalLE / r.cash.EUR;
-      else if (currency === '£') paid = totalLE / r.cash.GBP;
-      else paid = totalLE;
-    }
-  } else {
-    paid = cU + cE + cG + cL + vU + vE + vG + vL;
-    rateOk = true;
-  }
+  const hasDiscountChanged = (parseFloat(currentInvoice?.discount) || 0) !== discount;
   
-  paid = R2(paid);
-  
-  // ✅ 3. حساب الإجمالي من البنود (للتعديل الحي)
-  const itemsTotalFromFields = calcTotalFromItems();
-  
-  // ✅ 4. تحديد actualPrice النهائي
+  // ✅ 3. تحديد القيم النهائية
   let finalActualPrice;
+  let finalPaid;
+  let finalDiscount;
   
-  if (currentInvoice && currentInvoice._serverActualPrice !== undefined) {
-    // هل تم تعديل الكميات؟
-    const qtyFields = ['qty_0', 'qty_1', 'qty_2', 'qty_3', 'qty_4', 
-                       'qty_5', 'qty_6', 'qty_7', 'qty_8', 'qty_9'];
-    const serverQtys = [
-      currentInvoice.sgl, currentInvoice.dbl, currentInvoice.trpl, currentInvoice.extra,
-      currentInvoice.camel, currentInvoice.dinner, currentInvoice.vipDinner, currentInvoice.starGazing,
-      currentInvoice.privateTrip, currentInvoice.privateTransfer
-    ];
+  if (hasPaymentChanged || hasDiscountChanged) {
+    // ⚠️ المستخدم عدّل → أعد الحساب بأسعار الصرف الحالية
+    console.log('🟡 تم تعديل المدفوعات، إعادة الحساب...');
     
-    const hasQtyChanged = qtyFields.some((id, idx) => {
-      const field = document.getElementById(id);
-      const fieldVal = field ? parseFloat(field.value) || 0 : 0;
-      const serverVal = parseFloat(serverQtys[idx]) || 0;
-      return fieldVal !== serverVal;
-    });
+    finalActualPrice = currentInvoice?._serverActualPrice || calcTotalFromItems();
+    finalDiscount = discount;
     
-    const hasPaymentChanged = 
-      (parseFloat(currentInvoice.cashUSD) || 0) !== cU ||
-      (parseFloat(currentInvoice.cashEUR) || 0) !== cE ||
-      (parseFloat(currentInvoice.cashGBP) || 0) !== cG ||
-      (parseFloat(currentInvoice.cashLE) || 0) !== cL ||
-      (parseFloat(currentInvoice.visaUSD) || 0) !== vU ||
-      (parseFloat(currentInvoice.visaEUR) || 0) !== vE ||
-      (parseFloat(currentInvoice.visaGBP) || 0) !== vG ||
-      (parseFloat(currentInvoice.visaLE) || 0) !== vL;
+    let paid = 0;
+    let rateOk = false;
     
-    const hasDiscountChanged = (parseFloat(currentInvoice.discount) || 0) !== discount;
-    
-    if (hasQtyChanged || hasPaymentChanged || hasDiscountChanged) {
-      // ✅ المستخدم عدّل شيئاً → أعد الحساب
-      console.log('🔵 تم تعديل البيانات، إعادة الحساب من tripPrices');
-      finalActualPrice = itemsTotalFromFields;
-    } else {
-      // ✅ لم يتم تعديل شيء → استخدم actualPrice من السيرفر
-      console.log('🟢 لا توجد تعديلات، استخدام actualPrice من السيرفر:', currentInvoice._serverActualPrice);
-      finalActualPrice = currentInvoice._serverActualPrice;
+    if (activeDate && (cU + cE + cG + cL + vU + vE + vG + vL) > 0) {
+      const raw = await getRate(activeDate);
+      const r = rateFields(raw);
+      if (r && raw && raw.success !== false && raw.cash && raw.cash.USD > 0) {
+        rateOk = true;
+        const totalLE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
+                        vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
+        if (currency === '$') paid = totalLE / r.cash.USD;
+        else if (currency === '€') paid = totalLE / r.cash.EUR;
+        else if (currency === '£') paid = totalLE / r.cash.GBP;
+        else paid = totalLE;
+      }
     }
+    
+    if (!rateOk) {
+      paid = cU + cE + cG + cL + vU + vE + vG + vL;
+    }
+    
+    finalPaid = R2(paid);
+    
   } else {
-    // لا يوجد مرجع سيرفر، احسب من الحقول
-    finalActualPrice = itemsTotalFromFields;
+    // ✅ لا يوجد تعديل → استخدم القيم من السيرفر مباشرة
+    console.log('🟢 لا توجد تعديلات، استخدام القيم من السيرفر');
+    
+    finalActualPrice = currentInvoice?._serverActualPrice || parseFloat(currentInvoice?.actualPrice) || 0;
+    finalPaid = currentInvoice?._serverPaymentPrice || parseFloat(currentInvoice?.paymentPrice) || 0;
+    finalDiscount = currentInvoice?._serverDiscount || parseFloat(currentInvoice?.discount) || 0;
   }
   
-  // ✅ 5. حساب rest النهائي
-  const rest = R2(Math.max(0, finalActualPrice - discount - paid));
+  // ✅ 4. حساب rest النهائي
+  const rest = R2(Math.max(0, finalActualPrice - finalDiscount - finalPaid));
   
-  // ✅ 6. عرض القيم
+  // ✅ 5. عرض القيم
   document.getElementById('displayActualPrice').textContent = finalActualPrice.toFixed(2);
-  document.getElementById('displayPaymentPrice').textContent = paid.toFixed(2);
+  document.getElementById('displayPaymentPrice').textContent = finalPaid.toFixed(2);
   document.getElementById('displayRest').textContent = rest.toFixed(2);
   
-  // ✅ 7. تحديث currentInvoice للاستخدام في التحصيل
+  // ✅ 6. تحديث currentInvoice
   if (currentInvoice) {
     currentInvoice.actualPrice = finalActualPrice;
-    currentInvoice.paymentPrice = paid;
-    currentInvoice.discount = discount;
+    currentInvoice.paymentPrice = finalPaid;
+    currentInvoice.discount = finalDiscount;
     currentInvoice.rest = rest;
   }
+  
+  // ✅ 7. تحديث زر التحصيل ديناميكياً
+  const collectBtn = document.getElementById('collectionBtn');
+  if (collectBtn) {
+    const btnCurrency = currentInvoice?.invoiceCurrency || 'LE';
+    if (rest > 0.01 && canCollect) {
+      collectBtn.disabled = false;
+      collectBtn.style.opacity = '1';
+      collectBtn.style.cursor = 'pointer';
+      collectBtn.innerHTML = `💰 تحصيل (المتبقي: ${rest.toFixed(2)} ${btnCurrency})`;
+    } else {
+      collectBtn.disabled = true;
+      collectBtn.style.opacity = '0.5';
+      collectBtn.style.cursor = 'not-allowed';
+      collectBtn.innerHTML = `💰 تحصيل - ${rest <= 0.01 ? 'لا يوجد مبلغ متبقي' : 'ليس لديك صلاحية'}`;
+    }
+  }
 }
-
+  
 function updateItemTotal(idx, price) {
   const qty = parseFloat(document.getElementById(`qty_${idx}`)?.value) || 0;
   const totalEl = document.getElementById(`total_${idx}`);
