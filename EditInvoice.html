@@ -117,6 +117,8 @@ let canEdit = false;      // ✅ أضف هذا (للاستخدام المستق�
 let currentRest = 0;      // ✅ أضف هذا (إن لم يكن موجوداً)
 let currentCollectionRest = 0;
 let signatureData = null;
+let collectionSummarySeq = 0;
+let collectionSummaryDebounce = null;
 // ============================================================
 // ✅ الدوال الأساسية
 // ============================================================
@@ -626,9 +628,47 @@ async function openCollectionModal() {
   updateCollectionSummary();
 }
 
-async function updateCollectionSummary() {
+// ============================================================
+// ✅ تحديث ملخص التحصيل — Debounce + Seq
+// ============================================================
+
+/**
+ * الدالة الرئيسية — تُستدعى من oninput على 8 حقول
+ * - تُظهر معاينة فورية (جمع بسيط بدون تحويل)
+ * - تُجدول الحساب الفعلي بعد 350ms (لتقليل الطلبات)
+ */
+function updateCollectionSummary() {
+  // ✅ 1. معاينة فورية (بدون تحويل)
+  quickPreviewCollectionSummary();
+  
+  // ✅ 2. جدولة الحساب الفعلي
+  clearTimeout(collectionSummaryDebounce);
+  collectionSummaryDebounce = setTimeout(calcCollectionSummary, 350);
+}
+
+/**
+ * معاينة سريعة — جمع المبالغ بدون تحويل عملات
+ * تُظهر للمستخدم استجابة فورية أثناء الكتابة
+ */
+function quickPreviewCollectionSummary() {
+  const vals = [
+    'collUSD', 'collEUR', 'collGBP', 'collLE',
+    'collVisaUSD', 'collVisaEUR', 'collVisaGBP', 'collVisaLE'
+  ].reduce((s, id) => s + (Number(document.getElementById(id)?.value) || 0), 0);
+  
+  const el = document.getElementById('collectionTotalDisplay');
+  if (el) el.textContent = vals.toFixed(2);
+}
+
+/**
+ * الحساب الفعلي — يشمل تحويل العملات بأسعار الصرف
+ * - يستخدم seq لتجاهل الردود القديمة (race condition)
+ */
+async function calcCollectionSummary() {
+  const mySeq = ++collectionSummarySeq;
   const currency = currentInvoice?.invoiceCurrency || 'LE';
   const activeDate = document.getElementById('activeDate')?.value;
+  
   const cU = Number(document.getElementById('collUSD')?.value) || 0;
   const cE = Number(document.getElementById('collEUR')?.value) || 0;
   const cG = Number(document.getElementById('collGBP')?.value) || 0;
@@ -638,22 +678,34 @@ async function updateCollectionSummary() {
   const vG = Number(document.getElementById('collVisaGBP')?.value) || 0;
   const vL = Number(document.getElementById('collVisaLE')?.value) || 0;
   
-  let collected = 0;
-  if (activeDate && (cU + cE + cG + cL + vU + vE + vG + vL) > 0) {
+  let collected = cU + cE + cG + cL + vU + vE + vG + vL;
+  
+  // ✅ إذا كان هناك تاريخ + مبالغ → حوّل بأسعار الصرف
+  if (activeDate && collected > 0) {
     const raw = await getRate(activeDate);
+    
+    // ✅ تجاهل الردود القديمة
+    if (mySeq !== collectionSummarySeq) return;
+    
     const r = rateFields(raw);
-    if (r) {
-      const totalLE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
-                      vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
+    if (r && raw && raw.success !== false && r.cash && r.cash.USD > 0) {
+      const totalLE = 
+        cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL +
+        vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
+      
       if (currency === '$') collected = totalLE / r.cash.USD;
       else if (currency === '€') collected = totalLE / r.cash.EUR;
       else if (currency === '£') collected = totalLE / r.cash.GBP;
       else collected = totalLE;
-    } else collected = cU + cE + cG + cL + vU + vE + vG + vL;
-  } else collected = cU + cE + cG + cL + vU + vE + vG + vL;
+    }
+  }
+  
+  // ✅ تجاهل الردود القديمة مرة أخرى (بعد await)
+  if (mySeq !== collectionSummarySeq) return;
   
   collected = R2(collected);
   const newRest = Math.max(0, R2(currentCollectionRest - collected));
+  
   document.getElementById('collectionTotalDisplay').textContent = collected.toFixed(2);
   document.getElementById('newRestPreview').textContent = newRest.toFixed(2);
 }
