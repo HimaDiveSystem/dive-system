@@ -1251,11 +1251,19 @@ function showEditForm() {
 // RENDER FORM
 // ============================================================
 function renderAddEditForm() {
-   const scrollPos = saveScrollPosition();
+  const scrollPos = saveScrollPosition();
   const content = document.getElementById('mainContent');
   const title = isEditMode ? '✏️ تعديل رحلة موجودة' : '➕ إضافة رحلة جديدة';
   
- const tripNameField = isEditMode ? `
+  // ✅ ✅ ✅ حفظ التكاليف الحالية قبل إعادة البناء (لحماية البيانات من الفقدان)
+  const savedMandatoryFees = JSON.parse(JSON.stringify(currentTrip.mandatoryFees || {}));
+  const savedFixedCosts = JSON.parse(JSON.stringify(currentTrip.fixedCosts || {}));
+  const savedHasCost = currentTrip.hasCost || false;
+  const savedItems = [...(currentTrip.items || [])];
+  const savedPrices = JSON.parse(JSON.stringify(currentTrip.prices || {}));
+  const savedBankPercent = currentTrip.bankPercent || 2.5;
+  
+  const tripNameField = isEditMode ? `
   <div class="trip-input-group">
     <input type="text" id="tripName" class="form-control" list="tripsList" 
            placeholder="اختر أو اكتب اسم الرحلة" 
@@ -1325,7 +1333,7 @@ function renderAddEditForm() {
         </div>
         <div class="bank-percent">
           <label>نسبة البنك للتكلفة (Visa):</label>
-          <input type="number" id="bankPercentage" value="2.5" step="0.1" min="0" max="100">
+          <input type="number" id="bankPercentage" value="${savedBankPercent}" step="0.1" min="0" max="100">
         </div>
       </div>
 
@@ -1370,13 +1378,27 @@ function renderAddEditForm() {
     </div>
   `;
   
+  // ✅ ✅ ✅ استرجاع البيانات بعد إعادة البناء (لحماية التكاليف من الفقدان)
+  currentTrip.mandatoryFees = savedMandatoryFees;
+  currentTrip.fixedCosts = savedFixedCosts;
+  currentTrip.hasCost = savedHasCost;
+  currentTrip.items = savedItems;
+  currentTrip.prices = savedPrices;
+  
   updateItemsUI();
   updatePricesUI();
-   setTimeout(() => {
+  
+  // ✅ ✅ ✅ إعادة رسم جدول التكاليف إذا كان hasCost مفعّلاً
+  if (currentTrip.hasCost && typeof renderCostDetailsTable === 'function') {
+    setTimeout(() => {
+      renderCostDetailsTable();
+    }, 100);
+  }
+  
+  setTimeout(() => {
     restoreScrollPosition(scrollPos);
   }, 50);
 }
-
 // ============================================================
 // UPDATE UI FUNCTIONS
 // ============================================================
@@ -1578,7 +1600,7 @@ async function loadTrip() {
         showAlert('الرجاء إدخال اسم الرحلة');
         return;
     }
-      const scrollPos = saveScrollPosition();
+    const scrollPos = saveScrollPosition();
     if (isLoadingTrip) return;
     isLoadingTrip = true;
     
@@ -1602,23 +1624,45 @@ async function loadTrip() {
         });
         
         if (def && def.name) {
-        currentTrip = {
-          id: def.id,
-          name: def.name,
-          category: def.category || '',
-          items: Array.isArray(def.items) ? [...def.items] : [],
-          prices: { USD: [], EUR: [], GBP: [], LE: [] },
-          hasCost: def.hasCost || false,
-          // ✅ الحقول الجديدة
-          mandatoryFees: def.mandatoryFees || {},
-          fixedCosts: def.fixedCosts || {}
-        };
+            currentTrip = {
+                id: def.id,
+                name: def.name,
+                category: def.category || '',
+                items: Array.isArray(def.items) ? [...def.items] : [],
+                prices: { USD: [], EUR: [], GBP: [], LE: [] },
+                hasCost: def.hasCost || false,
+                mandatoryFees: def.mandatoryFees || {},
+                fixedCosts: def.fixedCosts || {}
+            };
+            
+            console.log('✅ تم تحميل الرحلة:', def.name);
+            console.log('  hasCost:', currentTrip.hasCost);
+            console.log('  mandatoryFees:', currentTrip.mandatoryFees);
+            console.log('  fixedCosts:', currentTrip.fixedCosts);
             
             const categoryInput = document.getElementById('tripCategory');
             if (categoryInput) categoryInput.value = def.category || '';
             
+            // ✅ تحديث checkbox hasCost
             const costCheckbox = document.getElementById('hasCost');
-            if (costCheckbox) costCheckbox.checked = currentTrip.hasCost;
+            if (costCheckbox) {
+                costCheckbox.checked = currentTrip.hasCost;
+            }
+            
+            // ✅ ✅ ✅ إظهار/إخفاء قسم التكاليف
+            const costContainer = document.getElementById('costDetailsContainer');
+            if (costContainer) {
+                costContainer.style.display = currentTrip.hasCost ? 'block' : 'none';
+                console.log('  costContainer display:', costContainer.style.display);
+            }
+            
+            // ✅ رسم جدول التكاليف
+            if (currentTrip.hasCost) {
+                setTimeout(() => {
+                    renderCostDetailsTable();
+                    console.log('  ✅ تم رسم جدول التكاليف');
+                }, 50);
+            }
             
             updateItemsUI();
             
@@ -1652,9 +1696,9 @@ async function loadTrip() {
         }
     }
     setTimeout(() => {
-            restoreScrollPosition(scrollPos);
-        }, 100);
-    }
+        restoreScrollPosition(scrollPos);
+    }, 100);
+}
 
  
 async function loadTripPricesForCurrency(tripName, category, currencySym) {
