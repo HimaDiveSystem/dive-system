@@ -2233,22 +2233,34 @@ async function updateTrip() {
 // DELETE TRIP (نسخة معدلة)
 // ============================================================
 async function deleteCurrentTrip() {
+    // ✅ التحقق من وجود الرحلة
     if (!currentTrip.name) {
         showAlert('الرجاء اختيار رحلة أولاً');
         return;
     }
     
-    // ✅ التأكد من وجود centerName
+    // ✅ التحقق من centerName
     const centerName = currentUser?.centerName || '';
     if (!centerName) {
         showAlert('❌ خطأ: centerName غير موجود');
         return;
     }
     
+    // ✅ حفظ اسم الرحلة قبل الحذف (لتجنب فقدانه)
+    const tripNameToDelete = currentTrip.name;
+    
+    console.log('🗑️ deleteCurrentTrip called:');
+    console.log('  tripName:', JSON.stringify(tripNameToDelete));
+    console.log('  centerName:', JSON.stringify(centerName));
+    
+    // ✅ العثور على زر الحذف
     const deleteBtn = document.querySelector('.btn-danger');
     const originalBtnText = deleteBtn ? deleteBtn.innerHTML : '';
     
-    showConfirm(`⚠️ هل أنت متأكد من حذف الرحلة "${currentTrip.name}"؟\nسيتم حذف جميع الأسعار المرتبطة بها.`, async () => {
+    // ✅ طلب التأكيد
+    const confirmMessage = `⚠️ هل أنت متأكد من حذف الرحلة "${tripNameToDelete}"؟\n\nسيتم حذف جميع الأسعار المرتبطة بها (جميع العملات) من Price_List.\nسيتم حذف تعريف الرحلة من TripDefinitions.`;
+    
+    showConfirm(confirmMessage, async () => {
         try {
             // ✅ تعطيل الزر وإظهار حالة التحميل
             if (deleteBtn) {
@@ -2256,20 +2268,68 @@ async function deleteCurrentTrip() {
                 deleteBtn.disabled = true;
             }
             
-            const res = await jsonp('deleteTrip', { 
-                tripName: currentTrip.name,
+            // ✅ إرسال الطلب للخادم
+            const requestParams = {
+                tripName: tripNameToDelete,
                 centerName: centerName
-            });
+            };
             
-            if (res.success) {
-                showAlert('✅ تم حذف الرحلة بنجاح');
-                await loadAllTrips(true);  // ✅ تحديث القائمة
-                newTrip();
-                showTab('add');  // ✅ العودة إلى تبويب الإضافة
-            } else {
-                showAlert('❌ خطأ في حذف الرحلة: ' + res.message);
+            console.log('📤 Sending deleteTrip request:', requestParams);
+            
+            const res = await jsonp('deleteTrip', requestParams);
+            
+            console.log('📥 deleteTrip response:', res);
+            
+            // ✅ التحقق من نتيجة الحذف
+            if (!res || !res.success) {
+                const errorMsg = res?.message || 'خطأ غير معروف';
+                showAlert('❌ خطأ في حذف الرحلة: ' + errorMsg);
+                return;
             }
+            
+            // ✅ تحديث قائمة الرحلات (إبطال الكاش)
+            console.log('🔄 تحديث قائمة الرحلات...');
+            await loadAllTrips(true);
+            
+            // ✅ التحقق من أن الرحلة اختفت فعلاً
+            const stillExists = allTrips.find(t => t.name === tripNameToDelete);
+            
+            if (stillExists) {
+                // ⚠️ الرحلة ما زالت موجودة رغم أن الخادم قال success
+                console.warn('⚠️ الرحلة ما زالت موجودة بعد الحذف!');
+                showAlert(
+                    '⚠️ تحذير: الخادم أكد الحذف، لكن الرحلة ما زالت موجودة.\n\n' +
+                    'السبب المحتمل:\n' +
+                    '• ملف المركز مفتوح في المتصفح\n' +
+                    '• أو هناك تأخير في المزامنة\n\n' +
+                    'الرجاء:\n' +
+                    '1. إغلاق ملف المركز في المتصفح\n' +
+                    '2. إعادة تحميل الصفحة\n' +
+                    '3. المحاولة مرة أخرى'
+                );
+            } else {
+                // ✅ الحذف نجح فعلاً
+                const successMsg = res.message || `تم حذف الرحلة "${tripNameToDelete}" بنجاح`;
+                showAlert('✅ ' + successMsg);
+            }
+            
+            // ✅ إعادة تعيين currentTrip
+            currentTrip = {
+                id: null,
+                name: '',
+                category: '',
+                items: [],
+                prices: {},
+                hasCost: false,
+                mandatoryFees: {},
+                fixedCosts: {}
+            };
+            
+            // ✅ العودة إلى تبويب القائمة
+            showTab('list');
+            
         } catch(err) {
+            console.error('❌ deleteCurrentTrip error:', err);
             showAlert('❌ خطأ في الاتصال: ' + err.message);
         } finally {
             // ✅ إعادة تفعيل الزر
@@ -2278,6 +2338,9 @@ async function deleteCurrentTrip() {
                 deleteBtn.disabled = false;
             }
         }
+    }, () => {
+        // ✅ إلغاء الحذف
+        console.log('❌ تم إلغاء الحذف');
     });
 }
 // ============================================================
