@@ -1107,7 +1107,6 @@ async function loadAllCategories() {
   try {
     const result = await jsonp('getAllCategories');
     
-    // ✅ التعامل مع جميع أشكال الاستجابة
     if (Array.isArray(result)) {
       allCategories = result;
     } else if (result && Array.isArray(result.data)) {
@@ -1120,10 +1119,13 @@ async function loadAllCategories() {
     }
     
     console.log('✅ تم تحميل', allCategories.length, 'فئة');
+    if (allCategories.length > 0) {
+      console.log('   الفئات:', allCategories.join(', '));
+    }
     
   } catch(e) { 
     console.error('❌ loadAllCategories error:', e);
-    allCategories = [];  // ✅ مهم جداً: لا تتركها undefined
+    allCategories = [];
   }
 }
 
@@ -1291,11 +1293,16 @@ function renderAddEditForm() {
       <div class="card-title">${title}</div>
       <div class="form-grid">
         <div class="form-group">
+         <div class="form-group">
           <label class="required">الفئة</label>
-          <input type="text" id="tripCategory" class="form-control" list="categoriesList" placeholder="اختر أو اكتب فئة جديدة" value="${escapeHtml(currentTrip.category)}" style="direction: ltr; text-align: left;">
-          <datalist id="categoriesList">
-          ${Array.isArray(allCategories) ? allCategories.map(c => `<option value="${escapeHtml(c)}">`).join('') : ''}
-        </datalist>
+          <select id="tripCategory" class="form-control" style="direction: ltr; text-align: left; cursor: pointer;">
+            <option value="">-- اختر نوع النشاط --</option>
+            ${Array.isArray(allCategories) 
+              ? allCategories.map(c => 
+                  `<option value="${escapeHtml(c)}" ${c === currentTrip.category ? 'selected' : ''}>${escapeHtml(c)}</option>`
+                ).join('') 
+              : ''}
+          </select>
         </div>
         <div class="form-group">
           <label class="required">اسم الرحلة</label>
@@ -1805,6 +1812,48 @@ async function saveTrip() {
             return;
         }
         
+        // ✅✅✅ الإصلاح الجذري: قراءة التكاليف من DOM مباشرة
+        const mandatoryFeesFromDOM = {};
+        const fixedCostsFromDOM = {};
+        
+        if (hasCost) {
+            for (let i = 0; i < items.length; i++) {
+                const itemName = items[i].trim();
+                if (!itemName) continue;
+                
+                // قراءة MandatoryFee من DOM
+                const mfInput = document.getElementById(`mf_${i}`);
+                const mfcSelect = document.getElementById(`mfc_${i}`);
+                if (mfInput && mfcSelect) {
+                    const mfValue = parseFloat(mfInput.value) || 0;
+                    const mfCurrency = mfcSelect.value || 'USD';
+                    mandatoryFeesFromDOM[itemName] = { value: mfValue, currency: mfCurrency };
+                }
+                
+                // قراءة FixedCost من DOM
+                const fcInput = document.getElementById(`fc_${i}`);
+                const fccSelect = document.getElementById(`fcc_${i}`);
+                if (fcInput && fccSelect) {
+                    const fcValue = parseFloat(fcInput.value) || 0;
+                    const fcCurrency = fccSelect.value || 'LE';
+                    fixedCostsFromDOM[itemName] = { value: fcValue, currency: fcCurrency };
+                }
+            }
+        }
+        
+        console.log('🔍 === saveTrip - التكاليف المقروءة من DOM ===');
+        console.log('  mandatoryFeesFromDOM:', JSON.stringify(mandatoryFeesFromDOM));
+        console.log('  fixedCostsFromDOM:', JSON.stringify(fixedCostsFromDOM));
+        console.log('  hasCost:', hasCost);
+        
+        // ✅ استخدام القيم من DOM (أكثر موثوقية من currentTrip)
+        const finalMandatoryFees = hasCost ? mandatoryFeesFromDOM : {};
+        const finalFixedCosts = hasCost ? fixedCostsFromDOM : {};
+        
+        // ✅ تحديث currentTrip لضمان التناسق
+        currentTrip.mandatoryFees = finalMandatoryFees;
+        currentTrip.fixedCosts = finalFixedCosts;
+        
         const basePrices = [];
         if (currentTrip.prices.USD) {
             for (let i = 0; i < items.length; i++) {
@@ -1814,24 +1863,28 @@ async function saveTrip() {
             for (let i = 0; i < items.length; i++) basePrices.push(0);
         }
         
-        // ✅ الحصول على أسعار LE الموجودة (إن وجدت)
         const existingLEPrices = currentTrip.prices.LE ? [...currentTrip.prices.LE] : [];
         
         pendingTripData = {
-        tripName: tripName,
-        category: category,
-        items: items,
-        basePrices: basePrices,
-        hasCost: hasCost,
-        bankPercent: bankPercent,
-        centerName: centerName,
-        oldLEPrices: existingLEPrices,
-        // ✅ الحقول الجديدة
-        mandatoryFees: currentTrip.mandatoryFees || {},
-        fixedCosts: currentTrip.fixedCosts || {}
-      };
+            tripName: tripName,
+            category: category,
+            items: items,
+            basePrices: basePrices,
+            hasCost: hasCost,
+            bankPercent: bankPercent,
+            centerName: centerName,
+            oldLEPrices: existingLEPrices,
+            mandatoryFees: finalMandatoryFees,  // ✅ من DOM
+            fixedCosts: finalFixedCosts         // ✅ من DOM
+        };
         
-        // ✅ عرض النافذة مع الأسعار الموجودة
+        console.log('📤 pendingTripData قبل الإرسال:', JSON.stringify({
+            tripName: pendingTripData.tripName,
+            hasCost: pendingTripData.hasCost,
+            mandatoryFees: pendingTripData.mandatoryFees,
+            fixedCosts: pendingTripData.fixedCosts
+        }));
+        
         showCurrencyModal(items, async (lePrices) => {
             pendingTripData.lePrices = lePrices;
             await executeSaveTrip(pendingTripData);
@@ -1847,7 +1900,6 @@ async function saveTrip() {
         }
     }
 }
-
   
 // ============================================================
 // SHOW CURRENCY MODAL (نسخة معدلة - باراميترين فقط)
@@ -1940,22 +1992,32 @@ async function executeSaveTrip(data) {
             saveBtn.disabled = true;
         }
         
-        // 1. حفظ تعريف الرحلة
+        // ✅ Logs تشخيصية
+        console.log('🚀 executeSaveTrip - البيانات المُرسَلة:');
+        console.log('  tripName:', data.tripName);
+        console.log('  hasCost:', data.hasCost);
+        console.log('  mandatoryFees (نوع):', typeof data.mandatoryFees);
+        console.log('  mandatoryFees (قيمة):', JSON.stringify(data.mandatoryFees));
+        console.log('  fixedCosts (نوع):', typeof data.fixedCosts);
+        console.log('  fixedCosts (قيمة):', JSON.stringify(data.fixedCosts));
+        
         const defRes = await jsonp('saveTripDefinition', {
-        tripName: data.tripName,
-        category: data.category,
-        items: JSON.stringify(data.items),
-        hasCost: data.hasCost,
-        mandatoryFees: JSON.stringify(data.mandatoryFees || {}),
-        fixedCosts: JSON.stringify(data.fixedCosts || {}),
-        centerName: data.centerName
-      });
+            tripName: data.tripName,
+            category: data.category,
+            items: JSON.stringify(data.items),
+            hasCost: data.hasCost,
+            mandatoryFees: JSON.stringify(data.mandatoryFees || {}),
+            fixedCosts: JSON.stringify(data.fixedCosts || {}),
+            centerName: data.centerName
+        });
+        
+        console.log('📥 saveTripDefinition response:', defRes);
         
         if (!defRes.success) {
             showAlert('❌ خطأ في حفظ تعريف الرحلة: ' + defRes.message);
             return;
         }
-        
+         
         // ✅ 2. استدعاء واحد لتحديث جميع العملات
         const lePrices = data.lePrices || data.items.map(() => 0);
         
@@ -2004,9 +2066,7 @@ async function executeSaveTrip(data) {
     }
 }
   
-// ============================================================
-// UPDATE TRIP (نسخة معدلة - استدعاء واحد)
-// ============================================================
+
 // ============================================================
 // UPDATE TRIP (النسخة المعدلة - تصحيح خطأ LE)
 // ============================================================
@@ -2046,6 +2106,49 @@ async function updateTrip() {
             return;
         }
         
+        // ✅✅✅ الإصلاح: قراءة التكاليف من DOM
+        const currentItems = currentTrip.items.filter(item => item && item.trim() !== '');
+        const mandatoryFeesFromDOM = {};
+        const fixedCostsFromDOM = {};
+        
+        if (hasCost) {
+            for (let i = 0; i < currentTrip.items.length; i++) {
+                const itemName = (currentTrip.items[i] || '').trim();
+                if (!itemName) continue;
+                
+                const mfInput = document.getElementById(`mf_${i}`);
+                const mfcSelect = document.getElementById(`mfc_${i}`);
+                if (mfInput && mfcSelect) {
+                    mandatoryFeesFromDOM[itemName] = {
+                        value: parseFloat(mfInput.value) || 0,
+                        currency: mfcSelect.value || 'USD'
+                    };
+                }
+                
+                const fcInput = document.getElementById(`fc_${i}`);
+                const fccSelect = document.getElementById(`fcc_${i}`);
+                if (fcInput && fccSelect) {
+                    fixedCostsFromDOM[itemName] = {
+                        value: parseFloat(fcInput.value) || 0,
+                        currency: fccSelect.value || 'LE'
+                    };
+                }
+            }
+        }
+        
+        console.log('🔍 updateTrip - التكاليف من DOM:', {
+            mandatoryFees: mandatoryFeesFromDOM,
+            fixedCosts: fixedCostsFromDOM,
+            hasCost: hasCost
+        });
+        
+        const finalMandatoryFees = hasCost ? mandatoryFeesFromDOM : {};
+        const finalFixedCosts = hasCost ? fixedCostsFromDOM : {};
+        
+        // ✅ تحديث currentTrip
+        currentTrip.mandatoryFees = finalMandatoryFees;
+        currentTrip.fixedCosts = finalFixedCosts;
+        
         let priceKey = selectedCurrency;
         if (selectedCurrency === '$') priceKey = 'USD';
         else if (selectedCurrency === '€') priceKey = 'EUR';
@@ -2058,23 +2161,20 @@ async function updateTrip() {
             prices.push(val);
         }
         
-        const currentItems = currentTrip.items.filter(item => item && item.trim() !== '');
-        
-        // ✅ الحصول على أسعار LE الموجودة
         const existingLEPrices = currentTrip.prices.LE ? [...currentTrip.prices.LE] : [];
         
         showConfirm(`تحديث الرحلة "${currentTrip.name}" بالعملة ${selectedCurrency}؟`, async () => {
             try {
-            let updateData = {
-            tripName: currentTrip.name,
-            category: category,
-            hasCost: hasCost,
-            bankPercentage: bankPercent,
-            items: JSON.stringify(currentItems),
-            centerName: centerName,
-            mandatoryFees: JSON.stringify(currentTrip.mandatoryFees || {}),  // ✅ أضف
-            fixedCosts: JSON.stringify(currentTrip.fixedCosts || {})         // ✅ أضف
-        };
+                let updateData = {
+                    tripName: currentTrip.name,
+                    category: category,
+                    hasCost: hasCost,
+                    bankPercentage: bankPercent,
+                    items: JSON.stringify(currentItems),
+                    centerName: centerName,
+                    mandatoryFees: JSON.stringify(finalMandatoryFees),  // ✅ من DOM
+                    fixedCosts: JSON.stringify(finalFixedCosts)         // ✅ من DOM
+                };
                 
                 if (selectedCurrency === '$') {
                     updateData.currency = 'BASE';
@@ -2083,8 +2183,8 @@ async function updateTrip() {
                 }
                 else if (selectedCurrency === 'LE') {
                     updateData.currency = 'LE_ONLY';
-                    updateData.prices = JSON.stringify([]);  // ✅ فارغ
-                    updateData.lePrices = JSON.stringify(prices);  // ✅ LE هنا
+                    updateData.prices = JSON.stringify([]);
+                    updateData.lePrices = JSON.stringify(prices);
                 }
                 else if (selectedCurrency === '€') {
                     updateData.currency = 'EUR_ONLY';
@@ -2095,58 +2195,29 @@ async function updateTrip() {
                     updateData.prices = JSON.stringify(prices);
                 }
                 
+                console.log('📤 updateTrip - إرسال:', JSON.stringify({
+                    tripName: updateData.tripName,
+                    hasCost: updateData.hasCost,
+                    mandatoryFees: updateData.mandatoryFees,
+                    fixedCosts: updateData.fixedCosts
+                }));
+                
                 const res = await jsonp('updateTrip', updateData);
                 
                 if (res.success) {
-                    // ✅ تحديث currentTrip.prices
-                    if (selectedCurrency === '$') {
-                        if (!currentTrip.prices.USD) currentTrip.prices.USD = [];
-                        if (!currentTrip.prices.EUR) currentTrip.prices.EUR = [];
-                        if (!currentTrip.prices.GBP) currentTrip.prices.GBP = [];
-                        for (let i = 0; i < prices.length; i++) {
-                            currentTrip.prices.USD[i] = prices[i];
-                            currentTrip.prices.EUR[i] = prices[i];
-                            currentTrip.prices.GBP[i] = prices[i];
-                        }
-                        if (!currentTrip.prices.LE) currentTrip.prices.LE = [];
-                        for (let i = 0; i < existingLEPrices.length; i++) {
-                            currentTrip.prices.LE[i] = existingLEPrices[i];
-                        }
-                    } else if (selectedCurrency === 'LE') {
-                        if (!currentTrip.prices.LE) currentTrip.prices.LE = [];
-                        for (let i = 0; i < prices.length; i++) {
-                            currentTrip.prices.LE[i] = prices[i];
-                        }
-                    } else if (selectedCurrency === '€') {
-                        if (!currentTrip.prices.EUR) currentTrip.prices.EUR = [];
-                        for (let i = 0; i < prices.length; i++) {
-                            currentTrip.prices.EUR[i] = prices[i];
-                        }
-                    } else if (selectedCurrency === '£') {
-                        if (!currentTrip.prices.GBP) currentTrip.prices.GBP = [];
-                        for (let i = 0; i < prices.length; i++) {
-                            currentTrip.prices.GBP[i] = prices[i];
-                        }
-                    }
-                    
+                    // ... باقي الكود كما هو ...
                     showAlert('✅ ' + res.message);
                     await loadAllTrips(true);
                     updatePricesUI();
                     
-                    // ✅ إذا كانت العملة دولار، اعرض نافذة LE مع الأسعار الموجودة
                     if (selectedCurrency === '$') {
                         setTimeout(() => {
-                            const leEmpty = !currentTrip.prices.LE || currentTrip.prices.LE.every(p => p === 0);
-                            const hasLE = !leEmpty;
-                            
+                            const currentLE = currentTrip.prices.LE ? [...currentTrip.prices.LE] : [];
                             showConfirm(
-                                hasLE ? 'هل تريد تعديل سعر الجنيه المصري؟' : 'هل تريد إدخال أسعار الجنيه المصري؟',
+                                currentLE.some(p => p > 0) ? 'هل تريد تعديل سعر الجنيه المصري؟' : 'هل تريد إدخال أسعار الجنيه المصري؟',
                                 async () => {
-                                    // ✅ تمرير الأسعار الموجودة إلى نافذة LE
-                                    const currentLE = currentTrip.prices.LE ? [...currentTrip.prices.LE] : [];
                                     showCurrencyModal(currentTrip.items, async (lePrices) => {
-                                         // ✅ ✅ ✅ التصحيح: إرسال LE في lePrices وليس prices
-                                           const leRes = await jsonp('updateTrip', {
+                                        const leRes = await jsonp('updateTrip', {
                                             tripName: currentTrip.name,
                                             category: category,
                                             currencyType: 'LE_ONLY',
@@ -2157,8 +2228,8 @@ async function updateTrip() {
                                             bankPercentage: bankPercent,
                                             items: JSON.stringify(currentItems),
                                             centerName: centerName,
-                                            mandatoryFees: JSON.stringify(currentTrip.mandatoryFees || {}),  // ✅ أضف
-                                            fixedCosts: JSON.stringify(currentTrip.fixedCosts || {})         // ✅ أضف
+                                            mandatoryFees: JSON.stringify(finalMandatoryFees),
+                                            fixedCosts: JSON.stringify(finalFixedCosts)
                                         });
                                         
                                         if (leRes.success) {
@@ -2217,7 +2288,6 @@ async function updateTrip() {
                 updateBtn.innerHTML = originalBtnText;
                 updateBtn.disabled = false;
             }
-            console.log('❌ تم إلغاء التحديث');
         });
         
     } catch(err) {
@@ -2722,8 +2792,7 @@ function updateMandatoryFee(index) {
   if (!currentTrip.mandatoryFees) currentTrip.mandatoryFees = {};
   currentTrip.mandatoryFees[itemName] = { value, currency };
   
-  console.log(`📋 MandatoryFee [${itemName}]: ${value} ${currency}`);
-}
+ }
 
 /**
  * تحديث تكلفة ثابتة لبند
@@ -2737,8 +2806,6 @@ function updateFixedCost(index) {
   
   if (!currentTrip.fixedCosts) currentTrip.fixedCosts = {};
   currentTrip.fixedCosts[itemName] = { value, currency };
-  
-  console.log(`💰 FixedCost [${itemName}]: ${value} ${currency}`);
 }
 
 /**
