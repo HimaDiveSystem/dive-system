@@ -2851,17 +2851,50 @@ async function loadActivitiesCheckboxes(sel = []) {
   const c = document.getElementById('activitiesCheckboxes');
   if (!c) return;
   
+  // ✅ ✅ ✅ إصلاح: التعامل مع جميع أشكال الاستجابة
   if (!cachedActivities) {
     try {
-      cachedActivities = await callGAS('getAllActivities');
+      const result = await callGAS('getAllActivities');
+      
+      console.log('📥 getAllActivities raw response:', result);
+      console.log('📥 type:', typeof result);
+      console.log('📥 isArray:', Array.isArray(result));
+      
+      // ✅ الحالات المختلفة
+      if (Array.isArray(result)) {
+        cachedActivities = result;
+      } else if (result && Array.isArray(result.data)) {
+        cachedActivities = result.data;
+      } else if (result && Array.isArray(result.activities)) {
+        cachedActivities = result.activities;
+      } else if (result && typeof result === 'object') {
+        // ✅ قد يكون كائن بعناصر مرقّمة (0, 1, 2...)
+        const values = Object.values(result);
+        const arr = values.filter(v => v && typeof v === 'object' && v.name);
+        cachedActivities = arr.length > 0 ? arr : [];
+      } else {
+        console.warn('⚠️ getAllActivities: unexpected response format');
+        cachedActivities = [];
+      }
+      
+      console.log(`✅ cachedActivities loaded: ${cachedActivities.length} items`);
     } catch(e) {
-      console.error(e);
+      console.error('❌ getAllActivities error:', e);
       cachedActivities = [];
     }
   }
   
-  const selArr = typeof sel === 'string' ? sel.split(',').map(s => s.trim()) : sel;
-  const acts = (cachedActivities || []).filter(a => a.status);
+  // ✅ ✅ ✅ تأكد نهائي
+  if (!Array.isArray(cachedActivities)) {
+    console.warn('⚠️ cachedActivities is not array:', typeof cachedActivities);
+    cachedActivities = [];
+  }
+  
+  const selArr = typeof sel === 'string' 
+    ? sel.split(',').map(s => s.trim()).filter(Boolean)
+    : (Array.isArray(sel) ? sel : []);
+  
+  const acts = cachedActivities.filter(a => a && (a.status === true || a.status === 'TRUE'));
   
   if (acts.length === 0) {
     c.innerHTML = '<span style="color:#aaa;">لا توجد أنشطة</span>';
@@ -2869,7 +2902,10 @@ async function loadActivitiesCheckboxes(sel = []) {
   }
   
   c.innerHTML = acts.map(a => 
-    `<label class="act-lbl"><input type="checkbox" value="${safeEscape(a.name)}" ${selArr.includes(a.name) ? 'checked' : ''}><span>${safeEscape(a.name)}</span></label>`
+    `<label class="act-lbl">
+      <input type="checkbox" value="${safeEscape(a.name)}" ${selArr.includes(a.name) ? 'checked' : ''}>
+      <span>${safeEscape(a.name)}</span>
+    </label>`
   ).join('');
 }
 
