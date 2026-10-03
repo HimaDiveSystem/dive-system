@@ -9,7 +9,7 @@ const CONFIG = {
   REQUEST_TIMEOUT: 60000,
   
   // ✅ التأخير بين الطلبات في الطابور (بالمللي ثانية)
-  QUEUE_DELAY: 150,
+  QUEUE_DELAY: 400,
   
   // ✅ أسماء الصفحات حسب نوع المستخدم
   DASHBOARD_PAGES: {
@@ -49,9 +49,9 @@ let _jsonpQueue = [];            // طابور الطلبات
  * @param {Object} params - المعاملات (اختياري)
  * @returns {Promise<any>}
  */
-function callGAS(action, params = {}) {
+function callGAS(action, params = {}, retries = 2) {
   return new Promise((resolve, reject) => {
-    _jsonpQueue.push({ action, params, resolve, reject });
+    _jsonpQueue.push({ action, params, resolve, reject, retries });
     _processQueue();
   });
 }
@@ -64,9 +64,8 @@ function _processQueue() {
   
   const task = _jsonpQueue.shift();
   _jsonpInProgress = true;
-  
-  const { action, params, resolve, reject } = task;
-  
+   const { action, params, resolve, reject, retries } = task;  
+    
   // ✅ إضافة centerName تلقائياً إذا كان المستخدم مسجلاً
   const user = typeof Session !== 'undefined' && Session.getUser ? Session.getUser() : null;
   const finalParams = { ...params };
@@ -129,12 +128,22 @@ function _processQueue() {
   };
   
   // ✅ مهلة الطلب
+   // ✅ مهلة الطلب
   timeoutId = setTimeout(() => {
     if (isResolved) return;
     isResolved = true;
     console.error(`❌ callGAS [${action}] timeout after ${CONFIG.REQUEST_TIMEOUT}ms`);
     cleanup();
-    reject(new Error('انتهى وقت الاتصال'));
+    
+    // ✅ Retry Logic (نفس ما في script.onerror)
+    if (retries > 0) {
+      console.log(`🔄 إعادة محاولة [${action}]... (${retries} متبقية)`);
+      setTimeout(() => {
+        callGAS(action, params, retries - 1).then(resolve).catch(reject);
+      }, 1000);
+    } else {
+      reject(new Error('انتهى وقت الاتصال'));
+    }
   }, CONFIG.REQUEST_TIMEOUT);
   
   // ✅ إنشاء عنصر script
@@ -142,14 +151,22 @@ function _processQueue() {
   script.src = url.toString();
   script.async = true;
   
-  script.onerror = function() {
+   script.onerror = function() {
     if (isResolved) return;
     isResolved = true;
     console.error(`❌ callGAS [${action}] script load error`);
     cleanup();
-    reject(new Error('فشل تحميل السكربت'));
-  };
-  
+    
+    // ✅ Retry Logic
+    if (retries > 0) {
+      console.log(`🔄 إعادة محاولة [${action}]... (${retries} متبقية)`);
+      setTimeout(() => {
+        callGAS(action, params, retries - 1).then(resolve).catch(reject);
+      }, 1000);
+    } else {
+      reject(new Error('فشل تحميل السكربت'));
+    }
+  };  
   document.head.appendChild(script);
 }
 
