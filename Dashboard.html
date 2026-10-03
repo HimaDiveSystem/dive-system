@@ -1077,6 +1077,348 @@ let availablePermissions = {};
 let allPermissionsList = [];
 
 // ═══════════════════════════════════════════════════════════════════
+// ✅ نظام Cache + Performance Optimization
+// ═══════════════════════════════════════════════════════════════════
+let currentView = '';
+window._dashLoading = true;
+const DASH_CACHE_KEY = 'dash_cache_v2';
+const policyCache = {};
+let policyLoadToken = 0;
+let activitiesPromise = null;
+let activitiesRenderToken = 0;
+
+/**
+ * تطبيق الإحصائيات على الواجهة
+ */
+function applyStats(s) {
+  s = s || {};
+  const set = (id, v) => { 
+    const el = document.getElementById(id); 
+    if (el) { 
+      el.className = 'stat-value'; 
+      el.textContent = v ?? 0; 
+    } 
+  };
+  set('cnt-centers', s.centers);
+  set('cnt-branches', s.branches);
+  set('cnt-staff', s.users);
+  set('cnt-critical', s.critical);
+  set('cnt-warning', s.warning);
+}
+
+/**
+ * حفظ Cache الداشبورد (بدون كلمات المرور)
+ */
+function saveDashCache() {
+  try {
+    const strip = u => { 
+      const { password, loginPassword, ...rest } = u; 
+      return rest; 
+    };
+    localStorage.setItem(DASH_CACHE_KEY, JSON.stringify({
+      centers: centers.map(strip),
+      branches: branches.map(strip),
+      staff: staff.map(strip),
+      stats: window._lastStats || null
+    }));
+  } catch (e) {}
+}
+
+/**
+ * تحميل Cache الداشبورد
+ */
+function loadDashCache() {
+  try {
+    const raw = localStorage.getItem(DASH_CACHE_KEY);
+    if (!raw) return false;
+    const c = JSON.parse(raw);
+    centers = c.centers || [];
+    branches = c.branches || [];
+    staff = c.staff || [];
+    if (c.stats) { 
+      window._lastStats = c.stats; 
+      applyStats(c.stats); 
+    }
+    return centers.length > 0;
+  } catch (e) { 
+    return false; 
+  }
+}
+
+/**
+ * إعادة عرض الواجهة الحالية
+ */
+function rerenderCurrentView() {
+  if (currentView === 'centers') renderCentersTable();
+  else if (currentView === 'branches') renderBranchesTable();
+  else if (currentView === 'staff') renderStaffTable();
+}
+
+/**
+ * ✅ جلب كل بيانات الداشبورد بطلب واحد
+ */
+async function fetchDashboard() {
+  window._dashLoading = true;
+  try {
+    let boot = null;
+    try {
+      boot = await callGAS('getDashboardBootstrap');
+    } catch (e) {
+      console.warn('⚠️ getDashboardBootstrap failed, fallback to old method');
+    }
+    
+    if (boot && boot.success && Array.isArray(boot.centers)) {
+      centers = boot.centers;
+      branches = boot.branches || [];
+      staff = boot.users || [];
+      window._lastStats = boot.stats;
+      applyStats(boot.stats);
+    } else {
+      // ✅ Fallback: الطريقة القديمة
+      const [stats, d] = await Promise.all([
+        callGAS('getDashboardStats'),
+        callGAS('getAllDashboardData')
+      ]);
+      window._lastStats = stats;
+      applyStats(stats);
+      if (Array.isArray(d?.centers))  centers  = d.centers;
+      if (Array.isArray(d?.branches)) branches = d.branches;
+      if (Array.isArray(d?.users))    staff    = d.users;
+    }
+    
+    window.staff = staff;
+    try {
+      localStorage.setItem('users', JSON.stringify(staff));
+      sessionStorage.setItem('users', JSON.stringify(staff));
+    } catch (e) {}
+    
+    saveDashCache();
+  } catch (e) {
+    console.error('❌ fetchDashboard:', e);
+    if (!centers.length) {
+      showAlert('⚠️ حدث خطأ في تحميل البيانات. يرجى تحديث الصفحة.');
+    }
+  } finally {
+    window._dashLoading = false;
+    rerenderCurrentView();
+  }
+}
+
+/**
+ * ✅ استبدال refreshData
+ */
+async function refreshData() { 
+  return fetchDashboard(); 
+}
+
+/**
+ * ✅ استبدال loadDashboardData
+ */
+async function loadDashboardData() { 
+  return fetchDashboard(); 
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ✅ نظام Cache لسياسات العمولة
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * جلب سياسات مركز مع Cache
+ */
+async function getPolicyHistory(centerName) {
+  const r = await callGAS('getPolicyHistoryForCenter', { centerName });
+  const list = (r && r.success && Array.isArray(r.data)) ? r.data : [];
+  policyCache[centerName] = list;
+  return list;
+}
+
+/**
+ * اختيار السياسة المطبقة حسب التاريخ
+ */
+function pickApplicablePolicy(policies, date) {
+  if (!policies || !policies.length) return null;
+  const d = new Date(date || new Date());
+  d.setHours(0, 0, 0, 0);
+  
+  const sorted = [...policies].sort((a, b) => {
+    const da = parseDateFromString(a.effectiveFrom);
+    const db = parseDateFromString(b.effectiveFrom);
+    return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
+  });
+  
+  for (const p of sorted) {
+    const e = parseDateFromString(p.effectiveFrom);
+    if (e) { 
+      e.setHours(0, 0, 0, 0); 
+      if (d >= e) return p; 
+    }
+  }
+  return sorted[sorted.length - 1];
+}
+
+/**
+ * بناء HTML لـ Timeline
+ */
+function buildPolicyTimelineHtml(policies) {
+  const sorted = [...policies].sort((a, b) => {
+    const da = parseDateFromString(a.effectiveFrom);
+    const db = parseDateFromString(b.effectiveFrom);
+    return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
+  });
+  
+  const current = pickApplicablePolicy(sorted);
+  
+  return sorted.map((policy, index) => {
+    const isCurrent = current && policy.historyId === current.historyId;
+    const s = policy.settings || {};
+    const deductions = [];
+    if (s.deductDiscount) deductions.push('الخصم');
+    if (s.deductMandatoryFees) deductions.push('الرسوم');
+    if (s.deductTripCost) deductions.push('التكلفة');
+    
+    let activityRatesHtml = '';
+    if (s.useActivityRates && s.activityRates && Object.keys(s.activityRates).length) {
+      const list = Object.entries(s.activityRates)
+        .map(([n, r]) => `<span style="background:#e0e7ff;padding:2px 8px;border-radius:10px;font-size:10px;margin:2px;display:inline-block;">${safeEscape(n)}: ${safeEscape(r)}%</span>`)
+        .join('');
+      activityRatesHtml = `<div style="margin-top:6px;"><span style="font-size:10px;color:#4c1d95;font-weight:700;">🎯 نسب مخصصة:</span> ${list}</div>`;
+    }
+    
+    const bg = isCurrent 
+      ? 'linear-gradient(135deg,#d4edda,#c8e6c9)' 
+      : (index === 0 ? 'linear-gradient(135deg,#fff3cd,#ffecb3)' : 'white');
+    const border = isCurrent ? '#27ae60' : (index === 0 ? '#f5c842' : '#e9f0fa');
+    const badge = isCurrent
+      ? '<span style="background:#27ae60;color:white;padding:2px 8px;border-radius:10px;font-size:9px;font-weight:700;">✅ الحالية المطبقة</span>'
+      : (index === 0
+        ? '<span style="background:#f5c842;color:#1e2b4f;padding:2px 8px;border-radius:10px;font-size:9px;font-weight:700;">🔵 الأحدث (لم تبدأ بعد)</span>'
+        : '<span style="background:#e9f0fa;color:#5a6a8a;padding:2px 8px;border-radius:10px;font-size:9px;font-weight:700;">📜 سابقة</span>');
+    
+    return `
+      <div style="background:${bg};border:2px solid ${border};border-radius:10px;padding:10px 12px;font-size:11px;color:#1e2b4f;line-height:1.5;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+            <strong style="font-size:12px;color:#0f1f3d;">${safeEscape(policy.historyId)}</strong>${badge}
+          </div>
+          <div dir="ltr" style="font-size:11px;font-weight:700;color:#0f1f3d;">📅 ${safeEscape(policy.effectiveFrom)}</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <div style="background:#1e2b4f;color:#f5c842;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;">💰 ${safeEscape(s.rate || 0)}%</div>
+          ${deductions.length
+            ? `<div style="background:#fee2e2;color:#b71c1c;padding:3px 10px;border-radius:12px;font-size:10px;">🔻 يخصم: ${deductions.join(' + ')}</div>`
+            : `<div style="background:#f0f9ff;color:#0369a1;padding:3px 10px;border-radius:12px;font-size:10px;">بدون خصومات</div>`}
+          ${s.shareProfit ? `<div style="background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:12px;font-size:10px;font-weight:700;">💎 تقاسم أرباح 50%</div>` : ''}
+        </div>
+        ${activityRatesHtml}
+      </div>`;
+  }).join('');
+}
+
+/**
+ * عرض Timeline في حاوية
+ */
+function renderPolicyTimeline(containerId, policies) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el.innerHTML = (policies && policies.length)
+    ? buildPolicyTimelineHtml(policies)
+    : '<div style="text-align:center;padding:20px;color:#94a3b8;font-size:12px;">📭 لا توجد سجلات لهذا المركز</div>';
+}
+
+/**
+ * ✅ loadPolicyTimeline — النسخة المحسّنة
+ */
+async function loadPolicyTimeline(centerName, currentHistoryId = '', containerId = 'policyTimelineList') {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  
+  if (!centerName) {
+    container.innerHTML = '<div style="text-align:center;padding:20px;color:#94a3b8;font-size:12px;">💡 احفظ المركز أولاً لعرض تاريخ السياسات</div>';
+    return;
+  }
+  
+  container.innerHTML = '<div style="text-align:center;padding:20px;color:#94a3b8;font-size:12px;"><div class="loader-sm"></div>⏳ جاري تحميل السجلات...</div>';
+  
+  try {
+    renderPolicyTimeline(containerId, await getPolicyHistory(centerName));
+  } catch (e) {
+    container.innerHTML = `<div style="text-align:center;padding:20px;color:#e74c3c;font-size:12px;">❌ خطأ في التحميل: ${safeEscape(e.message)}</div>`;
+  }
+}
+
+/**
+ * ✅ loadPolicyForEdit — للمركز عند التعديل
+ */
+async function loadPolicyForEdit(centerName) {
+  const myToken = ++policyLoadToken;
+  let filled = false;
+  
+  const apply = (policies) => {
+    if (myToken !== policyLoadToken) return;
+    const cur = pickApplicablePolicy(policies);
+    
+    if (!filled) {
+      filled = true;
+      if (cur) {
+        fillPolicyFields(cur.settings);
+        const eff = document.getElementById('policyEffectiveFrom');
+        if (eff) eff.value = convertDateToInput(cur.effectiveFrom);
+      }
+    }
+    
+    showCurrentPolicyBadge(cur
+      ? { success: true, settings: cur.settings, historyId: cur.historyId, effectiveFrom: cur.effectiveFrom }
+      : null);
+    renderPolicyTimeline('policyTimelineList', policies);
+  };
+  
+  if (policyCache[centerName]) {
+    apply(policyCache[centerName]);
+  } else {
+    loadPolicyTimeline(centerName, '');
+  }
+  
+  try {
+    apply(await getPolicyHistory(centerName));
+  } catch (e) {
+    console.warn('⚠️ فشل تحميل السياسات:', e);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ✅ تحميل الأنشطة (Promise مشترك)
+// ═══════════════════════════════════════════════════════════════════
+
+function fetchActivities() {
+  if (cachedActivities) return Promise.resolve(cachedActivities);
+  if (!activitiesPromise) {
+    activitiesPromise = callGAS('getAllActivities')
+      .then(result => {
+        let arr = [];
+        if (Array.isArray(result)) arr = result;
+        else if (result && Array.isArray(result.data)) arr = result.data;
+        else if (result && Array.isArray(result.activities)) arr = result.activities;
+        else if (result && typeof result === 'object') {
+          arr = Object.values(result).filter(v => v && typeof v === 'object' && v.name);
+        }
+        
+        if (arr.length) {
+          cachedActivities = arr;
+        } else {
+          activitiesPromise = null;
+        }
+        return arr;
+      })
+      .catch(e => {
+        activitiesPromise = null;
+        console.error('❌ getAllActivities:', e);
+        return [];
+      });
+  }
+  return activitiesPromise;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // ✅ دوال الصلاحيات
 // ═══════════════════════════════════════════════════════════════════
 
@@ -1376,6 +1718,10 @@ function getDaysLeft(endStr) {
  * @param {string} ds - التاريخ بصيغة (dd/MMM/yyyy) أو (yyyy-MM-dd) أو (dd-MMM-yyyy)
  * @returns {Date|null}
  */
+/**
+ * تحويل نص التاريخ إلى Date object
+ * يدعم: dd/MMM/yyyy, dd-MMM-yyyy, yyyy-MM-dd, d/M/yyyy
+ */
 function parseDateFromString(ds) {
   if (!ds) return null;
   if (ds instanceof Date) return ds;
@@ -1384,7 +1730,7 @@ function parseDateFromString(ds) {
   ds = ds.toString().trim();
   if (!ds) return null;
   
-  // ✅ صيغة dd/MMM/yyyy
+  // ✅ dd/MMM/yyyy
   if (ds.match(/^\d{1,2}\/[A-Za-z]{3}\/\d{4}$/)) {
     const months = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
     const parts = ds.split('/');
@@ -1394,7 +1740,7 @@ function parseDateFromString(ds) {
     if (month !== undefined) return new Date(year, month, day);
   }
   
-  // ✅ صيغة dd-MMM-yyyy
+  // ✅ dd-MMM-yyyy
   if (ds.match(/^\d{1,2}-[A-Za-z]{3}-\d{4}$/)) {
     const months = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
     const parts = ds.split('-');
@@ -1404,13 +1750,13 @@ function parseDateFromString(ds) {
     if (month !== undefined) return new Date(year, month, day);
   }
   
-  // ✅ صيغة ISO: yyyy-MM-dd
+  // ✅ yyyy-MM-dd
   if (ds.match(/^\d{4}-\d{2}-\d{2}/)) {
     const p = ds.substring(0,10).split('-');
     return new Date(parseInt(p[0]), parseInt(p[1]) - 1, parseInt(p[2]));
   }
   
-  // ✅ صيغة d/M/yyyy
+  // ✅ d/M/yyyy
   if (ds.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
     const p = ds.split('/');
     return new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0]));
@@ -1467,8 +1813,10 @@ function checkUserPermission(permission) {
   return perms.includes(permission);
 }
 
-function closeModal(id){ 
-  document.getElementById(id).style.display='none'; 
+function closeModal(id) { 
+  // ✅ إبطال أي تحميل سياسة قيد التنفيذ
+  if (id === 'centerModal') policyLoadToken++;
+  document.getElementById(id).style.display = 'none'; 
 }
 
 function showAlert(msg, cb) {
@@ -1514,7 +1862,7 @@ function showCenters() {
     showAlert('⚠️ ليس لديك صلاحية لعرض المراكز');
     return;
   }
-  
+  currentView = 'centers';
   const ca = document.getElementById('contentArea');
   ca.innerHTML = `<div class="content-header"><h2>🏢 إدارة المراكز</h2><button class="btn-primary" id="addCenterBtn">➕ إضافة مركز</button></div><div class="table-wrap"><table><thead><tr><th>المركز</th><th>المالك</th><th>الجوال</th><th>انتهاء الاشتراك</th><th>المتبقي</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody id="centersTbody">${skeletonRows(7)}</tbody></table></div>`;
   document.getElementById('addCenterBtn').addEventListener('click', ()=>openCenterModal());
@@ -1524,10 +1872,12 @@ function showCenters() {
 function renderCentersTable() {
   const tb = document.getElementById('centersTbody'); 
   if(!tb) return;
-  if (!centers.length) { 
-    tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:30px;color:#aaa;">لا توجد مراكز</td></tr>'; 
-    return; 
-  }
+  if (!centers.length) {
+  tb.innerHTML = window._dashLoading
+    ? skeletonRows(7)
+    : '<tr><td colspan="7" style="text-align:center;padding:30px;color:#aaa;">لا توجد مراكز</td></tr>';
+  return;
+}
   
   const canEdit = checkUserPermission('ManageCenters');
   const canDelete = checkUserPermission('ManageCenters');
@@ -1563,135 +1913,148 @@ if (canDelete) {
   }).join('');
 }
 
-async function openCenterModal(id) {
+/**
+ * ✅ openCenterModal — النسخة المحسّنة
+ * - النافذة تظهر فوراً
+ * - البيانات تُحمّل في الخلفية
+ */
+function openCenterModal(id) {
   if (!checkUserPermission('ManageCenters')) {
     showAlert('⚠️ ليس لديك صلاحية لإدارة المراكز');
     return;
   }
   
   const isEdit = !!id;
+  const c = isEdit ? centers.find(x => x.id === id) : null;
+  
+  if (isEdit && !c) {
+    showAlert('بيانات المركز غير موجودة');
+    return;
+  }
+  
+  // ✅ إعداد النافذة
   document.getElementById('centerModalTitle').textContent = isEdit ? '✏️ تعديل المركز' : '➕ مركز جديد';
   document.getElementById('centerForm').reset();
   document.getElementById('centerId').value = id || '';
   
   ensureExtraFields();
   ensureLogoUploadField();
-  loadActivitiesCheckboxes([]);
+  
+  // ✅ إعادة تعيين اللوجو
+  const logoPrev = document.getElementById('logoPreview');
+  if (logoPrev) logoPrev.innerHTML = '<span style="font-size:24px;">🖼️</span>';
+  const logoUrl = document.getElementById('centerLogoUrl');
+  if (logoUrl) logoUrl.value = '';
+  
+  // ✅ إعداد السياسة
+  fillPolicyFields(null);
+  bindPolicyEvents();
+  showCurrentPolicyBadge(null);
   
   if (isEdit) {
-    const c = centers.find(x => x.id === id);
-    if (!c) { showAlert('بيانات المركز غير موجودة'); return; }
-    
+    // ✅ تعبئة الحقول (فوري)
     document.getElementById('centerName').value = c.name || '';
     document.getElementById('ownerName').value = c.owner || '';
-    document.getElementById('centerEmail').value = c.email || '';  // 📧 البريد الرسمي
-    document.getElementById('centerLoginEmail').value = c.loginEmail || '';  // 🔑 بريد تسجيل الدخول
+    document.getElementById('centerEmail').value = c.email || '';
+    document.getElementById('centerLoginEmail').value = c.loginEmail || '';
     document.getElementById('centerLoginPassword').value = c.loginPassword || '123456';
     document.getElementById('centerPhone').value = c.phone || '';
     document.getElementById('centerAddress').value = c.address || '';
-       document.getElementById('subscriptionPlan').value = c.subscriptionPlan || 'باقة أساسية - 3500 جنيه/شهر';
-    
-    // ✅ تحميل إعدادات السياسة من الخادم
-       // ✅ تحميل إعدادات السياسة الحالية من الخادم
-    const policyResult = await callGAS('getCenterCommissionSettings', { centerName: c.name });
-    if (policyResult?.success && policyResult.settings) {
-      fillPolicyFields(policyResult.settings);
-      
-      // ✅ تعبئة EffectiveFrom من آخر سجل
-      const effectiveFromEl = document.getElementById('policyEffectiveFrom');
-      if (effectiveFromEl && policyResult.effectiveFrom) {
-        effectiveFromEl.value = convertDateToInput(policyResult.effectiveFrom);
-      }
-      
-      // ✅ عرض شارة السياسة الحالية
-      showCurrentPolicyBadge(policyResult);
-      
-      // ✅ تحميل Timeline كل السجلات
-      loadPolicyTimeline(c.name, policyResult.historyId || '');
-      
-    } else {
-      fillPolicyFields(null);
-      showCurrentPolicyBadge(null);
-      loadPolicyTimeline(c.name, '');
-    }
-    
-    bindPolicyEvents();
-    
+    document.getElementById('subscriptionPlan').value = c.subscriptionPlan || 'باقة أساسية - 3500 جنيه/شهر';
     document.getElementById('centerStatus').value = (c.status === 'TRUE' || c.status === true) ? 'Active' : 'Inactive';
     document.getElementById('contactNumbers').value = c.contactNumbers || '';
     document.getElementById('centerCategory').value = c.centerCategory || '';
     document.getElementById('cancelationPolicy').value = c.cancelationPolicy || '';
     document.getElementById('subscriptionStart').value = convertDateToInput(c.subscriptionStart);
     document.getElementById('subscriptionEnd').value = convertDateToInput(c.subscriptionEnd);
-    loadActivitiesCheckboxes(c.activities || '');
     
     if (c.centerLogo && c.centerLogo.trim() !== '') {
       document.getElementById('centerLogoUrl').value = c.centerLogo;
-      document.getElementById('logoPreview').innerHTML = `<img src="${getDriveDirectUrl(c.centerLogo)}" style="width:100%; height:100%; object-fit:cover;">`;
+      document.getElementById('logoPreview').innerHTML = `<img src="${getDriveDirectUrl(c.centerLogo)}" style="width:100%;height:100%;object-fit:cover;">`;
     }
-  } else {
-       // ✅ عند إنشاء مركز جديد
-    fillPolicyFields(null);
-    bindPolicyEvents();
     
-    // ✅ إخفاء شارة السياسة الحالية + Timeline
-    showCurrentPolicyBadge(null);
+    // ✅ تحميل الأنشطة (خلفياً — لا await)
+    loadActivitiesCheckboxes(c.activities || '');
+    
+    // ✅ تحميل السياسة (خلفياً — لا await)
+    loadPolicyForEdit(c.name);
+    
+  } else {
+    // ✅ مركز جديد
+    loadActivitiesCheckboxes([]);
+    policyLoadToken++;
     loadPolicyTimeline('', '');
     
-    // ✅ تعبئة تاريخ السريان الافتراضي
-    const effectiveFromEl = document.getElementById('policyEffectiveFrom');
-    if (effectiveFromEl) {
-      effectiveFromEl.value = '2026-01-01';
-    }
+    const eff = document.getElementById('policyEffectiveFrom');
+    if (eff) eff.value = '2026-01-01';
     
-    
-    // ✅ معاينة الإيميل المتولد
+    // ✅ معاينة الإيميل
     const nameInput = document.getElementById('centerName');
     const loginEmailInput = document.getElementById('centerLoginEmail');
     
-    const updateLoginEmail = function() {
-      const name = nameInput.value.trim();
-      const cleanCenter = name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'center';
-      loginEmailInput.value = `owner@${cleanCenter}.com`;
+    const updateLoginEmail = () => {
+      const clean = nameInput.value.trim().replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'center';
+      loginEmailInput.value = `owner@${clean}.com`;
     };
     
-    nameInput.addEventListener('input', updateLoginEmail);
-    setTimeout(updateLoginEmail, 100);
+    nameInput.oninput = updateLoginEmail;
+    updateLoginEmail();
   }
   
-  document.getElementById('centerModal').style.display = 'flex';
+  // ✅ ✅ ✅ إظهار النافذة فوراً (قبل أي await)
+  const modal = document.getElementById('centerModal');
+  modal.style.display = 'flex';
+  
+  const box = modal.querySelector('.modal-box');
+  if (box) box.scrollTop = 0;
 }
   
 function viewCenter(id) {
   const c = centers.find(x => x.id === id);
-  if (!c) return;
+  if (!c) {
+    showAlert('المركز غير موجود');
+    return;
+  }
   
   let logoHtml = '';
   if (c.centerLogo && c.centerLogo.trim() !== '') {
-    logoHtml = `<div style="text-align:center; margin:15px 0;">
-      <img src="${getDriveDirectUrl(c.centerLogo)}" style="max-width:150px; max-height:150px; border-radius:12px; border:1px solid #ddd; padding:5px; background:white;">
-    </div>`;
+    logoHtml = `<div style="text-align:center;margin:15px 0;">
+      <img src="${getDriveDirectUrl(c.centerLogo)}" style="max-width:150px;max-height:150px;border-radius:12px;border:1px solid #ddd;padding:5px;background:white;"></div>`;
   }
- 
+  
   document.getElementById('viewTitle').textContent = '🏢 تفاصيل المركز';
   document.getElementById('viewBody').innerHTML = `
     ${logoHtml}
     <p><strong>المعرف:</strong> ${safeEscape(c.id)}</p>
     <p><strong>المركز:</strong> ${safeEscape(c.name)}</p>
     <p><strong>المالك:</strong> ${safeEscape(c.owner)}</p>
-    <p><strong>البريد:</strong> ${safeEscape(c.email)}</p>
-    <p><strong>الجوال:</strong> ${safeEscape(c.phone)}</p>
-    <p><strong>العنوان:</strong> ${safeEscape(c.address)}</p>
-    <p><strong>خطة الاشتراك:</strong> ${safeEscape(c.subscriptionPlan)}</p>
-    <p><strong>بداية الاشتراك:</strong> ${safeEscape(c.subscriptionStart)}</p>
-    <p><strong>انتهاء الاشتراك:</strong> ${safeEscape(c.subscriptionEnd)}</p>
-    <p><strong>أرقام التواصل:</strong> ${safeEscape(c.contactNumbers)||'—'}</p>
-    <p><strong>فئة المركز:</strong> ${safeEscape(c.centerCategory)||'—'}</p>
-    <p><strong>سياسة الإلغاء:</strong> ${safeEscape(c.cancelationPolicy)||'—'}</p>
-    <p><strong>الأنشطة:</strong> ${safeEscape(c.activities)||'—'}</p>
+    <p><strong>البريد:</strong> ${safeEscape(c.email) || '—'}</p>
+    <p><strong>الجوال:</strong> ${safeEscape(c.phone) || '—'}</p>
+    <p><strong>العنوان:</strong> ${safeEscape(c.address) || '—'}</p>
+    <p><strong>خطة الاشتراك:</strong> ${safeEscape(c.subscriptionPlan) || '—'}</p>
+    <p><strong>بداية الاشتراك:</strong> ${safeEscape(c.subscriptionStart) || '—'}</p>
+    <p><strong>انتهاء الاشتراك:</strong> ${safeEscape(c.subscriptionEnd) || '—'}</p>
+    <p><strong>أرقام التواصل:</strong> ${safeEscape(c.contactNumbers) || '—'}</p>
+    <p><strong>فئة المركز:</strong> ${safeEscape(c.centerCategory) || '—'}</p>
+    <p><strong>سياسة الإلغاء:</strong> ${safeEscape(c.cancelationPolicy) || '—'}</p>
+    <p><strong>الأنشطة:</strong> ${safeEscape(c.activities) || '—'}</p>
     <p><strong>الحالة:</strong> ${(c.status === 'TRUE' || c.status === true) ? 'نشط' : 'غير نشط'}</p>
+    
+    <!-- ✅ ✅ ✅ قسم Timeline السياسات -->
+    <div style="margin-top:16px;padding:12px;background:#fef3c7;border:2px solid #f5c842;border-radius:12px;line-height:1.5;">
+      <div style="font-weight:700;color:#92400e;margin-bottom:8px;">📜 تاريخ سياسات العمولة (Timeline)</div>
+      <div id="viewPolicyTimeline" style="display:flex;flex-direction:column;gap:8px;max-height:280px;overflow-y:auto;"></div>
+    </div>
   `;
+  
+  // ✅ إظهار النافذة فوراً
   document.getElementById('viewModal').style.display = 'flex';
+  
+  // ✅ تحميل Timeline (خلفياً — فوري من Cache إن وُجد)
+  if (policyCache[c.name]) {
+    renderPolicyTimeline('viewPolicyTimeline', policyCache[c.name]);
+  }
+  loadPolicyTimeline(c.name, '', 'viewPolicyTimeline');
 }
 // ═══════════════════════════════════════════════════════════════════
 // ✅ دوال سياسة العمولة الموحّدة
@@ -1962,11 +2325,11 @@ async function saveCenter(e) {
     return;
   }
   
-  const acts = Array.from(document.querySelectorAll('#activitiesCheckboxes input:checked')).map(x=>x.value).join(',');
-  const id = document.getElementById('centerId').value||'';
+  const acts = Array.from(document.querySelectorAll('#activitiesCheckboxes input:checked'))
+    .map(x => x.value).join(',');
+  const id = document.getElementById('centerId').value || '';
   const logoUrl = document.getElementById('centerLogoUrl')?.value || '';
   
-  // ✅ جلب البيانات
   const name = document.getElementById('centerName').value.trim();
   const owner = document.getElementById('ownerName').value.trim();
   const phone = document.getElementById('centerPhone').value.trim();
@@ -1975,31 +2338,33 @@ async function saveCenter(e) {
   const subscriptionStart = document.getElementById('subscriptionStart').value;
   const subscriptionEnd = document.getElementById('subscriptionEnd').value;
   
-  // ✅ ============================================================
-  // ✅ التحقق من جميع البيانات المطلوبة قبل الحفظ
-  // ✅ ============================================================
+  // ✅ التحقق
   const errors = [];
-  
   if (!name) errors.push('اسم المركز مطلوب');
   if (!owner) errors.push('اسم المالك مطلوب');
   if (!phone) errors.push('رقم الجوال مطلوب');
-  if (!loginEmail) errors.push('بريد تسجيل الدخول مطلوب (يتولد تلقائياً)');
+  if (!loginEmail) errors.push('بريد تسجيل الدخول مطلوب');
   if (!loginPassword || loginPassword.length < 6) errors.push('كلمة المرور مطلوبة (6 أحرف على الأقل)');
   if (!subscriptionStart) errors.push('بداية الاشتراك مطلوبة');
   if (!subscriptionEnd) errors.push('نهاية الاشتراك مطلوبة');
   
-  // ✅ التحقق من صحة البريد الإلكتروني
-  if (loginEmail && !loginEmail.includes('@')) {
-    errors.push('بريد تسجيل الدخول غير صحيح (يجب أن يحتوي على @)');
+  // ✅ ✅ ✅ إلزام فئة نشاط
+  const actBoxes = document.querySelectorAll('#activitiesCheckboxes input[type="checkbox"]');
+  if (actBoxes.length === 0) {
+    errors.push('فئات الأنشطة لم تُحمَّل بعد، انتظر لحظة ثم أعد المحاولة');
+  } else if (!acts) {
+    errors.push('اختر فئة نشاط واحدة على الأقل');
   }
   
-  // ✅ التحقق من صحة رقم الجوال
+  if (loginEmail && !loginEmail.includes('@')) {
+    errors.push('بريد تسجيل الدخول غير صحيح');
+  }
+  
   const phoneDigits = phone.replace(/\D/g, '');
   if (phoneDigits.length < 10) {
     errors.push('رقم الجوال غير صحيح (10 أرقام على الأقل)');
   }
   
-  // ✅ التحقق من صحة التواريخ
   if (subscriptionStart && subscriptionEnd) {
     const start = new Date(subscriptionStart);
     const end = new Date(subscriptionEnd);
@@ -2022,7 +2387,7 @@ async function saveCenter(e) {
     loginPassword: loginPassword || '123456',
     phone: phone,
     address: document.getElementById('centerAddress').value.trim(),
-    activities: acts,
+    activities: acts,  // ✅ ✅ ✅ مهم — يُرسل الأنشطة
     subscriptionPlan: document.getElementById('subscriptionPlan').value,
     commissionSettings: getPolicySettings(),
     subscriptionStart: subscriptionStart,
@@ -2034,73 +2399,46 @@ async function saveCenter(e) {
     centerLogo: logoUrl,
     sheetId: ''
   };
-
-  const btn=document.getElementById('centerSaveBtn'); 
-  btn.disabled=true; 
-  btn.textContent='⏳ جاري الحفظ...';
   
-   try {
-    let action = id ? 'updateCenter' : 'createCenterWithSheet';
+  const btn = document.getElementById('centerSaveBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ جاري الحفظ...';
+  
+  try {
+    const action = id ? 'updateCenter' : 'createCenterWithSheet';
     const r = await callGAS(action, data);
     
     if (r?.success) {
-      // ✅ حفظ السياسة في CommissionPolicyHistory
-      const policySettings = getPolicySettings();
-      const effectiveFromISO = document.getElementById('policyEffectiveFrom')?.value || '2026-01-01';
-      
-           try {
-        const policySaveResult = await callGAS('saveCommissionPolicyChange', {
+      // ✅ حفظ السياسة (خلفياً — لا انتظار)
+      try {
+        const pr = await callGAS('saveCommissionPolicyChange', {
           centerName: data.name,
-          effectiveFrom: effectiveFromISO,
-          settings: JSON.stringify(policySettings),
+          effectiveFrom: document.getElementById('policyEffectiveFrom')?.value || '2026-01-01',
+          settings: JSON.stringify(getPolicySettings()),
           changedBy: currentUser?.name || 'Admin',
           notes: id ? 'تحديث سياسة العمولة' : 'سياسة أولية عند الإنشاء'
         });
-        
-        if (policySaveResult?.success) {
-          if (policySaveResult.settingsChanged === false) {
-            console.log('ℹ️ لم تتغير السياسة — لم تُضف سجلاً جديداً');
-          } else {
-            console.log('✅ تم حفظ السياسة:', policySaveResult.message);
-          }
-          
-          // ✅ تحديث Timeline بعد الحفظ
-          try {
-            await loadPolicyTimeline(data.name, policySaveResult.historyId || '');
-          } catch(e) {
-            console.warn('⚠️ فشل تحديث Timeline:', e);
-          }
-          
-          // ✅ تحديث شارة السياسة الحالية
-          try {
-            const updatedPolicy = await callGAS('getCenterCommissionSettings', { centerName: data.name });
-            if (updatedPolicy?.success) {
-              showCurrentPolicyBadge(updatedPolicy);
-            }
-          } catch(e) {
-            console.warn('⚠️ فشل تحديث Badge:', e);
-          }
-          
-        } else {
-          console.warn('⚠️ فشل حفظ سياسة العمولة:', policySaveResult?.message);
-        }
-      } catch(e) {
+        if (!pr?.success) console.warn('⚠️ فشل حفظ سياسة العمولة:', pr?.message);
+      } catch (e) {
         console.error('❌ خطأ في حفظ سياسة العمولة:', e);
       }
       
+      // ✅ إبطال Cache السياسة
+      delete policyCache[data.name];
+      
       closeModal('centerModal');
-      showAlert(r.message || '✅ تم الحفظ', async() => { 
-        await refreshData(); 
+      showAlert(r.message || '✅ تم الحفظ', () => { 
         showCenters(); 
+        fetchDashboard(); 
       });
     } else {
-      showAlert('❌ ' + (r?.message||'فشل الحفظ'));
+      showAlert('❌ ' + (r?.message || 'فشل الحفظ'));
     }
-  } catch(err) { 
-    showAlert('❌ خطأ في الاتصال: ' + err.message); 
-  } finally { 
-    btn.disabled=false; 
-    btn.textContent='💾 حفظ'; 
+  } catch (err) {
+    showAlert('❌ خطأ في الاتصال: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '💾 حفظ';
   }
 }
 
@@ -2173,6 +2511,7 @@ function showBranches() {
     showAlert('⚠️ ليس لديك صلاحية لعرض الفروع');
     return;
   }
+  currentView = 'branches';
   
   const ca = document.getElementById('contentArea');
   ca.innerHTML = `<div class="content-header"><h2>🏛️ إدارة الفروع</h2><button class="btn-primary" id="addBranchBtn">➕ إضافة فرع</button></div><div class="table-wrap"><table><thead><tr><th>الفرع</th><th>المركز</th><th>المدير</th><th>الجوال</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody id="branchesTbody">${skeletonRows(6)}</tbody></table></div>`;
@@ -2183,10 +2522,12 @@ function showBranches() {
 function renderBranchesTable() {
   const tb = document.getElementById('branchesTbody'); 
   if(!tb) return;
-  if(!branches.length){ 
-    tb.innerHTML='<tr><td colspan="6" style="text-align:center;padding:30px;color:#aaa;">لا توجد فروع</td></tr>'; 
-    return; 
-  }
+  if (!branches.length) {
+  tb.innerHTML = window._dashLoading
+    ? skeletonRows(6)
+    : '<tr><td colspan="6" style="text-align:center;padding:30px;color:#aaa;">لا توجد فروع</td></tr>';
+  return;
+}
   
   const canEdit = checkUserPermission('ManageBranches');
   const canDelete = checkUserPermission('ManageBranches');
@@ -2490,7 +2831,7 @@ function showStaff() {
     showAlert('⚠️ ليس لديك صلاحية لعرض المستخدمين');
     return;
   }
-  
+  currentView = 'staff';
   const ca = document.getElementById('contentArea');
   ca.innerHTML = `<div class="content-header"><h2>👥 إدارة المستخدمين</h2><button class="btn-primary" id="addUserBtn">➕ إضافة مستخدم</button></div><div class="table-wrap"><table><thead><tr><th>الاسم</th><th>المركز</th><th>الفرع</th><th>الدور</th><th>الجوال</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody id="staffTbody">${skeletonRows(7)}</tbody></table></div>`;
   document.getElementById('addUserBtn').addEventListener('click', ()=>openUserModal());
@@ -2500,10 +2841,12 @@ function showStaff() {
 function renderStaffTable() {
   const tb = document.getElementById('staffTbody'); 
   if(!tb) return;
-  if(!staff.length){ 
-    tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:#aaa;">لا يوجد مستخدمون</td></tr>'; 
-    return; 
-  }
+ if (!staff.length) {
+  tb.innerHTML = window._dashLoading
+    ? skeletonRows(7)
+    : '<tr><td colspan="7" style="text-align:center;padding:30px;color:#aaa;">لا يوجد مستخدمون</td></tr>';
+  return;
+}
   
   const canEdit = checkUserPermission('ManageUsers');
   const canDelete = checkUserPermission('ManageUsers');
@@ -2593,8 +2936,9 @@ function showPermissions() {
     return;
   }
   
-  const ca = document.getElementById('contentArea');
-  ca.innerHTML = `
+  currentView = 'permissions';
+  
+  document.getElementById('contentArea').innerHTML = `
     <div class="content-header">
       <h2>🔑 إدارة الصلاحيات</h2>
       <div style="display:flex;gap:10px;flex-wrap:wrap;">
@@ -2608,6 +2952,13 @@ function showPermissions() {
       </div>
     </div>
   `;
+  
+  // ✅ عرض فوري من البيانات المحمّلة
+  if (staff.length && staff.some(u => Array.isArray(u.permissions))) {
+    renderPermissionsTable(staff);
+  }
+  
+  // ✅ ثم تحديث من الخادم
   loadPermissionsTable();
 }
   
@@ -2782,83 +3133,82 @@ function editUserPermissions(userId) {
 
 async function openUserModal(id) {
   const isEdit = !!id;
+  const u = isEdit ? staff.find(x => x.id === id) : null;
+  
+  if (isEdit && !u) {
+    showAlert('بيانات المستخدم غير موجودة');
+    return;
+  }
+  
+  // ✅ إعداد النافذة
   document.getElementById('userModalTitle').textContent = isEdit ? '✏️ تعديل المستخدم' : '➕ مستخدم جديد';
   document.getElementById('userForm').reset();
   document.getElementById('userId').value = id || '';
   document.getElementById('historyMsg').style.display = 'none';
-  
-  // ✅ تعبئة حقل كلمة المرور بقيمة افتراضية
   document.getElementById('userLoginPassword').value = '123456';
   
+  // ✅ تعبئة المراكز
   const sel = document.getElementById('userCenterId');
-  sel.innerHTML = '<option value="">اختر المركز...</option>';
-  centers.forEach(c => sel.innerHTML += `<option value="${c.id}">${safeEscape(c.name)}</option>`);
+  sel.innerHTML = '<option value="">اختر المركز...</option>' +
+    centers.map(c => `<option value="${c.id}">${safeEscape(c.name)}</option>`).join('');
   document.getElementById('userBranchId').innerHTML = '<option value="">المركز الرئيسي</option>';
   
   if (isEdit) {
-    const u = staff.find(x => x.id === id);
-    if (!u) { showAlert('بيانات المستخدم غير موجودة'); return; }
-    
+    // ✅ تعبئة الحقول فوراً
     sel.value = u.centerId || '';
     loadBranchesForCenter(u.centerId, u.branchId);
     document.getElementById('userPhone').value = u.phone || '';
     document.getElementById('userFullName').value = u.name || '';
-    document.getElementById('userEmail').value = u.email || '';  // 📧 البريد الشخصي
-    document.getElementById('userLoginEmail').value = u.loginEmail || '';  // 🔑 بريد تسجيل الدخول
+    document.getElementById('userEmail').value = u.email || '';
+    document.getElementById('userLoginEmail').value = u.loginEmail || '';
     document.getElementById('userLoginPassword').value = u.loginPassword || '123456';
     document.getElementById('userStatus').value = u.isActive ? 'active' : 'inactive';
-    
     document.getElementById('userRole').value = u.type || 'Sales';
-    loadPermissionsForRole();
-    
-    let userPermissions = [];
-    if (u.permissions && u.permissions.length > 0) {
-      userPermissions = u.permissions.map(p => p.permission || p);
-      console.log('✅ صلاحيات من staff:', userPermissions);
-    }
-    
-    if (userPermissions.length === 0) {
-      try {
-        console.log('📡 جلب الصلاحيات من الخادم للمستخدم:', id);
-        const result = await callGAS('getPermissionsForUser', { userId: id });
-        if (result?.permissions && result.permissions.length > 0) {
-          userPermissions = result.permissions;
-          console.log('✅ صلاحيات من الخادم:', userPermissions);
-        }
-      } catch(e) {
-        console.warn('⚠️ فشل جلب الصلاحيات من الخادم:', e);
-      }
-    }
-    
-    if (userPermissions.length > 0) {
-      setTimeout(() => {
-        setUserPermissions(userPermissions);
-      }, 400);
-    } else {
-      console.log('ℹ️ لا توجد صلاحيات محفوظة لهذا المستخدم');
-    }
   } else {
-    loadPermissionsForRole();
-    // ✅ عند إنشاء مستخدم جديد، معاينة الإيميل المتولد
+    // ✅ معاينة الإيميل
     const nameInput = document.getElementById('userFullName');
     const loginEmailInput = document.getElementById('userLoginEmail');
-    const centerSelect = document.getElementById('userCenterId');
     
-    const updateLoginEmail = function() {
-      const name = nameInput.value.trim();
-      const cleanName = name.replace(/[^a-zA-Z0-9.]/g, '').toLowerCase() || 'user';
-      const centerName = centers.find(c => c.id === centerSelect.value)?.name || 'center';
-      const cleanCenter = centerName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'center';
-      loginEmailInput.value = `${cleanName}@${cleanCenter}.com`;  // ✅ user@bellaone.com
+    const update = () => {
+      const cleanName = nameInput.value.trim().replace(/[^a-zA-Z0-9.]/g, '').toLowerCase() || 'user';
+      const cn = centers.find(c => c.id === sel.value)?.name || 'center';
+      loginEmailInput.value = `${cleanName}@${cn.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'center'}.com`;
     };
     
-    nameInput.addEventListener('input', updateLoginEmail);
-    centerSelect.addEventListener('change', updateLoginEmail);
-    // معاينة أولية
-    setTimeout(updateLoginEmail, 100);
+    nameInput.oninput = update;
+    sel.onchange = () => {
+      update();
+      loadBranchesForCenter(sel.value);
+    };
+    update();
   }
   
+  // ✅ تحميل الصلاحيات (خلفياً)
+  loadPermissionsForRole();
+  
+  // ✅ إظهار النافذة فوراً
   document.getElementById('userModal').style.display = 'flex';
+  
+  // ✅ ثم تحميل صلاحيات المستخدم (خلفياً)
+  if (isEdit) {
+    let perms = (u.permissions && u.permissions.length) 
+      ? u.permissions.map(p => p.permission || p) 
+      : [];
+    
+    if (perms.length) {
+      setUserPermissions(perms);
+    } else {
+      try {
+        const r = await callGAS('getPermissionsForUser', { userId: id });
+        // ✅ تحقق من أن النافذة ما زالت مفتوحة على نفس المستخدم
+        if (r?.permissions?.length && document.getElementById('userId').value === id) {
+          setUserPermissions(r.permissions);
+        }
+      } catch (e) {
+        console.warn('⚠️ فشل جلب الصلاحيات:', e);
+      }
+    }
+  }
 }
   
 async function saveUser(e) {
@@ -2965,167 +3315,6 @@ async function saveUser(e) {
 // ═══════════════════════════════════════════════════════════════════
 // ✅ دوال مساعدة أخرى
 // ═══════════════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════════════
-// ✅ دوال Timeline سياسة العمولة
-// ═══════════════════════════════════════════════════════════════════
-
-/**
- * تحميل وعرض Timeline كل السجلات
- * @param {string} centerName
- * @param {string} currentHistoryId - معرف السياسة الحالية (لتمييزها)
- */
-async function loadPolicyTimeline(centerName, currentHistoryId = '') {
-  const container = document.getElementById('policyTimelineList');
-  if (!container) return;
-  
-  // ✅ إذا لم يكن هناك centerName، عرض رسالة
-  if (!centerName) {
-    container.innerHTML = `
-      <div style="text-align:center; padding:20px; color:#94a3b8; font-size:12px;">
-        💡 احفظ المركز أولاً لعرض تاريخ السياسات
-      </div>
-    `;
-    return;
-  }
-  
-  // ✅ عرض Loading
-  container.innerHTML = `
-    <div style="text-align:center; padding:20px; color:#94a3b8; font-size:12px;">
-      <div class="loader-sm" style="margin:0 auto 8px;"></div>
-      ⏳ جاري تحميل السجلات...
-    </div>
-  `;
-  
-  try {
-    // ✅ جلب كل السجلات
-    const result = await callGAS('getPolicyHistoryForCenter', { centerName });
-    
-    if (!result?.success || !Array.isArray(result.data)) {
-      container.innerHTML = `
-        <div style="text-align:center; padding:20px; color:#94a3b8; font-size:12px;">
-          📭 لا توجد سجلات لهذا المركز
-        </div>
-      `;
-      return;
-    }
-    
-    const policies = result.data;
-    
-    if (policies.length === 0) {
-      container.innerHTML = `
-        <div style="text-align:center; padding:20px; color:#94a3b8; font-size:12px;">
-          📭 لا توجد سجلات لهذا المركز
-        </div>
-      `;
-      return;
-    }
-    
-    // ✅ ترتيب تنازلي (الأحدث أولاً)
-    policies.sort((a, b) => {
-      const dateA = parseDateFromString(a.effectiveFrom);
-      const dateB = parseDateFromString(b.effectiveFrom);
-      if (!dateA || !dateB) return 0;
-      return dateB.getTime() - dateA.getTime();
-    });
-    
-    // ✅ بناء HTML
-    let html = '';
-    policies.forEach((policy, index) => {
-      const isCurrent = policy.historyId === currentHistoryId;
-      const s = policy.settings || {};
-      
-      // ✅ تنسيق الحقول
-      const rate = s.rate || 0;
-      const deductions = [];
-      if (s.deductDiscount) deductions.push('خصم');
-      if (s.deductMandatoryFees) deductions.push('رسوم');
-      if (s.deductTripCost) deductions.push('تكلفة');
-      
-      // ✅ النسب المخصصة
-      let activityRatesHtml = '';
-      if (s.useActivityRates && s.activityRates && Object.keys(s.activityRates).length > 0) {
-        const ratesList = Object.entries(s.activityRates)
-          .map(([name, r]) => `<span style="background:#e0e7ff; padding:2px 8px; border-radius:10px; font-size:10px; margin:2px; display:inline-block;">${name}: ${r}%</span>`)
-          .join('');
-        activityRatesHtml = `
-          <div style="margin-top:6px;">
-            <span style="font-size:10px; color:#4c1d95; font-weight:700;">🎯 نسب مخصصة:</span>
-            ${ratesList}
-          </div>
-        `;
-      }
-      
-      // ✅ لون الخلفية حسب الحالة
-      const bgColor = isCurrent 
-        ? 'linear-gradient(135deg, #d4edda, #c8e6c9)' 
-        : (index === 0 ? 'linear-gradient(135deg, #fff3cd, #ffecb3)' : 'white');
-      
-      const borderColor = isCurrent 
-        ? '#27ae60' 
-        : (index === 0 ? '#f5c842' : '#e9f0fa');
-      
-      const badge = isCurrent 
-        ? '<span style="background:#27ae60; color:white; padding:2px 8px; border-radius:10px; font-size:9px; font-weight:700;">✅ الحالية المطبقة</span>'
-        : (index === 0 
-            ? '<span style="background:#f5c842; color:#1e2b4f; padding:2px 8px; border-radius:10px; font-size:9px; font-weight:700;">🔵 الأحدث</span>'
-            : '<span style="background:#e9f0fa; color:#5a6a8a; padding:2px 8px; border-radius:10px; font-size:9px; font-weight:700;">📜 سابقة</span>'
-          );
-      
-      html += `
-        <div style="
-          background: ${bgColor};
-          border: 2px solid ${borderColor};
-          border-radius: 10px;
-          padding: 10px 12px;
-          font-size: 11px;
-          color: #1e2b4f;
-          position: relative;
-        ">
-          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:6px;">
-            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-              <strong style="font-size:12px; color:#0f1f3d;">${policy.historyId}</strong>
-              ${badge}
-            </div>
-            <div style="font-size:11px; font-weight:700; color:#0f1f3d;">
-              📅 ${policy.effectiveFrom}
-            </div>
-          </div>
-          
-          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:4px;">
-            <div style="background:#1e2b4f; color:#f5c842; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:700;">
-              💰 ${rate}%
-            </div>
-            ${deductions.length > 0 
-              ? `<div style="background:#fee2e2; color:#b71c1c; padding:3px 10px; border-radius:12px; font-size:10px;">
-                  🔻 خصم: ${deductions.join(' + ')}
-                </div>` 
-              : `<div style="background:#f0f9ff; color:#0369a1; padding:3px 10px; border-radius:12px; font-size:10px;">
-                  بدون خصومات
-                </div>`}
-            ${s.shareProfit 
-              ? `<div style="background:#fef3c7; color:#92400e; padding:3px 10px; border-radius:12px; font-size:10px; font-weight:700;">
-                  💎 تقاسم أرباح 50%
-                </div>` 
-              : ''}
-          </div>
-          
-          ${activityRatesHtml}
-        </div>
-      `;
-    });
-    
-    container.innerHTML = html;
-    console.log(`✅ loadPolicyTimeline: تم عرض ${policies.length} سجل`);
-    
-  } catch(e) {
-    console.error('❌ loadPolicyTimeline error:', e);
-    container.innerHTML = `
-      <div style="text-align:center; padding:20px; color:#e74c3c; font-size:12px;">
-        ❌ خطأ في التحميل: ${e.message}
-      </div>
-    `;
-  }
-}
 
 /**
  * تحديث Timeline (يُستدعى من زر التحديث)
@@ -3201,66 +3390,56 @@ async function loadBranchesForCenter(centerId, selectedId = '') {
   } catch(e){ console.error(e); }
 }
 
+/**
+ * ✅ loadActivitiesCheckboxes — النسخة المحسّنة
+ * - Promise مشترك (لا طلبات متكررة)
+ * - Token لمنع Race Conditions
+ * - مطابقة غير حساسة لحالة الأحرف
+ * - مطابقة مع الفئة أيضاً
+ */
 async function loadActivitiesCheckboxes(sel = []) {
   const c = document.getElementById('activitiesCheckboxes');
   if (!c) return;
   
-  // ✅ ✅ ✅ إصلاح: التعامل مع جميع أشكال الاستجابة
+  const token = ++activitiesRenderToken;
+  
+  // ✅ تحويل sel إلى Set بأحرف صغيرة
+  const selSet = new Set(
+    (typeof sel === 'string' 
+      ? sel.split(/[,|،]/) 
+      : (Array.isArray(sel) ? sel : []))
+      .map(s => String(s).trim().toLowerCase())
+      .filter(Boolean)
+  );
+  
+  // ✅ عرض Loading إذا لم يكن هناك Cache
   if (!cachedActivities) {
-    try {
-      const result = await callGAS('getAllActivities');
-      
-      console.log('📥 getAllActivities raw response:', result);
-      console.log('📥 type:', typeof result);
-      console.log('📥 isArray:', Array.isArray(result));
-      
-      // ✅ الحالات المختلفة
-      if (Array.isArray(result)) {
-        cachedActivities = result;
-      } else if (result && Array.isArray(result.data)) {
-        cachedActivities = result.data;
-      } else if (result && Array.isArray(result.activities)) {
-        cachedActivities = result.activities;
-      } else if (result && typeof result === 'object') {
-        // ✅ قد يكون كائن بعناصر مرقّمة (0, 1, 2...)
-        const values = Object.values(result);
-        const arr = values.filter(v => v && typeof v === 'object' && v.name);
-        cachedActivities = arr.length > 0 ? arr : [];
-      } else {
-        console.warn('⚠️ getAllActivities: unexpected response format');
-        cachedActivities = [];
-      }
-      
-      console.log(`✅ cachedActivities loaded: ${cachedActivities.length} items`);
-    } catch(e) {
-      console.error('❌ getAllActivities error:', e);
-      cachedActivities = [];
-    }
+    c.innerHTML = '<span style="color:#94a3b8;">⏳ جاري تحميل الفئات...</span>';
   }
   
-  // ✅ ✅ ✅ تأكد نهائي
-  if (!Array.isArray(cachedActivities)) {
-    console.warn('⚠️ cachedActivities is not array:', typeof cachedActivities);
-    cachedActivities = [];
-  }
+  // ✅ جلب الأنشطة (Promise مشترك)
+  const all = await fetchActivities();
+  if (token !== activitiesRenderToken) return;
   
-  const selArr = typeof sel === 'string' 
-    ? sel.split(',').map(s => s.trim()).filter(Boolean)
-    : (Array.isArray(sel) ? sel : []);
+  const acts = all.filter(a => a && (a.status === true || a.status === 'TRUE'));
   
-  const acts = cachedActivities.filter(a => a && (a.status === true || a.status === 'TRUE'));
-  
-  if (acts.length === 0) {
+  if (!acts.length) {
     c.innerHTML = '<span style="color:#aaa;">لا توجد أنشطة</span>';
     return;
   }
   
-  c.innerHTML = acts.map(a => 
-    `<label class="act-lbl">
-      <input type="checkbox" value="${safeEscape(a.name)}" ${selArr.includes(a.name) ? 'checked' : ''}>
+  c.innerHTML = acts.map(a => {
+    const nameLower = String(a.name).trim().toLowerCase();
+    const catLower = String(a.category || '').trim().toLowerCase();
+    
+    // ✅ المطابقة: بالاسم أو بالفئة
+    const checked = selSet.has(nameLower) || selSet.has(catLower);
+    
+    return `<label class="act-lbl">
+      <input type="checkbox" value="${safeEscape(a.name)}" ${checked ? 'checked' : ''}>
       <span>${safeEscape(a.name)}</span>
-    </label>`
-  ).join('');
+    </label>`;
+  }).join('');
 }
 
 function ensureExtraFields() {
@@ -3464,54 +3643,71 @@ async function compressImage(file, maxWidth = 800, maxHeight = 800, quality = 0.
 // ✅ دوال التقارير
 // ═══════════════════════════════════════════════════════════════════
 
-async function showExpiringReport() {
+/**
+ * ✅ بناء تقرير الاشتراكات محلياً من البيانات المحمّلة
+ */
+function buildExpiryReportLocal() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  const r = { expired: [], critical: [], warning: [] };
+  
+  centers.forEach(c => {
+    const end = parseDateFromString(c.subscriptionEnd);
+    if (!end || isNaN(end.getTime())) return;
+    end.setHours(0, 0, 0, 0);
+    
+    const diff = Math.ceil((end - today) / 864e5);
+    const o = { 
+      id: c.id, 
+      name: c.name, 
+      endDate: c.subscriptionEnd, 
+      diff, 
+      isActive: c.status === 'TRUE' 
+    };
+    
+    if (diff < 0) r.expired.push(o);
+    else if (diff <= 3) r.critical.push(o);
+    else if (diff <= 7) r.warning.push(o);
+  });
+  
+  return r;
+}
+
+/**
+ * ✅ openExpiryModal — عرض فوري + تحديث
+ */
+async function openExpiryModal(title, filter) {
   if (!checkUserPermission('ViewExpiringSubscriptions')) {
-    showAlert('⚠️ ليس لديك صلاحية لعرض تقرير الاشتراكات');
+    showAlert('⚠️ ليس لديك صلاحية لعرض هذا التقرير');
     return;
   }
   
-  document.getElementById('subTitle').textContent = '⚠️ تقرير الاشتراكات';
-  document.getElementById('subList').innerHTML = '<div style="text-align:center;padding:30px;"><div class="loader-sm"></div><p>جاري التحميل...</p></div>';
+  document.getElementById('subTitle').textContent = title;
   document.getElementById('subModal').style.display = 'flex';
+  
+  // ✅ عرض فوري من البيانات المحمّلة
+  const hasLocal = centers.length > 0;
+  if (hasLocal) {
+    renderExpiryModal(buildExpiryReportLocal(), filter);
+  } else {
+    document.getElementById('subList').innerHTML = '<div style="text-align:center;padding:30px;"><div class="loader-sm"></div><p>جاري التحميل...</p></div>';
+  }
+  
+  // ✅ ثم تحديث من الخادم
   try {
-    const r = await callGAS('getExpiryReport');
-    renderExpiryModal(r);
-  } catch(e) {
-    document.getElementById('subList').innerHTML = '<p style="color:red;text-align:center;">خطأ في التحميل</p>';
+    renderExpiryModal(await callGAS('getExpiryReport'), filter);
+  } catch (e) {
+    if (!hasLocal) {
+      document.getElementById('subList').innerHTML = '<p style="color:red;text-align:center;">خطأ في التحميل</p>';
+    }
   }
 }
 
-async function showCritical() {
-  if (!checkUserPermission('ViewExpiringSubscriptions')) {
-    showAlert('⚠️ ليس لديك صلاحية لعرض التقارير الحرجة');
-    return;
-  }
-  document.getElementById('subTitle').textContent = '🔴 حرجة (≤ 3 أيام)';
-  document.getElementById('subList').innerHTML = '<div style="text-align:center;padding:30px;"><div class="loader-sm"></div></div>';
-  document.getElementById('subModal').style.display = 'flex';
-  try { 
-    const r = await callGAS('getExpiryReport'); 
-    renderExpiryModal(r, 'critical'); 
-  } catch(e) { 
-    document.getElementById('subList').innerHTML = '<p style="color:red;text-align:center;">خطأ</p>'; 
-  }
-}
+function showExpiringReport() { return openExpiryModal('⚠️ تقرير الاشتراكات'); }
+function showCritical()       { return openExpiryModal('🔴 حرجة (≤ 3 أيام)', 'critical'); }
+function showWarning()        { return openExpiryModal('🟡 تحذير (4-7 أيام)', 'warning'); }
 
-async function showWarning() {
-  if (!checkUserPermission('ViewExpiringSubscriptions')) {
-    showAlert('⚠️ ليس لديك صلاحية لعرض التقارير التحذيرية');
-    return;
-  }
-  document.getElementById('subTitle').textContent = '🟡 تحذير (4-7 أيام)';
-  document.getElementById('subList').innerHTML = '<div style="text-align:center;padding:30px;"><div class="loader-sm"></div></div>';
-  document.getElementById('subModal').style.display = 'flex';
-  try { 
-    const r = await callGAS('getExpiryReport'); 
-    renderExpiryModal(r, 'warning'); 
-  } catch(e) { 
-    document.getElementById('subList').innerHTML = '<p style="color:red;text-align:center;">خطأ</p>'; 
-  }
-}
 
 function renderExpiryModal(r, filter) {
   const sections = filter
@@ -3592,92 +3788,6 @@ async function runCheckNow() {
 // ✅ التحميل الأولي
 // ═══════════════════════════════════════════════════════════════════
 
-async function initDashboard() {
-  currentUser = Session.getUser();
-  
-  if (!currentUser) {
-    const userType = sessionStorage.getItem('userType');
-    if (userType) {
-      const stored = localStorage.getItem('currentUser');
-      if (stored) {
-        try {
-          const data = JSON.parse(stored);
-          if (data.user) {
-            currentUser = data.user;
-            if (typeof Theme !== 'undefined') {
-              Theme.applyToPage();
-              Theme.setPageTitle('لوحة تحكم المدير');
-            }
-            document.getElementById('userNameDisplay').textContent = currentUser.name || 'مدير';
-            await loadDashboardData();
-            return;
-          }
-        } catch(e) {}
-      }
-    }
-    window.location.href = 'index.html';
-    return;
-  }
-  
-  if (typeof Theme !== 'undefined') {
-    Theme.applyToPage();
-    Theme.setPageTitle('لوحة تحكم المدير');
-  }
-  
-  document.getElementById('userNameDisplay').textContent = currentUser.name || 'مدير';
-  await loadDashboardData();
-}
-
-async function loadDashboardData() {
-  try {
-    // ✅ التأكد من وجود callGAS قبل الاستدعاء
-    if (typeof callGAS === 'undefined') {
-      console.warn('⚠️ callGAS غير معرفة، محاولة انتظار التحميل...');
-      // ✅ انتظار تحميل callGAS (إذا كانت موجودة في ui.js)
-      await new Promise(resolve => {
-        const checkInterval = setInterval(() => {
-          if (typeof callGAS !== 'undefined') {
-            clearInterval(checkInterval);
-            resolve();
-          }
-        }, 100);
-        // ✅ مهلة 5 ثواني
-        setTimeout(() => {
-          clearInterval(checkInterval);
-          resolve();
-        }, 5000);
-      });
-    }
-    
-    console.log('📡 loadDashboardData - بدء جلب البيانات...');
-    const stats = await callGAS('getDashboardStats');
-    console.log('📡 stats:', stats);
-    
-    document.getElementById('cnt-centers').className = 'stat-value';
-    document.getElementById('cnt-branches').className = 'stat-value';
-    document.getElementById('cnt-staff').className = 'stat-value';
-    document.getElementById('cnt-critical').className = 'stat-value';
-    document.getElementById('cnt-warning').className = 'stat-value';
-    document.getElementById('cnt-centers').textContent = stats?.centers ?? 0;
-    document.getElementById('cnt-branches').textContent = stats?.branches ?? 0;
-    document.getElementById('cnt-staff').textContent = stats?.users ?? 0;
-    document.getElementById('cnt-critical').textContent = stats?.critical ?? 0;
-    document.getElementById('cnt-warning').textContent = stats?.warning ?? 0;
-    
-    // ✅ جلب البيانات الأخرى
-    try {
-      const d = await callGAS('getAllDashboardData');
-      centers = Array.isArray(d?.centers) ? d.centers : [];
-      branches = Array.isArray(d?.branches) ? d.branches : [];
-      staff = Array.isArray(d?.users) ? d.users : [];
-    } catch(e) { console.error('Data error:', e); }
-    
-  } catch(e) { 
-    console.error('❌ Stats error:', e); 
-    // ✅ عرض رسالة خطأ للمستخدم
-    showAlert('⚠️ حدث خطأ في تحميل البيانات. يرجى تحديث الصفحة.', '⚠️');
-  }
-}
 // ✅ دالة الخروج الاحترافية الموحدة
 function showLogoutConfirm() {
   const overlay = document.createElement('div');
@@ -3783,139 +3893,54 @@ function showLogoutConfirm() {
   });
 }
 
-async function refreshData() {
-  try {
-    const [d, s] = await Promise.all([
-      callGAS('getAllDashboardData'),
-      callGAS('getDashboardStats')
-    ]);
-    
-    centers = Array.isArray(d?.centers) ? d.centers : centers;
-    branches = Array.isArray(d?.branches) ? d.branches : branches;
-    staff = Array.isArray(d?.users) ? d.users : staff;
-    
-    if (d?.users && Array.isArray(d.users)) {
-      localStorage.setItem('users', JSON.stringify(d.users));
-      sessionStorage.setItem('users', JSON.stringify(d.users));
-      window.staff = d.users;
-      staff = d.users;
-    }
-    
-    document.getElementById('cnt-centers').textContent = s?.centers ?? 0;
-    document.getElementById('cnt-branches').textContent = s?.branches ?? 0;
-    document.getElementById('cnt-staff').textContent = s?.users ?? 0;
-    document.getElementById('cnt-critical').textContent = s?.critical ?? 0;
-    document.getElementById('cnt-warning').textContent = s?.warning ?? 0;
-    
-    console.log('✅ تم تحديث جميع البيانات بنجاح');
-  } catch(e) {
-    console.error('Refresh error:', e);
-  }
-}
+
 
 // ═══════════════════════════════════════════════════════════════════
 // ✅ التهيئة
 // ═══════════════════════════════════════════════════════════════════
 
-document.addEventListener('DOMContentLoaded', async function() {
-    // ✅ التحقق من صحة الجلسة
-    if (!Session.checkValidity()) {
-        window.location.href = 'index.html';
-        return;
-    }
-    
-    // ✅ جلب المستخدم من Session
-    currentUser = Session.getUser();
-    if (!currentUser) {
-        window.location.href = 'index.html';
-        return;
-    }
-    
-    // ✅ ✅ ✅ التأكد من وجود الصلاحيات
-    if (!currentUser.permissions || currentUser.permissions.length === 0) {
-        console.warn('⚠️ لا توجد صلاحيات، محاولة استعادتها...');
-        
-        // ✅ محاولة من sessionStorage
-        try {
-            const permStored = sessionStorage.getItem('userPermissions');
-            if (permStored) {
-                const perms = JSON.parse(permStored);
-                if (perms && perms.length > 0) {
-                    currentUser.permissions = perms;
-                    Session.save(currentUser);
-                    console.log('✅ تم استعادة الصلاحيات من sessionStorage');
-                }
-            }
-        } catch(e) {}
-        
-        // ✅ محاولة من localStorage
-        if (!currentUser.permissions || currentUser.permissions.length === 0) {
-            try {
-                const permStored = localStorage.getItem('userPermissions');
-                if (permStored) {
-                    const perms = JSON.parse(permStored);
-                    if (perms && perms.length > 0) {
-                        currentUser.permissions = perms;
-                        Session.save(currentUser);
-                        console.log('✅ تم استعادة الصلاحيات من localStorage');
-                    }
-                }
-            } catch(e) {}
-        }
-        
-        // ✅ محاولة من الخادم مباشرة
-        if (!currentUser.permissions || currentUser.permissions.length === 0) {
-            try {
-                console.log('📡 جلب الصلاحيات من الخادم...');
-                const result = await callGAS('getPermissionsForUser', { 
-                    userId: currentUser.id 
-                });
-                if (result && result.permissions && result.permissions.length > 0) {
-                    currentUser.permissions = result.permissions;
-                    Session.save(currentUser);
-                    console.log('✅ تم استعادة الصلاحيات من الخادم');
-                }
-            } catch(e) {
-                console.warn('⚠️ فشل جلب الصلاحيات من الخادم:', e);
-            }
-        }
-    }
-    
-   const user = Session.getUser();
-if (!user || user.type !== 'Admin') {
-    window.location.href = 'index.html';  // ✅ وليس Dashboard.html
+document.addEventListener('DOMContentLoaded', function () {
+  // ✅ 1) فحص الجلسة (سريع — بدون await)
+  if (!Session.checkValidity()) {
+    window.location.href = 'index.html';
     return;
-}
-    
-    await initDashboard();
-    
-     // ✅ ربط الأحداث - الأزرار في الشريط العلوي
-   
-  // ✅ ربط الأحداث - الإحصائيات
+  }
+  
+  currentUser = Session.getUser();
+  if (!currentUser || currentUser.type !== 'Admin') {
+    window.location.href = 'index.html';
+    return;
+  }
+  
+  // ✅ 2) ربط الأحداث فوراً (قبل أي طلب شبكة)
   document.getElementById('sc-centers')?.addEventListener('click', showCenters);
   document.getElementById('sc-branches')?.addEventListener('click', showBranches);
   document.getElementById('sc-staff')?.addEventListener('click', showStaff);
   document.getElementById('sc-critical')?.addEventListener('click', showCritical);
   document.getElementById('sc-warning')?.addEventListener('click', showWarning);
   
-  // ✅ ربط الأحداث - الفورمات
   document.getElementById('centerForm')?.addEventListener('submit', saveCenter);
   document.getElementById('branchForm')?.addEventListener('submit', saveBranch);
   document.getElementById('userForm')?.addEventListener('submit', saveUser);
-  
-  document.getElementById('userCenterId')?.addEventListener('change', function(e) {
-    loadBranchesForCenter(e.target.value);
-  });
-  
+  document.getElementById('userCenterId')?.addEventListener('change', e => loadBranchesForCenter(e.target.value));
   document.getElementById('userRole')?.addEventListener('change', loadPermissionsForRole);
   
- const logoutBtn = document.querySelector('.logout-btn');
-if (logoutBtn) {
-  logoutBtn.addEventListener('click', function(e) {
-    e.preventDefault();
-    showLogoutConfirm();
+  document.querySelector('.logout-btn')?.addEventListener('click', e => { 
+    e.preventDefault(); 
+    showLogoutConfirm(); 
   });
-}
+  
+  // ✅ 3) إعداد الواجهة
+  if (typeof Theme !== 'undefined') {
+    Theme.applyToPage();
+    Theme.setPageTitle('لوحة تحكم المدير');
+  }
+  document.getElementById('userNameDisplay').textContent = currentUser.name || 'مدير';
+  
+  window._dashLoading = true;
+  loadDashCache();           // فوري من localStorage
+  fetchActivities();         // تحميل مسبق
+  fetchDashboard();          // تحديث من الخادم
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -3936,7 +3961,7 @@ window.viewCenter = viewCenter;
 window.saveCenter = saveCenter;
 window.doDeleteCenter = doDeleteCenter;
 window.doToggleCenter = doToggleCenter;
-
+window.viewBranch = viewBranch;
 window.openBranchModal = openBranchModal;
 window.saveBranch = saveBranch;
 window.doDeleteBranch = doDeleteBranch;
@@ -3996,64 +4021,7 @@ window.viewBranch = function(id) {
   document.getElementById('viewModal').style.display = 'flex';
 };
   
-// ✅ دالة viewCenter (إذا كانت مفقودة)
-window.viewCenter = function(id) {
-  const c = centers.find(x => x.id === id);
-  if (!c) {
-    showAlert('المركز غير موجود');
-    return;
-  }
-  
-  let logoHtml = '';
-  if (c.centerLogo && c.centerLogo.trim() !== '') {
-    logoHtml = `<div style="text-align:center; margin:15px 0;">
-      <img src="${getDriveDirectUrl(c.centerLogo)}" style="max-width:150px; max-height:150px; border-radius:12px; border:1px solid #ddd; padding:5px; background:white;">
-    </div>`;
-  }
-  
-  document.getElementById('viewTitle').textContent = '🏢 تفاصيل المركز';
-  document.getElementById('viewBody').innerHTML = `
-    ${logoHtml}
-    <p><strong>المعرف:</strong> ${safeEscape(c.id)}</p>
-    <p><strong>المركز:</strong> ${safeEscape(c.name)}</p>
-    <p><strong>المالك:</strong> ${safeEscape(c.owner)}</p>
-    <p><strong>البريد:</strong> ${safeEscape(c.email) || '—'}</p>
-    <p><strong>الجوال:</strong> ${safeEscape(c.phone) || '—'}</p>
-    <p><strong>العنوان:</strong> ${safeEscape(c.address) || '—'}</p>
-    <p><strong>خطة الاشتراك:</strong> ${safeEscape(c.subscriptionPlan) || '—'}</p>
-    <p><strong>بداية الاشتراك:</strong> ${safeEscape(c.subscriptionStart) || '—'}</p>
-    <p><strong>انتهاء الاشتراك:</strong> ${safeEscape(c.subscriptionEnd) || '—'}</p>
-    <p><strong>أرقام التواصل:</strong> ${safeEscape(c.contactNumbers) || '—'}</p>
-    <p><strong>فئة المركز:</strong> ${safeEscape(c.centerCategory) || '—'}</p>
-    <p><strong>سياسة الإلغاء:</strong> ${safeEscape(c.cancelationPolicy) || '—'}</p>
-    <p><strong>الأنشطة:</strong> ${safeEscape(c.activities) || '—'}</p>
-    <p><strong>الحالة:</strong> ${(c.status === 'TRUE' || c.status === true) ? 'نشط' : 'غير نشط'}</p>
-  `;
-  document.getElementById('viewModal').style.display = 'flex';
-};
 
-// ✅ دالة viewUser (إذا كانت مفقودة)
-window.viewUser = function(id) {
-  const u = staff.find(x => x.id === id);
-  if (!u) {
-    showAlert('المستخدم غير موجود');
-    return;
-  }
-  
-  document.getElementById('viewTitle').textContent = '👤 تفاصيل المستخدم';
-  document.getElementById('viewBody').innerHTML = `
-    <p><strong>المعرف:</strong> ${safeEscape(u.id)}</p>
-    <p><strong>الاسم:</strong> ${safeEscape(u.name)}</p>
-    <p><strong>المركز:</strong> ${safeEscape(u.centerName) || '—'}</p>
-    <p><strong>الفرع:</strong> ${safeEscape(u.branchName) || 'المركز الرئيسي'}</p>
-    <p><strong>الدور:</strong> ${safeEscape(u.type) || '—'}</p>
-    <p><strong>الجوال:</strong> ${safeEscape(u.phone) || '—'}</p>
-    <p><strong>البريد الشخصي:</strong> ${safeEscape(u.email) || '—'}</p>
-    <p><strong>بريد تسجيل الدخول:</strong> ${safeEscape(u.loginEmail) || '—'}</p>
-    <p><strong>الحالة:</strong> ${u.isActive ? 'نشط' : 'غير نشط'}</p>
-  `;
-  document.getElementById('viewModal').style.display = 'flex';
-};
 </script>
 </body>
 </html>
