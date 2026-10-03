@@ -706,18 +706,39 @@
         </select>
       </div>
       
-      <!-- ✅ نموذج سياسة العمولة -->
+           <!-- ✅ نموذج سياسة العمولة -->
       <div class="form-group" style="background:#f8fafc; padding:15px; border-radius:16px; border:2px solid #e9f0fa;">
         <label style="font-size:14px; font-weight:700; color:#1e2b4f; margin-bottom:12px; display:block;">
-          💰 سياسة العمولة
+          💰 سياسة العمولة الحالية
         </label>
         
+        <!-- ═══════════════════════════════════════════════════ -->
+        <!-- ✅ مؤشر السياسة الحالية -->
+        <!-- ═══════════════════════════════════════════════════ -->
+        <div id="currentPolicyBadge" style="
+          display: none;
+          padding: 10px 14px;
+          background: linear-gradient(135deg, #d4edda, #a8d5ba);
+          border: 2px solid #27ae60;
+          border-radius: 12px;
+          margin-bottom: 15px;
+          font-size: 12px;
+          color: #155724;
+          font-weight: 600;
+        ">
+          <div id="currentPolicyBadgeContent"></div>
+        </div>
+        
+        <!-- ═══════════════════════════════════════════════════ -->
+        <!-- ✅ حقول السياسة الحالية (كما هي) -->
+        <!-- ═══════════════════════════════════════════════════ -->
+        
         <div class="form-group" style="margin-bottom:12px;">
-          <label class="req">تاريخ سريان السياسة</label>
+          <label class="req">تاريخ سريان السياسة الجديدة</label>
           <input type="date" id="policyEffectiveFrom" value="2026-01-01" required
                  style="width:100%; padding:9px 12px; border:2px solid #e9f0fa; border-radius:40px;">
           <div style="font-size:11px;color:#6c757d;margin-top:4px;">
-            💡 التاريخ الذي تبدأ فيه هذه السياسة بالعمل (الافتراضي: 01/Jan/2026)
+            💡 التاريخ الذي تبدأ فيه هذه السياسة بالعمل. <strong>عند تغييره إلى تاريخ جديد → تُضاف سياسة جديدة.</strong>
           </div>
         </div>
         
@@ -775,9 +796,38 @@
         </div>
         
         <div style="margin-top:12px; padding:10px; background:#e8f5e9; border-radius:12px; border:1px solid #c8e6c9;">
-          <div style="font-size:11px; color:#1b5e20; font-weight:700; margin-bottom:4px;">📋 ملخص السياسة:</div>
+          <div style="font-size:11px; color:#1b5e20; font-weight:700; margin-bottom:4px;">📋 ملخص السياسة الجديدة:</div>
           <div id="policyPreview" style="font-size:12px; color:#1e2b4f; line-height:1.6;">
             عمولة ثابتة 10% (بدون خصومات)
+          </div>
+        </div>
+        
+        <!-- ═══════════════════════════════════════════════════ -->
+        <!-- ✅ Timeline كل السجلات -->
+        <!-- ═══════════════════════════════════════════════════ -->
+        <div id="policyTimelineSection" style="margin-top:20px; padding:15px; background:#fef3c7; border-radius:12px; border:2px solid #f5c842;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+            <div style="font-size:13px; font-weight:700; color:#92400e;">
+              📜 تاريخ السياسات (Timeline)
+            </div>
+            <button type="button" onclick="refreshPolicyTimeline()" 
+                    style="padding:4px 10px; background:#92400e; color:white; border:none; border-radius:16px; cursor:pointer; font-size:10px; font-weight:700;">
+              🔄 تحديث
+            </button>
+          </div>
+          
+          <div id="policyTimelineList" style="
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+            padding-right: 4px;
+          ">
+            <!-- سيتم تعبئتها ديناميكياً -->
+            <div style="text-align:center; padding:20px; color:#94a3b8; font-size:12px;">
+              ⏳ جاري تحميل السجلات...
+            </div>
           </div>
         </div>
       </div>
@@ -1493,6 +1543,7 @@ async function openCenterModal(id) {
        document.getElementById('subscriptionPlan').value = c.subscriptionPlan || 'باقة أساسية - 3500 جنيه/شهر';
     
     // ✅ تحميل إعدادات السياسة من الخادم
+       // ✅ تحميل إعدادات السياسة الحالية من الخادم
     const policyResult = await callGAS('getCenterCommissionSettings', { centerName: c.name });
     if (policyResult?.success && policyResult.settings) {
       fillPolicyFields(policyResult.settings);
@@ -1502,8 +1553,17 @@ async function openCenterModal(id) {
       if (effectiveFromEl && policyResult.effectiveFrom) {
         effectiveFromEl.value = convertDateToInput(policyResult.effectiveFrom);
       }
+      
+      // ✅ عرض شارة السياسة الحالية
+      showCurrentPolicyBadge(policyResult);
+      
+      // ✅ تحميل Timeline كل السجلات
+      loadPolicyTimeline(c.name, policyResult.historyId || '');
+      
     } else {
       fillPolicyFields(null);
+      showCurrentPolicyBadge(null);
+      loadPolicyTimeline(c.name, '');
     }
     
     bindPolicyEvents();
@@ -1521,15 +1581,20 @@ async function openCenterModal(id) {
       document.getElementById('logoPreview').innerHTML = `<img src="${getDriveDirectUrl(c.centerLogo)}" style="width:100%; height:100%; object-fit:cover;">`;
     }
   } else {
-    // ✅ عند إنشاء مركز جديد
+       // ✅ عند إنشاء مركز جديد
     fillPolicyFields(null);
     bindPolicyEvents();
+    
+    // ✅ إخفاء شارة السياسة الحالية + Timeline
+    showCurrentPolicyBadge(null);
+    loadPolicyTimeline('', '');
     
     // ✅ تعبئة تاريخ السريان الافتراضي
     const effectiveFromEl = document.getElementById('policyEffectiveFrom');
     if (effectiveFromEl) {
       effectiveFromEl.value = '2026-01-01';
     }
+    
     
     // ✅ معاينة الإيميل المتولد
     const nameInput = document.getElementById('centerName');
@@ -1934,7 +1999,7 @@ async function saveCenter(e) {
       const policySettings = getPolicySettings();
       const effectiveFromISO = document.getElementById('policyEffectiveFrom')?.value || '2026-01-01';
       
-      try {
+           try {
         const policySaveResult = await callGAS('saveCommissionPolicyChange', {
           centerName: data.name,
           effectiveFrom: effectiveFromISO,
@@ -1949,6 +2014,24 @@ async function saveCenter(e) {
           } else {
             console.log('✅ تم حفظ السياسة:', policySaveResult.message);
           }
+          
+          // ✅ تحديث Timeline بعد الحفظ
+          try {
+            await loadPolicyTimeline(data.name, policySaveResult.historyId || '');
+          } catch(e) {
+            console.warn('⚠️ فشل تحديث Timeline:', e);
+          }
+          
+          // ✅ تحديث شارة السياسة الحالية
+          try {
+            const updatedPolicy = await callGAS('getCenterCommissionSettings', { centerName: data.name });
+            if (updatedPolicy?.success) {
+              showCurrentPolicyBadge(updatedPolicy);
+            }
+          } catch(e) {
+            console.warn('⚠️ فشل تحديث Badge:', e);
+          }
+          
         } else {
           console.warn('⚠️ فشل حفظ سياسة العمولة:', policySaveResult?.message);
         }
@@ -2833,7 +2916,229 @@ async function saveUser(e) {
 // ═══════════════════════════════════════════════════════════════════
 // ✅ دوال مساعدة أخرى
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// ✅ دوال Timeline سياسة العمولة
+// ═══════════════════════════════════════════════════════════════════
 
+/**
+ * تحميل وعرض Timeline كل السجلات
+ * @param {string} centerName
+ * @param {string} currentHistoryId - معرف السياسة الحالية (لتمييزها)
+ */
+async function loadPolicyTimeline(centerName, currentHistoryId = '') {
+  const container = document.getElementById('policyTimelineList');
+  if (!container) return;
+  
+  // ✅ إذا لم يكن هناك centerName، عرض رسالة
+  if (!centerName) {
+    container.innerHTML = `
+      <div style="text-align:center; padding:20px; color:#94a3b8; font-size:12px;">
+        💡 احفظ المركز أولاً لعرض تاريخ السياسات
+      </div>
+    `;
+    return;
+  }
+  
+  // ✅ عرض Loading
+  container.innerHTML = `
+    <div style="text-align:center; padding:20px; color:#94a3b8; font-size:12px;">
+      <div class="loader-sm" style="margin:0 auto 8px;"></div>
+      ⏳ جاري تحميل السجلات...
+    </div>
+  `;
+  
+  try {
+    // ✅ جلب كل السجلات
+    const result = await callGAS('getPolicyHistoryForCenter', { centerName });
+    
+    if (!result?.success || !Array.isArray(result.data)) {
+      container.innerHTML = `
+        <div style="text-align:center; padding:20px; color:#94a3b8; font-size:12px;">
+          📭 لا توجد سجلات لهذا المركز
+        </div>
+      `;
+      return;
+    }
+    
+    const policies = result.data;
+    
+    if (policies.length === 0) {
+      container.innerHTML = `
+        <div style="text-align:center; padding:20px; color:#94a3b8; font-size:12px;">
+          📭 لا توجد سجلات لهذا المركز
+        </div>
+      `;
+      return;
+    }
+    
+    // ✅ ترتيب تنازلي (الأحدث أولاً)
+    policies.sort((a, b) => {
+      const dateA = parseDateFromString(a.effectiveFrom);
+      const dateB = parseDateFromString(b.effectiveFrom);
+      if (!dateA || !dateB) return 0;
+      return dateB.getTime() - dateA.getTime();
+    });
+    
+    // ✅ بناء HTML
+    let html = '';
+    policies.forEach((policy, index) => {
+      const isCurrent = policy.historyId === currentHistoryId;
+      const s = policy.settings || {};
+      
+      // ✅ تنسيق الحقول
+      const rate = s.rate || 0;
+      const deductions = [];
+      if (s.deductDiscount) deductions.push('خصم');
+      if (s.deductMandatoryFees) deductions.push('رسوم');
+      if (s.deductTripCost) deductions.push('تكلفة');
+      
+      // ✅ النسب المخصصة
+      let activityRatesHtml = '';
+      if (s.useActivityRates && s.activityRates && Object.keys(s.activityRates).length > 0) {
+        const ratesList = Object.entries(s.activityRates)
+          .map(([name, r]) => `<span style="background:#e0e7ff; padding:2px 8px; border-radius:10px; font-size:10px; margin:2px; display:inline-block;">${name}: ${r}%</span>`)
+          .join('');
+        activityRatesHtml = `
+          <div style="margin-top:6px;">
+            <span style="font-size:10px; color:#4c1d95; font-weight:700;">🎯 نسب مخصصة:</span>
+            ${ratesList}
+          </div>
+        `;
+      }
+      
+      // ✅ لون الخلفية حسب الحالة
+      const bgColor = isCurrent 
+        ? 'linear-gradient(135deg, #d4edda, #c8e6c9)' 
+        : (index === 0 ? 'linear-gradient(135deg, #fff3cd, #ffecb3)' : 'white');
+      
+      const borderColor = isCurrent 
+        ? '#27ae60' 
+        : (index === 0 ? '#f5c842' : '#e9f0fa');
+      
+      const badge = isCurrent 
+        ? '<span style="background:#27ae60; color:white; padding:2px 8px; border-radius:10px; font-size:9px; font-weight:700;">✅ الحالية المطبقة</span>'
+        : (index === 0 
+            ? '<span style="background:#f5c842; color:#1e2b4f; padding:2px 8px; border-radius:10px; font-size:9px; font-weight:700;">🔵 الأحدث</span>'
+            : '<span style="background:#e9f0fa; color:#5a6a8a; padding:2px 8px; border-radius:10px; font-size:9px; font-weight:700;">📜 سابقة</span>'
+          );
+      
+      html += `
+        <div style="
+          background: ${bgColor};
+          border: 2px solid ${borderColor};
+          border-radius: 10px;
+          padding: 10px 12px;
+          font-size: 11px;
+          color: #1e2b4f;
+          position: relative;
+        ">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:6px;">
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+              <strong style="font-size:12px; color:#0f1f3d;">${policy.historyId}</strong>
+              ${badge}
+            </div>
+            <div style="font-size:11px; font-weight:700; color:#0f1f3d;">
+              📅 ${policy.effectiveFrom}
+            </div>
+          </div>
+          
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:4px;">
+            <div style="background:#1e2b4f; color:#f5c842; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:700;">
+              💰 ${rate}%
+            </div>
+            ${deductions.length > 0 
+              ? `<div style="background:#fee2e2; color:#b71c1c; padding:3px 10px; border-radius:12px; font-size:10px;">
+                  🔻 خصم: ${deductions.join(' + ')}
+                </div>` 
+              : `<div style="background:#f0f9ff; color:#0369a1; padding:3px 10px; border-radius:12px; font-size:10px;">
+                  بدون خصومات
+                </div>`}
+            ${s.shareProfit 
+              ? `<div style="background:#fef3c7; color:#92400e; padding:3px 10px; border-radius:12px; font-size:10px; font-weight:700;">
+                  💎 تقاسم أرباح 50%
+                </div>` 
+              : ''}
+          </div>
+          
+          ${activityRatesHtml}
+        </div>
+      `;
+    });
+    
+    container.innerHTML = html;
+    console.log(`✅ loadPolicyTimeline: تم عرض ${policies.length} سجل`);
+    
+  } catch(e) {
+    console.error('❌ loadPolicyTimeline error:', e);
+    container.innerHTML = `
+      <div style="text-align:center; padding:20px; color:#e74c3c; font-size:12px;">
+        ❌ خطأ في التحميل: ${e.message}
+      </div>
+    `;
+  }
+}
+
+/**
+ * تحديث Timeline (يُستدعى من زر التحديث)
+ */
+function refreshPolicyTimeline() {
+  const centerName = document.getElementById('centerName')?.value?.trim();
+  const currentHistoryId = document.getElementById('currentPolicyBadge')?.dataset?.historyId || '';
+  
+  if (!centerName) {
+    showAlert('⚠️ احفظ المركز أولاً');
+    return;
+  }
+  
+  loadPolicyTimeline(centerName, currentHistoryId);
+}
+
+/**
+ * عرض شارة "السياسة الحالية" فوق النموذج
+ */
+function showCurrentPolicyBadge(policyResult) {
+  const badge = document.getElementById('currentPolicyBadge');
+  const content = document.getElementById('currentPolicyBadgeContent');
+  
+  if (!badge || !content) return;
+  
+  if (!policyResult || !policyResult.success || !policyResult.settings) {
+    badge.style.display = 'none';
+    return;
+  }
+  
+  const s = policyResult.settings;
+  const historyId = policyResult.historyId || 'N/A';
+  const effectiveFrom = policyResult.effectiveFrom || 'N/A';
+  
+  // ✅ حفظ historyId في dataset للاستخدام لاحقاً
+  badge.dataset.historyId = historyId;
+  
+  const deductions = [];
+  if (s.deductDiscount) deductions.push('خصم');
+  if (s.deductMandatoryFees) deductions.push('رسوم');
+  if (s.deductTripCost) deductions.push('تكلفة');
+  
+  content.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+      <div>
+        <span style="font-size:13px;">✅</span>
+        <strong>السياسة الحالية:</strong>
+        <span style="background:#27ae60; color:white; padding:2px 8px; border-radius:10px; font-size:10px; margin-right:6px;">
+          ${historyId}
+        </span>
+        <span style="font-size:11px;">(${effectiveFrom})</span>
+      </div>
+      <div style="font-size:11px; color:#155724;">
+        💰 ${s.rate}% 
+        ${deductions.length > 0 ? ' | 🔻 ' + deductions.join(' + ') : ' | بدون خصومات'}
+        ${s.shareProfit ? ' | 💎 تقاسم 50%' : ''}
+      </div>
+    </div>
+  `;
+  
+  badge.style.display = 'block';
+}
 async function loadBranchesForCenter(centerId, selectedId = '') {
   if (!centerId) return;
   try {
