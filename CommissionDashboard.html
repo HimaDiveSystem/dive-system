@@ -775,8 +775,7 @@ thead th:hover {
       </div>
     </div>
     
-    <!-- Invoices Table -->
-        <!-- Invoices Table -->
+     <!-- Invoices Table -->
     <div class="section">
       <div class="section-title">
         <span>📋 الفواتير والعمولات</span>
@@ -1060,6 +1059,49 @@ function populateTripFilter() {
     tripSelect.value = currentValue;
   }
 }
+  // ═══════════════════════════════════════════════════════════════════
+// ✅ دالة جديدة — تحديث ملخص السيلز من البيانات المفلترة
+// ═══════════════════════════════════════════════════════════════════
+function updateSalesSummaryFromFiltered(invoices) {
+  // للسيلز — لا يُعرض القسم أصلاً
+  if (currentScope === 'self') return;
+  
+  const salesMap = new Map();
+  
+  invoices.forEach(inv => {
+    const sid = inv.salesId || '';
+    if (!sid) return;
+    
+    if (!salesMap.has(sid)) {
+      salesMap.set(sid, {
+        salesId: sid,
+        salesName: inv.salesName || sid,
+        invoicesCount: 0,
+        totalCommission: 0,
+        averageCommission: 0,
+        topInvoice: 0,
+        totalPaymentPrice: 0
+      });
+    }
+    const s = salesMap.get(sid);
+    const c = parseFloat(inv.commission) || 0;
+    s.invoicesCount++;
+    s.totalCommission += c;
+    s.totalPaymentPrice += parseFloat(inv.paymentPrice) || 0;
+    if (c > s.topInvoice) s.topInvoice = c;
+  });
+  
+  const salesSummary = Array.from(salesMap.values()).map(s => {
+    s.averageCommission = s.invoicesCount > 0 
+      ? s.totalCommission / s.invoicesCount 
+      : 0;
+    return s;
+  });
+  
+  salesSummary.sort((a, b) => b.totalCommission - a.totalCommission);
+  
+  renderSalesSummary(salesSummary);
+}
 // ═══════════════════════════════════════════════════════════════════
 // LOAD COMMISSIONS DATA
 // ═══════════════════════════════════════════════════════════════════
@@ -1091,8 +1133,7 @@ async function loadCommissionsData() {
       branchName: currentUser.branchName || '',
       fromDate: fromDate,
       toDate: toDate,
-      salesId: document.getElementById('filterSales')?.value || ''
-    };
+      };
     
     console.log('📡 إرسال الطلب:', params);
     
@@ -1151,6 +1192,18 @@ function applyTableFiltersAndRender() {
   
   // 1. البداية من كل الفواتير
   let invoices = [...window._allInvoices];
+  
+  // ✅ ✅ ✅ فلترة السيلز (الأهم!)
+  const salesFilter = document.getElementById('filterSales')?.value || '';
+  if (salesFilter) {
+    invoices = invoices.filter(inv => inv.salesId === salesFilter);
+  }
+  
+  // ✅ فلترة الفرع (للمالك)
+  const branchFilter = document.getElementById('filterBranch')?.value || '';
+  if (branchFilter) {
+    invoices = invoices.filter(inv => inv.branchName === branchFilter);
+  }
   
   // 2. فلترة البحث النصي
   const searchQuery = (document.getElementById('filterSearch')?.value || '').trim().toLowerCase();
@@ -1214,8 +1267,48 @@ function applyTableFiltersAndRender() {
   // 6. إعادة تعيين الصفحة
   window._currentPage = 1;
   
-  // 7. عرض الجدول + الإجماليات + Pagination
-  renderInvoicesWithPagination();
+  // ✅ ✅ ✅ تحديث الإحصائيات بناءً على البيانات المفلترة!
+  updateStatsFromFiltered(invoices);
+  // ✅ ✅ ✅ جديد: تحديث ملخص السيلز
+updateSalesSummaryFromFiltered(invoices);
+
+// 7. عرض الجدول
+renderInvoicesWithPagination();
+ 
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ✅ دالة جديدة — تحديث الإحصائيات من البيانات المفلترة
+// ═══════════════════════════════════════════════════════════════════
+function updateStatsFromFiltered(invoices) {
+  let totalCommission = 0;
+  let topCommission = 0;
+  
+  invoices.forEach(inv => {
+    const c = parseFloat(inv.commission) || 0;
+    totalCommission += c;
+    if (c > topCommission) topCommission = c;
+  });
+  
+  const count = invoices.length;
+  const average = count > 0 ? totalCommission / count : 0;
+  
+  // تحديث البطاقات
+  const el1 = document.getElementById('statTotalCommission');
+  if (el1) el1.textContent = formatNumber(totalCommission);
+  
+  const el2 = document.getElementById('statInvoicesCount');
+  if (el2) el2.textContent = count;
+  
+  const el3 = document.getElementById('statAverageCommission');
+  if (el3) el3.textContent = formatNumber(average);
+  
+  const el4 = document.getElementById('statTopInvoice');
+  if (el4) el4.textContent = formatNumber(topCommission);
+  
+  // ✅ إظهار البطاقات إذا كانت مخفية
+  const grid = document.getElementById('statsGrid');
+  if (grid) grid.style.display = 'grid';
 }
   // ═══════════════════════════════════════════════════════════════════
 // RENDER INVOICES WITH PAGINATION — الجدول + الإجماليات + Pagination
@@ -1762,14 +1855,16 @@ window.goBack = goBack;
 window.populateSalesFilter = populateSalesFilter;
 window.populateTripFilter = populateTripFilter;
 
-// ✅ الدوال الحرجة للتفاعلات
+// ✅ الدوال المُصدَّرة
 window.applyTableFiltersAndRender = applyTableFiltersAndRender;
-window.renderInvoicesWithPagination = renderInvoicesWithPagination;
+window.updateStatsFromFiltered = updateStatsFromFiltered;
 window.sortTable = sortTable;
-window.getSortIcon = getSortIcon;
-window.renderPaginationControls = renderPaginationControls;
 window.gotoPage = gotoPage;
 window.changePageSize = changePageSize;
+window.renderPaginationControls = renderPaginationControls;
+window.renderInvoicesWithPagination = renderInvoicesWithPagination;
+window.populateTripFilter = populateTripFilter;
+window.parseDateFromString = parseDateFromString;
 
 // ✅ دوال مساعدة
 window.safeEscape = safeEscape;
@@ -1777,7 +1872,7 @@ window.isoToDDMMMYYYY = isoToDDMMMYYYY;
 window.formatNumber = formatNumber;
 window.getCurrencySymbol = getCurrencySymbol;
 window.showToast = showToast;
-
+window.updateSalesSummaryFromFiltered = updateSalesSummaryFromFiltered;
 console.log('✅ CommissionDashboard.html - تم التحميل بنجاح');
   
 </script>
