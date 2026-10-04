@@ -430,7 +430,7 @@ function renderTable(rows, month, year) {
   function fmt(n) { return Math.round(n).toLocaleString(); }
   function fmtDays(n) { return (Math.round(n*100)/100).toLocaleString(); }
 
-  let html = `<div class="table-wrap"><table>
+    let html = `<div class="table-wrap"><table>
     <thead>
       <tr>
         <th>#</th>
@@ -449,11 +449,15 @@ function renderTable(rows, month, year) {
         <th>صافي بعد الخصم</th>
         <th>الدفعة المقدمة</th>
         <th>الصافي المستحق</th>
+        <th>تفاصيل</th>
       </tr>
     </thead>
     <tbody>`;
 
-  rows.forEach((r, i) => {
+   rows.forEach((r, i) => {
+    // ✅ ✅ ✅ زر 👁️ يظهر فقط إذا كان للموظف عمولة > 0
+    const showDetailsBtn = r.commission > 0;
+    
     html += `<tr>
       <td>${i+1}</td>
       <td>${r.userId}</td>
@@ -471,8 +475,21 @@ function renderTable(rows, month, year) {
       <td>${r.totalAfterCuts > 0 ? fmt(r.totalAfterCuts) : '—'}</td>
       <td style="color:${r.downPaymentLE>0?'#c0392b':'#aaa'};">${r.downPaymentLE > 0 ? fmt(r.downPaymentLE) : '—'}</td>
       <td class="cell-net" style="font-weight:700;color:${r.net>=0?'#1e8449':'#e74c3c'};">${r.net !== 0 ? fmt(r.net) : '—'}</td>
+      <td>
+        ${showDetailsBtn 
+          ? `<button onclick="openCommissionDetails('${r.userId}', '${(r.name || '').replace(/'/g, "\\'")}')" 
+                     style="background:#0d9488;color:white;border:none;padding:5px 10px;border-radius:8px;cursor:pointer;font-size:11px;font-weight:700;transition:.2s;"
+                     title="عرض تفاصيل العمولات"
+                     onmouseover="this.style.transform='scale(1.1)'"
+                     onmouseout="this.style.transform='scale(1)'">
+               👁️
+             </button>`
+          : '—'
+        }
+      </td>
     </tr>`;
   });
+ 
 
   html += `<tr class="total-row" style="background:#1e2b4f;color:#ffd966;">
     <td colspan="4"><strong>الإجمالي الكلي</strong></td>
@@ -488,8 +505,9 @@ function renderTable(rows, month, year) {
     <td><strong>${totals.total > 0 ? fmt(totals.total) : '—'}</strong></td>
     <td><strong>${totals.downPaymentLE > 0 ? fmt(totals.downPaymentLE) : '—'}</strong></td>
     <td><strong>${totals.net !== 0 ? fmt(totals.net) : '—'}</strong></td>
+    <td><strong>—</strong></td>
   </tr>`;
-
+  
   html += `</tbody></table></div>`;
   document.getElementById('reportArea').innerHTML = html;
 }
@@ -592,7 +610,70 @@ function showToast(msg, type) {
   t.className = 'toast ' + (type==='error'?'t-err':type==='info'?'t-info':'t-ok') + ' show';
   setTimeout(() => { t.className = 'toast'; }, 3500);
 }
+// ═══════════════════════════════════════════════════════════════════
+// OPEN COMMISSION DETAILS — فتح تفاصيل عمولات الموظف
+// ═══════════════════════════════════════════════════════════════════
+function openCommissionDetails(userId, userName) {
+  if (!userId) {
+    showToast('⚠️ لم يتم تحديد الموظف', 'error');
+    return;
+  }
+  
+  const month = document.getElementById('selMonth').value;
+  const year = document.getElementById('selYear').value;
+  
+  if (!month || !year) {
+    showToast('⚠️ اختر الشهر والسنة أولاً', 'error');
+    return;
+  }
+  
+  // ✅ حساب أول وآخر يوم في الشهر
+  const monthMap = {
+    'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+    'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+  };
+  
+  const monthIndex = monthMap[month];
+  if (monthIndex === undefined) {
+    showToast('⚠️ شهر غير صحيح', 'error');
+    return;
+  }
+  
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  
+  // ✅ أول يوم في الشهر
+  const fromStr = `01/${months[monthIndex]}/${year}`;
+  
+  // ✅ آخر يوم في الشهر (حساب الأيام الفعلية)
+  const lastDay = new Date(parseInt(year), monthIndex + 1, 0).getDate();
+  const toStr = `${String(lastDay).padStart(2, '0')}/${months[monthIndex]}/${year}`;
+  
+  // ✅ حفظ الجلسة
+  if (currentUser) {
+    Session.save(currentUser);
+  }
+  
+  // ✅ بناء URL
+  const params = new URLSearchParams({
+    filterSales: userId,
+    restoreFrom: fromStr,
+    restoreTo: toStr
+  });
+  
+  console.log('🚀 فتح تفاصيل العمولات:', { 
+    userId, 
+    userName, 
+    fromStr, 
+    toStr,
+    url: 'CommissionDashboard.html?' + params.toString()
+  });
+  
+  window.location.href = 'CommissionDashboard.html?' + params.toString();
+}
 
+// ✅ تصدير للـ window
+window.openCommissionDetails = openCommissionDetails;
 // ──────────────────────────────────────────────
 // ✅ العودة للصفحة السابقة
 // ──────────────────────────────────────────────
