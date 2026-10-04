@@ -619,7 +619,10 @@ function renderTable(rows, month, year) {
 // ═══════════════════════════════════════════════════════════════════
 // openCommissionDetails — عرض تفاصيل عمولات موظف معين
 // ═══════════════════════════════════════════════════════════════════
-function openCommissionDetails(userId, employeeName) {
+// ═══════════════════════════════════════════════════════════════════
+// openCommissionDetails — عرض تفاصيل العمولات (من السيرفر مباشرة)
+// ═══════════════════════════════════════════════════════════════════
+async function openCommissionDetails(userId, employeeName) {
   const month = document.getElementById('selMonth').value;
   const year  = document.getElementById('selYear').value;
   
@@ -628,158 +631,162 @@ function openCommissionDetails(userId, employeeName) {
     return;
   }
   
-  // ✅ فلترة الفواتير لهذا الموظف في هذا الشهر
-  const empInvoices = (window._allInvoices || []).filter(inv => {
-    const invMonth = (inv.month || '').toString().trim();
-    const invYear  = (inv.year  || '').toString().trim();
-    const state    = (inv.state || '').toString().trim().toLowerCase();
-    const salesId  = (inv.salesId || '').toString().trim();
-    
-    if (invMonth !== month) return false;
-    if (invYear !== year) return false;
-    if (state !== 'confirmed') return false;
-    if (salesId !== userId) return false;
-    
-    const comm = parseFloat(inv.commission) || 0;
-    return comm > 0;
-  });
+  // ✅ عرض loader داخل مودال مؤقت
+  const loadingModal = document.createElement('div');
+  loadingModal.id = 'commDetailsLoading';
+  loadingModal.style.cssText = `
+    position:fixed;top:0;left:0;width:100%;height:100%;
+    background:rgba(0,0,0,0.7);z-index:9999;
+    display:flex;align-items:center;justify-content:center;
+  `;
+  loadingModal.innerHTML = `
+    <div style="background:white;border-radius:16px;padding:30px 50px;text-align:center;">
+      <div style="border:4px solid #f3f3f3;border-top:4px solid #0d9488;
+                  border-radius:50%;width:40px;height:40px;
+                  animation:spin 0.9s linear infinite;margin:0 auto 15px;"></div>
+      <div style="font-weight:700;color:#1e2b4f;">جاري تحميل التفاصيل...</div>
+    </div>
+  `;
+  document.body.appendChild(loadingModal);
   
-  // ✅ حساب الإجمالي
-  const totalComm = empInvoices.reduce((sum, inv) => {
-    return sum + (parseFloat(inv.commission) || 0);
-  }, 0);
-  
-  // ✅ بناء جدول التفاصيل
-  let rowsHtml = '';
-  if (empInvoices.length === 0) {
-    rowsHtml = `<tr><td colspan="6" style="text-align:center;padding:20px;color:#999;">
-      لا توجد فواتير مؤكدة بهذا الشهر
-    </td></tr>`;
-  } else {
-    empInvoices.forEach((inv, idx) => {
-      rowsHtml += `<tr>
-        <td style="text-align:center;">${idx + 1}</td>
-        <td>${inv.voucherNo || '—'}</td>
-        <td>${inv.date || '—'}</td>
-        <td style="text-align:right;">${inv.customerName || inv.customer || '—'}</td>
-        <td style="text-align:center;">${inv.currency || '—'}</td>
-        <td style="text-align:center;">${inv.amount || '—'}</td>
-        <td style="text-align:center;color:#1e8449;font-weight:700;">${fmt(parseFloat(inv.commission) || 0)}</td>
-      </tr>`;
+  try {
+    // ✅ جلب البيانات من السيرفر
+    const result = await jsonp('getCommissionDetails', {
+      userId: Session.getUser()?.id || '',
+      userType: Session.getUser()?.type || 'Accountant',
+      centerName: Session.getUser()?.centerName || '',
+      branchName: Session.getUser()?.branchName || '',
+      targetSalesId: userId,
+      fromDate: `01/${month}/${year}`,
+      toDate: `31/${month}/${year}`
     });
-  }
-  
-  // ✅ HTML المودال
-  const modalHtml = `
-    <div id="commDetailsModal" style="
-      position:fixed;top:0;left:0;width:100%;height:100%;
-      background:rgba(0,0,0,0.7);z-index:9999;
-      display:flex;align-items:center;justify-content:center;
-      padding:20px;box-sizing:border-box;
-      animation:fadeIn 0.2s ease;
-    " onclick="if(event.target===this) closeCommissionDetails()">
-      
-      <div style="
-        background:#fff;border-radius:16px;
-        max-width:1000px;width:100%;max-height:90vh;
-        display:flex;flex-direction:column;
-        box-shadow:0 20px 60px rgba(0,0,0,0.4);
-        animation:slideUp 0.3s ease;
-      ">
-        
-        <!-- Header -->
+    
+    loadingModal.remove();
+    
+    if (!result || !result.success) {
+      showToast(result?.message || 'فشل تحميل التفاصيل', 'error');
+      return;
+    }
+    
+    const invoices = result.invoices || [];
+    const totalComm = result.summary?.totalCommission || 0;
+    
+    // ✅ بناء جدول التفاصيل
+    let rowsHtml = '';
+    if (invoices.length === 0) {
+      rowsHtml = `<tr><td colspan="7" style="text-align:center;padding:20px;color:#999;">
+        لا توجد فواتير مؤكدة بهذا الشهر
+      </td></tr>`;
+    } else {
+      invoices.forEach((inv, idx) => {
+        rowsHtml += `<tr>
+          <td style="text-align:center;">${idx + 1}</td>
+          <td>${escHtml(inv.voucherNo || '—')}</td>
+          <td>${escHtml(inv.activeDate || '—')}</td>
+          <td>${escHtml(inv.trip || '—')}</td>
+          <td style="text-align:center;">${fmt(inv.paymentPrice || 0)} ${escHtml(inv.invoiceCurrency || '')}</td>
+          <td style="text-align:center;">${inv.commissionRate || 0}%</td>
+          <td style="text-align:center;color:#1e8449;font-weight:700;">${fmt(inv.commission || 0)} LE</td>
+        </tr>`;
+      });
+    }
+    
+    // ✅ عرض المودال
+    const modalHtml = `
+      <div id="commDetailsModal" style="
+        position:fixed;top:0;left:0;width:100%;height:100%;
+        background:rgba(0,0,0,0.7);z-index:9999;
+        display:flex;align-items:center;justify-content:center;
+        padding:20px;box-sizing:border-box;
+      " onclick="if(event.target===this) closeCommissionDetails()">
         <div style="
-          padding:20px 25px;
-          background:linear-gradient(135deg,#0d9488,#14b8a6);
-          color:#fff;border-radius:16px 16px 0 0;
-          display:flex;justify-content:space-between;align-items:center;
+          background:#fff;border-radius:16px;
+          max-width:1100px;width:100%;max-height:90vh;
+          display:flex;flex-direction:column;
+          box-shadow:0 20px 60px rgba(0,0,0,0.4);
         ">
-          <div>
-            <h3 style="margin:0;font-size:18px;">👁️ تفاصيل عمولات — ${employeeName}</h3>
-            <p style="margin:5px 0 0;opacity:0.9;font-size:13px;">
-              ${month} / ${year} — الرقم الوظيفي: ${userId}
-            </p>
-          </div>
-          <button onclick="closeCommissionDetails()" style="
-            background:rgba(255,255,255,0.2);color:#fff;
-            border:none;width:36px;height:36px;border-radius:50%;
-            font-size:20px;cursor:pointer;transition:.2s;
-          " onmouseover="this.style.background='rgba(255,255,255,0.4)'"
-             onmouseout="this.style.background='rgba(255,255,255,0.2)'">×</button>
-        </div>
-        
-        <!-- Body -->
-        <div style="padding:20px 25px;overflow-y:auto;flex:1;">
-          
           <div style="
-            background:#e8f5e9;border-right:4px solid #1e8449;
-            padding:15px 20px;border-radius:10px;margin-bottom:20px;
+            padding:20px 25px;
+            background:linear-gradient(135deg,#0d9488,#14b8a6);
+            color:#fff;border-radius:16px 16px 0 0;
             display:flex;justify-content:space-between;align-items:center;
           ">
-            <span style="font-weight:700;color:#1e8449;font-size:15px;">
-              💰 إجمالي العمولات المحتسبة
-            </span>
-            <span style="font-weight:800;color:#1e8449;font-size:20px;">
-              ${fmt(totalComm)} LE
-            </span>
+            <div>
+              <h3 style="margin:0;font-size:18px;">👁️ تفاصيل عمولات — ${escHtml(employeeName)}</h3>
+              <p style="margin:5px 0 0;opacity:0.9;font-size:13px;">
+                ${month} / ${year} — الرقم الوظيفي: ${escHtml(userId)}
+              </p>
+            </div>
+            <button onclick="closeCommissionDetails()" style="
+              background:rgba(255,255,255,0.2);color:#fff;
+              border:none;width:36px;height:36px;border-radius:50%;
+              font-size:20px;cursor:pointer;
+            ">×</button>
+          </div>
+          
+          <div style="padding:20px 25px;overflow-y:auto;flex:1;">
+            <div style="
+              background:#e8f5e9;border-right:4px solid #1e8449;
+              padding:15px 20px;border-radius:10px;margin-bottom:20px;
+              display:flex;justify-content:space-between;align-items:center;
+            ">
+              <span style="font-weight:700;color:#1e8449;font-size:15px;">
+                💰 إجمالي العمولات المحتسبة
+              </span>
+              <span style="font-weight:800;color:#1e8449;font-size:20px;">
+                ${fmt(totalComm)} LE
+              </span>
+            </div>
+            
+            <div style="
+              background:#f8f9fa;padding:12px 16px;border-radius:10px;
+              margin-bottom:15px;font-size:13px;color:#666;
+            ">
+              📊 عدد الفواتير المؤكدة: <strong>${invoices.length}</strong>
+            </div>
+            
+            <div style="overflow-x:auto;border-radius:10px;border:1px solid #e0e0e0;">
+              <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                <thead>
+                  <tr style="background:#1e2b4f;color:#ffd966;">
+                    <th style="padding:10px;text-align:center;">#</th>
+                    <th style="padding:10px;text-align:center;">رقم الإيصال</th>
+                    <th style="padding:10px;text-align:center;">التاريخ</th>
+                    <th style="padding:10px;text-align:center;">الرحلة</th>
+                    <th style="padding:10px;text-align:center;">المدفوع</th>
+                    <th style="padding:10px;text-align:center;">النسبة</th>
+                    <th style="padding:10px;text-align:center;">العمولة</th>
+                  </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+              </table>
+            </div>
           </div>
           
           <div style="
-            background:#f8f9fa;padding:12px 16px;border-radius:10px;
-            margin-bottom:15px;font-size:13px;color:#666;
+            padding:15px 25px;background:#f8f9fa;
+            border-radius:0 0 16px 16px;text-align:right;
+            border-top:1px solid #e0e0e0;
           ">
-            📊 عدد الفواتير المؤكدة: <strong>${empInvoices.length}</strong>
+            <button onclick="closeCommissionDetails()" style="
+              background:#6c757d;color:#fff;border:none;
+              padding:10px 25px;border-radius:10px;
+              font-size:14px;font-weight:700;cursor:pointer;
+            ">إغلاق</button>
           </div>
-          
-          <div style="overflow-x:auto;border-radius:10px;border:1px solid #e0e0e0;">
-            <table style="width:100%;border-collapse:collapse;font-size:13px;">
-              <thead>
-                <tr style="background:#1e2b4f;color:#ffd966;">
-                  <th style="padding:10px;text-align:center;">#</th>
-                  <th style="padding:10px;text-align:right;">رقم الإيصال</th>
-                  <th style="padding:10px;text-align:center;">التاريخ</th>
-                  <th style="padding:10px;text-align:right;">اسم العميل</th>
-                  <th style="padding:10px;text-align:center;">العملة</th>
-                  <th style="padding:10px;text-align:center;">المبلغ</th>
-                  <th style="padding:10px;text-align:center;">العمولة</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rowsHtml}
-              </tbody>
-            </table>
-          </div>
-          
         </div>
-        
-        <!-- Footer -->
-        <div style="
-          padding:15px 25px;background:#f8f9fa;
-          border-radius:0 0 16px 16px;
-          display:flex;justify-content:flex-end;gap:10px;
-          border-top:1px solid #e0e0e0;
-        ">
-          <button onclick="closeCommissionDetails()" style="
-            background:#6c757d;color:#fff;border:none;
-            padding:10px 25px;border-radius:10px;
-            font-size:14px;font-weight:700;cursor:pointer;
-          ">إغلاق</button>
-        </div>
-        
       </div>
-    </div>
+    `;
     
-    <style>
-      @keyframes fadeIn { from {opacity:0;} to {opacity:1;} }
-      @keyframes slideUp { from {transform:translateY(30px);opacity:0;} to {transform:translateY(0);opacity:1;} }
-    </style>
-  `;
-  
-  // ✅ إزالة أي مودال قديم + إضافة الجديد
-  const existing = document.getElementById('commDetailsModal');
-  if (existing) existing.remove();
-  
-  document.body.insertAdjacentHTML('beforeend', modalHtml);
+    const existing = document.getElementById('commDetailsModal');
+    if (existing) existing.remove();
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+  } catch(e) {
+    loadingModal.remove();
+    console.error('❌ openCommissionDetails error:', e);
+    showToast('فشل تحميل التفاصيل: ' + e.message, 'error');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
