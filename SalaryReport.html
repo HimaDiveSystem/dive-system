@@ -129,9 +129,9 @@
           <select id="selYear"></select>
         </div>
         <div style="display:flex;gap:10px;align-items:flex-end;">
-          <button class="btn-primary" onclick="loadReport()">🔍 عرض التقرير</button>
-          <button class="btn-excel" onclick="exportToExcel()">📎 تصدير Excel</button>
-        </div>
+        <button class="btn-primary" id="btnLoadReport" onclick="loadReport()">🔍 عرض التقرير</button>
+        <button class="btn-excel" id="btnExportExcel" onclick="exportToExcel()">📎 تصدير Excel</button>
+      </div>
       </div>
     </div>
 
@@ -165,6 +165,7 @@
 
 let currentUser = null;
 let tableData = [];
+let isLoadingReport = false;   // ✅ جديد — لمنع Race Condition
 
 // ──────────────────────────────────────────────
 // ✅ JSONP helper - باستخدام CONFIG.GAS_URL
@@ -258,52 +259,106 @@ document.addEventListener('DOMContentLoaded', function() {
 // ──────────────────────────────────────────────
 // ✅ تحميل التقرير
 // ──────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// loadReport — تحميل تقرير المرتبات (Bootstrap Request)
+// ═══════════════════════════════════════════════════════════════════
 async function loadReport() {
+  // ✅ منع التحميل المتزامن
+  if (isLoadingReport) {
+    console.log('⚠️ loadReport: التحميل قيد التنفيذ — تجاهل');
+    return;
+  }
+  
   const month = document.getElementById('selMonth').value;
   const year  = document.getElementById('selYear').value;
-  if (!month || !year) { showToast('اختر الشهر والسنة', 'error'); return; }
-
+  
+  if (!month || !year) {
+    showToast('اختر الشهر والسنة', 'error');
+    return;
+  }
+  
+  isLoadingReport = true;
+  
+  // ✅ تحديث زر "عرض التقرير"
+  const btnLoad = document.getElementById('btnLoadReport');
+  const btnExcel = document.getElementById('btnExportExcel');
+  
+  if (btnLoad) {
+    btnLoad.disabled = true;
+    btnLoad.style.opacity = '0.6';
+    btnLoad.style.cursor = 'wait';
+    btnLoad.textContent = '⏳ جاري العرض...';
+  }
+  
+  if (btnExcel) {
+    btnExcel.disabled = true;
+    btnExcel.style.opacity = '0.5';
+    btnExcel.style.cursor = 'not-allowed';
+  }
+  
+  // ✅ عرض loader
   document.getElementById('reportArea').innerHTML = '<div class="loader"></div>';
   document.getElementById('infoBar').style.display = 'none';
-
+  
   try {
-   const [salResult, invoicesResult, expResult, ratesResult] = await Promise.all([
-  callGAS('getSalaryReportData', { month: month, year: year }),
-  callGAS('getAllInvoices', { includeCollection: 'false' }),
-  callGAS('getExpenseRevenueRows', { sheet: 'Expenses', dateFrom: '', dateTo: '' }),
-  callGAS('getLatestExchangeRates', {})
-]);
+    // ✅ ✅ ✅ طلب واحد بدلاً من 4
+    console.log('📡 getSalaryReportBootstrap — إرسال طلب موحّد...');
     
+    const result = await jsonp('getSalaryReportBootstrap', { month, year });
+    
+    console.log('📥 getSalaryReportBootstrap — النتيجة:', result);
+    
+    if (!result || !result.success) {
+      document.getElementById('reportArea').innerHTML =
+        '<div class="empty">❌ ' + (result?.message || 'فشل التحميل') + '</div>';
+      return;
+    }
+    
+    // ✅ استخراج البيانات
+    const salResult = result.salary;
+    const invoicesResult = result.invoices;
+    const expResult = result.expenses;
+    const ratesResult = result.rates;
+    
+    // ═══════════════════════════════════════════════
+    // التحقق من أسعار الصرف
+    // ═══════════════════════════════════════════════
     if (!ratesResult || !ratesResult.bUSD || !ratesResult.bEUR || !ratesResult.bGBP) {
-      document.getElementById('reportArea').innerHTML = 
+      document.getElementById('reportArea').innerHTML =
         '<div class="empty">⚠️ لا توجد أسعار صرف في شيت Exchange_Rates<br><small>يرجى إدخال أسعار الصرف أولاً</small></div>';
       tableData = [];
       return;
     }
-
+    
     const usdRate = parseFloat(ratesResult.bUSD);
     const eurRate = parseFloat(ratesResult.bEUR);
     const gbpRate = parseFloat(ratesResult.bGBP);
-
+    
+    // ═══════════════════════════════════════════════
+    // التحقق من بيانات المرتبات
+    // ═══════════════════════════════════════════════
     if (!salResult || !salResult.success || !salResult.employees || salResult.employees.length === 0) {
       document.getElementById('reportArea').innerHTML =
         '<div class="empty">📭 لا توجد بيانات رواتب للشهر المحدد<br><small>تأكد من تسجيل الحضور وضغط "مزامنة" أولاً</small></div>';
       tableData = [];
       return;
     }
-
-    const employees   = salResult.employees;
-    const invoices    = Array.isArray(invoicesResult) ? invoicesResult : [];
-    const expenses    = Array.isArray(expResult) ? expResult : [];
-
-    // حساب العمولات
+    
+    const employees = salResult.employees;
+    const invoices  = Array.isArray(invoicesResult) ? invoicesResult : [];
+    const expenses  = Array.isArray(expResult) ? expResult : [];
+    
+    // ═══════════════════════════════════════════════
+    // حساب العمولات من الفواتير
+    // ═══════════════════════════════════════════════
     const commissionMap = {};
+    
     invoices.forEach(inv => {
       const invMonth = (inv.month || '').toString().trim();
       const invYear  = (inv.year  || '').toString().trim();
       const state    = (inv.state || '').toString().trim().toLowerCase();
-      let comm = parseFloat(inv.commission) || 0;
       
+      let comm = parseFloat(inv.commission) || 0;
       if (isNaN(comm) || comm === 0) {
         const commStr = inv.commission?.toString().trim();
         if (commStr && commStr !== '') comm = parseFloat(commStr) || 0;
@@ -315,10 +370,15 @@ async function loadReport() {
 
       const salesId = (inv.salesId || '').toString().trim();
       if (!salesId) return;
+      
       commissionMap[salesId] = (commissionMap[salesId] || 0) + comm;
     });
-
+    
+    console.log('📊 commissionMap:', commissionMap);
+    
+    // ═══════════════════════════════════════════════
     // حساب الدفعات المقدمة
+    // ═══════════════════════════════════════════════
     const nameToId = {};
     employees.forEach(emp => {
       if (emp.name) nameToId[emp.name] = emp.userId;
@@ -344,14 +404,16 @@ async function loadReport() {
 
       advanceMap[targetUserId] = (advanceMap[targetUserId] || 0) + totalLE;
     });
-
+    
+    // ═══════════════════════════════════════════════
     // بناء صفوف التقرير
+    // ═══════════════════════════════════════════════
     tableData = employees.map(emp => {
-      const workingDays    = parseFloat(emp.workingDays)    || 0;
-      const monthlySalary  = parseFloat(emp.monthlySalary)  || 0;
-      const absentDays     = Math.max(0, 30 - workingDays);
+      const workingDays   = parseFloat(emp.workingDays)   || 0;
+      const monthlySalary = parseFloat(emp.monthlySalary) || 0;
+      const absentDays    = Math.max(0, 30 - workingDays);
 
-      const salaryAmount   = monthlySalary > 0
+      const salaryAmount = monthlySalary > 0
         ? Math.round((monthlySalary / 30) * workingDays)
         : (parseFloat(emp.salaryAmount) || 0);
 
@@ -365,40 +427,64 @@ async function loadReport() {
       const net            = totalAfterCuts - downPaymentLE;
 
       return {
-        userId:        emp.userId        || '',
-        name:          emp.name          || '',
-        position:      emp.position      || '',
-        workingDays: workingDays,
-        absentDays: absentDays,
-        monthlySalary: monthlySalary,
-        salaryAmount: salaryAmount,
-        commission: commission,
-        bonus: bonus,
-        total: total,
-        cuts: cuts,
-        insurance: insurance,
+        userId:         emp.userId        || '',
+        name:           emp.name          || '',
+        position:       emp.position      || '',
+        workingDays:    workingDays,
+        absentDays:     absentDays,
+        monthlySalary:  monthlySalary,
+        salaryAmount:   salaryAmount,
+        commission:     commission,
+        bonus:          bonus,
+        total:          total,
+        cuts:           cuts,
+        insurance:      insurance,
         totalAfterCuts: totalAfterCuts,
-        downPaymentLE: downPaymentLE,
-        net: net
+        downPaymentLE:  downPaymentLE,
+        net:            net
       };
     });
-
-    const totalCommissions = Object.values(commissionMap).reduce((a,b)=>a+b, 0);
-    const totalAdvances    = Object.values(advanceMap).reduce((a,b)=>a+b, 0);
+    
+    // ═══════════════════════════════════════════════
+    // معلومات إضافية
+    // ═══════════════════════════════════════════════
+    const totalCommissions = Object.values(commissionMap).reduce((a, b) => a + b, 0);
+    const totalAdvances    = Object.values(advanceMap).reduce((a, b) => a + b, 0);
     
     document.getElementById('infoBar').style.display = 'flex';
     document.getElementById('infoText').textContent =
       `إجمالي العمولات المجمَّعة من الفواتير: ${Math.round(totalCommissions).toLocaleString()} LE  |  إجمالي المسحوبات: ${Math.round(totalAdvances).toLocaleString()} LE  |  سعر الصرف المستخدم: $1 = ${usdRate} LE، €1 = ${eurRate} LE`;
-
+    
+    // ✅ عرض الجدول
     renderTable(tableData, month, year);
-
+    
+    console.log('✅ loadReport: اكتمل بنجاح');
+    
   } catch(e) {
+    console.error('❌ loadReport error:', e);
     document.getElementById('reportArea').innerHTML =
       '<div class="empty">❌ خطأ: ' + e.message + '</div>';
-    console.error(e);
+    tableData = [];
+  } finally {
+    // ✅ ✅ ✅ إعادة تعيين الحالة دائماً
+    isLoadingReport = false;
+    
+    if (btnLoad) {
+      btnLoad.disabled = false;
+      btnLoad.style.opacity = '1';
+      btnLoad.style.cursor = 'pointer';
+      btnLoad.textContent = '🔍 عرض التقرير';
+    }
+    
+    if (btnExcel) {
+      btnExcel.disabled = false;
+      btnExcel.style.opacity = '1';
+      btnExcel.style.cursor = 'pointer';
+    }
+    
+    console.log('🔄 loadReport: تم إعادة تعيين الحالة');
   }
 }
-
 // ──────────────────────────────────────────────
 // ✅ عرض الجدول
 // ──────────────────────────────────────────────
@@ -430,7 +516,7 @@ function renderTable(rows, month, year) {
   function fmt(n) { return Math.round(n).toLocaleString(); }
   function fmtDays(n) { return (Math.round(n*100)/100).toLocaleString(); }
 
-    let html = `<div class="table-wrap"><table>
+      let html = `<div class="table-wrap"><table>
     <thead>
       <tr>
         <th>#</th>
@@ -454,8 +540,8 @@ function renderTable(rows, month, year) {
     </thead>
     <tbody>`;
 
-   rows.forEach((r, i) => {
-    // ✅ ✅ ✅ زر 👁️ يظهر فقط إذا كان للموظف عمولة > 0
+    rows.forEach((r, i) => {
+    // ✅ زر 👁️ يظهر فقط إذا كان للموظف عمولة > 0
     const showDetailsBtn = r.commission > 0;
     
     html += `<tr>
@@ -491,7 +577,7 @@ function renderTable(rows, month, year) {
   });
  
 
-  html += `<tr class="total-row" style="background:#1e2b4f;color:#ffd966;">
+   html += `<tr class="total-row" style="background:#1e2b4f;color:#ffd966;">
     <td colspan="4"><strong>الإجمالي الكلي</strong></td>
     <td><strong>${totals.workingDays > 0 ? fmtDays(totals.workingDays) : '—'}</strong></td>
     <td><strong>${totals.absentDays > 0 ? fmt(totals.absentDays) : '—'}</strong></td>
@@ -505,102 +591,402 @@ function renderTable(rows, month, year) {
     <td><strong>${totals.total > 0 ? fmt(totals.total) : '—'}</strong></td>
     <td><strong>${totals.downPaymentLE > 0 ? fmt(totals.downPaymentLE) : '—'}</strong></td>
     <td><strong>${totals.net !== 0 ? fmt(totals.net) : '—'}</strong></td>
-    <td><strong>—</strong></td>
+    <td>—</td>
   </tr>`;
   
   html += `</tbody></table></div>`;
   document.getElementById('reportArea').innerHTML = html;
 }
+// ═══════════════════════════════════════════════════════════════════
+// openCommissionDetails — عرض تفاصيل عمولات موظف معين
+// ═══════════════════════════════════════════════════════════════════
+function openCommissionDetails(userId, employeeName) {
+  const month = document.getElementById('selMonth').value;
+  const year  = document.getElementById('selYear').value;
+  
+  if (!month || !year) {
+    showToast('اختر الشهر والسنة أولاً', 'error');
+    return;
+  }
+  
+  // ✅ فلترة الفواتير لهذا الموظف في هذا الشهر
+  const empInvoices = (window._allInvoices || []).filter(inv => {
+    const invMonth = (inv.month || '').toString().trim();
+    const invYear  = (inv.year  || '').toString().trim();
+    const state    = (inv.state || '').toString().trim().toLowerCase();
+    const salesId  = (inv.salesId || '').toString().trim();
+    
+    if (invMonth !== month) return false;
+    if (invYear !== year) return false;
+    if (state !== 'confirmed') return false;
+    if (salesId !== userId) return false;
+    
+    const comm = parseFloat(inv.commission) || 0;
+    return comm > 0;
+  });
+  
+  // ✅ حساب الإجمالي
+  const totalComm = empInvoices.reduce((sum, inv) => {
+    return sum + (parseFloat(inv.commission) || 0);
+  }, 0);
+  
+  // ✅ بناء جدول التفاصيل
+  let rowsHtml = '';
+  if (empInvoices.length === 0) {
+    rowsHtml = `<tr><td colspan="6" style="text-align:center;padding:20px;color:#999;">
+      لا توجد فواتير مؤكدة بهذا الشهر
+    </td></tr>`;
+  } else {
+    empInvoices.forEach((inv, idx) => {
+      rowsHtml += `<tr>
+        <td style="text-align:center;">${idx + 1}</td>
+        <td>${inv.voucherNo || '—'}</td>
+        <td>${inv.date || '—'}</td>
+        <td style="text-align:right;">${inv.customerName || inv.customer || '—'}</td>
+        <td style="text-align:center;">${inv.currency || '—'}</td>
+        <td style="text-align:center;">${inv.amount || '—'}</td>
+        <td style="text-align:center;color:#1e8449;font-weight:700;">${fmt(parseFloat(inv.commission) || 0)}</td>
+      </tr>`;
+    });
+  }
+  
+  // ✅ HTML المودال
+  const modalHtml = `
+    <div id="commDetailsModal" style="
+      position:fixed;top:0;left:0;width:100%;height:100%;
+      background:rgba(0,0,0,0.7);z-index:9999;
+      display:flex;align-items:center;justify-content:center;
+      padding:20px;box-sizing:border-box;
+      animation:fadeIn 0.2s ease;
+    " onclick="if(event.target===this) closeCommissionDetails()">
+      
+      <div style="
+        background:#fff;border-radius:16px;
+        max-width:1000px;width:100%;max-height:90vh;
+        display:flex;flex-direction:column;
+        box-shadow:0 20px 60px rgba(0,0,0,0.4);
+        animation:slideUp 0.3s ease;
+      ">
+        
+        <!-- Header -->
+        <div style="
+          padding:20px 25px;
+          background:linear-gradient(135deg,#0d9488,#14b8a6);
+          color:#fff;border-radius:16px 16px 0 0;
+          display:flex;justify-content:space-between;align-items:center;
+        ">
+          <div>
+            <h3 style="margin:0;font-size:18px;">👁️ تفاصيل عمولات — ${employeeName}</h3>
+            <p style="margin:5px 0 0;opacity:0.9;font-size:13px;">
+              ${month} / ${year} — الرقم الوظيفي: ${userId}
+            </p>
+          </div>
+          <button onclick="closeCommissionDetails()" style="
+            background:rgba(255,255,255,0.2);color:#fff;
+            border:none;width:36px;height:36px;border-radius:50%;
+            font-size:20px;cursor:pointer;transition:.2s;
+          " onmouseover="this.style.background='rgba(255,255,255,0.4)'"
+             onmouseout="this.style.background='rgba(255,255,255,0.2)'">×</button>
+        </div>
+        
+        <!-- Body -->
+        <div style="padding:20px 25px;overflow-y:auto;flex:1;">
+          
+          <div style="
+            background:#e8f5e9;border-right:4px solid #1e8449;
+            padding:15px 20px;border-radius:10px;margin-bottom:20px;
+            display:flex;justify-content:space-between;align-items:center;
+          ">
+            <span style="font-weight:700;color:#1e8449;font-size:15px;">
+              💰 إجمالي العمولات المحتسبة
+            </span>
+            <span style="font-weight:800;color:#1e8449;font-size:20px;">
+              ${fmt(totalComm)} LE
+            </span>
+          </div>
+          
+          <div style="
+            background:#f8f9fa;padding:12px 16px;border-radius:10px;
+            margin-bottom:15px;font-size:13px;color:#666;
+          ">
+            📊 عدد الفواتير المؤكدة: <strong>${empInvoices.length}</strong>
+          </div>
+          
+          <div style="overflow-x:auto;border-radius:10px;border:1px solid #e0e0e0;">
+            <table style="width:100%;border-collapse:collapse;font-size:13px;">
+              <thead>
+                <tr style="background:#1e2b4f;color:#ffd966;">
+                  <th style="padding:10px;text-align:center;">#</th>
+                  <th style="padding:10px;text-align:right;">رقم الإيصال</th>
+                  <th style="padding:10px;text-align:center;">التاريخ</th>
+                  <th style="padding:10px;text-align:right;">اسم العميل</th>
+                  <th style="padding:10px;text-align:center;">العملة</th>
+                  <th style="padding:10px;text-align:center;">المبلغ</th>
+                  <th style="padding:10px;text-align:center;">العمولة</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rowsHtml}
+              </tbody>
+            </table>
+          </div>
+          
+        </div>
+        
+        <!-- Footer -->
+        <div style="
+          padding:15px 25px;background:#f8f9fa;
+          border-radius:0 0 16px 16px;
+          display:flex;justify-content:flex-end;gap:10px;
+          border-top:1px solid #e0e0e0;
+        ">
+          <button onclick="closeCommissionDetails()" style="
+            background:#6c757d;color:#fff;border:none;
+            padding:10px 25px;border-radius:10px;
+            font-size:14px;font-weight:700;cursor:pointer;
+          ">إغلاق</button>
+        </div>
+        
+      </div>
+    </div>
+    
+    <style>
+      @keyframes fadeIn { from {opacity:0;} to {opacity:1;} }
+      @keyframes slideUp { from {transform:translateY(30px);opacity:0;} to {transform:translateY(0);opacity:1;} }
+    </style>
+  `;
+  
+  // ✅ إزالة أي مودال قديم + إضافة الجديد
+  const existing = document.getElementById('commDetailsModal');
+  if (existing) existing.remove();
+  
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+}
 
+// ═══════════════════════════════════════════════════════════════════
+// closeCommissionDetails — إغلاق المودال
+// ═══════════════════════════════════════════════════════════════════
+function closeCommissionDetails() {
+  const modal = document.getElementById('commDetailsModal');
+  if (modal) modal.remove();
+}
 // ──────────────────────────────────────────────
 // ✅ تصدير Excel
 // ──────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// exportToExcel — تصدير Excel احترافي (نفس تنسيق BookingsToday.html)
+// ═══════════════════════════════════════════════════════════════════
 function exportToExcel() {
-  if (!tableData.length) { showToast('لا توجد بيانات لتصديرها', 'error'); return; }
+  if (!tableData.length) {
+    showToast('لا توجد بيانات لتصديرها', 'error');
+    return;
+  }
   
   const month = document.getElementById('selMonth').value;
-  const year = document.getElementById('selYear').value;
+  const year  = document.getElementById('selYear').value;
   
-  const delimiter = ';';
+  // ✅ أسماء الشهور للعرض
+  const monthNames = {
+    'Jan': 'يناير', 'Feb': 'فبراير', 'Mar': 'مارس', 'Apr': 'أبريل',
+    'May': 'مايو', 'Jun': 'يونيو', 'Jul': 'يوليو', 'Aug': 'أغسطس',
+    'Sep': 'سبتمبر', 'Oct': 'أكتوبر', 'Nov': 'نوفمبر', 'Dec': 'ديسمبر'
+  };
+  const monthAr = monthNames[month] || month;
   
+  // ═══════════════════════════════════════════════
+  // 1. حساب الإجماليات
+  // ═══════════════════════════════════════════════
+  const totals = tableData.reduce((acc, r) => {
+    acc.workingDays    += r.workingDays    || 0;
+    acc.absentDays     += r.absentDays     || 0;
+    acc.monthlySalary  += r.monthlySalary  || 0;
+    acc.salaryAmount   += r.salaryAmount   || 0;
+    acc.commission     += r.commission     || 0;
+    acc.bonus          += r.bonus          || 0;
+    acc.total          += r.total          || 0;
+    acc.cuts           += r.cuts           || 0;
+    acc.insurance      += r.insurance      || 0;
+    acc.totalAfterCuts += r.totalAfterCuts || 0;
+    acc.downPaymentLE  += r.downPaymentLE  || 0;
+    acc.net            += r.net            || 0;
+    return acc;
+  }, {
+    workingDays: 0, absentDays: 0, monthlySalary: 0, salaryAmount: 0,
+    commission: 0, bonus: 0, total: 0, cuts: 0, insurance: 0,
+    totalAfterCuts: 0, downPaymentLE: 0, net: 0
+  });
+  
+  // ✅ عدد الأعمدة الكلي
+  const TOTAL_COLS = 16;
+  
+  // ═══════════════════════════════════════════════
+  // 2. بناء HTML Excel
+  // ═══════════════════════════════════════════════
+  let html = '';
+  html += '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">';
+  html += '<head>';
+  html += '<meta charset="UTF-8">';
+  html += '<style>';
+  html += 'table{border-collapse:collapse;font-family:Arial,sans-serif;font-size:10px;}';
+  html += 'th{background:#1a3260;color:#f5c842;padding:8px 5px;border:1px solid #94a3b8;font-weight:bold;text-align:center;font-size:11px;}';
+  html += 'td{padding:5px 4px;border:1px solid #cbd5e1;vertical-align:middle;text-align:center;font-size:10px;}';
+  html += '.title{background:#0f1f3d;color:#f5c842;font-size:16px;font-weight:bold;padding:14px;text-align:center;}';
+  html += '.subtitle{background:#f1f5f9;padding:10px;text-align:center;font-weight:bold;font-size:12px;color:#0f1f3d;}';
+  html += '.info-summary{background:#dbeafe;padding:10px;text-align:center;font-weight:bold;font-size:12px;color:#1e40af;}';
+  html += '.totals{background:#dbeafe;font-weight:bold;color:#000;}';
+  html += '.totals td{padding:6px 4px;font-size:11px;}';
+  html += '.salary-cell{background:#e8f4f8;color:#1a5276;font-weight:bold;}';
+  html += '.commission-cell{background:#e8f5e9;color:#1b5e20;font-weight:bold;}';
+  html += '.net-cell{background:#fff3e0;color:#e65100;font-weight:900;}';
+  html += '.deduction-cell{color:#dc2626;font-weight:bold;}';
+  html += '</style>';
+  html += '</head>';
+  html += '<body>';
+  
+  // ═══════════════════════════════════════════════
+  // 3. الصفوف العلوية الثلاثة (Title + Subtitle + Info)
+  // ═══════════════════════════════════════════════
+  html += '<table border="1">';
+  
+  // ✅ صف 1: العنوان الرئيسي
+  html += `<tr><td colspan="${TOTAL_COLS}" class="title">💰 Salary Report - ${monthAr} / ${year}</td></tr>`;
+  
+  // ✅ صف 2: معلومات المركز والمستخدم
+  html += `<tr><td colspan="${TOTAL_COLS}" class="subtitle">`;
+  html += `🏢 Center: ${escHtml(currentUser?.centerName || '')} &nbsp;|&nbsp; `;
+  html += `👤 User: ${escHtml(currentUser?.name || '')} &nbsp;|&nbsp; `;
+  html += `📊 Total Employees: ${tableData.length}`;
+  html += `</td></tr>`;
+  
+  // ✅ صف 3: معلومات إضافية (Total Salary / Commissions)
+  html += `<tr><td colspan="${TOTAL_COLS}" class="info-summary">`;
+  html += `💵 Total Net Salary: ${Math.round(totals.net).toLocaleString()} EGP &nbsp;|&nbsp; `;
+  html += `💰 Total Commissions: ${Math.round(totals.commission).toLocaleString()} EGP &nbsp;|&nbsp; `;
+  html += `📅 Period: ${monthAr} / ${year}`;
+  html += `</td></tr>`;
+  
+  html += '</table>';
+  html += '<br>';
+  
+  // ═══════════════════════════════════════════════
+  // 4. الجدول الرئيسي
+  // ═══════════════════════════════════════════════
+  html += '<table border="1">';
+  html += '<thead><tr>';
+  
+  // ✅ الرؤوس (كحلي + ذهبي)
   const headers = [
-    '#', 'الرقم الوظيفي', 'الاسم', 'الوظيفة', 
-    'أيام الحضور', 'أيام الغياب', 
-    'الراتب الأساسي', 'الراتب المستحق', 
-    'العمولة', 'الحافز', 
-    'الإجمالي', 'الخصم', 'التأمينات', 
+    '#', 'الرقم الوظيفي', 'الاسم', 'الوظيفة',
+    'أيام الحضور', 'أيام الغياب',
+    'الراتب الأساسي', 'الراتب المستحق',
+    'العمولة', 'الحافز',
+    'الإجمالي', 'الخصم', 'التأمينات',
     'صافي بعد الخصم', 'الدفعة المقدمة', 'الصافي المستحق'
   ];
   
-  const rows = [];
-  rows.push(headers.join(delimiter));
-  
-  tableData.forEach((emp, index) => {
-    const row = [
-      index + 1,
-      emp.userId,
-      emp.name ? `"${emp.name}"` : '',
-      emp.position ? `"${emp.position}"` : '',
-      (emp.workingDays && emp.workingDays > 0) ? emp.workingDays.toFixed(1) : '',
-      (emp.absentDays && emp.absentDays > 0) ? emp.absentDays : '',
-      (emp.monthlySalary && emp.monthlySalary > 0) ? emp.monthlySalary : '',
-      (emp.salaryAmount && emp.salaryAmount > 0) ? emp.salaryAmount : '',
-      (emp.commission && emp.commission > 0) ? emp.commission : '',
-      (emp.bonus && emp.bonus > 0) ? emp.bonus : '',
-      (emp.total && emp.total > 0) ? emp.total : '',
-      (emp.cuts && emp.cuts > 0) ? emp.cuts : '',
-      (emp.insurance && emp.insurance > 0) ? emp.insurance : '',
-      (emp.totalAfterCuts && emp.totalAfterCuts > 0) ? emp.totalAfterCuts : '',
-      (emp.downPaymentLE && emp.downPaymentLE > 0) ? emp.downPaymentLE : '',
-      (emp.net !== 0) ? emp.net : ''
-    ];
-    rows.push(row.join(delimiter));
+  headers.forEach(h => {
+    html += `<th style="background:#1a3260;color:#f5c842;">${h}</th>`;
   });
   
-  // الإجماليات
-  const totals = tableData.reduce((acc, r) => {
-    acc.workingDays   += r.workingDays || 0;
-    acc.absentDays    += r.absentDays || 0;
-    acc.monthlySalary += r.monthlySalary || 0;
-    acc.salaryAmount  += r.salaryAmount || 0;
-    acc.commission    += r.commission || 0;
-    acc.total         += r.total || 0;
-    acc.downPaymentLE += r.downPaymentLE || 0;
-    acc.net           += r.net || 0;
-    return acc;
-  }, { workingDays: 0, absentDays: 0, monthlySalary: 0, salaryAmount: 0, commission: 0, total: 0, downPaymentLE: 0, net: 0 });
+  html += '</tr></thead>';
+  html += '<tbody>';
   
-  const totalRow = [
-    'الإجمالي الكلي',
-    '', '', '',
-    totals.workingDays > 0 ? totals.workingDays.toFixed(1) : '',
-    totals.absentDays > 0 ? totals.absentDays : '',
-    totals.monthlySalary > 0 ? totals.monthlySalary : '',
-    totals.salaryAmount > 0 ? totals.salaryAmount : '',
-    totals.commission > 0 ? totals.commission : '',
-    '',
-    totals.total > 0 ? totals.total : '',
-    '',
-    '',
-    totals.total > 0 ? totals.total : '',
-    totals.downPaymentLE > 0 ? totals.downPaymentLE : '',
-    totals.net !== 0 ? totals.net : ''
-  ];
-  rows.push(totalRow.join(delimiter));
+  // ═══════════════════════════════════════════════
+  // 5. صفوف البيانات
+  // ═══════════════════════════════════════════════
+  tableData.forEach((emp, index) => {
+    html += '<tr>';
+    
+    // #
+    html += `<td>${index + 1}</td>`;
+    
+    // الرقم الوظيفي
+    html += `<td>${escHtml(emp.userId || '')}</td>`;
+    
+    // الاسم
+    html += `<td style="text-align:right;font-weight:bold;">${escHtml(emp.name || '')}</td>`;
+    
+    // الوظيفة
+    html += `<td>${escHtml(emp.position || '—')}</td>`;
+    
+    // أيام الحضور
+    html += `<td>${emp.workingDays > 0 ? emp.workingDays.toFixed(1) : '—'}</td>`;
+    
+    // أيام الغياب
+    html += `<td style="color:${emp.absentDays > 0 ? '#dc2626' : '#aaa'};font-weight:${emp.absentDays > 0 ? 'bold' : 'normal'};">${emp.absentDays > 0 ? emp.absentDays : '—'}</td>`;
+    
+    // الراتب الأساسي
+    html += `<td class="salary-cell">${emp.monthlySalary > 0 ? Math.round(emp.monthlySalary).toLocaleString() : '—'}</td>`;
+    
+    // الراتب المستحق
+    html += `<td class="salary-cell">${emp.salaryAmount > 0 ? Math.round(emp.salaryAmount).toLocaleString() : '—'}</td>`;
+    
+    // العمولة
+    html += `<td class="commission-cell">${emp.commission > 0 ? Math.round(emp.commission).toLocaleString() : '—'}</td>`;
+    
+    // الحافز
+    html += `<td>${emp.bonus > 0 ? Math.round(emp.bonus).toLocaleString() : '—'}</td>`;
+    
+    // الإجمالي
+    html += `<td style="font-weight:bold;">${emp.total > 0 ? Math.round(emp.total).toLocaleString() : '—'}</td>`;
+    
+    // الخصم
+    html += `<td class="deduction-cell">${emp.cuts > 0 ? Math.round(emp.cuts).toLocaleString() : '—'}</td>`;
+    
+    // التأمينات
+    html += `<td class="deduction-cell">${emp.insurance > 0 ? Math.round(emp.insurance).toLocaleString() : '—'}</td>`;
+    
+    // صافي بعد الخصم
+    html += `<td>${emp.totalAfterCuts > 0 ? Math.round(emp.totalAfterCuts).toLocaleString() : '—'}</td>`;
+    
+    // الدفعة المقدمة
+    html += `<td class="deduction-cell">${emp.downPaymentLE > 0 ? Math.round(emp.downPaymentLE).toLocaleString() : '—'}</td>`;
+    
+    // الصافي المستحق
+    const netColor = emp.net >= 0 ? '#1e8449' : '#e74c3c';
+    html += `<td class="net-cell" style="color:${netColor};">${emp.net !== 0 ? Math.round(emp.net).toLocaleString() : '—'}</td>`;
+    
+    html += '</tr>';
+  });
   
-  const blob = new Blob(['\uFEFF' + rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
-  const link = document.createElement('a');
+  // ═══════════════════════════════════════════════
+  // 6. صف الإجماليات
+  // ═══════════════════════════════════════════════
+  html += '<tr class="totals">';
+  html += `<td colspan="4" style="text-align:center;padding:8px;">📊 TOTAL (${tableData.length} Employees)</td>`;
+  html += `<td>${totals.workingDays > 0 ? totals.workingDays.toFixed(1) : '—'}</td>`;
+  html += `<td>${totals.absentDays > 0 ? totals.absentDays : '—'}</td>`;
+  html += `<td>${totals.monthlySalary > 0 ? Math.round(totals.monthlySalary).toLocaleString() : '—'}</td>`;
+  html += `<td>${totals.salaryAmount > 0 ? Math.round(totals.salaryAmount).toLocaleString() : '—'}</td>`;
+  html += `<td>${totals.commission > 0 ? Math.round(totals.commission).toLocaleString() : '—'}</td>`;
+  html += `<td>${totals.bonus > 0 ? Math.round(totals.bonus).toLocaleString() : '—'}</td>`;
+  html += `<td>${totals.total > 0 ? Math.round(totals.total).toLocaleString() : '—'}</td>`;
+  html += `<td>${totals.cuts > 0 ? Math.round(totals.cuts).toLocaleString() : '—'}</td>`;
+  html += `<td>${totals.insurance > 0 ? Math.round(totals.insurance).toLocaleString() : '—'}</td>`;
+  html += `<td>${totals.totalAfterCuts > 0 ? Math.round(totals.totalAfterCuts).toLocaleString() : '—'}</td>`;
+  html += `<td>${totals.downPaymentLE > 0 ? Math.round(totals.downPaymentLE).toLocaleString() : '—'}</td>`;
+  html += `<td>${totals.net !== 0 ? Math.round(totals.net).toLocaleString() : '—'}</td>`;
+  html += '</tr>';
+  
+  html += '</tbody></table>';
+  html += '</body></html>';
+  
+  // ═══════════════════════════════════════════════
+  // 7. تنزيل الملف
+  // ═══════════════════════════════════════════════
+  const fileName = `Salary_Report_${month}_${year}.xls`;
+  const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8' });
   const url = URL.createObjectURL(blob);
-  link.href = url;
-  link.setAttribute('download', `Salary_Report_${month}_${year}.csv`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
   URL.revokeObjectURL(url);
   
-  showToast('✅ تم التصدير بنجاح', 'success');
+  showToast(`✅ تم تصدير ${tableData.length} موظف`, 'success');
 }
-
 // ──────────────────────────────────────────────
 // ✅ Toast
 // ──────────────────────────────────────────────
@@ -610,70 +996,20 @@ function showToast(msg, type) {
   t.className = 'toast ' + (type==='error'?'t-err':type==='info'?'t-info':'t-ok') + ' show';
   setTimeout(() => { t.className = 'toast'; }, 3500);
 }
+  // ═══════════════════════════════════════════════════════════════════
+// escHtml — تهريب HTML
 // ═══════════════════════════════════════════════════════════════════
-// OPEN COMMISSION DETAILS — فتح تفاصيل عمولات الموظف
-// ═══════════════════════════════════════════════════════════════════
-function openCommissionDetails(userId, userName) {
-  if (!userId) {
-    showToast('⚠️ لم يتم تحديد الموظف', 'error');
-    return;
-  }
-  
-  const month = document.getElementById('selMonth').value;
-  const year = document.getElementById('selYear').value;
-  
-  if (!month || !year) {
-    showToast('⚠️ اختر الشهر والسنة أولاً', 'error');
-    return;
-  }
-  
-  // ✅ حساب أول وآخر يوم في الشهر
-  const monthMap = {
-    'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
-    'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
-  };
-  
-  const monthIndex = monthMap[month];
-  if (monthIndex === undefined) {
-    showToast('⚠️ شهر غير صحيح', 'error');
-    return;
-  }
-  
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
-                  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  
-  // ✅ أول يوم في الشهر
-  const fromStr = `01/${months[monthIndex]}/${year}`;
-  
-  // ✅ آخر يوم في الشهر (حساب الأيام الفعلية)
-  const lastDay = new Date(parseInt(year), monthIndex + 1, 0).getDate();
-  const toStr = `${String(lastDay).padStart(2, '0')}/${months[monthIndex]}/${year}`;
-  
-  // ✅ حفظ الجلسة
-  if (currentUser) {
-    Session.save(currentUser);
-  }
-  
-  // ✅ بناء URL
-  const params = new URLSearchParams({
-    filterSales: userId,
-    restoreFrom: fromStr,
-    restoreTo: toStr
-  });
-  
-  console.log('🚀 فتح تفاصيل العمولات:', { 
-    userId, 
-    userName, 
-    fromStr, 
-    toStr,
-    url: 'CommissionDashboard.html?' + params.toString()
-  });
-  
-  window.location.href = 'CommissionDashboard.html?' + params.toString();
+function escHtml(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/[&<>"']/g, m => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[m]));
 }
 
-// ✅ تصدير للـ window
-window.openCommissionDetails = openCommissionDetails;
 // ──────────────────────────────────────────────
 // ✅ العودة للصفحة السابقة
 // ──────────────────────────────────────────────
