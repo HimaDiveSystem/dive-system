@@ -171,13 +171,12 @@ let isLoadingReport = false;   // ✅ جديد — لمنع Race Condition
 // ──────────────────────────────────────────────
 // ✅ JSONP helper - باستخدام CONFIG.GAS_URL
 // ──────────────────────────────────────────────
-function jsonp(action, params={}) {
+function jsonp(action, params = {}, retryCount = 0) {
   return new Promise((resolve, reject) => {
     const cb = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
     params.action = action;
     params.callback = cb;
     
-    // ✅ إضافة centerId و centerName من Session
     const user = Session.getUser();
     if (user) {
       if (user.centerId && !params.centerId) params.centerId = user.centerId;
@@ -186,9 +185,45 @@ function jsonp(action, params={}) {
     
     const qs = Object.entries(params).map(([k,v]) => k+'='+encodeURIComponent(String(v??''))).join('&');
     const script = document.createElement('script');
-    const timeout = setTimeout(() => { delete window[cb]; script.remove(); reject(new Error('انتهى الوقت')); }, 120000);
-    window[cb] = (data) => { clearTimeout(timeout); delete window[cb]; script.remove(); resolve(data); };
-    script.onerror = () => { clearTimeout(timeout); delete window[cb]; script.remove(); reject(new Error('خطأ في الاتصال')); };
+    
+    const timeout = setTimeout(() => {
+      delete window[cb];
+      script.remove();
+      
+      // ✅ Retry تلقائي عند timeout
+      if (retryCount < 2) {
+        console.log(`⚠️ jsonp timeout — إعادة المحاولة (${retryCount + 1}/2)...`);
+        setTimeout(() => {
+          jsonp(action, params, retryCount + 1).then(resolve).catch(reject);
+        }, 1000);
+      } else {
+        reject(new Error('انتهى الوقت'));
+      }
+    }, 60000);   // ← 60 ثانية (بدلاً من 120)
+    
+    window[cb] = (data) => {
+      clearTimeout(timeout);
+      delete window[cb];
+      script.remove();
+      resolve(data);
+    };
+    
+    script.onerror = () => {
+      clearTimeout(timeout);
+      delete window[cb];
+      script.remove();
+      
+      // ✅ Retry تلقائي عند فشل التحميل
+      if (retryCount < 2) {
+        console.log(`⚠️ jsonp error — إعادة المحاولة (${retryCount + 1}/2)...`);
+        setTimeout(() => {
+          jsonp(action, params, retryCount + 1).then(resolve).catch(reject);
+        }, 1500);
+      } else {
+        reject(new Error('خطأ في الاتصال'));
+      }
+    };
+    
     script.src = CONFIG.GAS_URL + '?' + qs;
     document.head.appendChild(script);
   });
@@ -270,6 +305,15 @@ async function loadReport() {
     return;
   }
   
+  // ✅ ✅ ✅ جديد: انتظر 500ms قبل السماح بطلب جديد
+  if (window._lastLoadTime && (Date.now() - window._lastLoadTime < 500)) {
+    console.log('⚠️ loadReport: طلب سريع جداً — انتظر');
+    return;
+  }
+  window._lastLoadTime = Date.now();
+  
+  isLoadingReport = true;
+  
   const month = document.getElementById('selMonth').value;
   const year  = document.getElementById('selYear').value;
   
@@ -278,8 +322,7 @@ async function loadReport() {
     return;
   }
   
-  isLoadingReport = true;
-  
+   
   // ✅ تحديث زر "عرض التقرير"
   const btnLoad = document.getElementById('btnLoadReport');
   const btnExcel = document.getElementById('btnExportExcel');
