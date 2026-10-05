@@ -861,43 +861,70 @@ let sortCol = -1, sortDir = 1;
 let editRowNum = -1, selectedIdx = -1;
 let optionsCache = {};
 
-// ====== HELPERS ======
+// ═══════════════════════════════════════════════════════════════════
+// jsonp — نفس الطريقة المستخدمة في SalaryReport.html
+// ═══════════════════════════════════════════════════════════════════
 function gasGet(params, retryCount = 0) {
   return new Promise((resolve, reject) => {
+    // ✅ إضافة centerName من Session
     if (currentUser && currentUser.centerName) {
       params.centerName = currentUser.centerName;
     }
-    const qs = Object.entries(params).map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join('&');
-    const url = CONFIG.GAS_URL ? `${CONFIG.GAS_URL}?${qs}` : null;
-    if (!url) {
-      reject(new Error('CONFIG.GAS_URL غير معرف في config.js'));
+    
+    const action = params.action || '';
+    if (!action) {
+      reject(new Error('action مطلوب'));
       return;
     }
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-    fetch(url, {
-      signal: controller.signal,
-      headers: { 'Accept': 'application/json' }
-    })
-      .then(r => {
-        clearTimeout(timeoutId);
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then(resolve)
-      .catch(err => {
-        clearTimeout(timeoutId);
-        if (retryCount < 2) {
-          console.log(`⚠️ محاولة إعادة الاتصال (${retryCount + 1}/2)...`);
-          setTimeout(() => {
-            gasGet(params, retryCount + 1).then(resolve).catch(reject);
-          }, 2000);
-        } else {
-          reject(err);
-        }
-      });
+    
+    const cb = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
+    params.callback = cb;
+    
+    const qs = Object.entries(params)
+      .filter(([k, v]) => v !== undefined && v !== null)
+      .map(([k, v]) => k + '=' + encodeURIComponent(String(v ?? '')))
+      .join('&');
+    
+    const script = document.createElement('script');
+    
+    const timeout = setTimeout(() => {
+      delete window[cb];
+      script.remove();
+      
+      if (retryCount < 2) {
+        console.log(`⚠️ jsonp timeout — إعادة المحاولة (${retryCount + 1}/2)...`);
+        setTimeout(() => {
+          gasGet(params, retryCount + 1).then(resolve).catch(reject);
+        }, 1500);
+      } else {
+        reject(new Error('انتهى الوقت'));
+      }
+    }, 60000);
+    
+    window[cb] = (data) => {
+      clearTimeout(timeout);
+      delete window[cb];
+      script.remove();
+      resolve(data);
+    };
+    
+    script.onerror = () => {
+      clearTimeout(timeout);
+      delete window[cb];
+      script.remove();
+      
+      if (retryCount < 2) {
+        console.log(`⚠️ jsonp error — إعادة المحاولة (${retryCount + 1}/2)...`);
+        setTimeout(() => {
+          gasGet(params, retryCount + 1).then(resolve).catch(reject);
+        }, 1500);
+      } else {
+        reject(new Error('خطأ في الاتصال'));
+      }
+    };
+    
+    script.src = CONFIG.GAS_URL + '?' + qs;
+    document.head.appendChild(script);
   });
 }
 
