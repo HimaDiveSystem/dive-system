@@ -171,8 +171,19 @@ let isLoadingReport = false;   // ✅ جديد — لمنع Race Condition
 // ──────────────────────────────────────────────
 // ✅ JSONP helper - باستخدام CONFIG.GAS_URL
 // ──────────────────────────────────────────────
-function jsonp(action, params = {}, retryCount = 0) {
+// ──────────────────────────────────────────────
+// ✅ JSONP helper - بدون Retry (لأن Retry يُسبب مشاكل callback)
+// ──────────────────────────────────────────────
+function jsonp(action, params = {}) {
   return new Promise((resolve, reject) => {
+    // ✅ ✅ ✅ تحقق فوري: هل التقرير قيد التحميل؟
+    if (window._jsonpInFlight) {
+      console.log('⚠️ jsonp: طلب آخر قيد التنفيذ — إلغاء');
+      reject(new Error('طلب آخر قيد التنفيذ'));
+      return;
+    }
+    window._jsonpInFlight = true;
+    
     const cb = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
     params.action = action;
     params.callback = cb;
@@ -183,45 +194,42 @@ function jsonp(action, params = {}, retryCount = 0) {
       if (user.centerName && !params.centerName) params.centerName = user.centerName;
     }
     
-    const qs = Object.entries(params).map(([k,v]) => k+'='+encodeURIComponent(String(v??''))).join('&');
-    const script = document.createElement('script');
+    const qs = Object.entries(params)
+      .filter(([k, v]) => v !== undefined && v !== null)
+      .map(([k, v]) => k + '=' + encodeURIComponent(String(v ?? '')))
+      .join('&');
     
+    const script = document.createElement('script');
+    let completed = false;
+    
+    // ✅ Timeout نظيف
     const timeout = setTimeout(() => {
+      if (completed) return;
+      completed = true;
       delete window[cb];
       script.remove();
-      
-      // ✅ Retry تلقائي عند timeout
-      if (retryCount < 2) {
-        console.log(`⚠️ jsonp timeout — إعادة المحاولة (${retryCount + 1}/2)...`);
-        setTimeout(() => {
-          jsonp(action, params, retryCount + 1).then(resolve).catch(reject);
-        }, 1000);
-      } else {
-        reject(new Error('انتهى الوقت'));
-      }
-    }, 60000);   // ← 60 ثانية (بدلاً من 120)
+      window._jsonpInFlight = false;
+      reject(new Error('انتهى الوقت (60 ثانية)'));
+    }, 60000);
     
     window[cb] = (data) => {
+      if (completed) return;
+      completed = true;
       clearTimeout(timeout);
       delete window[cb];
       script.remove();
+      window._jsonpInFlight = false;
       resolve(data);
     };
     
     script.onerror = () => {
+      if (completed) return;
+      completed = true;
       clearTimeout(timeout);
       delete window[cb];
       script.remove();
-      
-      // ✅ Retry تلقائي عند فشل التحميل
-      if (retryCount < 2) {
-        console.log(`⚠️ jsonp error — إعادة المحاولة (${retryCount + 1}/2)...`);
-        setTimeout(() => {
-          jsonp(action, params, retryCount + 1).then(resolve).catch(reject);
-        }, 1500);
-      } else {
-        reject(new Error('خطأ في الاتصال'));
-      }
+      window._jsonpInFlight = false;
+      reject(new Error('خطأ في الاتصال'));
     };
     
     script.src = CONFIG.GAS_URL + '?' + qs;
@@ -300,9 +308,9 @@ document.addEventListener('DOMContentLoaded', function() {
   loadReport();
 });
 
-// ──────────────────────────────────────────────
-// ✅ تحميل التقرير
-// ──────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// loadReport — تحميل تقرير المرتبات (Bootstrap Request)
+// ═══════════════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════
 // loadReport — تحميل تقرير المرتبات (Bootstrap Request)
 // ═══════════════════════════════════════════════════════════════════
@@ -313,24 +321,30 @@ async function loadReport() {
     return;
   }
   
-  // ✅ ✅ ✅ جديد: انتظر 500ms قبل السماح بطلب جديد
-  if (window._lastLoadTime && (Date.now() - window._lastLoadTime < 500)) {
+  // ✅ منع الطلبات السريعة المتكررة
+  if (window._lastLoadTime && (Date.now() - window._lastLoadTime < 1000)) {
     console.log('⚠️ loadReport: طلب سريع جداً — انتظر');
     return;
   }
   window._lastLoadTime = Date.now();
   
-  isLoadingReport = true;
-  
-  const month = document.getElementById('selMonth').value;
-  const year  = document.getElementById('selYear').value;
+  // ✅ التقاط القيم قبل التعطيل
+  const selMonthEl = document.getElementById('selMonth');
+  const selYearEl  = document.getElementById('selYear');
+  const month = selMonthEl ? selMonthEl.value : '';
+  const year  = selYearEl  ? selYearEl.value  : '';
   
   if (!month || !year) {
     showToast('اختر الشهر والسنة', 'error');
     return;
   }
   
-   
+  isLoadingReport = true;
+  
+  // ✅ تعطيل حقول الفلتر أثناء التحميل (لمنع التعديل أثناء الطلب)
+  if (selMonthEl) selMonthEl.disabled = true;
+  if (selYearEl)  selYearEl.disabled  = true;
+  
   // ✅ تحديث زر "عرض التقرير"
   const btnLoad = document.getElementById('btnLoadReport');
   const btnExcel = document.getElementById('btnExportExcel');
@@ -353,7 +367,6 @@ async function loadReport() {
   document.getElementById('infoBar').style.display = 'none';
   
   try {
-    // ✅ ✅ ✅ طلب واحد بدلاً من 4
     console.log('📡 getSalaryReportBootstrap — إرسال طلب موحّد...');
     
     const result = await jsonp('getSalaryReportBootstrap', { month, year });
@@ -400,39 +413,30 @@ async function loadReport() {
     const invoices  = Array.isArray(invoicesResult) ? invoicesResult : [];
     const expenses  = Array.isArray(expResult) ? expResult : [];
     
-      // ✅ العمولات تُحسب على السيرفر — لا حاجة لحسابها هنا
-      const commissionMap = {};   // للتوافق فقط
-      console.log('✅ Commission handled on server-side');
+    // ✅ العمولات تُحسب على السيرفر — لا حاجة لحسابها هنا
+    console.log('✅ Commission handled on server-side');
     
-    // ═══════════════════════════════════════════════
-    // حساب الدفعات المقدمة
-    // ═══════════════════════════════════════════════
-    const nameToId = {};
-    employees.forEach(emp => {
-      if (emp.name) nameToId[emp.name] = emp.userId;
-    });
-
-       
     // ═══════════════════════════════════════════════
     // بناء صفوف التقرير
     // ═══════════════════════════════════════════════
-   tableData = employees.map(emp => {
-  const workingDays   = parseFloat(emp.workingDays)   || 0;
-  const monthlySalary = parseFloat(emp.monthlySalary) || 0;
-  const absentDays    = Math.max(0, 30 - workingDays);
-
-  const salaryAmount = monthlySalary > 0
-    ? Math.round((monthlySalary / 30) * workingDays)
-    : (parseFloat(emp.salaryAmount) || 0);
-
-  const commission     = parseFloat(emp.commission) || 0;   // ✅ من السيرفر
-  const bonus          = parseFloat(emp.bonus) || 0;
-  const total          = parseFloat(emp.total) || (salaryAmount + commission + bonus);   // ✅ من السيرفر
-  const cuts           = parseFloat(emp.cuts) || 0;
-  const insurance      = parseFloat(emp.insurance) || 0;
-  const totalAfterCuts = total - cuts - insurance;
-  const downPaymentLE  = parseFloat(emp.downPaymentLE) || 0;   // ✅ من السيرفر
-  const net            = parseFloat(emp.net) || (totalAfterCuts - downPaymentLE);   // ✅ من السيرفر
+    tableData = employees.map(emp => {
+      const workingDays   = parseFloat(emp.workingDays)   || 0;
+      const monthlySalary = parseFloat(emp.monthlySalary) || 0;
+      const absentDays    = Math.max(0, 30 - workingDays);
+      
+      const salaryAmount = monthlySalary > 0
+        ? Math.round((monthlySalary / 30) * workingDays)
+        : (parseFloat(emp.salaryAmount) || 0);
+      
+      const commission     = parseFloat(emp.commission) || 0;
+      const bonus          = parseFloat(emp.bonus) || 0;
+      const total          = parseFloat(emp.total) || (salaryAmount + commission + bonus);
+      const cuts           = parseFloat(emp.cuts) || 0;
+      const insurance      = parseFloat(emp.insurance) || 0;
+      const totalAfterCuts = total - cuts - insurance;
+      const downPaymentLE  = parseFloat(emp.downPaymentLE) || 0;
+      const net            = parseFloat(emp.net) || (totalAfterCuts - downPaymentLE);
+      
       return {
         userId:         emp.userId        || '',
         name:           emp.name          || '',
@@ -453,11 +457,10 @@ async function loadReport() {
     });
     
     // ═══════════════════════════════════════════════
-    // معلومات إضافية
+    // حساب الإجماليات من السيرفر مباشرة
     // ═══════════════════════════════════════════════
-   // ✅ ✅ ✅ حساب الإجماليات من employees مباشرة (البيانات من السيرفر)
-const totalCommissions = employees.reduce((sum, emp) => sum + (parseFloat(emp.commission) || 0), 0);
-const totalAdvances    = employees.reduce((sum, emp) => sum + (parseFloat(emp.downPaymentLE) || 0), 0);
+    const totalCommissions = employees.reduce((sum, emp) => sum + (parseFloat(emp.commission) || 0), 0);
+    const totalAdvances    = employees.reduce((sum, emp) => sum + (parseFloat(emp.downPaymentLE) || 0), 0);
     
     document.getElementById('infoBar').style.display = 'flex';
     document.getElementById('infoText').textContent =
@@ -474,8 +477,13 @@ const totalAdvances    = employees.reduce((sum, emp) => sum + (parseFloat(emp.do
       '<div class="empty">❌ خطأ: ' + e.message + '</div>';
     tableData = [];
   } finally {
-    // ✅ ✅ ✅ إعادة تعيين الحالة دائماً
+    // ✅ إعادة تعيين الحالة دائماً
     isLoadingReport = false;
+    window._jsonpInFlight = false;
+    
+    // ✅ إعادة تمكين حقول الفلتر
+    if (selMonthEl) selMonthEl.disabled = false;
+    if (selYearEl)  selYearEl.disabled  = false;
     
     if (btnLoad) {
       btnLoad.disabled = false;
@@ -493,7 +501,7 @@ const totalAdvances    = employees.reduce((sum, emp) => sum + (parseFloat(emp.do
     console.log('🔄 loadReport: تم إعادة تعيين الحالة');
   }
 }
-// ──────────────────────────────────────────────
+  // ──────────────────────────────────────────────
 // ✅ عرض الجدول
 // ──────────────────────────────────────────────
 function renderTable(rows, month, year) {
@@ -607,9 +615,6 @@ function renderTable(rows, month, year) {
 // ═══════════════════════════════════════════════════════════════════
 // openCommissionDetails — عرض تفاصيل عمولات موظف معين
 // ═══════════════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════════════
-// openCommissionDetails — عرض تفاصيل العمولات (من السيرفر مباشرة)
-// ═══════════════════════════════════════════════════════════════════
 async function openCommissionDetails(userId, employeeName) {
   const month = document.getElementById('selMonth').value;
   const year  = document.getElementById('selYear').value;
@@ -619,12 +624,19 @@ async function openCommissionDetails(userId, employeeName) {
     return;
   }
   
-  // ✅ عرض loader داخل مودال مؤقت
+  // ✅ منع فتح أكثر من مودال في نفس الوقت
+  if (window._commDetailsLoading) {
+    console.log('⚠️ مودال آخر قيد التحميل');
+    return;
+  }
+  window._commDetailsLoading = true;
+  
+  // ✅ عرض loader
   const loadingModal = document.createElement('div');
   loadingModal.id = 'commDetailsLoading';
   loadingModal.style.cssText = `
     position:fixed;top:0;left:0;width:100%;height:100%;
-    background:rgba(0,0,0,0.7);z-index:9999;
+    background:rgba(0,0,0,0.7);z-index:99999;
     display:flex;align-items:center;justify-content:center;
   `;
   loadingModal.innerHTML = `
@@ -633,12 +645,12 @@ async function openCommissionDetails(userId, employeeName) {
                   border-radius:50%;width:40px;height:40px;
                   animation:spin 0.9s linear infinite;margin:0 auto 15px;"></div>
       <div style="font-weight:700;color:#1e2b4f;">جاري تحميل التفاصيل...</div>
+      <div style="font-size:11px;color:#666;margin-top:8px;">قد يستغرق 5-10 ثوان</div>
     </div>
   `;
   document.body.appendChild(loadingModal);
   
   try {
-    // ✅ جلب البيانات من السيرفر
     const result = await jsonp('getCommissionDetails', {
       userId: Session.getUser()?.id || '',
       userType: Session.getUser()?.type || 'Accountant',
@@ -649,7 +661,9 @@ async function openCommissionDetails(userId, employeeName) {
       toDate: `31/${month}/${year}`
     });
     
-    loadingModal.remove();
+    const lm = document.getElementById('commDetailsLoading');
+    if (lm) lm.remove();
+    window._commDetailsLoading = false;
     
     if (!result || !result.success) {
       showToast(result?.message || 'فشل تحميل التفاصيل', 'error');
@@ -659,7 +673,7 @@ async function openCommissionDetails(userId, employeeName) {
     const invoices = result.invoices || [];
     const totalComm = result.summary?.totalCommission || 0;
     
-    // ✅ بناء جدول التفاصيل
+    // ✅ بناء الجدول
     let rowsHtml = '';
     if (invoices.length === 0) {
       rowsHtml = `<tr><td colspan="7" style="text-align:center;padding:20px;color:#999;">
@@ -683,7 +697,7 @@ async function openCommissionDetails(userId, employeeName) {
     const modalHtml = `
       <div id="commDetailsModal" style="
         position:fixed;top:0;left:0;width:100%;height:100%;
-        background:rgba(0,0,0,0.7);z-index:9999;
+        background:rgba(0,0,0,0.7);z-index:99999;
         display:flex;align-items:center;justify-content:center;
         padding:20px;box-sizing:border-box;
       " onclick="if(event.target===this) closeCommissionDetails()">
@@ -771,7 +785,9 @@ async function openCommissionDetails(userId, employeeName) {
     document.body.insertAdjacentHTML('beforeend', modalHtml);
     
   } catch(e) {
-    loadingModal.remove();
+    const lm = document.getElementById('commDetailsLoading');
+    if (lm) lm.remove();
+    window._commDetailsLoading = false;
     console.error('❌ openCommissionDetails error:', e);
     showToast('فشل تحميل التفاصيل: ' + e.message, 'error');
   }
