@@ -314,21 +314,16 @@ document.addEventListener('DOMContentLoaded', function() {
 // ═══════════════════════════════════════════════════════════════════
 // loadReport — تحميل تقرير المرتبات (Bootstrap Request)
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// loadReport — مع Cache على الواجهة
+// ═══════════════════════════════════════════════════════════════════
 async function loadReport() {
-  // ✅ منع التحميل المتزامن
+  // ✅ 1. منع التحميل المتزامن
   if (isLoadingReport) {
     console.log('⚠️ loadReport: التحميل قيد التنفيذ — تجاهل');
     return;
   }
   
-  // ✅ منع الطلبات السريعة المتكررة
-  if (window._lastLoadTime && (Date.now() - window._lastLoadTime < 1000)) {
-    console.log('⚠️ loadReport: طلب سريع جداً — انتظر');
-    return;
-  }
-  window._lastLoadTime = Date.now();
-  
-  // ✅ التقاط القيم قبل التعطيل
   const selMonthEl = document.getElementById('selMonth');
   const selYearEl  = document.getElementById('selYear');
   const month = selMonthEl ? selMonthEl.value : '';
@@ -339,13 +334,51 @@ async function loadReport() {
     return;
   }
   
+  // ✅ ✅ ✅ 2. Cache على sessionStorage (5 دقائق)
+  const cacheKey = `salary_${month}_${year}_${currentUser?.centerId || ''}`;
+  try {
+    const cached = sessionStorage.getItem(cacheKey);
+    const cachedTime = sessionStorage.getItem(cacheKey + '_time');
+    
+    if (cached && cachedTime && (Date.now() - parseInt(cachedTime)) < 300000) {
+      console.log(`📦 loadReport: استخدام Cache (عمره ${Math.round((Date.now() - parseInt(cachedTime))/1000)}s)`);
+      
+      // ✅ استخدم البيانات المخزنة
+      isLoadingReport = true;
+      try {
+        const cachedResult = JSON.parse(cached);
+        processReportData(cachedResult, month, year);
+        console.log('✅ loadReport: تم العرض من Cache');
+      } catch(e) {
+        console.warn('⚠️ Cache parse error:', e.message);
+        sessionStorage.removeItem(cacheKey);
+        sessionStorage.removeItem(cacheKey + '_time');
+        // متابعة الطلب العادي
+      } finally {
+        isLoadingReport = false;
+      }
+      return;
+    }
+  } catch(e) {
+    console.warn('⚠️ sessionStorage error:', e.message);
+  }
+  
+  // ✅ 3. حظر 3 ثوانٍ (للأمان)
+  if (window._lastLoadTime && (Date.now() - window._lastLoadTime < 3000)) {
+    const wait = Math.ceil((3000 - (Date.now() - window._lastLoadTime)) / 1000);
+    console.log(`⚠️ loadReport: انتظر ${wait} ثانية`);
+    showToast(`انتظر ${wait} ثانية...`, 'info');
+    return;
+  }
+  window._lastLoadTime = Date.now();
+  
   isLoadingReport = true;
   
-  // ✅ تعطيل حقول الفلتر أثناء التحميل (لمنع التعديل أثناء الطلب)
+  // ✅ تعطيل الحقول
   if (selMonthEl) selMonthEl.disabled = true;
   if (selYearEl)  selYearEl.disabled  = true;
   
-  // ✅ تحديث زر "عرض التقرير"
+  // ✅ تحديث الأزرار
   const btnLoad = document.getElementById('btnLoadReport');
   const btnExcel = document.getElementById('btnExportExcel');
   
@@ -362,7 +395,6 @@ async function loadReport() {
     btnExcel.style.cursor = 'not-allowed';
   }
   
-  // ✅ عرض loader
   document.getElementById('reportArea').innerHTML = '<div class="loader"></div>';
   document.getElementById('infoBar').style.display = 'none';
   
@@ -379,97 +411,17 @@ async function loadReport() {
       return;
     }
     
-    // ✅ استخراج البيانات
-    const salResult = result.salary;
-    const invoicesResult = result.invoices;
-    const expResult = result.expenses;
-    const ratesResult = result.rates;
-    
-    // ═══════════════════════════════════════════════
-    // التحقق من أسعار الصرف
-    // ═══════════════════════════════════════════════
-    if (!ratesResult || !ratesResult.bUSD || !ratesResult.bEUR || !ratesResult.bGBP) {
-      document.getElementById('reportArea').innerHTML =
-        '<div class="empty">⚠️ لا توجد أسعار صرف في شيت Exchange_Rates<br><small>يرجى إدخال أسعار الصرف أولاً</small></div>';
-      tableData = [];
-      return;
+    // ✅ ✅ ✅ 4. حفظ في Cache
+    try {
+      sessionStorage.setItem(cacheKey, JSON.stringify(result));
+      sessionStorage.setItem(cacheKey + '_time', Date.now().toString());
+      console.log('💾 loadReport: تم حفظ النتيجة في Cache');
+    } catch(e) {
+      console.warn('⚠️ Cache save error:', e.message);
     }
     
-    const usdRate = parseFloat(ratesResult.bUSD);
-    const eurRate = parseFloat(ratesResult.bEUR);
-    const gbpRate = parseFloat(ratesResult.bGBP);
-    
-    // ═══════════════════════════════════════════════
-    // التحقق من بيانات المرتبات
-    // ═══════════════════════════════════════════════
-    if (!salResult || !salResult.success || !salResult.employees || salResult.employees.length === 0) {
-      document.getElementById('reportArea').innerHTML =
-        '<div class="empty">📭 لا توجد بيانات رواتب للشهر المحدد<br><small>تأكد من تسجيل الحضور وضغط "مزامنة" أولاً</small></div>';
-      tableData = [];
-      return;
-    }
-    
-    const employees = salResult.employees;
-    const invoices  = Array.isArray(invoicesResult) ? invoicesResult : [];
-    const expenses  = Array.isArray(expResult) ? expResult : [];
-    
-    // ✅ العمولات تُحسب على السيرفر — لا حاجة لحسابها هنا
-    console.log('✅ Commission handled on server-side');
-    
-    // ═══════════════════════════════════════════════
-    // بناء صفوف التقرير
-    // ═══════════════════════════════════════════════
-    tableData = employees.map(emp => {
-      const workingDays   = parseFloat(emp.workingDays)   || 0;
-      const monthlySalary = parseFloat(emp.monthlySalary) || 0;
-      const absentDays    = Math.max(0, 30 - workingDays);
-      
-      const salaryAmount = monthlySalary > 0
-        ? Math.round((monthlySalary / 30) * workingDays)
-        : (parseFloat(emp.salaryAmount) || 0);
-      
-      const commission     = parseFloat(emp.commission) || 0;
-      const bonus          = parseFloat(emp.bonus) || 0;
-      const total          = parseFloat(emp.total) || (salaryAmount + commission + bonus);
-      const cuts           = parseFloat(emp.cuts) || 0;
-      const insurance      = parseFloat(emp.insurance) || 0;
-      const totalAfterCuts = total - cuts - insurance;
-      const downPaymentLE  = parseFloat(emp.downPaymentLE) || 0;
-      const net            = parseFloat(emp.net) || (totalAfterCuts - downPaymentLE);
-      
-      return {
-        userId:         emp.userId        || '',
-        name:           emp.name          || '',
-        position:       emp.position      || '',
-        workingDays:    workingDays,
-        absentDays:     absentDays,
-        monthlySalary:  monthlySalary,
-        salaryAmount:   salaryAmount,
-        commission:     commission,
-        bonus:          bonus,
-        total:          total,
-        cuts:           cuts,
-        insurance:      insurance,
-        totalAfterCuts: totalAfterCuts,
-        downPaymentLE:  downPaymentLE,
-        net:            net
-      };
-    });
-    
-    // ═══════════════════════════════════════════════
-    // حساب الإجماليات من السيرفر مباشرة
-    // ═══════════════════════════════════════════════
-    const totalCommissions = employees.reduce((sum, emp) => sum + (parseFloat(emp.commission) || 0), 0);
-    const totalAdvances    = employees.reduce((sum, emp) => sum + (parseFloat(emp.downPaymentLE) || 0), 0);
-    
-    document.getElementById('infoBar').style.display = 'flex';
-    document.getElementById('infoText').textContent =
-      `إجمالي العمولات المجمَّعة من الفواتير: ${Math.round(totalCommissions).toLocaleString()} LE  |  إجمالي المسحوبات: ${Math.round(totalAdvances).toLocaleString()} LE  |  سعر الصرف المستخدم: $1 = ${usdRate} LE، €1 = ${eurRate} LE`;
-    
-    // ✅ عرض الجدول
-    renderTable(tableData, month, year);
-    
-    console.log('✅ loadReport: اكتمل بنجاح');
+    // ✅ معالجة البيانات
+    processReportData(result, month, year);
     
   } catch(e) {
     console.error('❌ loadReport error:', e);
@@ -477,11 +429,9 @@ async function loadReport() {
       '<div class="empty">❌ خطأ: ' + e.message + '</div>';
     tableData = [];
   } finally {
-    // ✅ إعادة تعيين الحالة دائماً
     isLoadingReport = false;
     window._jsonpInFlight = false;
     
-    // ✅ إعادة تمكين حقول الفلتر
     if (selMonthEl) selMonthEl.disabled = false;
     if (selYearEl)  selYearEl.disabled  = false;
     
@@ -500,6 +450,72 @@ async function loadReport() {
     
     console.log('🔄 loadReport: تم إعادة تعيين الحالة');
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// processReportData — معالجة بيانات التقرير (مستخرجة لدالة منفصلة)
+// ═══════════════════════════════════════════════════════════════════
+function processReportData(result, month, year) {
+  const salResult = result.salary;
+  const invoicesResult = result.invoices;
+  const expResult = result.expenses;
+  const ratesResult = result.rates;
+  
+  if (!ratesResult || !ratesResult.bUSD || !ratesResult.bEUR || !ratesResult.bGBP) {
+    document.getElementById('reportArea').innerHTML =
+      '<div class="empty">⚠️ لا توجد أسعار صرف في شيت Exchange_Rates<br><small>يرجى إدخال أسعار الصرف أولاً</small></div>';
+    tableData = [];
+    return;
+  }
+  
+  const usdRate = parseFloat(ratesResult.bUSD);
+  const eurRate = parseFloat(ratesResult.bEUR);
+  
+  if (!salResult || !salResult.success || !salResult.employees || salResult.employees.length === 0) {
+    document.getElementById('reportArea').innerHTML =
+      '<div class="empty">📭 لا توجد بيانات رواتب للشهر المحدد<br><small>تأكد من تسجيل الحضور وضغط "مزامنة" أولاً</small></div>';
+    tableData = [];
+    return;
+  }
+  
+  const employees = salResult.employees;
+  
+  tableData = employees.map(emp => {
+    const workingDays   = parseFloat(emp.workingDays)   || 0;
+    const monthlySalary = parseFloat(emp.monthlySalary) || 0;
+    const absentDays    = Math.max(0, 30 - workingDays);
+    
+    const salaryAmount = monthlySalary > 0
+      ? Math.round((monthlySalary / 30) * workingDays)
+      : (parseFloat(emp.salaryAmount) || 0);
+    
+    const commission     = parseFloat(emp.commission) || 0;
+    const bonus          = parseFloat(emp.bonus) || 0;
+    const total          = parseFloat(emp.total) || (salaryAmount + commission + bonus);
+    const cuts           = parseFloat(emp.cuts) || 0;
+    const insurance      = parseFloat(emp.insurance) || 0;
+    const totalAfterCuts = total - cuts - insurance;
+    const downPaymentLE  = parseFloat(emp.downPaymentLE) || 0;
+    const net            = parseFloat(emp.net) || (totalAfterCuts - downPaymentLE);
+    
+    return {
+      userId: emp.userId || '',
+      name: emp.name || '',
+      position: emp.position || '',
+      workingDays, absentDays, monthlySalary, salaryAmount,
+      commission, bonus, total, cuts, insurance,
+      totalAfterCuts, downPaymentLE, net
+    };
+  });
+  
+  const totalCommissions = employees.reduce((sum, emp) => sum + (parseFloat(emp.commission) || 0), 0);
+  const totalAdvances    = employees.reduce((sum, emp) => sum + (parseFloat(emp.downPaymentLE) || 0), 0);
+  
+  document.getElementById('infoBar').style.display = 'flex';
+  document.getElementById('infoText').textContent =
+    `إجمالي العمولات المجمَّعة من الفواتير: ${Math.round(totalCommissions).toLocaleString()} LE  |  إجمالي المسحوبات: ${Math.round(totalAdvances).toLocaleString()} LE  |  سعر الصرف المستخدم: $1 = ${usdRate} LE، €1 = ${eurRate} LE`;
+  
+  renderTable(tableData, month, year);
 }
   // ──────────────────────────────────────────────
 // ✅ عرض الجدول
