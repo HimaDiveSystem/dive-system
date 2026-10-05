@@ -83,6 +83,8 @@
       background:white;
       border-radius:0 0 30px 30px;
     }
+    .btn-deduction{background:#dc2626;color:white;border:none;padding:12px 30px;border-radius:40px;cursor:pointer;font-weight:700;font-size:14px;transition:.2s;}
+.btn-deduction:hover{background:#b91c1c;transform:translateY(-1px);}
     .footer strong{color:#1e2b4f;}
     .footer .sep{margin:0 8px;}
   </style>
@@ -131,6 +133,7 @@
         </div>
         <div style="display:flex;gap:10px;align-items:flex-end;">
         <button class="btn-primary" id="btnLoadReport" onclick="loadReport()">🔍 عرض التقرير</button>
+        <button class="btn-deduction" id="btnAddDeduction" onclick="openDeductionForm()">➕ إثبات خصم</button>
         <button class="btn-excel" id="btnExportExcel" onclick="exportToExcel()">📎 تصدير Excel</button>
       </div>
       </div>
@@ -650,7 +653,7 @@ setTimeout(function() {
 }, 50);
 }
 // ═══════════════════════════════════════════════════════════════════
-// openCommissionDetails — نسخة متوافقة مع الهاتف
+// openCommissionDetails — عرض تفاصيل عمولات + خصومات موظف
 // ═══════════════════════════════════════════════════════════════════
 async function openCommissionDetails(userId, employeeName) {
   console.log('🎯 openCommissionDetails:', userId, employeeName);
@@ -666,7 +669,9 @@ async function openCommissionDetails(userId, employeeName) {
   if (window._commDetailsLoading) return;
   window._commDetailsLoading = true;
   
-  // ✅ Loader
+  // ─────────────────────────────────────────
+  // Loader
+  // ─────────────────────────────────────────
   const loadingModal = document.createElement('div');
   loadingModal.id = 'commDetailsLoading';
   loadingModal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:2147483647;display:flex;align-items:center;justify-content:center;';
@@ -674,6 +679,9 @@ async function openCommissionDetails(userId, employeeName) {
   document.body.appendChild(loadingModal);
   
   try {
+    // ─────────────────────────────────────────
+    // 1. جلب تفاصيل العمولات من الخادم
+    // ─────────────────────────────────────────
     const result = await jsonp('getCommissionDetails', {
       userId: Session.getUser()?.id || '',
       userType: Session.getUser()?.type || 'Accountant',
@@ -696,7 +704,9 @@ async function openCommissionDetails(userId, employeeName) {
     const invoices = result.invoices || [];
     const totalComm = result.summary?.totalCommission || 0;
     
-    // ✅ بناء الجدول
+    // ─────────────────────────────────────────
+    // 2. بناء جدول العمولات
+    // ─────────────────────────────────────────
     let rowsHtml = '';
     if (invoices.length === 0) {
       rowsHtml = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#999;">لا توجد فواتير مؤكدة بهذا الشهر</td></tr>';
@@ -714,15 +724,103 @@ async function openCommissionDetails(userId, employeeName) {
       });
     }
     
-    // ✅ المودال — بدون inline onclick
-    const modalHtml = 
+    // ═══════════════════════════════════════════
+    // 3. ✅ ✅ ✅ بناء جدول الخصومات (جديد)
+    // ═══════════════════════════════════════════
+    let deductionsHtml = '';
+    let totalDeductionsLE = 0;
+    
+    try {
+      // البحث عن بيانات الموظف في tableData
+      const empData = (window.tableData || tableData || []).find(e => 
+        String(e.userId) === String(userId)
+      );
+      
+      if (empData && empData.deductionsDetails && empData.deductionsDetails.length > 0) {
+        let dedRows = '';
+        
+        for (const ded of empData.deductionsDetails) {
+          // بناء نص القيمة حسب النوع
+          let amountText = '—';
+          if (ded.computedType === 'cash') {
+            amountText = `<span style="color:#dc2626;font-weight:700;">${fmt(ded.cashInLE)} LE</span>`;
+            
+            // عرض تفصيل العملات إذا كانت متعددة
+            const parts = [];
+            if (ded.cashUSD > 0) parts.push(`${ded.cashUSD}$`);
+            if (ded.cashEUR > 0) parts.push(`${ded.cashEUR}€`);
+            if (ded.cashGBP > 0) parts.push(`${ded.cashGBP}£`);
+            if (ded.cashLE > 0)  parts.push(`${ded.cashLE}LE`);
+            
+            if (parts.length > 0) {
+              amountText += `<div style="font-size:9px;color:#999;margin-top:2px;">${parts.join(' + ')}</div>`;
+            }
+            
+            totalDeductionsLE += ded.cashInLE || 0;
+            
+          } else if (ded.computedType === 'days') {
+            const dailyRate = (empData.monthlySalary || 0) / 30;
+            const daysInLE = Math.round(dailyRate * (ded.daysCount || 0));
+            amountText = `<span style="color:#b45309;font-weight:700;">${ded.daysCount} يوم</span>`;
+            amountText += `<div style="font-size:9px;color:#999;margin-top:2px;">≈ ${fmt(daysInLE)} LE</div>`;
+            
+            totalDeductionsLE += daysInLE;
+          }
+          
+          dedRows += `<tr>
+            <td style="text-align:center;padding:6px 4px;border-bottom:1px solid #fecaca;">${escHtml(ded.date || '—')}</td>
+            <td style="text-align:center;padding:6px 4px;border-bottom:1px solid #fecaca;">
+              ${ded.computedType === 'cash' ? '💵 نقدي' : '📆 أيام'}
+            </td>
+            <td style="text-align:center;padding:6px 4px;border-bottom:1px solid #fecaca;">${amountText}</td>
+            <td style="text-align:right;padding:6px 4px;border-bottom:1px solid #fecaca;max-width:200px;word-wrap:break-word;">${escHtml(ded.reason || '—')}</td>
+            <td style="text-align:center;padding:6px 4px;border-bottom:1px solid #fecaca;">${escHtml(ded.deductedBy || '—')}</td>
+          </tr>`;
+        }
+        
+        deductionsHtml = `
+          <div style="margin-top:20px;">
+            <div style="background:linear-gradient(135deg,#7f1d1d,#dc2626);color:#fff;padding:10px 16px;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center;">
+              <strong style="font-size:14px;">⬇️ الخصومات المطبقة (${empData.deductionsDetails.length})</strong>
+              <span style="background:rgba(255,255,255,0.2);padding:4px 12px;border-radius:20px;font-weight:700;font-size:13px;">
+                ${fmt(Math.round(totalDeductionsLE))} LE
+              </span>
+            </div>
+            <div style="background:#fef2f2;border:1px solid #fecaca;border-top:none;border-radius:0 0 10px 10px;padding:12px;">
+              <div style="overflow-x:auto;border-radius:8px;">
+                <table style="width:100%;border-collapse:collapse;font-size:11px;background:white;min-width:600px;">
+                  <thead>
+                    <tr style="background:#fca5a5;color:#7f1d1d;">
+                      <th style="padding:8px 6px;text-align:center;font-weight:800;">📅 التاريخ</th>
+                      <th style="padding:8px 6px;text-align:center;font-weight:800;">النوع</th>
+                      <th style="padding:8px 6px;text-align:center;font-weight:800;">القيمة</th>
+                      <th style="padding:8px 6px;text-align:right;font-weight:800;">السبب</th>
+                      <th style="padding:8px 6px;text-align:center;font-weight:800;">✍️ بواسطة</th>
+                    </tr>
+                  </thead>
+                  <tbody>${dedRows}</tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+    } catch(e) {
+      console.warn('⚠️ Failed to build deductions HTML:', e);
+      deductionsHtml = '';
+    }
+    
+    // ─────────────────────────────────────────
+    // 4. بناء المودال الكامل
+    // ─────────────────────────────────────────
+    const modalHtml =
       '<div id="commDetailsModal" style="position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:2147483647;display:flex;align-items:flex-start;justify-content:center;padding:8px;box-sizing:border-box;overflow-y:auto;-webkit-overflow-scrolling:touch;">' +
         '<div style="background:#fff;border-radius:12px;width:100%;max-width:1100px;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.4);overflow:hidden;margin:8px auto;">' +
           
           // Header
           '<div style="padding:14px 16px;background:linear-gradient(135deg,#0d9488,#14b8a6);color:#fff;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">' +
             '<div style="flex:1;min-width:0;">' +
-              '<h3 style="margin:0;font-size:14px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">👁️ تفاصيل عمولات — ' + escHtml(employeeName) + '</h3>' +
+              '<h3 style="margin:0;font-size:14px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">👁️ تفاصيل — ' + escHtml(employeeName) + '</h3>' +
               '<p style="margin:4px 0 0;opacity:0.9;font-size:11px;">' + month + '/' + year + ' — ' + escHtml(userId) + '</p>' +
             '</div>' +
             '<button id="commDetailsCloseBtn" type="button" style="background:rgba(255,255,255,0.25);color:#fff;border:none;width:36px;height:36px;border-radius:50%;font-size:22px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;line-height:1;padding:0;">×</button>' +
@@ -731,11 +829,21 @@ async function openCommissionDetails(userId, employeeName) {
           // Body
           '<div style="padding:12px;overflow-y:auto;flex:1;-webkit-overflow-scrolling:touch;max-height:calc(100vh - 140px);">' +
             
+            // ملخص العمولات
             '<div style="background:#e8f5e9;border-right:4px solid #1e8449;padding:12px 14px;border-radius:10px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
               '<span style="font-weight:700;color:#1e8449;font-size:12px;">💰 إجمالي العمولات</span>' +
               '<span style="font-weight:800;color:#1e8449;font-size:16px;">' + fmt(totalComm) + ' LE</span>' +
             '</div>' +
             
+            // ✅ ملخص الخصومات (إذا وجدت)
+            (totalDeductionsLE > 0 
+              ? '<div style="background:#fee2e2;border-right:4px solid #dc2626;padding:12px 14px;border-radius:10px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
+                  '<span style="font-weight:700;color:#dc2626;font-size:12px;">⬇️ إجمالي الخصومات</span>' +
+                  '<span style="font-weight:800;color:#dc2626;font-size:16px;">' + fmt(Math.round(totalDeductionsLE)) + ' LE</span>' +
+                '</div>'
+              : '') +
+            
+            // جدول الفواتير
             '<div style="background:#f8f9fa;padding:8px 12px;border-radius:8px;margin-bottom:10px;font-size:11px;color:#666;text-align:center;">📊 عدد الفواتير: <strong>' + invoices.length + '</strong></div>' +
             
             '<div style="overflow-x:auto;border-radius:10px;border:1px solid #e0e0e0;-webkit-overflow-scrolling:touch;">' +
@@ -752,6 +860,10 @@ async function openCommissionDetails(userId, employeeName) {
                 '<tbody>' + rowsHtml + '</tbody>' +
               '</table>' +
             '</div>' +
+            
+            // ✅ ✅ ✅ قسم الخصومات (جديد)
+            deductionsHtml +
+            
           '</div>' +
           
           // Footer
@@ -765,7 +877,9 @@ async function openCommissionDetails(userId, employeeName) {
     if (existing) existing.remove();
     document.body.insertAdjacentHTML('beforeend', modalHtml);
     
-    // ✅ ربط الأزرار يدوياً — يعمل على كل المتصفحات
+    // ─────────────────────────────────────────
+    // 5. ربط الأزرار
+    // ─────────────────────────────────────────
     setTimeout(function() {
       const btn1 = document.getElementById('commDetailsCloseBtn');
       const btn2 = document.getElementById('commDetailsCloseBtn2');
@@ -790,7 +904,6 @@ async function openCommissionDetails(userId, employeeName) {
         };
       }
       
-      // ✅ منع تمرير الصفحة الرئيسية
       document.body.style.overflow = 'hidden';
       document.documentElement.style.overflow = 'hidden';
     }, 50);
@@ -1059,6 +1172,446 @@ function escHtml(s) {
   }[m]));
 }
 
+  // ═══════════════════════════════════════════════════════════════════
+// DEDUCTIONS FORM — فورم إثبات الخصم
+// ═══════════════════════════════════════════════════════════════════
+
+let cachedEmployeesForDeduction = null;
+
+// ─────────────────────────────────────────
+// فتح فورم الخصم
+// ─────────────────────────────────────────
+async function openDeductionForm() {
+  // تحقق من الجلسة
+  if (!currentUser) {
+    showToast('⚠️ يجب تسجيل الدخول', 'error');
+    return;
+  }
+  
+  // ─────────────────────────────────────────
+  // 1. جلب قائمة الموظفين (مع cache)
+  // ─────────────────────────────────────────
+  if (!cachedEmployeesForDeduction) {
+    showToast('⏳ جاري تحميل الموظفين...', 'info');
+    try {
+      const result = await jsonp('getEmployeesForDeduction', {
+        centerName: currentUser.centerName
+      });
+      
+      if (result && result.success) {
+        cachedEmployeesForDeduction = result.employees || [];
+        console.log('✅ Employees loaded:', cachedEmployeesForDeduction.length);
+      } else {
+        cachedEmployeesForDeduction = [];
+        showToast('⚠️ لا يوجد موظفون', 'error');
+      }
+    } catch(e) {
+      console.error('❌ Failed to load employees:', e);
+      cachedEmployeesForDeduction = [];
+    }
+  }
+  
+  if (cachedEmployeesForDeduction.length === 0) {
+    showToast('⚠️ لا يوجد موظفون متاحون', 'error');
+    return;
+  }
+  
+  // ─────────────────────────────────────────
+  // 2. تجهيز القيم الافتراضية
+  // ─────────────────────────────────────────
+  const today = new Date();
+  const todayISO = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const currentMonth = monthNames[today.getMonth()];
+  const currentYear = today.getFullYear();
+  
+  const monthArNames = {
+    'Jan':'يناير','Feb':'فبراير','Mar':'مارس','Apr':'أبريل','May':'مايو','Jun':'يونيو',
+    'Jul':'يوليو','Aug':'أغسطس','Sep':'سبتمبر','Oct':'أكتوبر','Nov':'نوفمبر','Dec':'ديسمبر'
+  };
+  
+  // ─────────────────────────────────────────
+  // 3. بناء السنوات (من الحالية حتى 2050)
+  // ─────────────────────────────────────────
+  let yearsOptions = '';
+  for (let y = currentYear; y <= 2050; y++) {
+    yearsOptions += `<option value="${y}" ${y === currentYear ? 'selected' : ''}>${y}</option>`;
+  }
+  
+  // ─────────────────────────────────────────
+  // 4. بناء الشهور
+  // ─────────────────────────────────────────
+  let monthsOptions = '';
+  for (const m of monthNames) {
+    monthsOptions += `<option value="${m}" ${m === currentMonth ? 'selected' : ''}>${monthArNames[m]} (${m})</option>`;
+  }
+  
+  // ─────────────────────────────────────────
+  // 5. بناء قائمة الموظفين
+  // ─────────────────────────────────────────
+  let employeesOptions = '';
+  for (const emp of cachedEmployeesForDeduction) {
+    employeesOptions += `<option value="${escHtml(emp.id)}" data-name="${escHtml(emp.name)}">${escHtml(emp.name)} (${escHtml(emp.id)})</option>`;
+  }
+  
+  // ─────────────────────────────────────────
+  // 6. بناء المودال
+  // ─────────────────────────────────────────
+  const modalHtml = `
+    <div id="deductionFormModal" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:10000;display:flex;align-items:flex-start;justify-content:center;padding:10px;box-sizing:border-box;overflow-y:auto;">
+      <div style="background:#fff;border-radius:16px;max-width:650px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.4);margin:20px auto;">
+        
+        <!-- Header -->
+        <div style="padding:16px 20px;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border-radius:16px 16px 0 0;display:flex;justify-content:space-between;align-items:center;">
+          <h3 style="margin:0;font-size:17px;font-weight:800;">➕ إثبات خصم على موظف</h3>
+          <button onclick="closeDeductionForm()" style="background:rgba(255,255,255,0.2);color:#fff;border:none;width:34px;height:34px;border-radius:50%;font-size:22px;cursor:pointer;">×</button>
+        </div>
+        
+        <!-- Body -->
+        <div style="padding:20px;max-height:calc(100vh - 180px);overflow-y:auto;">
+          
+          <!-- Row 1: التاريخ + الشهر + السنة -->
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:14px;">
+            <div>
+              <label style="display:block;font-size:12px;font-weight:700;color:#64748b;margin-bottom:5px;">📅 التاريخ</label>
+              <input type="date" id="ded_date" value="${todayISO}" style="width:100%;padding:9px;border:2px solid #d0ddeb;border-radius:10px;font-size:13px;">
+            </div>
+            <div>
+              <label style="display:block;font-size:12px;font-weight:700;color:#64748b;margin-bottom:5px;">📆 الشهر</label>
+              <select id="ded_month" style="width:100%;padding:9px;border:2px solid #d0ddeb;border-radius:10px;font-size:13px;background:white;">
+                ${monthsOptions}
+              </select>
+            </div>
+            <div>
+              <label style="display:block;font-size:12px;font-weight:700;color:#64748b;margin-bottom:5px;">📆 السنة</label>
+              <select id="ded_year" style="width:100%;padding:9px;border:2px solid #d0ddeb;border-radius:10px;font-size:13px;background:white;">
+                ${yearsOptions}
+              </select>
+            </div>
+          </div>
+          
+          <!-- Row 2: الموظف -->
+          <div style="margin-bottom:14px;">
+            <label style="display:block;font-size:12px;font-weight:700;color:#64748b;margin-bottom:5px;">👤 الموظف</label>
+            <input list="ded_employees_list" id="ded_employee_search" placeholder="اكتب اسم الموظف..." autocomplete="off" 
+                   style="width:100%;padding:9px;border:2px solid #d0ddeb;border-radius:10px;font-size:13px;">
+            <datalist id="ded_employees_list">
+              ${employeesOptions}
+            </datalist>
+            <input type="hidden" id="ded_employee_id">
+            <input type="hidden" id="ded_employee_name">
+            <div id="ded_employee_display" style="margin-top:6px;font-size:12px;color:#1e8449;font-weight:700;display:none;"></div>
+          </div>
+          
+          <!-- Row 3: نوع الخصم -->
+          <div style="margin-bottom:14px;">
+            <label style="display:block;font-size:12px;font-weight:700;color:#64748b;margin-bottom:8px;">نوع الخصم</label>
+            <div style="display:flex;gap:20px;">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:700;">
+                <input type="checkbox" id="ded_type_cash" onchange="onDeductionTypeChange('cash')" style="width:18px;height:18px;cursor:pointer;">
+                💵 خصم نقدي
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:700;">
+                <input type="checkbox" id="ded_type_days" onchange="onDeductionTypeChange('days')" style="width:18px;height:18px;cursor:pointer;">
+                📆 خصم أيام
+              </label>
+            </div>
+          </div>
+          
+          <!-- Row 4: حقول الخصم النقدي -->
+          <div id="ded_cash_section" style="display:none;margin-bottom:14px;padding:12px;background:#fef2f2;border-radius:10px;border:1px solid #fecaca;">
+            <div style="font-size:12px;font-weight:700;color:#dc2626;margin-bottom:10px;">💵 مبالغ الخصم النقدي</div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
+              <div>
+                <label style="display:block;font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;">💵 USD ($)</label>
+                <input type="number" id="ded_cashUSD" step="0.01" min="0" placeholder="0" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;text-align:center;">
+              </div>
+              <div>
+                <label style="display:block;font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;">💶 EUR (€)</label>
+                <input type="number" id="ded_cashEUR" step="0.01" min="0" placeholder="0" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;text-align:center;">
+              </div>
+              <div>
+                <label style="display:block;font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;">💷 GBP (£)</label>
+                <input type="number" id="ded_cashGBP" step="0.01" min="0" placeholder="0" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;text-align:center;">
+              </div>
+              <div>
+                <label style="display:block;font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;">💴 LE</label>
+                <input type="number" id="ded_cashLE" step="0.01" min="0" placeholder="0" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;text-align:center;">
+              </div>
+            </div>
+          </div>
+          
+          <!-- Row 5: حقل خصم الأيام -->
+          <div id="ded_days_section" style="display:none;margin-bottom:14px;padding:12px;background:#fef3c7;border-radius:10px;border:1px solid #fde68a;">
+            <div style="font-size:12px;font-weight:700;color:#b45309;margin-bottom:10px;">📆 عدد الأيام المخصومة</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+              <div>
+                <label style="display:block;font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;">اختر من القائمة</label>
+                <select id="ded_days_preset" onchange="onDaysPresetChange()" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;background:white;">
+                  <option value="">-- اختر --</option>
+                  <option value="0.25">ربع يوم (0.25)</option>
+                  <option value="0.5">نصف يوم (0.5)</option>
+                  <option value="1">يوم واحد (1)</option>
+                  <option value="2">يومان (2)</option>
+                  <option value="3">3 أيام</option>
+                  <option value="7">أسبوع (7)</option>
+                  <option value="15">15 يوم</option>
+                  <option value="30">شهر (30)</option>
+                  <option value="custom">➡️ قيمة مخصصة</option>
+                </select>
+              </div>
+              <div>
+                <label style="display:block;font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;">أو أدخل يدوياً</label>
+                <input type="number" id="ded_daysCount" step="0.25" min="0.25" placeholder="مثال: 1.5" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;text-align:center;">
+              </div>
+            </div>
+          </div>
+          
+          <!-- Row 6: السبب -->
+          <div style="margin-bottom:14px;">
+            <label style="display:block;font-size:12px;font-weight:700;color:#64748b;margin-bottom:5px;">📝 سبب الخصم</label>
+            <textarea id="ded_reason" rows="2" placeholder="مثال: تأخير متكرر، غياب بدون إذن..." 
+                      style="width:100%;padding:9px;border:2px solid #d0ddeb;border-radius:10px;font-size:13px;font-family:inherit;resize:vertical;"></textarea>
+          </div>
+          
+          <!-- Row 7: خصم بواسطة -->
+          <div style="margin-bottom:14px;">
+            <label style="display:block;font-size:12px;font-weight:700;color:#64748b;margin-bottom:5px;">✍️ خصم بواسطة</label>
+            <input type="text" id="ded_deductedBy" value="${escHtml(currentUser?.name || '')}" 
+                   style="width:100%;padding:9px;border:2px solid #d0ddeb;border-radius:10px;font-size:13px;">
+          </div>
+          
+        </div>
+        
+        <!-- Footer -->
+        <div style="padding:14px 20px;background:#f8fafc;border-radius:0 0 16px 16px;display:flex;justify-content:flex-end;gap:10px;border-top:1px solid #e0e0e0;">
+          <button onclick="closeDeductionForm()" style="background:#6c757d;color:#fff;border:none;padding:10px 24px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;">إلغاء</button>
+          <button id="ded_saveBtn" onclick="submitDeduction()" style="background:#dc2626;color:#fff;border:none;padding:10px 28px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;">💾 حفظ الخصم</button>
+        </div>
+        
+      </div>
+    </div>
+  `;
+  
+  // إزالة أي مودال قديم
+  const existing = document.getElementById('deductionFormModal');
+  if (existing) existing.remove();
+  
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+  document.body.style.overflow = 'hidden';
+  
+  // ربط حدث التنبؤ بالموظف
+  attachEmployeeSearchEvents();
+}
+
+
+// ─────────────────────────────────────────
+// إغلاق فورم الخصم
+// ─────────────────────────────────────────
+function closeDeductionForm() {
+  const modal = document.getElementById('deductionFormModal');
+  if (modal) modal.remove();
+  document.body.style.overflow = '';
+}
+
+
+// ─────────────────────────────────────────
+// تغيير نوع الخصم
+// ─────────────────────────────────────────
+function onDeductionTypeChange(type) {
+  const cashCb = document.getElementById('ded_type_cash');
+  const daysCb = document.getElementById('ded_type_days');
+  const cashSection = document.getElementById('ded_cash_section');
+  const daysSection = document.getElementById('ded_days_section');
+  
+  // ✅ إذا اختار cash → ألغِ days
+  if (type === 'cash' && cashCb.checked) {
+    daysCb.checked = false;
+    cashSection.style.display = 'block';
+    daysSection.style.display = 'none';
+  }
+  // ✅ إذا اختار days → ألغِ cash
+  else if (type === 'days' && daysCb.checked) {
+    cashCb.checked = false;
+    daysSection.style.display = 'block';
+    cashSection.style.display = 'none';
+  }
+  // ✅ إذا ألغى الاختيار
+  else {
+    cashSection.style.display = 'none';
+    daysSection.style.display = 'none';
+  }
+}
+
+
+// ─────────────────────────────────────────
+// تغيير preset الأيام
+// ─────────────────────────────────────────
+function onDaysPresetChange() {
+  const preset = document.getElementById('ded_days_preset').value;
+  const daysInput = document.getElementById('ded_daysCount');
+  
+  if (preset && preset !== 'custom') {
+    daysInput.value = preset;
+  } else if (preset === 'custom') {
+    daysInput.value = '';
+    daysInput.focus();
+  }
+}
+
+
+// ─────────────────────────────────────────
+// التنبؤ بالموظف (auto-complete)
+// ─────────────────────────────────────────
+function attachEmployeeSearchEvents() {
+  const searchInput = document.getElementById('ded_employee_search');
+  const employeeIdInput = document.getElementById('ded_employee_id');
+  const employeeNameInput = document.getElementById('ded_employee_name');
+  const display = document.getElementById('ded_employee_display');
+  
+  if (!searchInput) return;
+  
+  searchInput.addEventListener('input', function() {
+    const val = this.value.trim();
+    if (!val) {
+      employeeIdInput.value = '';
+      employeeNameInput.value = '';
+      display.style.display = 'none';
+      return;
+    }
+    
+    // ✅ البحث عن الموظف
+    const emp = cachedEmployeesForDeduction.find(e => 
+      e.name === val || 
+      `${e.name} (${e.id})` === val ||
+      e.id === val
+    );
+    
+    if (emp) {
+      employeeIdInput.value = emp.id;
+      employeeNameInput.value = emp.name;
+      display.textContent = `✅ تم اختيار: ${emp.name} (${emp.id})`;
+      display.style.display = 'block';
+    } else {
+      employeeIdInput.value = '';
+      employeeNameInput.value = '';
+      display.style.display = 'none';
+    }
+  });
+}
+
+
+// ─────────────────────────────────────────
+// إرسال الفورم
+// ─────────────────────────────────────────
+async function submitDeduction() {
+  const saveBtn = document.getElementById('ded_saveBtn');
+  if (saveBtn.disabled) return;
+  
+  // ─────────────────────────────────────────
+  // جمع البيانات
+  // ─────────────────────────────────────────
+  const dateInput = document.getElementById('ded_date').value;
+  const month = document.getElementById('ded_month').value;
+  const year = document.getElementById('ded_year').value;
+  const employeeId = document.getElementById('ded_employee_id').value;
+  const employeeName = document.getElementById('ded_employee_name').value;
+  const reason = document.getElementById('ded_reason').value.trim();
+  const deductedBy = document.getElementById('ded_deductedBy').value.trim();
+  
+  const isCash = document.getElementById('ded_type_cash').checked;
+  const isDays = document.getElementById('ded_type_days').checked;
+  
+  // ─────────────────────────────────────────
+  // التحقق
+  // ─────────────────────────────────────────
+  if (!dateInput) {
+    showToast('⚠️ التاريخ مطلوب', 'error');
+    return;
+  }
+  
+  if (!employeeId) {
+    showToast('⚠️ يجب اختيار الموظف من القائمة', 'error');
+    document.getElementById('ded_employee_search').focus();
+    return;
+  }
+  
+  if (!isCash && !isDays) {
+    showToast('⚠️ يجب اختيار نوع الخصم', 'error');
+    return;
+  }
+  
+  if (!deductedBy) {
+    showToast('⚠️ حقل "خصم بواسطة" مطلوب', 'error');
+    return;
+  }
+  
+  // ─────────────────────────────────────────
+  // تجهيز payload
+  // ─────────────────────────────────────────
+  const payload = {
+    centerName: currentUser.centerName,
+    date: dateInput,
+    employeeId: employeeId,
+    employeeName: employeeName,
+    month: month,
+    year: year,
+    reason: reason,
+    deductedBy: deductedBy
+  };
+  
+  if (isCash) {
+    payload.deductionType = 'cash';
+    payload.cashUSD = parseFloat(document.getElementById('ded_cashUSD').value) || 0;
+    payload.cashEUR = parseFloat(document.getElementById('ded_cashEUR').value) || 0;
+    payload.cashGBP = parseFloat(document.getElementById('ded_cashGBP').value) || 0;
+    payload.cashLE = parseFloat(document.getElementById('ded_cashLE').value) || 0;
+    
+    if (payload.cashUSD === 0 && payload.cashEUR === 0 && 
+        payload.cashGBP === 0 && payload.cashLE === 0) {
+      showToast('⚠️ أدخل مبلغاً واحداً على الأقل', 'error');
+      return;
+    }
+  } else {
+    payload.deductionType = 'days';
+    payload.daysCount = parseFloat(document.getElementById('ded_daysCount').value) || 0;
+    
+    if (payload.daysCount <= 0) {
+      showToast('⚠️ عدد الأيام مطلوب', 'error');
+      return;
+    }
+  }
+  
+  // ─────────────────────────────────────────
+  // الإرسال
+  // ─────────────────────────────────────────
+  saveBtn.disabled = true;
+  saveBtn.textContent = '⏳ جاري الحفظ...';
+  saveBtn.style.opacity = '0.7';
+  
+  try {
+    const result = await jsonp('saveDeduction', payload);
+    
+    if (result && result.success) {
+      showToast(`✅ ${result.message}`, 'success');
+      closeDeductionForm();
+      
+      // ✅ إعادة تعيين الـ cache (لتحديث البيانات)
+      // لا نحتاج إعادة تحميل الفواتير — فقط عند فتح التقرير مرة أخرى
+    } else {
+      showToast('❌ ' + (result?.message || 'فشل الحفظ'), 'error');
+    }
+  } catch(e) {
+    console.error('❌ submitDeduction error:', e);
+    showToast('❌ خطأ: ' + e.message, 'error');
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = '💾 حفظ الخصم';
+    saveBtn.style.opacity = '1';
+  }
+}
+  
 // ──────────────────────────────────────────────
 // ✅ العودة للصفحة السابقة
 // ──────────────────────────────────────────────
