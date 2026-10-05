@@ -761,41 +761,45 @@ thead th:hover {
 <!-- Filter Panel -->
 <div class="filter-panel">
   <div class="filter-row">
-    <div class="filter-group">
-      <label>📅 من تاريخ</label>
-      <input type="date" id="filterFromDate" class="filter-input" 
-             onchange="loadCommissionsData()">
-    </div>
-    
-    <div class="filter-group">
-      <label>📅 إلى تاريخ</label>
-      <input type="date" id="filterToDate" class="filter-input" 
-             onchange="loadCommissionsData()">
-    </div>
-    
-    <div class="filter-group" id="branchFilterGroup" style="display: none;">
-      <label>🏛️ الفرع</label>
-      <select id="filterBranch" class="filter-select" 
-              onchange="loadCommissionsData()">
-        <option value="">كل الفروع</option>
-      </select>
-    </div>
-    
-    <div class="filter-group" id="salesFilterGroup" style="display: none;">
-      <label>👤 السيلز</label>
-      <select id="filterSales" class="filter-select" 
-              onchange="loadCommissionsData()">
-        <option value="">كل السيلز</option>
-      </select>
-    </div>
-    
-    <div class="filter-group" id="tripFilterGroup">
-      <label>🏝️ الرحلة</label>
-      <select id="filterTrip" class="filter-select" 
-              onchange="loadCommissionsData()">
-        <option value="">كل الرحلات</option>
-      </select>
-    </div>
+    <!-- ✅ التاريخ: فقط عند التغيير يُعاد التحميل من السيرفر -->
+<div class="filter-group">
+  <label>📅 من تاريخ</label>
+  <input type="date" id="filterFromDate" class="filter-input" 
+         onchange="reloadFromServer()">
+</div>
+
+<div class="filter-group">
+  <label>📅 إلى تاريخ</label>
+  <input type="date" id="filterToDate" class="filter-input" 
+         onchange="reloadFromServer()">
+</div>
+
+<!-- ✅ الفرع: فلترة محلية -->
+<div class="filter-group" id="branchFilterGroup" style="display: none;">
+  <label>🏛️ الفرع</label>
+  <select id="filterBranch" class="filter-select" 
+          onchange="applyTableFiltersAndRender()">
+    <option value="">كل الفروع</option>
+  </select>
+</div>
+
+<!-- ✅ السيلز: فلترة محلية -->
+<div class="filter-group" id="salesFilterGroup" style="display: none;">
+  <label>👤 السيلز</label>
+  <select id="filterSales" class="filter-select" 
+          onchange="applyTableFiltersAndRender()">
+    <option value="">كل السيلز</option>
+  </select>
+</div>
+
+<!-- ✅ الرحلة: فلترة محلية -->
+<div class="filter-group" id="tripFilterGroup">
+  <label>🏝️ الرحلة</label>
+  <select id="filterTrip" class="filter-select" 
+          onchange="applyTableFiltersAndRender()">
+    <option value="">كل الرحلات</option>
+  </select>
+</div>
   </div>
   
   <div class="filter-row">
@@ -818,9 +822,9 @@ thead th:hover {
     </div>
     
     <div class="filter-actions">
-      <button class="btn-primary" onclick="loadCommissionsData()">
-        🔄 تحديث
-      </button>
+        <button class="btn-primary" onclick="reloadFromServer()">
+      🔄 تحديث
+    </button>
       <button class="btn-success" onclick="exportToExcel()">
         📥 تصدير Excel
       </button>
@@ -1007,7 +1011,44 @@ document.addEventListener('DOMContentLoaded', async function() {
   
   console.log('✅ CommissionDashboard - جاهزة');
 });
+// ═══════════════════════════════════════════════════════════════════
+// reloadFromServer — إعادة تحميل البيانات من السيرفر
+// ═══════════════════════════════════════════════════════════════════
+// ✅ تُستدعى فقط عند:
+//   - تغيير التاريخ (من / إلى)
+//   - الضغط على زر "تحديث"
+// ═══════════════════════════════════════════════════════════════════
+async function reloadFromServer() {
+  const fromDate = document.getElementById('filterFromDate')?.value;
+  const toDate = document.getElementById('filterToDate')?.value;
+  
+  if (!fromDate || !toDate) {
+    showToast('⚠️ يرجى تحديد نطاق التاريخ', 'error');
+    return;
+  }
+  
+  if (new Date(fromDate) > new Date(toDate)) {
+    showToast('⚠️ تاريخ البداية يجب أن يكون قبل تاريخ النهاية', 'error');
+    return;
+  }
+  
+  // ✅ تصفير الفلاتر المحلية
+  const branchSel = document.getElementById('filterBranch');
+  const salesSel = document.getElementById('filterSales');
+  const tripSel = document.getElementById('filterTrip');
+  const searchInput = document.getElementById('filterSearch');
+  
+  if (branchSel) branchSel.value = '';
+  if (salesSel) salesSel.value = '';
+  if (tripSel) tripSel.value = '';
+  if (searchInput) searchInput.value = '';
+  
+  // ✅ جلب جديد من السيرفر
+  await loadCommissionsData();
+}
 
+// ✅ تصدير للـ window
+window.reloadFromServer = reloadFromServer;
 // ═══════════════════════════════════════════════════════════════════
 // UPDATE HEADER
 // ═══════════════════════════════════════════════════════════════════
@@ -1273,29 +1314,17 @@ async function loadCommissionsData() {
     const fromDate = isoToDDMMMYYYY(fromDateInput);
     const toDate = isoToDDMMMYYYY(toDateInput);
     
-    // ✅ ✅ ✅ جمع جميع الفلاتر
-    const salesFilter = document.getElementById('filterSales')?.value || '';
-    const tripFilter = document.getElementById('filterTrip')?.value || '';
-    const branchFilter = document.getElementById('filterBranch')?.value || '';
-    
-    // ✅ تحديد الفرع: للمالك يستخدم الفلتر، للمحاسب من الجلسة
-    let effectiveBranch = '';
-    if (currentScope === 'center') {
-      effectiveBranch = branchFilter;
-    } else if (currentScope === 'branch') {
-      effectiveBranch = currentUser.branchName || '';
-    }
-    
-    const params = {
-      userId: currentUser.id,
-      userType: currentUser.type,
-      centerName: currentUser.centerName,
-      branchName: effectiveBranch,
-      fromDate: fromDate,
-      toDate: toDate,
-      salesId: salesFilter,
-      tripName: tripFilter
-    };
+    // ✅ ✅ ✅ إرسال **تاريخ فقط** للسيرفر
+// الفلاتر الأخرى (branch/sales/trip) محلية
+const params = {
+  userId: currentUser.id,
+  userType: currentUser.type,
+  centerName: currentUser.centerName,
+  fromDate: fromDate,
+  toDate: toDate
+  // ✅ لا salesId ولا tripName ولا branchName
+  // (branchName يُفرض على السيرفر من Users)
+};
     
     console.log('📡 إرسال الطلب:', params);
     
@@ -1354,13 +1383,28 @@ function applyTableFiltersAndRender() {
     window._allInvoices = [];
   }
   
-  // 1. البداية من كل الفواتير (المفلترة من الخادم)
+  // ✅ 1. البداية من كل الفواتير (من السيرفر — بنطاق التاريخ فقط)
   let invoices = [...window._allInvoices];
   
-  // ✅ ملاحظة: salesId و tripName مُفلترة على الخادم بالفعل!
-  // لا نحتاج تكرار الفلترة هنا (تجنب فلترة مزدوجة)
+  // ✅ 2. فلترة الفرع (محلية) — للمالك/Admin فقط
+  const branchFilter = document.getElementById('filterBranch')?.value || '';
+  if (branchFilter && currentScope === 'center') {
+    invoices = invoices.filter(inv => inv.branchName === branchFilter);
+  }
   
-  // 2. فلترة البحث النصي (على العميل — سريعة)
+  // ✅ 3. فلترة السيلز (محلية) — للمحاسب/المالك
+  const salesFilter = document.getElementById('filterSales')?.value || '';
+  if (salesFilter && currentScope !== 'self') {
+    invoices = invoices.filter(inv => inv.salesId === salesFilter);
+  }
+  
+  // ✅ 4. فلترة الرحلة (محلية)
+  const tripFilter = document.getElementById('filterTrip')?.value || '';
+  if (tripFilter) {
+    invoices = invoices.filter(inv => inv.trip === tripFilter);
+  }
+  
+  // ✅ 5. فلترة البحث النصي (محلية)
   const searchQuery = (document.getElementById('filterSearch')?.value || '').trim().toLowerCase();
   if (searchQuery) {
     invoices = invoices.filter(inv => {
@@ -1383,7 +1427,7 @@ function applyTableFiltersAndRender() {
     });
   }
   
-  // 3. الترتيب
+  // ✅ 6. الترتيب
   if (window._sortColumn && window._sortDirection) {
     const col = window._sortColumn;
     const dir = window._sortDirection;
@@ -1409,22 +1453,22 @@ function applyTableFiltersAndRender() {
     });
   }
   
-  // 4. تخزين النتيجة
+  // ✅ 7. تخزين النتيجة
   window._filteredInvoices = invoices;
   
-  // 5. إعادة تعيين الصفحة
+  // ✅ 8. إعادة تعيين الصفحة
   window._currentPage = 1;
   
-   // 6. تحديث الإحصائيات
+  // ✅ 9. تحديث الإحصائيات
   updateStatsFromFiltered(invoices);
   
-  // 7. ✅ تحديث ملخص السيلز (للمحاسب والمالك)
+  // ✅ 10. تحديث ملخص السيلز
   updateSalesSummaryFromFiltered(invoices);
   
-  // 8. ✅ عرض ملخص الرحلات
+  // ✅ 11. عرض ملخص الرحلات
   renderTripsSummary(invoices);
   
-  // 9. عرض الجدول
+  // ✅ 12. عرض الجدول
   renderInvoicesWithPagination();
 }
 
