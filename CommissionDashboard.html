@@ -2207,57 +2207,224 @@ function openCommissionDetails(salesId) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// EXPORT TO EXCEL
+// exportToExcel — تصدير Excel احترافي (نفس تنسيق باقي التقارير)
 // ═══════════════════════════════════════════════════════════════════
 function exportToExcel() {
-  const table = document.querySelector('#invoicesContainer table');
-  if (!table) {
+  const allFiltered = window._filteredInvoices || [];
+  
+  if (!allFiltered || allFiltered.length === 0) {
     showToast('⚠️ لا توجد بيانات للتصدير', 'error');
     return;
   }
   
   try {
-    // بناء CSV
-    let csv = '';
-    const rows = table.querySelectorAll('tr');
+    // ═══════════════════════════════════════════
+    // 1. جمع معلومات الفلترة
+    // ═══════════════════════════════════════════
+    const fromDate = document.getElementById('filterFromDate')?.value || '';
+    const toDate = document.getElementById('filterToDate')?.value || '';
+    const branchFilter = document.getElementById('filterBranch')?.value || '';
+    const salesFilter = document.getElementById('filterSales')?.value || '';
+    const tripFilter = document.getElementById('filterTrip')?.value || '';
+    const searchQuery = document.getElementById('filterSearch')?.value || '';
     
-    rows.forEach(row => {
-      const cells = row.querySelectorAll('th, td');
-      const rowData = [];
-      
-      cells.forEach(cell => {
-        let text = cell.textContent.trim();
-        // إزالة الأحرف الخاصة
-        text = text.replace(/,/g, '،');
-        text = text.replace(/\n/g, ' ');
-        rowData.push('"' + text + '"');
-      });
-      
-      csv += rowData.join(',') + '\n';
+    // تحويل التواريخ للعرض
+    const fromDateDisplay = fromDate ? isoToDDMMMYYYY(fromDate) : '';
+    const toDateDisplay = toDate ? isoToDDMMMYYYY(toDate) : '';
+    
+    // اسم السيلز المختار
+    let salesName = '';
+    if (salesFilter) {
+      const salesSelect = document.getElementById('filterSales');
+      if (salesSelect) {
+        const opt = Array.from(salesSelect.options).find(o => o.value === salesFilter);
+        if (opt) salesName = opt.textContent;
+      }
+    }
+    
+    // ═══════════════════════════════════════════
+    // 2. حساب الإجماليات
+    // ═══════════════════════════════════════════
+    const totals = allFiltered.reduce((acc, inv) => {
+      acc.paymentPrice += parseFloat(inv.paymentPrice) || 0;
+      acc.commission   += parseFloat(inv.commission)   || 0;
+      acc.discount     += parseFloat(inv.discount)     || 0;
+      return acc;
+    }, { paymentPrice: 0, commission: 0, discount: 0 });
+    
+    // ═══════════════════════════════════════════
+    // 3. تحديد عدد الأعمدة
+    // ═══════════════════════════════════════════
+    const TOTAL_COLS = currentScope === 'self' ? 8 : 9;
+    
+    // ═══════════════════════════════════════════
+    // 4. بناء HTML Excel
+    // ═══════════════════════════════════════════
+    let html = '';
+    html += '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">';
+    html += '<head>';
+    html += '<meta charset="UTF-8">';
+    html += '<style>';
+    html += 'table{border-collapse:collapse;font-family:Arial,sans-serif;font-size:10px;}';
+    html += 'th{background:#1a3260;color:#f5c842;padding:8px 5px;border:1px solid #94a3b8;font-weight:bold;text-align:center;font-size:11px;}';
+    html += 'td{padding:5px 4px;border:1px solid #cbd5e1;vertical-align:middle;text-align:center;font-size:10px;}';
+    html += '.title{background:#0f1f3d;color:#f5c842;font-size:16px;font-weight:bold;padding:14px;text-align:center;}';
+    html += '.subtitle{background:#f1f5f9;padding:10px;text-align:center;font-weight:bold;font-size:12px;color:#0f1f3d;}';
+    html += '.info-summary{background:#dbeafe;padding:10px;text-align:center;font-weight:bold;font-size:12px;color:#1e40af;}';
+    html += '.totals{background:#dbeafe;font-weight:bold;color:#000;}';
+    html += '.totals td{padding:6px 4px;font-size:11px;}';
+    html += '.commission-cell{background:#e8f5e9;color:#1b5e20;font-weight:bold;}';
+    html += '.discount-cell{color:#dc2626;font-weight:bold;}';
+    html += '.activities-cell{text-align:right;font-size:10px;white-space:normal;word-break:break-word;}';
+    html += '</style>';
+    html += '</head>';
+    html += '<body>';
+    
+    // ═══════════════════════════════════════════
+    // 5. الصفوف العلوية الثلاثة
+    // ═══════════════════════════════════════════
+    html += '<table border="1">';
+    
+    // ✅ صف 1: العنوان الرئيسي
+    html += `<tr><td colspan="${TOTAL_COLS}" class="title">📊 Commission Report - ${currentUser?.centerName || ''}</td></tr>`;
+    
+    // ✅ صف 2: معلومات المستخدم + الفترة
+    html += `<tr><td colspan="${TOTAL_COLS}" class="subtitle">`;
+    html += `🏢 Center: ${safeEscape(currentUser?.centerName || '')} &nbsp;|&nbsp; `;
+    html += `👤 User: ${safeEscape(currentUser?.name || '')} &nbsp;|&nbsp; `;
+    html += `🎯 Scope: ${currentScope === 'self' ? 'Personal' : currentScope === 'branch' ? 'Branch' : 'Center'}`;
+    html += `</td></tr>`;
+    
+    // ✅ صف 3: معلومات إضافية
+    html += `<tr><td colspan="${TOTAL_COLS}" class="info-summary">`;
+    if (fromDateDisplay && toDateDisplay) {
+      html += `📅 Period: ${fromDateDisplay} → ${toDateDisplay} &nbsp;|&nbsp; `;
+    }
+    if (branchFilter) html += `🏛️ Branch: ${safeEscape(branchFilter)} &nbsp;|&nbsp; `;
+    if (salesName)    html += `👤 Sales: ${safeEscape(salesName)} &nbsp;|&nbsp; `;
+    if (tripFilter)   html += `🏝️ Trip: ${safeEscape(tripFilter)} &nbsp;|&nbsp; `;
+    html += `📊 Total Invoices: ${allFiltered.length}`;
+    html += `</td></tr>`;
+    
+    html += '</table>';
+    html += '<br>';
+    
+    // ═══════════════════════════════════════════
+    // 6. الجدول الرئيسي
+    // ═══════════════════════════════════════════
+    html += '<table border="1">';
+    html += '<thead><tr>';
+    
+    // ✅ الرؤوس (كحلي + ذهبي)
+    const headers = [
+      '📅 التاريخ',
+      '🎫 الفاتورة'
+    ];
+    
+    if (currentScope !== 'self') {
+      headers.push('👤 السيلز');
+    }
+    
+    headers.push('🏝️ الرحلة');
+    headers.push('📋 الأنشطة');
+    headers.push('💵 المدفوع');
+    headers.push('🎁 الخصم');
+    headers.push('📊 النسبة');
+    headers.push('💰 العمولة');
+    
+    headers.forEach(h => {
+      html += `<th style="background:#1a3260;color:#f5c842;">${h}</th>`;
     });
     
-    // إضافة BOM للدعم العربي في Excel
-    const BOM = '\uFEFF';
-    const blob = new Blob([BOM + csv], { type: 'text/csv;charset=utf-8;' });
+    html += '</tr></thead>';
+    html += '<tbody>';
     
-    const link = document.createElement('a');
+    // ═══════════════════════════════════════════
+    // 7. صفوف البيانات
+    // ═══════════════════════════════════════════
+    allFiltered.forEach(inv => {
+      const currencySymbol = getCurrencySymbol(inv.invoiceCurrency);
+      const activitiesText = safeEscape(inv.activitiesText || '—');
+      
+      html += '<tr>';
+      
+      // التاريخ
+      html += `<td>${safeEscape(inv.activeDate || '—')}</td>`;
+      
+      // الفاتورة
+      html += `<td>${safeEscape(inv.voucherNo || '—')}</td>`;
+      
+      // السيلز (إذا كان المستخدم ليس self)
+      if (currentScope !== 'self') {
+        html += `<td>${safeEscape(inv.salesName || '—')}</td>`;
+      }
+      
+      // الرحلة
+      html += `<td>${safeEscape(inv.trip || '—')}</td>`;
+      
+      // الأنشطة
+      html += `<td class="activities-cell">${activitiesText}</td>`;
+      
+      // المدفوع
+      html += `<td>${formatNumber(inv.paymentPrice || 0)} ${currencySymbol}</td>`;
+      
+      // الخصم
+      const discountDisplay = parseFloat(inv.discount) > 0 
+        ? `<span class="discount-cell">${formatNumber(inv.discount)}</span>` 
+        : '—';
+      html += `<td>${discountDisplay}</td>`;
+      
+      // النسبة
+      const rateDisplay = parseFloat(inv.commissionRate) > 0 
+        ? inv.commissionRate + '%' 
+        : '—';
+      html += `<td>${rateDisplay}</td>`;
+      
+      // العمولة
+      html += `<td class="commission-cell">${formatNumber(inv.commission || 0)} LE</td>`;
+      
+      html += '</tr>';
+    });
+    
+    // ═══════════════════════════════════════════
+    // 8. صف الإجماليات
+    // ═══════════════════════════════════════════
+    html += '<tr class="totals">';
+    const totalColspan = currentScope !== 'self' ? 5 : 4;
+    html += `<td colspan="${totalColspan}" style="text-align:center;padding:8px;">📊 TOTAL (${allFiltered.length} Invoices)</td>`;
+    html += `<td>${formatNumber(totals.paymentPrice)}</td>`;
+    html += `<td>${formatNumber(totals.discount)}</td>`;
+    html += `<td>—</td>`;
+    html += `<td>${formatNumber(totals.commission)} LE</td>`;
+    html += '</tr>';
+    
+    html += '</tbody></table>';
+    html += '</body></html>';
+    
+    // ═══════════════════════════════════════════
+    // 9. تنزيل الملف
+    // ═══════════════════════════════════════════
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    const fileName = `Commission_Report_${currentUser?.centerName || 'Center'}_${dateStr}.xls`;
+    
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8' });
     const url = URL.createObjectURL(blob);
-    const filename = `commissions_${new Date().toISOString().slice(0,10)}.csv`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
     
-    link.setAttribute('href', url);
-    link.setAttribute('download', filename);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    showToast(`✅ تم تصدير ${allFiltered.length} فاتورة`, 'success');
     
-    showToast('✅ تم تصدير البيانات', 'success');
   } catch(e) {
     console.error('Export error:', e);
-    showToast('❌ فشل التصدير', 'error');
+    showToast('❌ فشل التصدير: ' + e.message, 'error');
   }
 }
-
 // ═══════════════════════════════════════════════════════════════════
 // GO BACK
 // ═══════════════════════════════════════════════════════════════════
