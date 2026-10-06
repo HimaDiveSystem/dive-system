@@ -214,6 +214,92 @@ function getAverageRateForDate(dateStr) {
   
   return monthlyAvgRates[monthKey] || null;
 }
+  // ═══════════════════════════════════════════════════════════════════
+// getDailyRateForDate — جلب سعر الصرف اليومي للفاتورة
+// ═══════════════════════════════════════════════════════════════════
+// 📌 يستخدم exchangeRatesMap (أسعار يومية)
+// 📌 Fallback 1: أقرب يوم سابق
+// 📌 Fallback 2: أقرب يوم لاحق
+// 📌 Fallback 3: متوسط شهري (احتياطي أخير)
+// ═══════════════════════════════════════════════════════════════════
+function getDailyRateForDate(dateStr) {
+  if (!dateStr) return null;
+  
+  // ✅ 1. تحويل التاريخ إلى ISO
+  let isoDate = null;
+  
+  // إذا كان بصيغة dd/MMM/yyyy
+  if (/^\d{1,2}\/[A-Za-z]{3}\/\d{4}$/.test(dateStr)) {
+    isoDate = convertToISO(dateStr);
+  } 
+  // إذا كان بصيغة ISO (yyyy-mm-dd)
+  else if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    isoDate = dateStr;
+  }
+  
+  if (!isoDate) {
+    console.warn(`⚠️ getDailyRateForDate: تاريخ غير صالح: ${dateStr}`);
+    return null;
+  }
+  
+  // ✅ 2. البحث عن السعر في exchangeRatesMap (نفس اليوم)
+  if (exchangeRatesMap.has(isoDate)) {
+    const rate = exchangeRatesMap.get(isoDate);
+    console.log(`✅ سعر يومي مباشر للتاريخ ${isoDate}:`, rate);
+    return rate;
+  }
+  
+  // ✅ 3. Fallback: أقرب يوم سابق
+  const availableDates = Array.from(exchangeRatesMap.keys()).sort();
+  
+  if (availableDates.length === 0) {
+    console.warn('⚠️ exchangeRatesMap فارغة');
+    return null;
+  }
+  
+  const targetTime = new Date(isoDate).getTime();
+  
+  // ابحث عن أقرب يوم سابق
+  let closestDate = null;
+  let closestTime = 0;
+  
+  for (const d of availableDates) {
+    const dTime = new Date(d).getTime();
+    if (dTime <= targetTime && dTime > closestTime) {
+      closestTime = dTime;
+      closestDate = d;
+    }
+  }
+  
+  if (closestDate) {
+    console.log(`✅ Fallback: استخدام سعر ${closestDate} للفاتورة ${isoDate}`);
+    return exchangeRatesMap.get(closestDate);
+  }
+  
+  // ✅ 4. Fallback: أقرب يوم لاحق
+  closestDate = null;
+  closestTime = Infinity;
+  
+  for (const d of availableDates) {
+    const dTime = new Date(d).getTime();
+    if (dTime > targetTime && dTime < closestTime) {
+      closestTime = dTime;
+      closestDate = d;
+    }
+  }
+  
+  if (closestDate) {
+    console.log(`✅ Fallback (لاحق): استخدام سعر ${closestDate} للفاتورة ${isoDate}`);
+    return exchangeRatesMap.get(closestDate);
+  }
+  
+  // ✅ 5. Fallback أخير: متوسط شهري
+  console.warn(`⚠️ لا يوجد سعر يومي، استخدام متوسط شهري للفاتورة ${isoDate}`);
+  const date = new Date(isoDate);
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const monthKey = `${date.getFullYear()}-${monthNames[date.getMonth()]}`;
+  return monthlyAvgRates[monthKey] || null;
+}
 function parseDate(str){ if(!str) return null; const match=str.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/); if(match){ const day=parseInt(match[1]); const monthStr=match[2]; const year=parseInt(match[3]); const monthIndex=MONTHS.findIndex(m=>m.toLowerCase()===monthStr.toLowerCase()); if(monthIndex!==-1) return new Date(year,monthIndex,day); } const d=new Date(str); return isNaN(d)?null:d; }
 function fmtNum(n){ if(!n||isNaN(n)) return '0'; if(realMode) return Math.round(n).toLocaleString(); if(n>=1000000) return (n/1e6).toFixed(2)+'M'; if(n>=1000) return (n/1000).toFixed(1)+'K'; return Math.round(n).toString(); }
 function formatDateForInput(date){ const y=date.getFullYear(); const m=String(date.getMonth()+1).padStart(2,'0'); const d=String(date.getDate()).padStart(2,'0'); return `${y}-${m}-${d}`; }
@@ -318,27 +404,29 @@ function calculateTotalsInEGP(invoices) {
   let totalRestEGP = 0;
   
   for (const inv of invoices) {
-    const activeDate = inv.activeDate || inv.issueDate;  // ✅ صغير
+    const activeDate = inv.activeDate || inv.issueDate;
     if (!activeDate) continue;
     
-    const avgRate = getAverageRateForDate(activeDate);
-    if (!avgRate) continue;
+    // ✅ استخدام الأسعار اليومية (getDailyRateForDate)
+    const dailyRate = getDailyRateForDate(activeDate);
+    if (!dailyRate) continue;
     
     const actualPrice = parseFloat(inv.actualPrice) || 0;
     const discount = parseFloat(inv.discount) || 0;
     const netAmount = actualPrice - discount;
     const currency = inv.invoiceCurrency || 'LE';
     
+    // ✅ استخدام dailyRate.cash (هيكل الأسعار اليومية)
     let amountInEGP = 0;
-    if (currency === '$') amountInEGP = netAmount * avgRate.USD;
-    else if (currency === '€') amountInEGP = netAmount * avgRate.EUR;
-    else if (currency === '£') amountInEGP = netAmount * avgRate.GBP;
+    if (currency === '$') amountInEGP = netAmount * (dailyRate.cash?.USD || 0);
+    else if (currency === '€') amountInEGP = netAmount * (dailyRate.cash?.EUR || 0);
+    else if (currency === '£') amountInEGP = netAmount * (dailyRate.cash?.GBP || 0);
     else amountInEGP = netAmount;
     
     totalRevenueEGP += amountInEGP;
     
-    const paymentPrice = parseFloat(inv.paymentPrice) || 0;  // ✅ صغير
-    const rest = parseFloat(inv.rest) || 0;  // ✅ صغير
+    const paymentPrice = parseFloat(inv.paymentPrice) || 0;
+    const rest = parseFloat(inv.rest) || 0;
     const totalNet = paymentPrice + rest;
     if (totalNet > 0) {
       totalCollectedEGP += amountInEGP * (paymentPrice / totalNet);
@@ -352,6 +440,7 @@ function calculateTotalsInEGP(invoices) {
     totalRestEGP: Math.round(totalRestEGP)
   };
 }
+  
 async function calculateBookingData() {
   const total = filteredInvoices.length;
   const confirmed = filteredInvoices.filter(i => (i.state || '').toLowerCase() === 'confirmed').length;  // ✅ state (صغير)
@@ -371,7 +460,7 @@ async function calculateBookingData() {
     const monthLabel = `${MONTHS[dt.getMonth()]} ${dt.getFullYear()}`;
     if (!monthlyMap[monthKey]) monthlyMap[monthKey] = { label: monthLabel, rev: 0, count: 0 };
     
-    const rate = getAverageRateForDate(inv.activeDate);
+    const rate = getDailyRateForDate(inv.activeDate);
     if (rate) {
       const netAmount = (parseFloat(inv.actualPrice) || 0) - (parseFloat(inv.discount) || 0);  // ✅ actualPrice, discount (صغير)
       const currency = inv.invoiceCurrency || 'LE';  // ✅ invoiceCurrency (صغير)
@@ -400,7 +489,7 @@ async function calculateBookingData() {
   const tripMap = {};
   for (const inv of filteredInvoices) {
     const trip = inv.trip || 'أخرى';  // ✅ trip (صغير)
-    const rate = getAverageRateForDate(inv.activeDate);
+    const rate = getDailyRateForDate(inv.activeDate);
     if (rate) {
       const netAmount = (parseFloat(inv.actualPrice) || 0) - (parseFloat(inv.discount) || 0);
       const currency = inv.invoiceCurrency || 'LE';
@@ -418,7 +507,7 @@ async function calculateBookingData() {
   const salesMap = {};
   for (const inv of filteredInvoices) {
     const name = inv.salesName || 'غير معروف';  // ✅ salesName (صغير)
-    const rate = getAverageRateForDate(inv.activeDate);
+    const rate = getDailyRateForDate(inv.activeDate);
     if (rate) {
       const netAmount = (parseFloat(inv.actualPrice) || 0) - (parseFloat(inv.discount) || 0);
       const currency = inv.invoiceCurrency || 'LE';
@@ -436,7 +525,7 @@ async function calculateBookingData() {
   const branchMap = {};
   for (const inv of filteredInvoices) {
     const name = inv.branchName || 'المركز الرئيسي';  // ✅ branchName (صغير)
-    const rate = getAverageRateForDate(inv.activeDate);
+    const rate = getDailyRateForDate(inv.activeDate);
     if (rate) {
       const netAmount = (parseFloat(inv.actualPrice) || 0) - (parseFloat(inv.discount) || 0);
       const currency = inv.invoiceCurrency || 'LE';
@@ -454,7 +543,7 @@ async function calculateBookingData() {
   const natMap = {};
   for (const inv of filteredInvoices) {
     const nat = inv.nationality || 'أخرى';  // ✅ nationality (صغير)
-    const rate = getAverageRateForDate(inv.activeDate);
+    const rate = getDailyRateForDate(inv.activeDate);
     if (rate) {
       const netAmount = (parseFloat(inv.actualPrice) || 0) - (parseFloat(inv.discount) || 0);
       const currency = inv.invoiceCurrency || 'LE';
