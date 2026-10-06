@@ -1066,6 +1066,13 @@ function spin(w, d) { const n = document.getElementById('f'+w+'Nat'); let iso = 
 function valDates() { const f = document.getElementById('fFromNat').value, t = document.getElementById('fToNat').value; const eT = document.getElementById('errTo'); eT.textContent = ''; if (f && t && t < f) { eT.textContent = '⚠️ To ≥ From required'; return false; } return true; }
 document.addEventListener('click', e => { if (!e.target.closest('.dw') && !e.target.closest('.date-native')) hideAll(); });
 
+let _gasLock = Promise.resolve();
+
+function gasLocked(action, params = {}) {
+  const next = _gasLock.then(() => gas(action, params));
+  _gasLock = next.catch(() => {});  // ← لا يُكسر السلسلة عند الخطأ
+  return next;
+}
 function gas(action, params = {}) {
   return new Promise((resolve, reject) => {
     // ✅ إضافة centerName تلقائياً
@@ -1101,7 +1108,7 @@ function gas(action, params = {}) {
         if (script.parentNode) script.parentNode.removeChild(script);
         reject(new Error('Timeout for: ' + action));
       }
-    }, 60000);
+    }, 120000);
     
     window[callbackName] = function(data) {
       clearTimeout(timeoutId);
@@ -1125,31 +1132,29 @@ function gas(action, params = {}) {
 }
 
 async function loadCustomersAndSuppliers() {
-  try {
-    // ✅ إضافة centerName
-    const user = Session.getUser();
-    const data = await gas('getAllSuppliersCustomers', { 
-      centerName: user?.centerName || currentUser?.centerName || '' 
+  // ✅ إضافة centerName
+  const user = Session.getUser();
+  const data = await gasLocked('getAllSuppliersCustomers', { 
+    centerName: user?.centerName || currentUser?.centerName || '' 
+  });
+  if (Array.isArray(data)) {
+    allCustomers = data;
+    const selectEl = document.getElementById('customerFilterSelect');
+    let options = '<option value="">-- جميع العملاء والمنفذين --</option>';
+    const categoriesSet = new Set();
+    allCustomers.forEach(cust => {
+      const typeLabel = cust.customerType === 'Customer' ? '👤 عميل' : '🏢 منفذ';
+      options += `<option value="${cust.customerType}|${cust.customerName}">${typeLabel}: ${cust.customerName} (${cust.category || '-'})</option>`;
+      if (cust.category) categoriesSet.add(cust.category);
     });
-    if (Array.isArray(data)) {
-      allCustomers = data;
-      const selectEl = document.getElementById('customerFilterSelect');
-      let options = '<option value="">-- جميع العملاء والمنفذين --</option>';
-      const categoriesSet = new Set();
-      allCustomers.forEach(cust => {
-        const typeLabel = cust.customerType === 'Customer' ? '👤 عميل' : '🏢 منفذ';
-        options += `<option value="${cust.customerType}|${cust.customerName}">${typeLabel}: ${cust.customerName} (${cust.category || '-'})</option>`;
-        if (cust.category) categoriesSet.add(cust.category);
-      });
-      selectEl.innerHTML = options;
-      const catSelect = document.getElementById('categoryFilterSelect');
-      let catOptions = '<option value="">-- جميع الأنشطة --</option>';
-      Array.from(categoriesSet).sort().forEach(cat => {
-        catOptions += `<option value="${cat}">${cat}</option>`;
-      });
-      catSelect.innerHTML = catOptions;
-    }
-  } catch(e) { console.error(e); }
+    selectEl.innerHTML = options;
+    const catSelect = document.getElementById('categoryFilterSelect');
+    let catOptions = '<option value="">-- جميع الأنشطة --</option>';
+    Array.from(categoriesSet).sort().forEach(cat => {
+      catOptions += `<option value="${cat}">${cat}</option>`;
+    });
+    catSelect.innerHTML = catOptions;
+  }
 }
   
 function onCustomerFilterChange() {
@@ -1630,7 +1635,7 @@ function fmtSt(inv){
 async function loadInv(){
   document.getElementById('tblCont').innerHTML='<div class="loader-wrap"><div class="spinner"></div>Loading...</div>';
   try{
-    let data=await gas('getAllInvoices',{includeCollection:'true',centerName:currentUser?.centerName||'',userId:currentUser?.id||'',userType:currentUser?.type||''});
+       let data=await gasLocked('getAllInvoices',{includeCollection:'true',centerName:currentUser?.centerName||'',userId:currentUser?.id||'',userType:currentUser?.type||''});
     if(!Array.isArray(data))data=[];
     data.forEach(inv=>{
       const ad=inv.ActiveDate||inv.activeDate;
@@ -2100,6 +2105,7 @@ function showDeleteConfirmModal(voucherNo){
 
 function closeDeleteConfirmModal(){pendingDeleteVoucher=null;document.getElementById('deleteConfirmModal').classList.remove('open');}
 
+  
 async function executeDelete(){
   if(!pendingDeleteVoucher)return;
   const voucherNo=pendingDeleteVoucher;
@@ -2567,23 +2573,36 @@ document.addEventListener('DOMContentLoaded', async function() {
   document.getElementById('fToNat').value = t;
   document.getElementById('fToTxt').value = isoToTxt(t);
  // ✅ تحميل متسلسل لتجنب تعارض طلبات GAS
+// ✅ تحميل الفواتير أولاً (الأهم) مع إعادة محاولة تلقائية
 setTimeout(async () => {
   try {
-    console.log('⏳ [1/2] تحميل العملاء والمنفذين...');
-    await loadCustomersAndSuppliers();
-    console.log('✅ [1/2] تم تحميل العملاء والمنفذين');
+    console.log('⏳ [1/2] تحميل الفواتير...');
+    await loadInv();
+    console.log('✅ [1/2] تم تحميل الفواتير');
   } catch(e) {
-    console.error('❌ [1/2] فشل تحميل العملاء:', e.message);
+    console.error('❌ [1/2] فشل تحميل الفواتير:', e.message);
+    document.getElementById('tblCont').innerHTML = 
+      '<div class="no-data">⚠️ فشل تحميل الفواتير. جاري إعادة المحاولة...</div>';
+    
+    // ✅ إعادة المحاولة تلقائياً بعد 3 ثوان
+    setTimeout(() => {
+      console.log('🔄 إعادة محاولة تحميل الفواتير...');
+      loadInv().catch(e2 => {
+        console.error('❌ فشل ثاني:', e2.message);
+        document.getElementById('tblCont').innerHTML = 
+          '<div class="no-data">❌ فشل تحميل الفواتير. أعد تحميل الصفحة.</div>';
+      });
+    }, 3000);
   }
   
-  // ✅ بعد انتهاء العملاء، حمّل الفواتير
+  // ✅ ثم حمّل العملاء (أقل أهمية)
   setTimeout(async () => {
     try {
-      console.log('⏳ [2/2] تحميل الفواتير...');
-      await loadInv();
-      console.log('✅ [2/2] تم تحميل الفواتير');
+      console.log('⏳ [2/2] تحميل العملاء والمنفذين...');
+      await loadCustomersAndSuppliers();
+      console.log('✅ [2/2] تم تحميل العملاء والمنفذين');
     } catch(e) {
-      console.error('❌ [2/2] فشل تحميل الفواتير:', e.message);
+      console.error('❌ [2/2] فشل تحميل العملاء:', e.message);
     }
     fixStickyHeaderManually();
   }, 500);
