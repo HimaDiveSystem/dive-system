@@ -214,91 +214,73 @@ function getAverageRateForDate(dateStr) {
   
   return monthlyAvgRates[monthKey] || null;
 }
-  // ═══════════════════════════════════════════════════════════════════
-// getDailyRateForDate — جلب سعر الصرف اليومي للفاتورة
-// ═══════════════════════════════════════════════════════════════════
-// 📌 يستخدم exchangeRatesMap (أسعار يومية)
-// 📌 Fallback 1: أقرب يوم سابق
-// 📌 Fallback 2: أقرب يوم لاحق
-// 📌 Fallback 3: متوسط شهري (احتياطي أخير)
-// ═══════════════════════════════════════════════════════════════════
 function getDailyRateForDate(dateStr) {
   if (!dateStr) return null;
   
   // ✅ 1. تحويل التاريخ إلى ISO
   let isoDate = null;
-  
-  // إذا كان بصيغة dd/MMM/yyyy
   if (/^\d{1,2}\/[A-Za-z]{3}\/\d{4}$/.test(dateStr)) {
     isoDate = convertToISO(dateStr);
-  } 
-  // إذا كان بصيغة ISO (yyyy-mm-dd)
-  else if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+  } else if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
     isoDate = dateStr;
   }
   
-  if (!isoDate) {
-    console.warn(`⚠️ getDailyRateForDate: تاريخ غير صالح: ${dateStr}`);
-    return null;
-  }
+  if (!isoDate) return null;
   
-  // ✅ 2. البحث عن السعر في exchangeRatesMap (نفس اليوم)
+  // ✅ 2. البحث اليومي
   if (exchangeRatesMap.has(isoDate)) {
-    const rate = exchangeRatesMap.get(isoDate);
-    console.log(`✅ سعر يومي مباشر للتاريخ ${isoDate}:`, rate);
-    return rate;
+    return exchangeRatesMap.get(isoDate);
   }
   
   // ✅ 3. Fallback: أقرب يوم سابق
   const availableDates = Array.from(exchangeRatesMap.keys()).sort();
   
-  if (availableDates.length === 0) {
-    console.warn('⚠️ exchangeRatesMap فارغة');
-    return null;
+  if (availableDates.length > 0) {
+    const targetTime = new Date(isoDate).getTime();
+    let closestDate = null;
+    let closestTime = 0;
+    
+    for (const d of availableDates) {
+      const dTime = new Date(d).getTime();
+      if (dTime <= targetTime && dTime > closestTime) {
+        closestTime = dTime;
+        closestDate = d;
+      }
+    }
+    
+    if (closestDate) return exchangeRatesMap.get(closestDate);
+    
+    // Fallback: أقرب يوم لاحق
+    closestDate = null;
+    closestTime = Infinity;
+    for (const d of availableDates) {
+      const dTime = new Date(d).getTime();
+      if (dTime > targetTime && dTime < closestTime) {
+        closestTime = dTime;
+        closestDate = d;
+      }
+    }
+    if (closestDate) return exchangeRatesMap.get(closestDate);
   }
   
-  const targetTime = new Date(isoDate).getTime();
-  
-  // ابحث عن أقرب يوم سابق
-  let closestDate = null;
-  let closestTime = 0;
-  
-  for (const d of availableDates) {
-    const dTime = new Date(d).getTime();
-    if (dTime <= targetTime && dTime > closestTime) {
-      closestTime = dTime;
-      closestDate = d;
+  // ✅ 4. ✅ جديد: Fallback لمتوسط شهري
+  if (monthlyAvgRates && Object.keys(monthlyAvgRates).length > 0) {
+    const date = new Date(isoDate);
+    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const monthKey = `${date.getFullYear()}-${monthNames[date.getMonth()]}`;
+    
+    const avg = monthlyAvgRates[monthKey];
+    if (avg) {
+      console.warn(`⚠️ استخدام متوسط شهري ${monthKey}:`, avg);
+      return {
+        cash: { USD: avg.USD, EUR: avg.EUR, GBP: avg.GBP, LE: 1 },
+        visa: { USD: 0, EUR: 0, GBP: 0, LE: 0.975 }
+      };
     }
   }
   
-  if (closestDate) {
-    console.log(`✅ Fallback: استخدام سعر ${closestDate} للفاتورة ${isoDate}`);
-    return exchangeRatesMap.get(closestDate);
-  }
-  
-  // ✅ 4. Fallback: أقرب يوم لاحق
-  closestDate = null;
-  closestTime = Infinity;
-  
-  for (const d of availableDates) {
-    const dTime = new Date(d).getTime();
-    if (dTime > targetTime && dTime < closestTime) {
-      closestTime = dTime;
-      closestDate = d;
-    }
-  }
-  
-  if (closestDate) {
-    console.log(`✅ Fallback (لاحق): استخدام سعر ${closestDate} للفاتورة ${isoDate}`);
-    return exchangeRatesMap.get(closestDate);
-  }
-  
-  // ✅ 5. Fallback أخير: متوسط شهري
-  console.warn(`⚠️ لا يوجد سعر يومي، استخدام متوسط شهري للفاتورة ${isoDate}`);
-  const date = new Date(isoDate);
-  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const monthKey = `${date.getFullYear()}-${monthNames[date.getMonth()]}`;
-  return monthlyAvgRates[monthKey] || null;
+  console.warn(`⚠️ لا يوجد سعر للتاريخ ${isoDate}`);
+  return null;
 }
 function parseDate(str){ if(!str) return null; const match=str.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/); if(match){ const day=parseInt(match[1]); const monthStr=match[2]; const year=parseInt(match[3]); const monthIndex=MONTHS.findIndex(m=>m.toLowerCase()===monthStr.toLowerCase()); if(monthIndex!==-1) return new Date(year,monthIndex,day); } const d=new Date(str); return isNaN(d)?null:d; }
 function fmtNum(n){ if(!n||isNaN(n)) return '0'; if(realMode) return Math.round(n).toLocaleString(); if(n>=1000000) return (n/1e6).toFixed(2)+'M'; if(n>=1000) return (n/1000).toFixed(1)+'K'; return Math.round(n).toString(); }
