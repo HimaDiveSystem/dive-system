@@ -454,7 +454,7 @@
 .search-counter strong {
   color: var(--navy);
 }
-  /* ═══════════════════════════════════════════════════════════ */
+ /* ═══════════════════════════════════════════════════════════ */
 /* 🖨️ Print Styles - A4 Landscape - نسخة احترافية             */
 /* ═══════════════════════════════════════════════════════════ */
 @page {
@@ -700,12 +700,46 @@
     color: #000 !important;
     font-weight: 900 !important;
   }
-  
   /* ═══ الفاتورة - نص أسود ═══ */
   .vlink {
     color: #000 !important;
     font-weight: 800 !important;
     font-size: 7px !important;
+  }
+
+  /* في الطباعة: بدون تثبيت */
+  .customer-selector,
+  .filter-bar {
+    position: static !important;
+    top: auto !important;
+  }
+}  /* ← نهاية @media print */
+
+/* ═══════════════════════════════════════════ */
+/* 📱 الهاتف: إلغاء تثبيت شريط العميل والفلاتر */
+/* ═══════════════════════════════════════════ */
+@media (max-width: 768px) {
+  .customer-selector,
+  .filter-bar,
+  #customerSelectorBar,
+  #filterBarEl {
+    position: static !important;
+    top: auto !important;
+  }
+
+  /* إلغاء تثبيت رأس الجدول أيضاً */
+  #tblCont thead {
+    position: static !important;
+    top: auto !important;
+  }
+  #tblCont thead th {
+    position: static !important;
+    top: auto !important;
+  }
+
+  /* الجدول يأخذ ارتفاعه الطبيعي بدل ارتفاع ثابت */
+  .tbl-wrap {
+    max-height: none !important;
   }
 }
   </style>
@@ -969,7 +1003,6 @@ function updateStickyOffsets() {
 }  // <-- هذا القوس مهم جداً!
 
 // Re-run after any render and on resize
-const resizeObserver = new ResizeObserver(() => updateStickyOffsets());
 
 
 function showToast(msg, type) {
@@ -1041,11 +1074,16 @@ function gas(action, params = {}) {
       params.centerName = user.centerName;
     }
     
-    const callbackName = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
+    // ✅ ✅ ✅ توليد callback name فريد جداً (UUID)
+    const callbackName = 'cb_' + 
+      Date.now() + '_' + 
+      Math.random().toString(36).substring(2, 15) + '_' + 
+      Math.random().toString(36).substring(2, 15);
+    
     const url = new URL(CONFIG.GAS_URL);
     url.searchParams.set('action', action);
     url.searchParams.set('callback', callbackName);
-    url.searchParams.set('_t', Date.now());
+    url.searchParams.set('_t', Date.now() + '_' + Math.random());
     Object.keys(params).forEach(key => {
       if (params[key] !== undefined && params[key] !== null && params[key] !== '') {
         if (typeof params[key] === 'object') {
@@ -1055,26 +1093,34 @@ function gas(action, params = {}) {
         }
       }
     });
+    
+    // ✅ ✅ ✅ تسجيل callback name قبل إضافة السكريبت
+    const timeoutId = setTimeout(() => {
+      if (window[callbackName]) {
+        delete window[callbackName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+        reject(new Error('Timeout for: ' + action));
+      }
+    }, 60000);
+    
     window[callbackName] = function(data) {
+      clearTimeout(timeoutId);
       delete window[callbackName];
-      document.body.removeChild(script);
+      if (script.parentNode) script.parentNode.removeChild(script);
       resolve(data);
     };
+    
     const script = document.createElement('script');
     script.src = url.toString();
     script.onerror = function() {
+      clearTimeout(timeoutId);
       delete window[callbackName];
-      document.body.removeChild(script);
+      if (script.parentNode) script.parentNode.removeChild(script);
       reject(new Error('JSONP request failed for: ' + action));
     };
+    
+    // ✅ ✅ ✅ إضافة السكريبت بعد تعريف callback
     document.body.appendChild(script);
-    setTimeout(() => {
-      if (window[callbackName]) {
-        delete window[callbackName];
-        document.body.removeChild(script);
-        reject(new Error('Timeout for: ' + action));
-      }
-    }, 30000);
   });
 }
 
@@ -2520,10 +2566,30 @@ document.addEventListener('DOMContentLoaded', async function() {
   document.getElementById('fFromTxt').value = isoToTxt(t);
   document.getElementById('fToNat').value = t;
   document.getElementById('fToTxt').value = isoToTxt(t);
-  await loadCustomersAndSuppliers();
-  window.addEventListener('scroll', hideAll);
-  loadInv();
-  fixStickyHeaderManually();
+ // ✅ تحميل متسلسل لتجنب تعارض طلبات GAS
+setTimeout(async () => {
+  try {
+    console.log('⏳ [1/2] تحميل العملاء والمنفذين...');
+    await loadCustomersAndSuppliers();
+    console.log('✅ [1/2] تم تحميل العملاء والمنفذين');
+  } catch(e) {
+    console.error('❌ [1/2] فشل تحميل العملاء:', e.message);
+  }
+  
+  // ✅ بعد انتهاء العملاء، حمّل الفواتير
+  setTimeout(async () => {
+    try {
+      console.log('⏳ [2/2] تحميل الفواتير...');
+      await loadInv();
+      console.log('✅ [2/2] تم تحميل الفواتير');
+    } catch(e) {
+      console.error('❌ [2/2] فشل تحميل الفواتير:', e.message);
+    }
+    fixStickyHeaderManually();
+  }, 500);
+}, 100);
+
+window.addEventListener('scroll', hideAll);
 });  
 </script>
 </body>
