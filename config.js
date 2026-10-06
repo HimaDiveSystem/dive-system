@@ -1,3 +1,9 @@
+// ============================================================
+// config.js - الإعدادات العامة والدوال المساعدة
+// ============================================================
+// ⚠️ مهم: هذا الملف يجب أن يُحمّل أولاً قبل session.js و ui.js
+// ============================================================
+
 const CONFIG = {
   // ✅ الرابط الأساسي لـ Google Apps Script
   GAS_URL: 'https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec',
@@ -5,7 +11,7 @@ const CONFIG = {
   // ✅ صلاحية الجلسة (بالمللي ثانية) - 24 ساعة
   SESSION_DURATION: 24 * 60 * 60 * 1000,
   
-  // ✅ مهلة الطلب الواحد (بالمللي ثانية) - 20 ثانية
+  // ✅ مهلة الطلب الواحد (بالمللي ثانية) - 60 ثانية
   REQUEST_TIMEOUT: 60000,
   
   // ✅ التأخير بين الطلبات في الطابور (بالمللي ثانية)
@@ -17,28 +23,44 @@ const CONFIG = {
     Owner:                'OwnerDashboard.html',
     Sales:                'SalesDashboard.html',
     Accountant:           'AccountantDashboard.html',
+    AccountantManager:    'AccountantDashboard.html',
+    FinancialManager:     'AccountantDashboard.html',
     Customer:             'CustomerDashboard.html',
+    Supplier:             'CustomerDashboard.html',
     OperationsManager:    'OperationManager.html',
-    OperationsSupervisor: 'OperationSupervisor.html'
+    OperationsSupervisor: 'OperationSupervisor.html',
+    Employee:             'EmployeeDashboard.html'
   },
   
   // ✅ أنواع المستخدمين المسموح لهم بدخول صفحات محددة
   ALLOWED_TYPES: {
-    AccountantDashboard: ['Accountant', 'Admin', 'AccountantManager', 'FinancialManager'],
-    SalesDashboard:      ['Sales'],
-    OwnerDashboard:      ['Owner', 'Admin'],
-    Dashboard:           ['Admin', 'Owner', 'Accountant', 'Sales', 'OperationsManager', 'OperationsSupervisor'],
-    OperationManager:    ['OperationsManager', 'Admin', 'Owner'],
-    OperationSupervisor: ['OperationsSupervisor', 'OperationsManager', 'Admin']
+    AccountantDashboard:    ['Accountant', 'Admin', 'AccountantManager', 'FinancialManager', 'Owner'],
+    SalesDashboard:         ['Sales'],
+    OwnerDashboard:         ['Owner', 'Admin'],
+    Dashboard:              ['Admin', 'Owner', 'Accountant', 'Sales', 'OperationsManager', 'OperationsSupervisor'],
+    OperationManager:       ['OperationsManager', 'Admin', 'Owner'],
+    OperationSupervisor:    ['OperationsSupervisor', 'OperationsManager', 'Admin'],
+    CustomerDashboard:      ['Customer', 'Supplier']
   }
 };
 
 // ============================================================
-// 2️⃣ علامات عالمية لمنع التنفيذ المتزامن
+// 2️⃣ العلامات العالمية - تُعرّف مرة واحدة على window
 // ============================================================
-let _redirecting = false;        // لمنع إعادة التوجيه المتكررة
-let _jsonpInProgress = false;    // لمنع تنفيذ طلبين JSONP في نفس الوقت
-let _jsonpQueue = [];            // طابور الطلبات
+// ✅ مهم جداً: نستخدم window مباشرة لضمان المشاركة بين جميع الملفات
+
+if (typeof window._redirecting === 'undefined') {
+  window._redirecting = false;
+}
+if (typeof window._jsonpInProgress === 'undefined') {
+  window._jsonpInProgress = false;
+}
+if (typeof window._jsonpQueue === 'undefined') {
+  window._jsonpQueue = [];
+}
+if (typeof window._pageInitialized === 'undefined') {
+  window._pageInitialized = false;
+}
 
 // ============================================================
 // 3️⃣ callGAS - دالة JSONP الموحدة الوحيدة في المشروع
@@ -47,11 +69,12 @@ let _jsonpQueue = [];            // طابور الطلبات
  * استدعاء Google Apps Script عبر JSONP مع طابور لمنع التعارض
  * @param {string} action - اسم الإجراء
  * @param {Object} params - المعاملات (اختياري)
+ * @param {number} retries - عدد المحاولات المتبقية
  * @returns {Promise<any>}
  */
 function callGAS(action, params = {}, retries = 2) {
   return new Promise((resolve, reject) => {
-    _jsonpQueue.push({ action, params, resolve, reject, retries });
+    window._jsonpQueue.push({ action, params, resolve, reject, retries });
     _processQueue();
   });
 }
@@ -60,14 +83,19 @@ function callGAS(action, params = {}, retries = 2) {
  * معالجة الطابور - طلب واحد في كل مرة
  */
 function _processQueue() {
-  if (_jsonpInProgress || _jsonpQueue.length === 0) return;
+  if (window._jsonpInProgress || window._jsonpQueue.length === 0) return;
   
-  const task = _jsonpQueue.shift();
-  _jsonpInProgress = true;
-   const { action, params, resolve, reject, retries } = task;  
-    
+  const task = window._jsonpQueue.shift();
+  window._jsonpInProgress = true;
+  
+  const { action, params, resolve, reject, retries } = task;
+  
   // ✅ إضافة centerName تلقائياً إذا كان المستخدم مسجلاً
-  const user = typeof Session !== 'undefined' && Session.getUser ? Session.getUser() : null;
+  let user = null;
+  try {
+    user = (typeof Session !== 'undefined' && Session.getUser) ? Session.getUser() : null;
+  } catch(e) {}
+  
   const finalParams = { ...params };
   if (user && user.centerName && !finalParams.centerName) {
     finalParams.centerName = user.centerName;
@@ -101,7 +129,7 @@ function _processQueue() {
   
   // ✅ دالة التنظيف
   const cleanup = () => {
-    _jsonpInProgress = false;
+    window._jsonpInProgress = false;
     
     if (timeoutId) {
       clearTimeout(timeoutId);
@@ -128,14 +156,13 @@ function _processQueue() {
   };
   
   // ✅ مهلة الطلب
-   // ✅ مهلة الطلب
   timeoutId = setTimeout(() => {
     if (isResolved) return;
     isResolved = true;
     console.error(`❌ callGAS [${action}] timeout after ${CONFIG.REQUEST_TIMEOUT}ms`);
     cleanup();
     
-    // ✅ Retry Logic (نفس ما في script.onerror)
+    // ✅ Retry Logic
     if (retries > 0) {
       console.log(`🔄 إعادة محاولة [${action}]... (${retries} متبقية)`);
       setTimeout(() => {
@@ -151,7 +178,7 @@ function _processQueue() {
   script.src = url.toString();
   script.async = true;
   
-   script.onerror = function() {
+  script.onerror = function() {
     if (isResolved) return;
     isResolved = true;
     console.error(`❌ callGAS [${action}] script load error`);
@@ -166,7 +193,8 @@ function _processQueue() {
     } else {
       reject(new Error('فشل تحميل السكربت'));
     }
-  };  
+  };
+  
   document.head.appendChild(script);
 }
 
@@ -174,7 +202,6 @@ function _processQueue() {
 // 4️⃣ getDefaultPermissionsForType - الصلاحيات الافتراضية حسب نوع المستخدم
 // ============================================================
 // ⚠️ مهم جداً: هذه القائمة يجب أن تكون مطابقة تماماً للقائمة في Code.gs
-// في دالة getDefaultPermissionsForType
 // ============================================================
 function getDefaultPermissionsForType(userType) {
   const permissionsMap = {
@@ -247,7 +274,7 @@ function getDefaultPermissionsForType(userType) {
 // 5️⃣ checkUserPermission - التحقق من صلاحية المستخدم الحالي
 // ============================================================
 /**
- * يتحقق من صلاحية المستخدم الحالي (يستخدم Session أو localStorage)
+ * يتحقق من صلاحية المستخدم الحالي (يستخدم Session)
  * @param {string} permission - اسم الصلاحية
  * @returns {boolean}
  */
@@ -268,21 +295,6 @@ function checkUserPermission(permission) {
       return perms.includes(permission);
     }
     
-    // ✅ 2. Fallback: localStorage مباشرة
-    const stored = localStorage.getItem('currentUser');
-    if (stored) {
-      const data = JSON.parse(stored);
-      const user = data.user || {};
-      
-      if (user.type === 'Admin') return true;
-      
-      const perms = user.permissions || [];
-      if (perms.includes('ManageAll')) return true;
-      if (perms.includes('ManagePermissions')) return true;
-      
-      return perms.includes(permission);
-    }
-    
     return false;
   } catch(e) {
     console.warn('⚠️ checkUserPermission error:', e);
@@ -293,21 +305,14 @@ function checkUserPermission(permission) {
 // ============================================================
 // 6️⃣ getCenterNameById - البحث عن اسم المركز بالمعرف
 // ============================================================
-/**
- * يبحث عن اسم المركز من خلال centerId (يستخدم بيانات مخزّنة محلياً)
- * @param {string} centerId - معرف المركز
- * @returns {string} اسم المركز أو ''
- */
 function getCenterNameById(centerId) {
   try {
     if (!centerId) return '';
     
-    // ✅ 1. محاولة من localStorage
     const centers = JSON.parse(localStorage.getItem('centers') || '[]');
     const center = centers.find(c => c.id === centerId);
     if (center) return center.name;
     
-    // ✅ 2. محاولة من sessionStorage
     const sessionCenters = JSON.parse(sessionStorage.getItem('centers') || '[]');
     const sessionCenter = sessionCenters.find(c => c.id === centerId);
     if (sessionCenter) return sessionCenter.name;
@@ -389,10 +394,8 @@ if (typeof window !== 'undefined') {
   window.ddmmyyyyToISO = ddmmyyyyToISO;
   window.formatPhoneNumber = formatPhoneNumber;
   
-  // ✅ تصدير العلامات العالمية (لاستخدامها في session.js)
-  window._redirecting = _redirecting;
-  
   console.log('✅ config.js - تم التحميل بنجاح');
   console.log('📡 GAS_URL:', CONFIG.GAS_URL);
   console.log('⏱️ SESSION_DURATION:', CONFIG.SESSION_DURATION / 1000 / 60 / 60, 'hours');
+  console.log('🔄 _redirecting (initial):', window._redirecting);
 }
