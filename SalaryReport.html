@@ -508,6 +508,7 @@ function processReportData(result, month, year) {
       workingDays, absentDays, monthlySalary, salaryAmount,
       commission, bonus, total, cuts, insurance,
       totalAfterCuts, downPaymentLE, net
+       deductionsDetails: emp.deductionsDetails || [] 
     };
   });
   
@@ -653,7 +654,7 @@ setTimeout(function() {
 }, 50);
 }
 // ═══════════════════════════════════════════════════════════════════
-// openCommissionDetails — عرض تفاصيل عمولات + خصومات موظف
+// openCommissionDetails — نسخة تستخدم getDeductionsForMonth
 // ═══════════════════════════════════════════════════════════════════
 async function openCommissionDetails(userId, employeeName) {
   console.log('🎯 openCommissionDetails:', userId, employeeName);
@@ -669,9 +670,7 @@ async function openCommissionDetails(userId, employeeName) {
   if (window._commDetailsLoading) return;
   window._commDetailsLoading = true;
   
-  // ─────────────────────────────────────────
   // Loader
-  // ─────────────────────────────────────────
   const loadingModal = document.createElement('div');
   loadingModal.id = 'commDetailsLoading';
   loadingModal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:2147483647;display:flex;align-items:center;justify-content:center;';
@@ -679,9 +678,9 @@ async function openCommissionDetails(userId, employeeName) {
   document.body.appendChild(loadingModal);
   
   try {
-    // ─────────────────────────────────────────
-    // 1. جلب تفاصيل العمولات من الخادم
-    // ─────────────────────────────────────────
+    // ═══════════════════════════════════════════
+    // 1. جلب تفاصيل العمولات
+    // ═══════════════════════════════════════════
     const result = await jsonp('getCommissionDetails', {
       userId: Session.getUser()?.id || '',
       userType: Session.getUser()?.type || 'Accountant',
@@ -692,11 +691,10 @@ async function openCommissionDetails(userId, employeeName) {
       toDate: '31/' + month + '/' + year
     });
     
-    const lm = document.getElementById('commDetailsLoading');
-    if (lm) lm.remove();
-    window._commDetailsLoading = false;
-    
     if (!result || !result.success) {
+      const lm = document.getElementById('commDetailsLoading');
+      if (lm) lm.remove();
+      window._commDetailsLoading = false;
       showToast(result?.message || 'فشل تحميل التفاصيل', 'error');
       return;
     }
@@ -704,9 +702,58 @@ async function openCommissionDetails(userId, employeeName) {
     const invoices = result.invoices || [];
     const totalComm = result.summary?.totalCommission || 0;
     
-    // ─────────────────────────────────────────
-    // 2. بناء جدول العمولات
-    // ─────────────────────────────────────────
+    // ═══════════════════════════════════════════
+    // 2. ✅ جلب خصومات الشهر (getDeductionsForMonth)
+    // ═══════════════════════════════════════════
+    console.log('📡 جلب خصومات الشهر...');
+    
+    let allMonthDeductions = [];
+    let deductionsList = [];
+    let totalDeductionsLE = 0;
+    let rates = { bUSD: 50, bEUR: 60, bGBP: 66, bLE: 1 };
+    
+    try {
+      // أسعار الصرف
+      try {
+        const ratesResult = await jsonp('getLatestExchangeRates', {
+          centerName: Session.getUser()?.centerName || ''
+        });
+        if (ratesResult && ratesResult.bUSD) {
+          rates = {
+            bUSD: ratesResult.bUSD || 50,
+            bEUR: ratesResult.bEUR || 60,
+            bGBP: ratesResult.bGBP || 66,
+            bLE: ratesResult.bLE || 1
+          };
+        }
+      } catch(e) {}
+      
+      // خصومات الشهر كاملاً
+      const dedResult = await jsonp('getDeductionsForMonth', {
+        centerName: Session.getUser()?.centerName || '',
+        month: month,
+        year: year
+      });
+      
+      console.log('📥 getDeductionsForMonth result:', dedResult);
+      
+      if (dedResult && dedResult.success && dedResult.deductions) {
+        allMonthDeductions = dedResult.deductions;
+        
+        // ✅ فلترة على العميل
+        deductionsList = allMonthDeductions.filter(d => 
+          String(d.employeeId).trim() === String(userId).trim()
+        );
+        
+        console.log('✅ عدد الخصومات للموظف:', deductionsList.length);
+      }
+    } catch(e) {
+      console.warn('⚠️ فشل جلب الخصومات:', e);
+    }
+    
+    // ═══════════════════════════════════════════
+    // 3. بناء جدول العمولات
+    // ═══════════════════════════════════════════
     let rowsHtml = '';
     if (invoices.length === 0) {
       rowsHtml = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#999;">لا توجد فواتير مؤكدة بهذا الشهر</td></tr>';
@@ -725,99 +772,111 @@ async function openCommissionDetails(userId, employeeName) {
     }
     
     // ═══════════════════════════════════════════
-    // 3. ✅ ✅ ✅ بناء جدول الخصومات (جديد)
+    // 4. بناء جدول الخصومات
     // ═══════════════════════════════════════════
     let deductionsHtml = '';
-    let totalDeductionsLE = 0;
     
-    try {
-      // البحث عن بيانات الموظف في tableData
-      const empData = (window.tableData || tableData || []).find(e => 
-        String(e.userId) === String(userId)
-      );
+    // جلب الراتب الشهري
+    const empData = (window.tableData || tableData || []).find(e => 
+      String(e.userId) === String(userId)
+    );
+    const monthlySalary = empData?.monthlySalary || 0;
+    
+    if (deductionsList.length > 0) {
+      let dedRows = '';
       
-      if (empData && empData.deductionsDetails && empData.deductionsDetails.length > 0) {
-        let dedRows = '';
+      for (const ded of deductionsList) {
+        let amountText = '—';
+        const dedType = (ded.deductionType || '').toLowerCase();
         
-        for (const ded of empData.deductionsDetails) {
-          // بناء نص القيمة حسب النوع
-          let amountText = '—';
-          if (ded.computedType === 'cash') {
-            amountText = `<span style="color:#dc2626;font-weight:700;">${fmt(ded.cashInLE)} LE</span>`;
-            
-            // عرض تفصيل العملات إذا كانت متعددة
-            const parts = [];
-            if (ded.cashUSD > 0) parts.push(`${ded.cashUSD}$`);
-            if (ded.cashEUR > 0) parts.push(`${ded.cashEUR}€`);
-            if (ded.cashGBP > 0) parts.push(`${ded.cashGBP}£`);
-            if (ded.cashLE > 0)  parts.push(`${ded.cashLE}LE`);
-            
-            if (parts.length > 0) {
-              amountText += `<div style="font-size:9px;color:#999;margin-top:2px;">${parts.join(' + ')}</div>`;
-            }
-            
-            totalDeductionsLE += ded.cashInLE || 0;
-            
-          } else if (ded.computedType === 'days') {
-            const dailyRate = (empData.monthlySalary || 0) / 30;
-            const daysInLE = Math.round(dailyRate * (ded.daysCount || 0));
-            amountText = `<span style="color:#b45309;font-weight:700;">${ded.daysCount} يوم</span>`;
-            amountText += `<div style="font-size:9px;color:#999;margin-top:2px;">≈ ${fmt(daysInLE)} LE</div>`;
-            
-            totalDeductionsLE += daysInLE;
-          }
+        if (dedType === 'cash') {
+          const cashInLE = 
+            (ded.cashUSD || 0) * (rates.bUSD || 0) +
+            (ded.cashEUR || 0) * (rates.bEUR || 0) +
+            (ded.cashGBP || 0) * (rates.bGBP || 0) +
+            (ded.cashLE || 0);
           
-          dedRows += `<tr>
-            <td style="text-align:center;padding:6px 4px;border-bottom:1px solid #fecaca;">${escHtml(ded.date || '—')}</td>
-            <td style="text-align:center;padding:6px 4px;border-bottom:1px solid #fecaca;">
-              ${ded.computedType === 'cash' ? '💵 نقدي' : '📆 أيام'}
-            </td>
-            <td style="text-align:center;padding:6px 4px;border-bottom:1px solid #fecaca;">${amountText}</td>
-            <td style="text-align:right;padding:6px 4px;border-bottom:1px solid #fecaca;max-width:200px;word-wrap:break-word;">${escHtml(ded.reason || '—')}</td>
-            <td style="text-align:center;padding:6px 4px;border-bottom:1px solid #fecaca;">${escHtml(ded.deductedBy || '—')}</td>
-          </tr>`;
+          totalDeductionsLE += cashInLE;
+          
+          amountText = `<span style="color:#dc2626;font-weight:700;">${fmt(Math.round(cashInLE))} LE</span>`;
+          
+          const parts = [];
+          if (ded.cashUSD > 0) parts.push(`${ded.cashUSD}$ × ${rates.bUSD}`);
+          if (ded.cashEUR > 0) parts.push(`${ded.cashEUR}€ × ${rates.bEUR}`);
+          if (ded.cashGBP > 0) parts.push(`${ded.cashGBP}£ × ${rates.bGBP}`);
+          if (ded.cashLE > 0)  parts.push(`${ded.cashLE}LE`);
+          
+          if (parts.length > 0) {
+            amountText += `<div style="font-size:9px;color:#999;margin-top:2px;">${parts.join(' + ')}</div>`;
+          }
+        } else if (dedType === 'days') {
+          const dailyRate = monthlySalary > 0 ? monthlySalary / 30 : 0;
+          const daysInLE = dailyRate * (ded.daysCount || 0);
+          
+          totalDeductionsLE += daysInLE;
+          
+          amountText = `<span style="color:#b45309;font-weight:700;">${ded.daysCount} يوم</span>`;
+          
+          if (dailyRate > 0) {
+            amountText += `<div style="font-size:9px;color:#999;margin-top:2px;">${ded.daysCount} × ${Math.round(dailyRate)} = ${fmt(Math.round(daysInLE))} LE</div>`;
+          }
         }
         
-        deductionsHtml = `
-          <div style="margin-top:20px;">
-            <div style="background:linear-gradient(135deg,#7f1d1d,#dc2626);color:#fff;padding:10px 16px;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center;">
-              <strong style="font-size:14px;">⬇️ الخصومات المطبقة (${empData.deductionsDetails.length})</strong>
-              <span style="background:rgba(255,255,255,0.2);padding:4px 12px;border-radius:20px;font-weight:700;font-size:13px;">
-                ${fmt(Math.round(totalDeductionsLE))} LE
-              </span>
-            </div>
-            <div style="background:#fef2f2;border:1px solid #fecaca;border-top:none;border-radius:0 0 10px 10px;padding:12px;">
-              <div style="overflow-x:auto;border-radius:8px;">
-                <table style="width:100%;border-collapse:collapse;font-size:11px;background:white;min-width:600px;">
-                  <thead>
-                    <tr style="background:#fca5a5;color:#7f1d1d;">
-                      <th style="padding:8px 6px;text-align:center;font-weight:800;">📅 التاريخ</th>
-                      <th style="padding:8px 6px;text-align:center;font-weight:800;">النوع</th>
-                      <th style="padding:8px 6px;text-align:center;font-weight:800;">القيمة</th>
-                      <th style="padding:8px 6px;text-align:right;font-weight:800;">السبب</th>
-                      <th style="padding:8px 6px;text-align:center;font-weight:800;">✍️ بواسطة</th>
-                    </tr>
-                  </thead>
-                  <tbody>${dedRows}</tbody>
-                </table>
-              </div>
+        // ✅ توحيد التاريخ
+        let dateStr = ded.date || '—';
+        
+        dedRows += `<tr>
+          <td style="text-align:center;padding:8px 6px;border-bottom:1px solid #fecaca;">${escHtml(dateStr)}</td>
+          <td style="text-align:center;padding:8px 6px;border-bottom:1px solid #fecaca;">
+            ${dedType === 'cash' ? '💵 نقدي' : '📆 أيام'}
+          </td>
+          <td style="text-align:center;padding:8px 6px;border-bottom:1px solid #fecaca;">${amountText}</td>
+          <td style="text-align:right;padding:8px 6px;border-bottom:1px solid #fecaca;max-width:200px;word-wrap:break-word;">${escHtml(ded.reason || '—')}</td>
+          <td style="text-align:center;padding:8px 6px;border-bottom:1px solid #fecaca;">${escHtml(ded.deductedBy || '—')}</td>
+        </tr>`;
+      }
+      
+      deductionsHtml = `
+        <div style="margin-top:20px;">
+          <div style="background:linear-gradient(135deg,#7f1d1d,#dc2626);color:#fff;padding:10px 16px;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center;">
+            <strong style="font-size:14px;">⬇️ الخصومات المطبقة (${deductionsList.length})</strong>
+            <span style="background:rgba(255,255,255,0.2);padding:4px 12px;border-radius:20px;font-weight:700;font-size:13px;">
+              ${fmt(Math.round(totalDeductionsLE))} LE
+            </span>
+          </div>
+          <div style="background:#fef2f2;border:1px solid #fecaca;border-top:none;border-radius:0 0 10px 10px;padding:12px;">
+            <div style="overflow-x:auto;border-radius:8px;">
+              <table style="width:100%;border-collapse:collapse;font-size:11px;background:white;min-width:600px;">
+                <thead>
+                  <tr style="background:#fca5a5;color:#7f1d1d;">
+                    <th style="padding:8px 6px;text-align:center;font-weight:800;">📅 التاريخ</th>
+                    <th style="padding:8px 6px;text-align:center;font-weight:800;">النوع</th>
+                    <th style="padding:8px 6px;text-align:center;font-weight:800;">القيمة</th>
+                    <th style="padding:8px 6px;text-align:right;font-weight:800;">السبب</th>
+                    <th style="padding:8px 6px;text-align:center;font-weight:800;">✍️ بواسطة</th>
+                  </tr>
+                </thead>
+                <tbody>${dedRows}</tbody>
+              </table>
             </div>
           </div>
-        `;
-      }
-    } catch(e) {
-      console.warn('⚠️ Failed to build deductions HTML:', e);
-      deductionsHtml = '';
+        </div>
+      `;
+    } else {
+      deductionsHtml = `
+        <div style="margin-top:20px;padding:12px;background:#f1f5f9;border-radius:10px;text-align:center;color:#64748b;font-size:12px;">
+          ℹ️ لا توجد خصومات مطبقة على هذا الموظف لهذا الشهر
+        </div>
+      `;
     }
     
-    // ─────────────────────────────────────────
-    // 4. بناء المودال الكامل
-    // ─────────────────────────────────────────
+    // ═══════════════════════════════════════════
+    // 5. بناء المودال
+    // ═══════════════════════════════════════════
     const modalHtml =
       '<div id="commDetailsModal" style="position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:2147483647;display:flex;align-items:flex-start;justify-content:center;padding:8px;box-sizing:border-box;overflow-y:auto;-webkit-overflow-scrolling:touch;">' +
         '<div style="background:#fff;border-radius:12px;width:100%;max-width:1100px;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.4);overflow:hidden;margin:8px auto;">' +
           
-          // Header
           '<div style="padding:14px 16px;background:linear-gradient(135deg,#0d9488,#14b8a6);color:#fff;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">' +
             '<div style="flex:1;min-width:0;">' +
               '<h3 style="margin:0;font-size:14px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">👁️ تفاصيل — ' + escHtml(employeeName) + '</h3>' +
@@ -826,16 +885,13 @@ async function openCommissionDetails(userId, employeeName) {
             '<button id="commDetailsCloseBtn" type="button" style="background:rgba(255,255,255,0.25);color:#fff;border:none;width:36px;height:36px;border-radius:50%;font-size:22px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;line-height:1;padding:0;">×</button>' +
           '</div>' +
           
-          // Body
           '<div style="padding:12px;overflow-y:auto;flex:1;-webkit-overflow-scrolling:touch;max-height:calc(100vh - 140px);">' +
             
-            // ملخص العمولات
             '<div style="background:#e8f5e9;border-right:4px solid #1e8449;padding:12px 14px;border-radius:10px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
               '<span style="font-weight:700;color:#1e8449;font-size:12px;">💰 إجمالي العمولات</span>' +
               '<span style="font-weight:800;color:#1e8449;font-size:16px;">' + fmt(totalComm) + ' LE</span>' +
             '</div>' +
             
-            // ✅ ملخص الخصومات (إذا وجدت)
             (totalDeductionsLE > 0 
               ? '<div style="background:#fee2e2;border-right:4px solid #dc2626;padding:12px 14px;border-radius:10px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
                   '<span style="font-weight:700;color:#dc2626;font-size:12px;">⬇️ إجمالي الخصومات</span>' +
@@ -843,7 +899,6 @@ async function openCommissionDetails(userId, employeeName) {
                 '</div>'
               : '') +
             
-            // جدول الفواتير
             '<div style="background:#f8f9fa;padding:8px 12px;border-radius:8px;margin-bottom:10px;font-size:11px;color:#666;text-align:center;">📊 عدد الفواتير: <strong>' + invoices.length + '</strong></div>' +
             
             '<div style="overflow-x:auto;border-radius:10px;border:1px solid #e0e0e0;-webkit-overflow-scrolling:touch;">' +
@@ -861,25 +916,24 @@ async function openCommissionDetails(userId, employeeName) {
               '</table>' +
             '</div>' +
             
-            // ✅ ✅ ✅ قسم الخصومات (جديد)
             deductionsHtml +
             
           '</div>' +
           
-          // Footer
           '<div style="padding:10px 12px;background:#f8f9fa;text-align:center;border-top:1px solid #e0e0e0;flex-shrink:0;">' +
             '<button id="commDetailsCloseBtn2" type="button" style="background:#1e2b4f;color:#ffd966;border:none;padding:12px 30px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;width:100%;max-width:300px;">إغلاق</button>' +
           '</div>' +
         '</div>' +
       '</div>';
     
+    const lm = document.getElementById('commDetailsLoading');
+    if (lm) lm.remove();
+    window._commDetailsLoading = false;
+    
     const existing = document.getElementById('commDetailsModal');
     if (existing) existing.remove();
     document.body.insertAdjacentHTML('beforeend', modalHtml);
     
-    // ─────────────────────────────────────────
-    // 5. ربط الأزرار
-    // ─────────────────────────────────────────
     setTimeout(function() {
       const btn1 = document.getElementById('commDetailsCloseBtn');
       const btn2 = document.getElementById('commDetailsCloseBtn2');
@@ -908,7 +962,7 @@ async function openCommissionDetails(userId, employeeName) {
       document.documentElement.style.overflow = 'hidden';
     }, 50);
     
-    console.log('✅ المودال تم عرضه');
+    console.log('✅ المودال تم عرضه — ' + deductionsList.length + ' خصم');
     
   } catch(e) {
     const lm = document.getElementById('commDetailsLoading');
