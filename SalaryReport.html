@@ -656,6 +656,9 @@ setTimeout(function() {
 // ═══════════════════════════════════════════════════════════════════
 // openCommissionDetails — نسخة تستخدم getDeductionsForMonth
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// openCommissionDetails — عرض تفاصيل الموظف (فواتير + دفعات + خصومات)
+// ═══════════════════════════════════════════════════════════════════
 async function openCommissionDetails(userId, employeeName) {
   console.log('🎯 openCommissionDetails:', userId, employeeName);
   
@@ -670,7 +673,9 @@ async function openCommissionDetails(userId, employeeName) {
   if (window._commDetailsLoading) return;
   window._commDetailsLoading = true;
   
+  // ─────────────────────────────────────────
   // Loader
+  // ─────────────────────────────────────────
   const loadingModal = document.createElement('div');
   loadingModal.id = 'commDetailsLoading';
   loadingModal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:2147483647;display:flex;align-items:center;justify-content:center;';
@@ -702,57 +707,48 @@ async function openCommissionDetails(userId, employeeName) {
     const invoices = result.invoices || [];
     const totalComm = result.summary?.totalCommission || 0;
     
-    // ═══════════════════════════════════════════
-    // 2. ✅ جلب خصومات الشهر (getDeductionsForMonth)
-    // ═══════════════════════════════════════════
-    console.log('📡 جلب خصومات الشهر...');
+    // ✅ حفظ الفواتير في متغير عام للتصدير/الطباعة
+    window._currentInvoices = invoices;
     
-    let allMonthDeductions = [];
-    let deductionsList = [];
-    let totalDeductionsLE = 0;
-    let rates = { bUSD: 50, bEUR: 60, bGBP: 66, bLE: 1 };
+    // ═══════════════════════════════════════════
+    // 2. جلب الدفعات المقدمة من Expenses
+    // ═══════════════════════════════════════════
+    console.log('📡 جلب الدفعات المقدمة...');
+    
+    let advances = [];
+    let advancesTotals = null;
     
     try {
-      // أسعار الصرف
-      try {
-        const ratesResult = await jsonp('getLatestExchangeRates', {
-          centerName: Session.getUser()?.centerName || ''
-        });
-        if (ratesResult && ratesResult.bUSD) {
-          rates = {
-            bUSD: ratesResult.bUSD || 50,
-            bEUR: ratesResult.bEUR || 60,
-            bGBP: ratesResult.bGBP || 66,
-            bLE: ratesResult.bLE || 1
-          };
-        }
-      } catch(e) {}
-      
-      // خصومات الشهر كاملاً
-      const dedResult = await jsonp('getDeductionsForMonth', {
+      const advResult = await jsonp('getAdvancesForEmployee', {
         centerName: Session.getUser()?.centerName || '',
+        employeeName: employeeName,
         month: month,
         year: year
       });
       
-      console.log('📥 getDeductionsForMonth result:', dedResult);
+      console.log('📥 getAdvancesForEmployee result:', advResult);
       
-      if (dedResult && dedResult.success && dedResult.deductions) {
-        allMonthDeductions = dedResult.deductions;
-        
-        // ✅ فلترة على العميل
-        deductionsList = allMonthDeductions.filter(d => 
-          String(d.employeeId).trim() === String(userId).trim()
-        );
-        
-        console.log('✅ عدد الخصومات للموظف:', deductionsList.length);
+      if (advResult && advResult.success) {
+        advances = advResult.advances || [];
+        advancesTotals = advResult.totals || null;
       }
     } catch(e) {
-      console.warn('⚠️ فشل جلب الخصومات:', e);
+      console.warn('⚠️ فشل جلب الدفعات:', e);
     }
     
+    // ✅ حفظ الدفعات في متغير عام
+    window._currentAdvances = advances;
+    window._advancesTotals = advancesTotals;
+    
     // ═══════════════════════════════════════════
-    // 3. بناء جدول العمولات
+    // 3. جلب بيانات الموظف من tableData
+    // ═══════════════════════════════════════════
+    const empData = (window.tableData || tableData || []).find(e => 
+      String(e.userId) === String(userId)
+    );
+    
+    // ═══════════════════════════════════════════
+    // 4. بناء جدول الفواتير
     // ═══════════════════════════════════════════
     let rowsHtml = '';
     if (invoices.length === 0) {
@@ -772,81 +768,155 @@ async function openCommissionDetails(userId, employeeName) {
     }
     
     // ═══════════════════════════════════════════
-    // 4. بناء جدول الخصومات
+    // 5. بناء جدول الدفعات المقدمة
+    // ═══════════════════════════════════════════
+    let advancesHtml = '';
+    
+    if (advances.length > 0) {
+      let advRows = '';
+      
+      for (const adv of advances) {
+        advRows += '<tr>' +
+          '<td style="text-align:center;padding:6px 4px;border-bottom:1px solid #fed7aa;">' + escHtml(adv.date || '—') + '</td>' +
+          '<td style="text-align:right;padding:6px 4px;border-bottom:1px solid #fed7aa;max-width:200px;word-wrap:break-word;">' + escHtml(adv.details || '—') + '</td>' +
+          '<td style="text-align:center;padding:6px 4px;border-bottom:1px solid #fed7aa;">' + (adv.usd > 0 ? adv.usd : '—') + '</td>' +
+          '<td style="text-align:center;padding:6px 4px;border-bottom:1px solid #fed7aa;">' + (adv.eur > 0 ? adv.eur : '—') + '</td>' +
+          '<td style="text-align:center;padding:6px 4px;border-bottom:1px solid #fed7aa;">' + (adv.gbp > 0 ? adv.gbp : '—') + '</td>' +
+          '<td style="text-align:center;padding:6px 4px;border-bottom:1px solid #fed7aa;">' + (adv.le > 0 ? adv.le : '—') + '</td>' +
+          '<td style="text-align:center;padding:6px 4px;border-bottom:1px solid #fed7aa;">' + (adv.vUSD > 0 ? adv.vUSD : '—') + '</td>' +
+          '<td style="text-align:center;padding:6px 4px;border-bottom:1px solid #fed7aa;">' + (adv.vEUR > 0 ? adv.vEUR : '—') + '</td>' +
+          '<td style="text-align:center;padding:6px 4px;border-bottom:1px solid #fed7aa;">' + (adv.vGBP > 0 ? adv.vGBP : '—') + '</td>' +
+          '<td style="text-align:center;padding:6px 4px;border-bottom:1px solid #fed7aa;">' + (adv.vLE > 0 ? adv.vLE : '—') + '</td>' +
+        '</tr>';
+      }
+      
+      // صف الإجماليات
+      let totalRow = '';
+      if (advancesTotals) {
+        const t = advancesTotals;
+        totalRow = '<tr style="background:#fed7aa;font-weight:800;">' +
+          '<td colspan="2" style="text-align:center;padding:8px 6px;">الإجمالي</td>' +
+          '<td style="text-align:center;padding:8px 6px;">' + (t.USD > 0 ? t.USD : '—') + '</td>' +
+          '<td style="text-align:center;padding:8px 6px;">' + (t.EUR > 0 ? t.EUR : '—') + '</td>' +
+          '<td style="text-align:center;padding:8px 6px;">' + (t.GBP > 0 ? t.GBP : '—') + '</td>' +
+          '<td style="text-align:center;padding:8px 6px;">' + (t.LE > 0 ? t.LE : '—') + '</td>' +
+          '<td style="text-align:center;padding:8px 6px;">' + (t.VUSD > 0 ? t.VUSD : '—') + '</td>' +
+          '<td style="text-align:center;padding:8px 6px;">' + (t.VEUR > 0 ? t.VEUR : '—') + '</td>' +
+          '<td style="text-align:center;padding:8px 6px;">' + (t.VGBP > 0 ? t.VGBP : '—') + '</td>' +
+          '<td style="text-align:center;padding:8px 6px;">' + (t.VLE > 0 ? t.VLE : '—') + '</td>' +
+        '</tr>';
+      }
+      
+      advancesHtml = `
+        <div style="margin-top:20px;">
+          <div style="background:linear-gradient(135deg,#7c2d12,#ea580c);color:#fff;padding:10px 16px;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center;">
+            <strong style="font-size:14px;">💵 الدفعات المقدمة (${advances.length})</strong>
+            <span style="background:rgba(255,255,255,0.2);padding:4px 12px;border-radius:20px;font-weight:700;font-size:13px;">
+              ${advancesTotals ? fmt(advancesTotals.LE) + ' LE + عملات' : ''}
+            </span>
+          </div>
+          <div style="background:#fff7ed;border:1px solid #fed7aa;border-top:none;border-radius:0 0 10px 10px;padding:12px;">
+            <div style="overflow-x:auto;border-radius:8px;">
+              <table style="width:100%;border-collapse:collapse;font-size:11px;background:white;min-width:800px;">
+                <thead>
+                  <tr style="background:#fdba74;color:#7c2d12;">
+                    <th style="padding:8px 6px;text-align:center;font-weight:800;">📅 التاريخ</th>
+                    <th style="padding:8px 6px;text-align:right;font-weight:800;">التفاصيل</th>
+                    <th style="padding:8px 6px;text-align:center;font-weight:800;">$</th>
+                    <th style="padding:8px 6px;text-align:center;font-weight:800;">€</th>
+                    <th style="padding:8px 6px;text-align:center;font-weight:800;">£</th>
+                    <th style="padding:8px 6px;text-align:center;font-weight:800;">LE</th>
+                    <th style="padding:8px 6px;text-align:center;font-weight:800;">Visa$</th>
+                    <th style="padding:8px 6px;text-align:center;font-weight:800;">Visa€</th>
+                    <th style="padding:8px 6px;text-align:center;font-weight:800;">Visa£</th>
+                    <th style="padding:8px 6px;text-align:center;font-weight:800;">VisaLE</th>
+                  </tr>
+                </thead>
+                <tbody>${advRows}${totalRow}</tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `;
+    } else {
+      advancesHtml = `
+        <div style="margin-top:20px;padding:12px;background:#f1f5f9;border-radius:10px;text-align:center;color:#64748b;font-size:12px;">
+          ℹ️ لا توجد دفعات مقدمة لهذا الموظف في هذا الشهر
+        </div>
+      `;
+    }
+    
+    // ═══════════════════════════════════════════
+    // 6. بناء جدول الخصومات مع أزرار التعديل والحذف
     // ═══════════════════════════════════════════
     let deductionsHtml = '';
+    let totalDeductionsLE = 0;
     
-    // جلب الراتب الشهري
-    const empData = (window.tableData || tableData || []).find(e => 
-      String(e.userId) === String(userId)
-    );
-    const monthlySalary = empData?.monthlySalary || 0;
-    
-    if (deductionsList.length > 0) {
+    if (empData && empData.deductionsDetails && empData.deductionsDetails.length > 0) {
       let dedRows = '';
       
-      for (const ded of deductionsList) {
+      for (const ded of empData.deductionsDetails) {
         let amountText = '—';
-        const dedType = (ded.deductionType || '').toLowerCase();
-        
-        if (dedType === 'cash') {
-          const cashInLE = 
-            (ded.cashUSD || 0) * (rates.bUSD || 0) +
-            (ded.cashEUR || 0) * (rates.bEUR || 0) +
-            (ded.cashGBP || 0) * (rates.bGBP || 0) +
-            (ded.cashLE || 0);
-          
-          totalDeductionsLE += cashInLE;
-          
-          amountText = `<span style="color:#dc2626;font-weight:700;">${fmt(Math.round(cashInLE))} LE</span>`;
-          
+        if (ded.computedType === 'cash') {
+          amountText = `<span style="color:#dc2626;font-weight:700;">${fmt(ded.cashInLE)} LE</span>`;
           const parts = [];
-          if (ded.cashUSD > 0) parts.push(`${ded.cashUSD}$ × ${rates.bUSD}`);
-          if (ded.cashEUR > 0) parts.push(`${ded.cashEUR}€ × ${rates.bEUR}`);
-          if (ded.cashGBP > 0) parts.push(`${ded.cashGBP}£ × ${rates.bGBP}`);
+          if (ded.cashUSD > 0) parts.push(`${ded.cashUSD}$`);
+          if (ded.cashEUR > 0) parts.push(`${ded.cashEUR}€`);
+          if (ded.cashGBP > 0) parts.push(`${ded.cashGBP}£`);
           if (ded.cashLE > 0)  parts.push(`${ded.cashLE}LE`);
-          
           if (parts.length > 0) {
             amountText += `<div style="font-size:9px;color:#999;margin-top:2px;">${parts.join(' + ')}</div>`;
           }
-        } else if (dedType === 'days') {
-          const dailyRate = monthlySalary > 0 ? monthlySalary / 30 : 0;
-          const daysInLE = dailyRate * (ded.daysCount || 0);
-          
-          totalDeductionsLE += daysInLE;
-          
+          totalDeductionsLE += ded.cashInLE || 0;
+        } else if (ded.computedType === 'days') {
+          const dailyRate = (empData.monthlySalary || 0) / 30;
+          const daysInLE = Math.round(dailyRate * (ded.daysCount || 0));
           amountText = `<span style="color:#b45309;font-weight:700;">${ded.daysCount} يوم</span>`;
-          
-          if (dailyRate > 0) {
-            amountText += `<div style="font-size:9px;color:#999;margin-top:2px;">${ded.daysCount} × ${Math.round(dailyRate)} = ${fmt(Math.round(daysInLE))} LE</div>`;
-          }
+          amountText += `<div style="font-size:9px;color:#999;margin-top:2px;">≈ ${fmt(daysInLE)} LE</div>`;
+          totalDeductionsLE += daysInLE;
         }
         
-        // ✅ توحيد التاريخ
-        let dateStr = ded.date || '—';
+        // ✅ أزرار الإجراءات
+        const actionsHtml = `
+          <div style="display:flex;gap:4px;justify-content:center;">
+            <button 
+              onclick="openEditDeductionForm('${ded.deductionId}', '${empData.userId}', '${(empData.name || '').replace(/'/g, "\\'")}')"
+              title="تعديل"
+              style="background:#0d9488;color:#fff;border:none;padding:5px 8px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700;">
+              ✏️
+            </button>
+            <button 
+              onclick="deleteDeduction('${ded.deductionId}', '${empData.userId}', '${(empData.name || '').replace(/'/g, "\\'")}')"
+              title="حذف"
+              style="background:#dc2626;color:#fff;border:none;padding:5px 8px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700;">
+              🗑️
+            </button>
+          </div>
+        `;
         
         dedRows += `<tr>
-          <td style="text-align:center;padding:8px 6px;border-bottom:1px solid #fecaca;">${escHtml(dateStr)}</td>
+          <td style="text-align:center;padding:8px 6px;border-bottom:1px solid #fecaca;">${escHtml(ded.date || '—')}</td>
           <td style="text-align:center;padding:8px 6px;border-bottom:1px solid #fecaca;">
-            ${dedType === 'cash' ? '💵 نقدي' : '📆 أيام'}
+            ${ded.computedType === 'cash' ? '💵 نقدي' : '📆 أيام'}
           </td>
           <td style="text-align:center;padding:8px 6px;border-bottom:1px solid #fecaca;">${amountText}</td>
           <td style="text-align:right;padding:8px 6px;border-bottom:1px solid #fecaca;max-width:200px;word-wrap:break-word;">${escHtml(ded.reason || '—')}</td>
           <td style="text-align:center;padding:8px 6px;border-bottom:1px solid #fecaca;">${escHtml(ded.deductedBy || '—')}</td>
+          <td style="text-align:center;padding:8px 6px;border-bottom:1px solid #fecaca;">${actionsHtml}</td>
         </tr>`;
       }
       
       deductionsHtml = `
         <div style="margin-top:20px;">
           <div style="background:linear-gradient(135deg,#7f1d1d,#dc2626);color:#fff;padding:10px 16px;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center;">
-            <strong style="font-size:14px;">⬇️ الخصومات المطبقة (${deductionsList.length})</strong>
+            <strong style="font-size:14px;">⬇️ الخصومات المطبقة (${empData.deductionsDetails.length})</strong>
             <span style="background:rgba(255,255,255,0.2);padding:4px 12px;border-radius:20px;font-weight:700;font-size:13px;">
               ${fmt(Math.round(totalDeductionsLE))} LE
             </span>
           </div>
           <div style="background:#fef2f2;border:1px solid #fecaca;border-top:none;border-radius:0 0 10px 10px;padding:12px;">
             <div style="overflow-x:auto;border-radius:8px;">
-              <table style="width:100%;border-collapse:collapse;font-size:11px;background:white;min-width:600px;">
+              <table style="width:100%;border-collapse:collapse;font-size:11px;background:white;min-width:700px;">
                 <thead>
                   <tr style="background:#fca5a5;color:#7f1d1d;">
                     <th style="padding:8px 6px;text-align:center;font-weight:800;">📅 التاريخ</th>
@@ -854,6 +924,7 @@ async function openCommissionDetails(userId, employeeName) {
                     <th style="padding:8px 6px;text-align:center;font-weight:800;">القيمة</th>
                     <th style="padding:8px 6px;text-align:right;font-weight:800;">السبب</th>
                     <th style="padding:8px 6px;text-align:center;font-weight:800;">✍️ بواسطة</th>
+                    <th style="padding:8px 6px;text-align:center;font-weight:800;">إجراءات</th>
                   </tr>
                 </thead>
                 <tbody>${dedRows}</tbody>
@@ -871,55 +942,121 @@ async function openCommissionDetails(userId, employeeName) {
     }
     
     // ═══════════════════════════════════════════
-    // 5. بناء المودال
+    // 7. بناء جدول ملخص الموظف (صف واحد)
+    // ═══════════════════════════════════════════
+    let summaryRowHtml = '';
+    if (empData) {
+      summaryRowHtml = `
+        <div style="margin-bottom:16px;">
+          <div style="background:#1a3260;color:#f5c842;padding:10px 16px;border-radius:10px 10px 0 0;font-size:13px;font-weight:800;">
+            📋 ملخص الموظف
+          </div>
+          <div style="background:#f8f9fa;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 10px 10px;padding:10px;overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:11px;min-width:1100px;">
+              <thead>
+                <tr style="background:#1a3260;color:#f5c842;">
+                  <th style="padding:8px 4px;text-align:center;">#</th>
+                  <th style="padding:8px 4px;text-align:center;">الرقم الوظيفي</th>
+                  <th style="padding:8px 4px;text-align:right;">الاسم</th>
+                  <th style="padding:8px 4px;text-align:center;">الوظيفة</th>
+                  <th style="padding:8px 4px;text-align:center;">أيام الحضور</th>
+                  <th style="padding:8px 4px;text-align:center;">أيام الغياب</th>
+                  <th style="padding:8px 4px;text-align:center;">الراتب الأساسي</th>
+                  <th style="padding:8px 4px;text-align:center;">الراتب المستحق</th>
+                  <th style="padding:8px 4px;text-align:center;">العمولة</th>
+                  <th style="padding:8px 4px;text-align:center;">الحافز</th>
+                  <th style="padding:8px 4px;text-align:center;">الإجمالي</th>
+                  <th style="padding:8px 4px;text-align:center;">الخصم</th>
+                  <th style="padding:8px 4px;text-align:center;">التأمينات</th>
+                  <th style="padding:8px 4px;text-align:center;">صافي بعد الخصم</th>
+                  <th style="padding:8px 4px;text-align:center;">الدفعة المقدمة</th>
+                  <th style="padding:8px 4px;text-align:center;">الصافي المستحق</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr style="background:#fff;">
+                  <td style="padding:10px 4px;text-align:center;font-weight:700;">1</td>
+                  <td style="padding:10px 4px;text-align:center;font-weight:700;">${escHtml(empData.userId)}</td>
+                  <td style="padding:10px 4px;text-align:right;font-weight:700;">${escHtml(empData.name)}</td>
+                  <td style="padding:10px 4px;text-align:center;color:#6c757d;">${escHtml(empData.position || '—')}</td>
+                  <td style="padding:10px 4px;text-align:center;font-weight:700;color:#1e2b4f;">${empData.workingDays > 0 ? empData.workingDays.toFixed(1) : '—'}</td>
+                  <td style="padding:10px 4px;text-align:center;color:${empData.absentDays > 0 ? '#e74c3c' : '#aaa'};">${empData.absentDays > 0 ? empData.absentDays : '—'}</td>
+                  <td style="padding:10px 4px;text-align:center;background:#e8f4f8;color:#1a5276;font-weight:700;">${empData.monthlySalary > 0 ? fmt(empData.monthlySalary) : '—'}</td>
+                  <td style="padding:10px 4px;text-align:center;background:#e8f4f8;">${empData.salaryAmount > 0 ? fmt(empData.salaryAmount) : '—'}</td>
+                  <td style="padding:10px 4px;text-align:center;background:#e8f5e9;color:#1b5e20;font-weight:700;">${empData.commission > 0 ? fmt(empData.commission) : '—'}</td>
+                  <td style="padding:10px 4px;text-align:center;">${empData.bonus > 0 ? fmt(empData.bonus) : '—'}</td>
+                  <td style="padding:10px 4px;text-align:center;font-weight:700;">${empData.total > 0 ? fmt(empData.total) : '—'}</td>
+                  <td style="padding:10px 4px;text-align:center;color:#dc2626;font-weight:700;">${empData.cuts > 0 ? fmt(empData.cuts) : '—'}</td>
+                  <td style="padding:10px 4px;text-align:center;">${empData.insurance > 0 ? fmt(empData.insurance) : '—'}</td>
+                  <td style="padding:10px 4px;text-align:center;">${empData.totalAfterCuts > 0 ? fmt(empData.totalAfterCuts) : '—'}</td>
+                  <td style="padding:10px 4px;text-align:center;color:${empData.downPaymentLE > 0 ? '#c0392b' : '#aaa'};">${empData.downPaymentLE > 0 ? fmt(empData.downPaymentLE) : '—'}</td>
+                  <td style="padding:10px 4px;text-align:center;background:#fff3e0;color:${empData.net >= 0 ? '#1e8449' : '#e74c3c'};font-weight:900;">${empData.net !== 0 ? fmt(empData.net) : '—'}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+    
+    // ═══════════════════════════════════════════
+    // 8. بناء المودال
     // ═══════════════════════════════════════════
     const modalHtml =
       '<div id="commDetailsModal" style="position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:2147483647;display:flex;align-items:flex-start;justify-content:center;padding:8px;box-sizing:border-box;overflow-y:auto;-webkit-overflow-scrolling:touch;">' +
-        '<div style="background:#fff;border-radius:12px;width:100%;max-width:1100px;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.4);overflow:hidden;margin:8px auto;">' +
+        '<div style="background:#fff;border-radius:12px;width:100%;max-width:1200px;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.4);overflow:hidden;margin:8px auto;">' +
           
-          '<div style="padding:14px 16px;background:linear-gradient(135deg,#0d9488,#14b8a6);color:#fff;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">' +
-            '<div style="flex:1;min-width:0;">' +
-              '<h3 style="margin:0;font-size:14px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">👁️ تفاصيل — ' + escHtml(employeeName) + '</h3>' +
+          // Header
+          '<div style="padding:14px 16px;background:linear-gradient(135deg,#0d9488,#14b8a6);color:#fff;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;flex-wrap:wrap;gap:10px;">' +
+            '<div style="flex:1;min-width:200px;">' +
+              '<h3 style="margin:0;font-size:15px;font-weight:800;">👁️ تفاصيل — ' + escHtml(employeeName) + '</h3>' +
               '<p style="margin:4px 0 0;opacity:0.9;font-size:11px;">' + month + '/' + year + ' — ' + escHtml(userId) + '</p>' +
             '</div>' +
-            '<button id="commDetailsCloseBtn" type="button" style="background:rgba(255,255,255,0.25);color:#fff;border:none;width:36px;height:36px;border-radius:50%;font-size:22px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;line-height:1;padding:0;">×</button>' +
+            '<div style="display:flex;gap:6px;align-items:center;">' +
+              '<button id="commDetailsExcelBtn" type="button" title="تصدير Excel" style="background:rgba(255,255,255,0.25);color:#fff;border:none;width:36px;height:36px;border-radius:8px;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;">📊</button>' +
+              '<button id="commDetailsPrintBtn" type="button" title="طباعة" style="background:rgba(255,255,255,0.25);color:#fff;border:none;width:36px;height:36px;border-radius:8px;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;">🖨️</button>' +
+              '<button id="commDetailsCloseBtn" type="button" style="background:rgba(255,255,255,0.25);color:#fff;border:none;width:36px;height:36px;border-radius:50%;font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;padding:0;">×</button>' +
+            '</div>' +
           '</div>' +
           
+          // Body
           '<div style="padding:12px;overflow-y:auto;flex:1;-webkit-overflow-scrolling:touch;max-height:calc(100vh - 140px);">' +
             
-            '<div style="background:#e8f5e9;border-right:4px solid #1e8449;padding:12px 14px;border-radius:10px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
-              '<span style="font-weight:700;color:#1e8449;font-size:12px;">💰 إجمالي العمولات</span>' +
-              '<span style="font-weight:800;color:#1e8449;font-size:16px;">' + fmt(totalComm) + ' LE</span>' +
+            // جدول ملخص الموظف
+            summaryRowHtml +
+            
+            // جدول الفواتير
+            '<div style="margin-bottom:16px;">' +
+              '<div style="background:#1a3260;color:#f5c842;padding:10px 16px;border-radius:10px 10px 0 0;font-size:13px;font-weight:800;">' +
+                '🧾 الفواتير المؤكدة (' + invoices.length + ')' +
+              '</div>' +
+              '<div style="background:#f8f9fa;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 10px 10px;padding:12px;">' +
+                '<div style="overflow-x:auto;border-radius:8px;">' +
+                  '<table style="width:100%;border-collapse:collapse;font-size:11px;background:white;min-width:600px;">' +
+                    '<thead><tr style="background:#1a3260;color:#f5c842;">' +
+                      '<th style="padding:8px 6px;text-align:center;">#</th>' +
+                      '<th style="padding:8px 6px;text-align:center;">الإيصال</th>' +
+                      '<th style="padding:8px 6px;text-align:center;">التاريخ</th>' +
+                      '<th style="padding:8px 6px;text-align:right;">الرحلة</th>' +
+                      '<th style="padding:8px 6px;text-align:center;">المدفوع</th>' +
+                      '<th style="padding:8px 6px;text-align:center;">%</th>' +
+                      '<th style="padding:8px 6px;text-align:center;">العمولة</th>' +
+                    '</tr></thead>' +
+                    '<tbody>' + rowsHtml + '</tbody>' +
+                  '</table>' +
+                '</div>' +
+              '</div>' +
             '</div>' +
             
-            (totalDeductionsLE > 0 
-              ? '<div style="background:#fee2e2;border-right:4px solid #dc2626;padding:12px 14px;border-radius:10px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
-                  '<span style="font-weight:700;color:#dc2626;font-size:12px;">⬇️ إجمالي الخصومات</span>' +
-                  '<span style="font-weight:800;color:#dc2626;font-size:16px;">' + fmt(Math.round(totalDeductionsLE)) + ' LE</span>' +
-                '</div>'
-              : '') +
+            // جدول الدفعات المقدمة
+            advancesHtml +
             
-            '<div style="background:#f8f9fa;padding:8px 12px;border-radius:8px;margin-bottom:10px;font-size:11px;color:#666;text-align:center;">📊 عدد الفواتير: <strong>' + invoices.length + '</strong></div>' +
-            
-            '<div style="overflow-x:auto;border-radius:10px;border:1px solid #e0e0e0;-webkit-overflow-scrolling:touch;">' +
-              '<table style="width:100%;border-collapse:collapse;font-size:10px;min-width:500px;">' +
-                '<thead><tr style="background:#1e2b4f;color:#ffd966;">' +
-                  '<th style="padding:6px 4px;text-align:center;white-space:nowrap;">#</th>' +
-                  '<th style="padding:6px 4px;text-align:center;white-space:nowrap;">الإيصال</th>' +
-                  '<th style="padding:6px 4px;text-align:center;white-space:nowrap;">التاريخ</th>' +
-                  '<th style="padding:6px 4px;text-align:right;white-space:nowrap;">الرحلة</th>' +
-                  '<th style="padding:6px 4px;text-align:center;white-space:nowrap;">المدفوع</th>' +
-                  '<th style="padding:6px 4px;text-align:center;white-space:nowrap;">%</th>' +
-                  '<th style="padding:6px 4px;text-align:center;white-space:nowrap;">العمولة</th>' +
-                '</tr></thead>' +
-                '<tbody>' + rowsHtml + '</tbody>' +
-              '</table>' +
-            '</div>' +
-            
+            // جدول الخصومات
             deductionsHtml +
             
           '</div>' +
           
+          // Footer
           '<div style="padding:10px 12px;background:#f8f9fa;text-align:center;border-top:1px solid #e0e0e0;flex-shrink:0;">' +
             '<button id="commDetailsCloseBtn2" type="button" style="background:#1e2b4f;color:#ffd966;border:none;padding:12px 30px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;width:100%;max-width:300px;">إغلاق</button>' +
           '</div>' +
@@ -934,9 +1071,14 @@ async function openCommissionDetails(userId, employeeName) {
     if (existing) existing.remove();
     document.body.insertAdjacentHTML('beforeend', modalHtml);
     
+    // ═══════════════════════════════════════════
+    // 9. ربط الأزرار
+    // ═══════════════════════════════════════════
     setTimeout(function() {
       const btn1 = document.getElementById('commDetailsCloseBtn');
       const btn2 = document.getElementById('commDetailsCloseBtn2');
+      const excelBtn = document.getElementById('commDetailsExcelBtn');
+      const printBtn = document.getElementById('commDetailsPrintBtn');
       const modal = document.getElementById('commDetailsModal');
       
       function closeHandler(e) {
@@ -952,6 +1094,25 @@ async function openCommissionDetails(userId, employeeName) {
         btn2.onclick = closeHandler;
         btn2.addEventListener('touchend', closeHandler, { passive: false });
       }
+      
+      // ✅ زر التصدير
+      if (excelBtn) {
+        excelBtn.onclick = function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          exportModalToExcel(userId, employeeName, month, year);
+        };
+      }
+      
+      // ✅ زر الطباعة
+      if (printBtn) {
+        printBtn.onclick = function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          printModal(userId, employeeName, month, year);
+        };
+      }
+      
       if (modal) {
         modal.onclick = function(e) {
           if (e.target === modal) closeCommissionDetails();
@@ -962,7 +1123,7 @@ async function openCommissionDetails(userId, employeeName) {
       document.documentElement.style.overflow = 'hidden';
     }, 50);
     
-    console.log('✅ المودال تم عرضه — ' + deductionsList.length + ' خصم');
+    console.log('✅ المودال تم عرضه — ' + invoices.length + ' فاتورة، ' + advances.length + ' دفعة، ' + (empData?.deductionsDetails?.length || 0) + ' خصم');
     
   } catch(e) {
     const lm = document.getElementById('commDetailsLoading');
@@ -974,7 +1135,6 @@ async function openCommissionDetails(userId, employeeName) {
     showToast('فشل تحميل التفاصيل: ' + e.message, 'error');
   }
 }
-
 // ═══════════════════════════════════════════════════════════════════
 // closeCommissionDetails
 // ═══════════════════════════════════════════════════════════════════
@@ -1665,7 +1825,642 @@ async function submitDeduction() {
     saveBtn.style.opacity = '1';
   }
 }
+  // ═══════════════════════════════════════════════════════════════════
+// ✏️ updateDeductionSubmit — إرسال طلب تعديل خصم
+// ═══════════════════════════════════════════════════════════════════
+async function updateDeductionSubmit() {
+  const saveBtn = document.getElementById('ded_saveBtn');
+  if (saveBtn.disabled) return;
   
+  const deductionId = document.getElementById('ded_deductionId').value;
+  const dateInput   = document.getElementById('ded_date').value;
+  const month       = document.getElementById('ded_month').value;
+  const year        = document.getElementById('ded_year').value;
+  const employeeId  = document.getElementById('ded_employee_id').value;
+  const employeeName= document.getElementById('ded_employee_name').value;
+  const reason      = document.getElementById('ded_reason').value.trim();
+  const deductedBy  = document.getElementById('ded_deductedBy').value.trim();
+  
+  const isCash = document.getElementById('ded_type_cash').checked;
+  const isDays = document.getElementById('ded_type_days').checked;
+  
+  if (!dateInput || !employeeId) {
+    showToast('⚠️ التاريخ والموظف مطلوبان', 'error');
+    return;
+  }
+  if (!isCash && !isDays) {
+    showToast('⚠️ يجب اختيار نوع الخصم', 'error');
+    return;
+  }
+  if (!deductedBy) {
+    showToast('⚠️ حقل "خصم بواسطة" مطلوب', 'error');
+    return;
+  }
+  
+  const payload = {
+    centerName: currentUser.centerName,
+    deductionId: deductionId,
+    date: dateInput,
+    employeeId: employeeId,
+    employeeName: employeeName,
+    month: month,
+    year: year,
+    reason: reason,
+    deductedBy: deductedBy
+  };
+  
+  if (isCash) {
+    payload.deductionType = 'cash';
+    payload.cashUSD = parseFloat(document.getElementById('ded_cashUSD').value) || 0;
+    payload.cashEUR = parseFloat(document.getElementById('ded_cashEUR').value) || 0;
+    payload.cashGBP = parseFloat(document.getElementById('ded_cashGBP').value) || 0;
+    payload.cashLE  = parseFloat(document.getElementById('ded_cashLE').value)  || 0;
+    if (!payload.cashUSD && !payload.cashEUR && !payload.cashGBP && !payload.cashLE) {
+      showToast('⚠️ أدخل مبلغاً واحداً على الأقل', 'error');
+      return;
+    }
+  } else {
+    payload.deductionType = 'days';
+    payload.daysCount = parseFloat(document.getElementById('ded_daysCount').value) || 0;
+    if (payload.daysCount <= 0) {
+      showToast('⚠️ عدد الأيام مطلوب', 'error');
+      return;
+    }
+  }
+  
+  saveBtn.disabled = true;
+  saveBtn.textContent = '⏳ جاري التحديث...';
+  saveBtn.style.opacity = '0.7';
+  
+  try {
+    const result = await jsonp('updateDeduction', payload);
+    
+    if (result && result.success) {
+      showToast('✅ ' + (result.message || 'تم التحديث'), 'success');
+      closeDeductionForm();
+      
+      // ✅ إعادة تحميل التقرير لتحديث البيانات
+      sessionStorage.removeItem(`salary_${month}_${year}_${currentUser.centerId}`);
+      sessionStorage.removeItem(`salary_${month}_${year}_${currentUser.centerId}_time`);
+      await loadReport();
+      
+      // ✅ إعادة فتح المودال إذا كانت الصفحة الحالية هي التقرير
+      setTimeout(() => {
+        if (typeof openCommissionDetails === 'function') {
+          openCommissionDetails(employeeId, employeeName);
+        }
+      }, 1500);
+    } else {
+      showToast('❌ ' + (result?.message || 'فشل التحديث'), 'error');
+    }
+  } catch(e) {
+    console.error('❌ updateDeductionSubmit error:', e);
+    showToast('❌ خطأ: ' + e.message, 'error');
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = '💾 حفظ التعديل';
+    saveBtn.style.opacity = '1';
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// 🗑️ deleteDeduction — حذف خصم (Soft Delete) مع تأكيد
+// ═══════════════════════════════════════════════════════════════════
+async function deleteDeduction(deductionId, employeeId, employeeName) {
+  if (!deductionId) return;
+  
+  // ✅ نافذة تأكيد مخصصة
+  const confirmed = await showConfirmDialog(
+    '🗑️ تأكيد الحذف',
+    `هل أنت متأكد من حذف الخصم "${deductionId}"؟\n\nيمكن استرجاعه لاحقاً من الشيت (Soft Delete).`
+  );
+  
+  if (!confirmed) return;
+  
+  showToast('⏳ جاري الحذف...', 'info');
+  
+  try {
+    const result = await jsonp('cancelDeduction', {
+      centerName: currentUser.centerName,
+      deductionId: deductionId
+    });
+    
+    if (result && result.success) {
+      showToast('✅ تم حذف الخصم بنجاح', 'success');
+      
+      const month = document.getElementById('selMonth').value;
+      const year  = document.getElementById('selYear').value;
+      
+      // ✅ إعادة تحميل التقرير
+      sessionStorage.removeItem(`salary_${month}_${year}_${currentUser.centerId}`);
+      sessionStorage.removeItem(`salary_${month}_${year}_${currentUser.centerId}_time`);
+      await loadReport();
+      
+      // ✅ إعادة فتح المودال
+      setTimeout(() => {
+        if (typeof openCommissionDetails === 'function') {
+          openCommissionDetails(employeeId, employeeName);
+        }
+      }, 1500);
+    } else {
+      showToast('❌ ' + (result?.message || 'فشل الحذف'), 'error');
+    }
+  } catch(e) {
+    console.error('❌ deleteDeduction error:', e);
+    showToast('❌ خطأ: ' + e.message, 'error');
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// ✏️ openEditDeductionForm — فتح فورم الخصم في وضع التعديل
+// ═══════════════════════════════════════════════════════════════════
+async function openEditDeductionForm(deductionId, employeeId, employeeName) {
+  // ✅ جلب بيانات الخصم من tableData
+  const empData = (window.tableData || tableData || []).find(e => 
+    String(e.userId) === String(employeeId)
+  );
+  
+  let deduction = null;
+  if (empData && empData.deductionsDetails) {
+    deduction = empData.deductionsDetails.find(d => d.deductionId === deductionId);
+  }
+  
+  if (!deduction) {
+    showToast('⚠️ لم يتم العثور على بيانات الخصم', 'error');
+    return;
+  }
+  
+  // ✅ فتح فورم الخصم العادي
+  await openDeductionForm();
+  
+  // ✅ تعبئة الفورم ببيانات الخصم
+  setTimeout(() => {
+    // ID الفورم للتعديل
+    let hiddenId = document.getElementById('ded_deductionId');
+    if (!hiddenId) {
+      hiddenId = document.createElement('input');
+      hiddenId.type = 'hidden';
+      hiddenId.id = 'ded_deductionId';
+      document.getElementById('ded_saveBtn').parentElement.parentElement.appendChild(hiddenId);
+    }
+    hiddenId.value = deductionId;
+    
+    // تغيير عنوان الفورم
+    const title = document.querySelector('#deductionFormModal h3');
+    if (title) title.textContent = '✏️ تعديل خصم - ' + deductionId;
+    
+    // تغيير زر الحفظ
+    const saveBtn = document.getElementById('ded_saveBtn');
+    if (saveBtn) {
+      saveBtn.textContent = '💾 حفظ التعديل';
+      saveBtn.onclick = updateDeductionSubmit;
+    }
+    
+    // تعبئة التاريخ
+    const dateInput = document.getElementById('ded_date');
+    if (dateInput && deduction.date) {
+      // تحويل dd/MMM/yyyy إلى YYYY-MM-DD
+      const d = parseDateFromString(deduction.date);
+      if (d) {
+        const iso = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        dateInput.value = iso;
+      }
+    }
+    
+    // تعبئة الشهر والسنة
+    if (document.getElementById('ded_month')) document.getElementById('ded_month').value = deduction.month || '';
+    if (document.getElementById('ded_year'))  document.getElementById('ded_year').value  = deduction.year  || '';
+    
+    // تعبئة الموظف
+    const searchInput = document.getElementById('ded_employee_search');
+    const idInput = document.getElementById('ded_employee_id');
+    const nameInput = document.getElementById('ded_employee_name');
+    const display = document.getElementById('ded_employee_display');
+    
+    if (searchInput) {
+      searchInput.value = employeeName + ' (' + employeeId + ')';
+      searchInput.disabled = true;  // لا يمكن تغيير الموظف في التعديل
+    }
+    if (idInput) idInput.value = employeeId;
+    if (nameInput) nameInput.value = employeeName;
+    if (display) {
+      display.textContent = '✅ الموظف: ' + employeeName + ' (' + employeeId + ')';
+      display.style.display = 'block';
+    }
+    
+    // تعبئة نوع الخصم
+    const cashCb = document.getElementById('ded_type_cash');
+    const daysCb = document.getElementById('ded_type_days');
+    
+    if (deduction.deductionType === 'cash') {
+      if (cashCb) {
+        cashCb.checked = true;
+        onDeductionTypeChange('cash');
+      }
+      if (document.getElementById('ded_cashUSD')) document.getElementById('ded_cashUSD').value = deduction.cashUSD || '';
+      if (document.getElementById('ded_cashEUR')) document.getElementById('ded_cashEUR').value = deduction.cashEUR || '';
+      if (document.getElementById('ded_cashGBP')) document.getElementById('ded_cashGBP').value = deduction.cashGBP || '';
+      if (document.getElementById('ded_cashLE'))  document.getElementById('ded_cashLE').value  = deduction.cashLE  || '';
+    } else if (deduction.deductionType === 'days') {
+      if (daysCb) {
+        daysCb.checked = true;
+        onDeductionTypeChange('days');
+      }
+      if (document.getElementById('ded_daysCount')) document.getElementById('ded_daysCount').value = deduction.daysCount || '';
+    }
+    
+    // تعبئة السبب
+    if (document.getElementById('ded_reason')) document.getElementById('ded_reason').value = deduction.reason || '';
+    
+    // تعبئة خصم بواسطة
+    if (document.getElementById('ded_deductedBy')) document.getElementById('ded_deductedBy').value = deduction.deductedBy || '';
+    
+  }, 100);
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// 📊 exportModalToExcel — تصدير بيانات المودال إلى Excel
+// ═══════════════════════════════════════════════════════════════════
+function exportModalToExcel(userId, employeeName, month, year) {
+  try {
+    const empData = (window.tableData || tableData || []).find(e => 
+      String(e.userId) === String(userId)
+    );
+    
+    if (!empData) {
+      showToast('⚠️ لم يتم العثور على بيانات الموظف', 'error');
+      return;
+    }
+    
+    const monthNames = {
+      'Jan':'يناير','Feb':'فبراير','Mar':'مارس','Apr':'أبريل',
+      'May':'مايو','Jun':'يونيو','Jul':'يوليو','Aug':'أغسطس',
+      'Sep':'سبتمبر','Oct':'أكتوبر','Nov':'نوفمبر','Dec':'ديسمبر'
+    };
+    const monthAr = monthNames[month] || month;
+    
+    // ═══════════════════════════════════════════
+    // 1. بناء HTML Excel
+    // ═══════════════════════════════════════════
+    let html = '';
+    html += '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">';
+    html += '<head><meta charset="UTF-8"><style>';
+    html += 'table{border-collapse:collapse;font-family:Arial,sans-serif;font-size:11px;margin-bottom:20px;}';
+    html += 'th{background:#1a3260;color:#f5c842;padding:8px 6px;border:1px solid #94a3b8;font-weight:bold;text-align:center;}';
+    html += 'td{padding:6px 5px;border:1px solid #cbd5e1;text-align:center;}';
+    html += '.title{background:#0f1f3d;color:#f5c842;font-size:16px;font-weight:bold;padding:14px;text-align:center;}';
+    html += '.subtitle{background:#f1f5f9;padding:10px;text-align:center;font-weight:bold;font-size:12px;color:#0f1f3d;}';
+    html += '.info-summary{background:#dbeafe;padding:10px;text-align:center;font-weight:bold;font-size:12px;color:#1e40af;}';
+    html += '.section-title{background:#1a3260;color:#f5c842;padding:10px;text-align:center;font-weight:bold;font-size:13px;}';
+    html += '.ded-title{background:#7f1d1d;color:#fff;padding:10px;text-align:center;font-weight:bold;font-size:13px;}';
+    html += '.adv-title{background:#7c2d12;color:#fff;padding:10px;text-align:center;font-weight:bold;font-size:13px;}';
+    html += '.deduction-cell{color:#dc2626;font-weight:bold;}';
+    html += '.commission-cell{color:#1b5e20;font-weight:bold;}';
+    html += '.totals-row{background:#dbeafe;font-weight:bold;color:#000;}';
+    html += '</style></head><body>';
+    
+    // ═══════════════════════════════════════════
+    // 2. رأس التقرير
+    // ═══════════════════════════════════════════
+    const TOTAL_COLS = 8;
+    
+    html += '<table border="1">';
+    html += `<tr><td colspan="${TOTAL_COLS}" class="title">👁️ تفاصيل الموظف — ${escHtml(employeeName)}</td></tr>`;
+    html += `<tr><td colspan="${TOTAL_COLS}" class="subtitle">🏢 ${escHtml(currentUser.centerName || '')} &nbsp;|&nbsp; 📅 ${monthAr} / ${year} &nbsp;|&nbsp; 🆔 ${escHtml(userId)}</td></tr>`;
+    html += `<tr><td colspan="${TOTAL_COLS}" class="info-summary">💰 إجمالي العمولات: ${fmt(empData.commission)} LE &nbsp;|&nbsp; ⬇️ إجمالي الخصومات: ${fmt(empData.cuts)} LE &nbsp;|&nbsp; 💵 الصافي المستحق: ${fmt(empData.net)} LE</td></tr>`;
+    html += '</table>';
+    html += '<br>';
+    
+    // ═══════════════════════════════════════════
+    // 3. ملخص الموظف
+    // ═══════════════════════════════════════════
+    html += '<table border="1">';
+    html += `<tr><td colspan="16" class="section-title">📋 ملخص الموظف</td></tr>`;
+    html += '<tr>';
+    ['#','الرقم الوظيفي','الاسم','الوظيفة','أيام الحضور','أيام الغياب','الراتب الأساسي','الراتب المستحق','العمولة','الحافز','الإجمالي','الخصم','التأمينات','صافي بعد الخصم','الدفعة المقدمة','الصافي المستحق'].forEach(h => {
+      html += `<th>${h}</th>`;
+    });
+    html += '</tr>';
+    html += '<tr>';
+    html += `<td>1</td>`;
+    html += `<td>${escHtml(empData.userId)}</td>`;
+    html += `<td>${escHtml(empData.name)}</td>`;
+    html += `<td>${escHtml(empData.position || '—')}</td>`;
+    html += `<td>${empData.workingDays > 0 ? empData.workingDays.toFixed(1) : '—'}</td>`;
+    html += `<td>${empData.absentDays > 0 ? empData.absentDays : '—'}</td>`;
+    html += `<td>${empData.monthlySalary > 0 ? fmt(empData.monthlySalary) : '—'}</td>`;
+    html += `<td>${empData.salaryAmount > 0 ? fmt(empData.salaryAmount) : '—'}</td>`;
+    html += `<td class="commission-cell">${empData.commission > 0 ? fmt(empData.commission) : '—'}</td>`;
+    html += `<td>${empData.bonus > 0 ? fmt(empData.bonus) : '—'}</td>`;
+    html += `<td><strong>${empData.total > 0 ? fmt(empData.total) : '—'}</strong></td>`;
+    html += `<td class="deduction-cell">${empData.cuts > 0 ? fmt(empData.cuts) : '—'}</td>`;
+    html += `<td>${empData.insurance > 0 ? fmt(empData.insurance) : '—'}</td>`;
+    html += `<td>${empData.totalAfterCuts > 0 ? fmt(empData.totalAfterCuts) : '—'}</td>`;
+    html += `<td>${empData.downPaymentLE > 0 ? fmt(empData.downPaymentLE) : '—'}</td>`;
+    html += `<td><strong>${empData.net !== 0 ? fmt(empData.net) : '—'}</strong></td>`;
+    html += '</tr>';
+    html += '</table>';
+    html += '<br>';
+    
+    // ═══════════════════════════════════════════
+    // 4. الفواتير
+    // ═══════════════════════════════════════════
+    if (window._currentInvoices && window._currentInvoices.length > 0) {
+      html += '<table border="1">';
+      html += `<tr><td colspan="7" class="section-title">🧾 الفواتير المؤكدة (${window._currentInvoices.length})</td></tr>`;
+      html += '<tr><th>#</th><th>الإيصال</th><th>التاريخ</th><th>الرحلة</th><th>المدفوع</th><th>%</th><th>العمولة</th></tr>';
+      
+      window._currentInvoices.forEach((inv, idx) => {
+        html += '<tr>';
+        html += `<td>${idx + 1}</td>`;
+        html += `<td>${escHtml(inv.voucherNo || '—')}</td>`;
+        html += `<td>${escHtml(inv.activeDate || '—')}</td>`;
+        html += `<td>${escHtml(inv.trip || '—')}</td>`;
+        html += `<td>${fmt(inv.paymentPrice || 0)} ${escHtml(inv.invoiceCurrency || '')}</td>`;
+        html += `<td>${inv.commissionRate || 0}%</td>`;
+        html += `<td class="commission-cell">${fmt(inv.commission || 0)} LE</td>`;
+        html += '</tr>';
+      });
+      html += '</table>';
+      html += '<br>';
+    }
+    
+    // ═══════════════════════════════════════════
+    // 5. الدفعات المقدمة
+    // ═══════════════════════════════════════════
+    if (window._currentAdvances && window._currentAdvances.length > 0) {
+      html += '<table border="1">';
+      html += `<tr><td colspan="10" class="adv-title">💵 الدفعات المقدمة (${window._currentAdvances.length})</td></tr>`;
+      html += '<tr><th>#</th><th>التاريخ</th><th>التفاصيل</th><th>$</th><th>€</th><th>£</th><th>LE</th><th>Visa$</th><th>Visa€</th><th>Visa£</th></tr>';
+      
+      window._currentAdvances.forEach((adv, idx) => {
+        html += '<tr>';
+        html += `<td>${idx + 1}</td>`;
+        html += `<td>${escHtml(adv.date || '—')}</td>`;
+        html += `<td>${escHtml(adv.details || '—')}</td>`;
+        html += `<td>${adv.usd > 0 ? adv.usd : '—'}</td>`;
+        html += `<td>${adv.eur > 0 ? adv.eur : '—'}</td>`;
+        html += `<td>${adv.gbp > 0 ? adv.gbp : '—'}</td>`;
+        html += `<td>${adv.le > 0 ? adv.le : '—'}</td>`;
+        html += `<td>${adv.vUSD > 0 ? adv.vUSD : '—'}</td>`;
+        html += `<td>${adv.vEUR > 0 ? adv.vEUR : '—'}</td>`;
+        html += `<td>${adv.vGBP > 0 ? adv.vGBP : '—'}</td>`;
+        html += '</tr>';
+      });
+      
+      // صف الإجماليات
+      if (window._advancesTotals) {
+        const t = window._advancesTotals;
+        html += '<tr class="totals-row">';
+        html += `<td colspan="3">الإجمالي</td>`;
+        html += `<td>${t.USD > 0 ? t.USD : '—'}</td>`;
+        html += `<td>${t.EUR > 0 ? t.EUR : '—'}</td>`;
+        html += `<td>${t.GBP > 0 ? t.GBP : '—'}</td>`;
+        html += `<td>${t.LE > 0 ? t.LE : '—'}</td>`;
+        html += `<td>${t.VUSD > 0 ? t.VUSD : '—'}</td>`;
+        html += `<td>${t.VEUR > 0 ? t.VEUR : '—'}</td>`;
+        html += `<td>${t.VGBP > 0 ? t.VGBP : '—'}</td>`;
+        html += '</tr>';
+      }
+      html += '</table>';
+      html += '<br>';
+    }
+    
+    // ═══════════════════════════════════════════
+    // 6. الخصومات
+    // ═══════════════════════════════════════════
+    if (empData.deductionsDetails && empData.deductionsDetails.length > 0) {
+      html += '<table border="1">';
+      html += `<tr><td colspan="6" class="ded-title">⬇️ الخصومات المطبقة (${empData.deductionsDetails.length})</td></tr>`;
+      html += '<tr><th>#</th><th>التاريخ</th><th>النوع</th><th>القيمة</th><th>السبب</th><th>بواسطة</th></tr>';
+      
+      empData.deductionsDetails.forEach((ded, idx) => {
+        let amountText = '';
+        if (ded.computedType === 'cash') {
+          amountText = `${fmt(ded.cashInLE)} LE`;
+          const parts = [];
+          if (ded.cashUSD > 0) parts.push(`${ded.cashUSD}$`);
+          if (ded.cashEUR > 0) parts.push(`${ded.cashEUR}€`);
+          if (ded.cashGBP > 0) parts.push(`${ded.cashGBP}£`);
+          if (ded.cashLE > 0)  parts.push(`${ded.cashLE}LE`);
+          if (parts.length > 0) amountText += ` (${parts.join(' + ')})`;
+        } else {
+          amountText = `${ded.daysCount} يوم`;
+        }
+        
+        html += '<tr>';
+        html += `<td>${idx + 1}</td>`;
+        html += `<td>${escHtml(ded.date || '—')}</td>`;
+        html += `<td>${ded.computedType === 'cash' ? '💵 نقدي' : '📆 أيام'}</td>`;
+        html += `<td class="deduction-cell">${amountText}</td>`;
+        html += `<td>${escHtml(ded.reason || '—')}</td>`;
+        html += `<td>${escHtml(ded.deductedBy || '—')}</td>`;
+        html += '</tr>';
+      });
+      html += '</table>';
+    }
+    
+    html += '</body></html>';
+    
+    // ═══════════════════════════════════════════
+    // 7. التنزيل
+    // ═══════════════════════════════════════════
+    const fileName = `Employee_${userId}_${month}_${year}.xls`;
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    showToast('✅ تم تصدير التقرير بنجاح', 'success');
+    
+  } catch(e) {
+    console.error('❌ exportModalToExcel error:', e);
+    showToast('❌ فشل التصدير: ' + e.message, 'error');
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// 🖨️ printModal — طباعة المودال
+// ═══════════════════════════════════════════════════════════════════
+function printModal(userId, employeeName, month, year) {
+  try {
+    const empData = (window.tableData || tableData || []).find(e => 
+      String(e.userId) === String(userId)
+    );
+    
+    if (!empData) {
+      showToast('⚠️ لم يتم العثور على بيانات الموظف', 'error');
+      return;
+    }
+    
+    const monthNames = {
+      'Jan':'يناير','Feb':'فبراير','Mar':'مارس','Apr':'أبريل',
+      'May':'مايو','Jun':'يونيو','Jul':'يوليو','Aug':'أغسطس',
+      'Sep':'سبتمبر','Oct':'أكتوبر','Nov':'نوفمبر','Dec':'ديسمبر'
+    };
+    const monthAr = monthNames[month] || month;
+    
+    // ═══════════════════════════════════════════
+    // 1. بناء HTML للطباعة
+    // ═══════════════════════════════════════════
+    let html = '<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8">';
+    html += '<title>تقرير الموظف — ' + escHtml(employeeName) + '</title>';
+    html += '<style>';
+    html += '@page{size:A4 landscape;margin:10mm;}';
+    html += '*{margin:0;padding:0;box-sizing:border-box;}';
+    html += 'body{font-family:Arial,sans-serif;direction:rtl;padding:10px;}';
+    html += 'h1{background:#0f1f3d;color:#f5c842;padding:12px;text-align:center;font-size:18px;border-radius:8px;margin-bottom:8px;}';
+    html += '.subtitle{background:#f1f5f9;padding:8px;text-align:center;font-size:12px;color:#0f1f3d;border-radius:6px;margin-bottom:12px;font-weight:bold;}';
+    html += '.summary-bar{background:#dbeafe;padding:10px;text-align:center;font-size:13px;color:#1e40af;border-radius:6px;margin-bottom:15px;font-weight:bold;}';
+    html += 'h3{background:#1a3260;color:#f5c842;padding:8px 12px;font-size:14px;border-radius:6px;margin:15px 0 8px;}';
+    html += 'h3.ded{background:#7f1d1d;color:#fff;}';
+    html += 'h3.adv{background:#7c2d12;color:#fff;}';
+    html += 'table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:12px;}';
+    html += 'th{background:#1a3260;color:#f5c842;padding:6px 4px;border:1px solid #94a3b8;font-weight:bold;}';
+    html += 'td{padding:5px 4px;border:1px solid #cbd5e1;text-align:center;}';
+    html += '.comm-cell{color:#1b5e20;font-weight:bold;}';
+    html += '.ded-cell{color:#dc2626;font-weight:bold;}';
+    html += '.totals-row{background:#dbeafe;font-weight:bold;}';
+    html += '@media print{body{padding:0;}h1{font-size:16px;}}';
+    html += '</style></head><body>';
+    
+    html += '<h1>👁️ تفاصيل الموظف — ' + escHtml(employeeName) + '</h1>';
+    html += '<div class="subtitle">🏢 ' + escHtml(currentUser.centerName || '') + ' &nbsp;|&nbsp; 📅 ' + monthAr + ' / ' + year + ' &nbsp;|&nbsp; 🆔 ' + escHtml(userId) + '</div>';
+    html += '<div class="summary-bar">💰 إجمالي العمولات: ' + fmt(empData.commission) + ' LE &nbsp;|&nbsp; ⬇️ إجمالي الخصومات: ' + fmt(empData.cuts) + ' LE &nbsp;|&nbsp; 💵 الصافي المستحق: ' + fmt(empData.net) + ' LE</div>';
+    
+    // ملخص الموظف
+    html += '<h3>📋 ملخص الموظف</h3>';
+    html += '<table><tr>';
+    ['#','الرقم الوظيفي','الاسم','الوظيفة','أيام الحضور','أيام الغياب','الراتب الأساسي','الراتب المستحق','العمولة','الحافز','الإجمالي','الخصم','التأمينات','صافي بعد الخصم','الدفعة المقدمة','الصافي المستحق'].forEach(h => {
+      html += '<th>' + h + '</th>';
+    });
+    html += '</tr><tr>';
+    html += '<td>1</td>';
+    html += '<td>' + escHtml(empData.userId) + '</td>';
+    html += '<td>' + escHtml(empData.name) + '</td>';
+    html += '<td>' + escHtml(empData.position || '—') + '</td>';
+    html += '<td>' + (empData.workingDays > 0 ? empData.workingDays.toFixed(1) : '—') + '</td>';
+    html += '<td>' + (empData.absentDays > 0 ? empData.absentDays : '—') + '</td>';
+    html += '<td>' + (empData.monthlySalary > 0 ? fmt(empData.monthlySalary) : '—') + '</td>';
+    html += '<td>' + (empData.salaryAmount > 0 ? fmt(empData.salaryAmount) : '—') + '</td>';
+    html += '<td class="comm-cell">' + (empData.commission > 0 ? fmt(empData.commission) : '—') + '</td>';
+    html += '<td>' + (empData.bonus > 0 ? fmt(empData.bonus) : '—') + '</td>';
+    html += '<td><strong>' + (empData.total > 0 ? fmt(empData.total) : '—') + '</strong></td>';
+    html += '<td class="ded-cell">' + (empData.cuts > 0 ? fmt(empData.cuts) : '—') + '</td>';
+    html += '<td>' + (empData.insurance > 0 ? fmt(empData.insurance) : '—') + '</td>';
+    html += '<td>' + (empData.totalAfterCuts > 0 ? fmt(empData.totalAfterCuts) : '—') + '</td>';
+    html += '<td>' + (empData.downPaymentLE > 0 ? fmt(empData.downPaymentLE) : '—') + '</td>';
+    html += '<td><strong>' + (empData.net !== 0 ? fmt(empData.net) : '—') + '</strong></td>';
+    html += '</tr></table>';
+    
+    // الفواتير
+    if (window._currentInvoices && window._currentInvoices.length > 0) {
+      html += '<h3>🧾 الفواتير المؤكدة (' + window._currentInvoices.length + ')</h3>';
+      html += '<table><tr><th>#</th><th>الإيصال</th><th>التاريخ</th><th>الرحلة</th><th>المدفوع</th><th>%</th><th>العمولة</th></tr>';
+      window._currentInvoices.forEach((inv, idx) => {
+        html += '<tr>';
+        html += '<td>' + (idx + 1) + '</td>';
+        html += '<td>' + escHtml(inv.voucherNo || '—') + '</td>';
+        html += '<td>' + escHtml(inv.activeDate || '—') + '</td>';
+        html += '<td>' + escHtml(inv.trip || '—') + '</td>';
+        html += '<td>' + fmt(inv.paymentPrice || 0) + ' ' + escHtml(inv.invoiceCurrency || '') + '</td>';
+        html += '<td>' + (inv.commissionRate || 0) + '%</td>';
+        html += '<td class="comm-cell">' + fmt(inv.commission || 0) + ' LE</td>';
+        html += '</tr>';
+      });
+      html += '</table>';
+    }
+    
+    // الدفعات المقدمة
+    if (window._currentAdvances && window._currentAdvances.length > 0) {
+      html += '<h3 class="adv">💵 الدفعات المقدمة (' + window._currentAdvances.length + ')</h3>';
+      html += '<table><tr><th>#</th><th>التاريخ</th><th>التفاصيل</th><th>$</th><th>€</th><th>£</th><th>LE</th><th>Visa$</th><th>Visa€</th><th>Visa£</th></tr>';
+      window._currentAdvances.forEach((adv, idx) => {
+        html += '<tr>';
+        html += '<td>' + (idx + 1) + '</td>';
+        html += '<td>' + escHtml(adv.date || '—') + '</td>';
+        html += '<td>' + escHtml(adv.details || '—') + '</td>';
+        html += '<td>' + (adv.usd > 0 ? adv.usd : '—') + '</td>';
+        html += '<td>' + (adv.eur > 0 ? adv.eur : '—') + '</td>';
+        html += '<td>' + (adv.gbp > 0 ? adv.gbp : '—') + '</td>';
+        html += '<td>' + (adv.le > 0 ? adv.le : '—') + '</td>';
+        html += '<td>' + (adv.vUSD > 0 ? adv.vUSD : '—') + '</td>';
+        html += '<td>' + (adv.vEUR > 0 ? adv.vEUR : '—') + '</td>';
+        html += '<td>' + (adv.vGBP > 0 ? adv.vGBP : '—') + '</td>';
+        html += '</tr>';
+      });
+      if (window._advancesTotals) {
+        const t = window._advancesTotals;
+        html += '<tr class="totals-row"><td colspan="3">الإجمالي</td>';
+        html += '<td>' + (t.USD > 0 ? t.USD : '—') + '</td>';
+        html += '<td>' + (t.EUR > 0 ? t.EUR : '—') + '</td>';
+        html += '<td>' + (t.GBP > 0 ? t.GBP : '—') + '</td>';
+        html += '<td>' + (t.LE > 0 ? t.LE : '—') + '</td>';
+        html += '<td>' + (t.VUSD > 0 ? t.VUSD : '—') + '</td>';
+        html += '<td>' + (t.VEUR > 0 ? t.VEUR : '—') + '</td>';
+        html += '<td>' + (t.VGBP > 0 ? t.VGBP : '—') + '</td>';
+        html += '</tr>';
+      }
+      html += '</table>';
+    }
+    
+    // الخصومات
+    if (empData.deductionsDetails && empData.deductionsDetails.length > 0) {
+      html += '<h3 class="ded">⬇️ الخصومات المطبقة (' + empData.deductionsDetails.length + ')</h3>';
+      html += '<table><tr><th>#</th><th>التاريخ</th><th>النوع</th><th>القيمة</th><th>السبب</th><th>بواسطة</th></tr>';
+      empData.deductionsDetails.forEach((ded, idx) => {
+        let amountText = '';
+        if (ded.computedType === 'cash') {
+          amountText = fmt(ded.cashInLE) + ' LE';
+        } else {
+          amountText = ded.daysCount + ' يوم';
+        }
+        html += '<tr>';
+        html += '<td>' + (idx + 1) + '</td>';
+        html += '<td>' + escHtml(ded.date || '—') + '</td>';
+        html += '<td>' + (ded.computedType === 'cash' ? '💵 نقدي' : '📆 أيام') + '</td>';
+        html += '<td class="ded-cell">' + amountText + '</td>';
+        html += '<td>' + escHtml(ded.reason || '—') + '</td>';
+        html += '<td>' + escHtml(ded.deductedBy || '—') + '</td>';
+        html += '</tr>';
+      });
+      html += '</table>';
+    }
+    
+    html += '<div style="text-align:center;margin-top:20px;padding:8px;font-size:10px;color:#94a3b8;">تم الطباعة بتاريخ ' + new Date().toLocaleString('ar-EG') + ' — Dive System</div>';
+    html += '</body></html>';
+    
+    // ═══════════════════════════════════════════
+    // 2. فتح نافذة الطباعة
+    // ═══════════════════════════════════════════
+    const printWindow = window.open('', '_blank', 'width=1200,height=800');
+    if (!printWindow) {
+      showToast('⚠️ يرجى السماح بالنوافذ المنبثقة', 'error');
+      return;
+    }
+    
+    printWindow.document.write(html);
+    printWindow.document.close();
+    
+    setTimeout(() => {
+      printWindow.focus();
+      printWindow.print();
+    }, 500);
+    
+  } catch(e) {
+    console.error('❌ printModal error:', e);
+    showToast('❌ فشل الطباعة: ' + e.message, 'error');
+  }
+}
 // ──────────────────────────────────────────────
 // ✅ العودة للصفحة السابقة
 // ──────────────────────────────────────────────
