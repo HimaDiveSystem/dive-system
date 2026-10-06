@@ -426,7 +426,7 @@ function calculateTotalsInEGP(invoices) {
   
 async function calculateBookingData() {
   const total = filteredInvoices.length;
-  const confirmed = filteredInvoices.filter(i => (i.state || '').toLowerCase() === 'confirmed').length;  // ✅ state (صغير)
+  const confirmed = filteredInvoices.filter(i => (i.state || '').toLowerCase() === 'confirmed').length;
   
   const totals = calculateTotalsInEGP(filteredInvoices);
   
@@ -434,24 +434,35 @@ async function calculateBookingData() {
   const coll = totals.totalCollectedEGP;
   const rest = totals.totalRestEGP;
   
+  // ✅ دالة مساعدة لحساب الإيراد بالجنيه المصري
+  function calcRevenueInEGP(inv) {
+    const rate = getDailyRateForDate(inv.activeDate);
+    if (!rate || !rate.cash) return 0;
+    
+    const netAmount = (parseFloat(inv.actualPrice) || 0) - (parseFloat(inv.discount) || 0);
+    const currency = (inv.invoiceCurrency || 'LE').trim();
+    
+    let rev = 0;
+    if (currency === '$') rev = netAmount * (rate.cash.USD || 0);
+    else if (currency === '€') rev = netAmount * (rate.cash.EUR || 0);
+    else if (currency === '£') rev = netAmount * (rate.cash.GBP || 0);
+    else rev = netAmount;
+    
+    return (!isNaN(rev) && isFinite(rev)) ? rev : 0;
+  }
+  
   // تجميع شهري
   const monthlyMap = {};
   for (const inv of filteredInvoices) {
-    const dt = parseDate(inv.activeDate);  // ✅ activeDate (صغير)
-    if (!dt) continue;
+    const dt = parseDate(inv.activeDate);
+    if (!dt || isNaN(dt.getTime())) continue;
+    
     const monthKey = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
     const monthLabel = `${MONTHS[dt.getMonth()]} ${dt.getFullYear()}`;
     if (!monthlyMap[monthKey]) monthlyMap[monthKey] = { label: monthLabel, rev: 0, count: 0 };
     
-    const rate = getDailyRateForDate(inv.activeDate);
-    if (rate) {
-      const netAmount = (parseFloat(inv.actualPrice) || 0) - (parseFloat(inv.discount) || 0);  // ✅ actualPrice, discount (صغير)
-      const currency = inv.invoiceCurrency || 'LE';  // ✅ invoiceCurrency (صغير)
-      let rev = 0;
-      if (currency === '$') rev = netAmount * rate.USD;
-      else if (currency === '€') rev = netAmount * rate.EUR;
-      else if (currency === '£') rev = netAmount * rate.GBP;
-      else rev = netAmount;
+    const rev = calcRevenueInEGP(inv);
+    if (rev > 0 || inv.actualPrice) {
       monthlyMap[monthKey].rev += rev;
       monthlyMap[monthKey].count++;
     }
@@ -462,7 +473,7 @@ async function calculateBookingData() {
   const revData = sortedMonths.map(k => monthlyMap[k].rev);
   const cntData = sortedMonths.map(k => monthlyMap[k].count);
   
-  const highestRevenue = Math.max(...revData, 0);
+  const highestRevenue = revData.length > 0 ? Math.max(...revData) : 0;
   const bestMonthIndex = revData.indexOf(highestRevenue);
   const bestMonthName = bestMonthIndex !== -1 ? labels[bestMonthIndex] : '-';
   const avgMonthly = totalRevenue / (labels.length || 1);
@@ -471,16 +482,9 @@ async function calculateBookingData() {
   // تجميع حسب الرحلة
   const tripMap = {};
   for (const inv of filteredInvoices) {
-    const trip = inv.trip || 'أخرى';  // ✅ trip (صغير)
-    const rate = getDailyRateForDate(inv.activeDate);
-    if (rate) {
-      const netAmount = (parseFloat(inv.actualPrice) || 0) - (parseFloat(inv.discount) || 0);
-      const currency = inv.invoiceCurrency || 'LE';
-      let rev = 0;
-      if (currency === '$') rev = netAmount * rate.USD;
-      else if (currency === '€') rev = netAmount * rate.EUR;
-      else if (currency === '£') rev = netAmount * rate.GBP;
-      else rev = netAmount;
+    const trip = inv.trip || 'أخرى';
+    const rev = calcRevenueInEGP(inv);
+    if (rev > 0) {
       tripMap[trip] = (tripMap[trip] || 0) + rev;
     }
   }
@@ -489,16 +493,9 @@ async function calculateBookingData() {
   // تجميع حسب المندوب
   const salesMap = {};
   for (const inv of filteredInvoices) {
-    const name = inv.salesName || 'غير معروف';  // ✅ salesName (صغير)
-    const rate = getDailyRateForDate(inv.activeDate);
-    if (rate) {
-      const netAmount = (parseFloat(inv.actualPrice) || 0) - (parseFloat(inv.discount) || 0);
-      const currency = inv.invoiceCurrency || 'LE';
-      let rev = 0;
-      if (currency === '$') rev = netAmount * rate.USD;
-      else if (currency === '€') rev = netAmount * rate.EUR;
-      else if (currency === '£') rev = netAmount * rate.GBP;
-      else rev = netAmount;
+    const name = inv.salesName || 'غير معروف';
+    const rev = calcRevenueInEGP(inv);
+    if (rev > 0) {
       salesMap[name] = (salesMap[name] || 0) + rev;
     }
   }
@@ -507,16 +504,9 @@ async function calculateBookingData() {
   // تجميع حسب الفرع
   const branchMap = {};
   for (const inv of filteredInvoices) {
-    const name = inv.branchName || 'المركز الرئيسي';  // ✅ branchName (صغير)
-    const rate = getDailyRateForDate(inv.activeDate);
-    if (rate) {
-      const netAmount = (parseFloat(inv.actualPrice) || 0) - (parseFloat(inv.discount) || 0);
-      const currency = inv.invoiceCurrency || 'LE';
-      let rev = 0;
-      if (currency === '$') rev = netAmount * rate.USD;
-      else if (currency === '€') rev = netAmount * rate.EUR;
-      else if (currency === '£') rev = netAmount * rate.GBP;
-      else rev = netAmount;
+    const name = inv.branchName || 'المركز الرئيسي';
+    const rev = calcRevenueInEGP(inv);
+    if (rev > 0) {
       branchMap[name] = (branchMap[name] || 0) + rev;
     }
   }
@@ -525,16 +515,9 @@ async function calculateBookingData() {
   // تجميع حسب الجنسية
   const natMap = {};
   for (const inv of filteredInvoices) {
-    const nat = inv.nationality || 'أخرى';  // ✅ nationality (صغير)
-    const rate = getDailyRateForDate(inv.activeDate);
-    if (rate) {
-      const netAmount = (parseFloat(inv.actualPrice) || 0) - (parseFloat(inv.discount) || 0);
-      const currency = inv.invoiceCurrency || 'LE';
-      let rev = 0;
-      if (currency === '$') rev = netAmount * rate.USD;
-      else if (currency === '€') rev = netAmount * rate.EUR;
-      else if (currency === '£') rev = netAmount * rate.GBP;
-      else rev = netAmount;
+    const nat = inv.nationality || 'أخرى';
+    const rev = calcRevenueInEGP(inv);
+    if (rev > 0) {
       natMap[nat] = (natMap[nat] || 0) + rev;
     }
   }
