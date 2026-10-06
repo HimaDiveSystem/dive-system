@@ -1359,66 +1359,87 @@ function openCommissionDashboard() {
   // ============================================================
   // ✅ التحميل الأولي
   // ============================================================
-  document.addEventListener('DOMContentLoaded', async function() {
-    // تطبيق الثيم الموحد
-    if (typeof Theme !== 'undefined' && Theme.applyToPage) {
-      Theme.applyToPage();
-      Theme.setPageTitle('لوحة المبيعات');
+document.addEventListener('DOMContentLoaded', async function() {
+  // ✅ حماية من التهيئة المتكررة
+  if (window._pageInitialized) {
+    console.warn('⚠️ الصفحة مهيأة مسبقاً — تجاهل');
+    return;
+  }
+  window._pageInitialized = true;
+  
+  // ✅ تطبيق الثيم
+  if (typeof Theme !== 'undefined' && Theme.applyToPage) {
+    Theme.applyToPage();
+    Theme.setPageTitle('لوحة المبيعات');
+  }
+  
+  // ✅ جلب المستخدم من Session
+  let userData = null;
+  try {
+    userData = Session.getUser();
+  } catch(e) {
+    console.error('❌ فشل جلب المستخدم:', e);
+  }
+  
+  // ✅ إذا لم توجد جلسة → index.html
+  if (!userData || !userData.type) {
+    console.warn('⚠️ لا توجد جلسة صالحة');
+    if (window.Session && window.Session.safeRedirect) {
+      window.Session.safeRedirect('index.html');
     }
+    return;
+  }
+  
+  const userType = (userData.type || '').toString().trim();
+  console.log('👤 نوع المستخدم:', userType);
+  
+  // ✅ التحقق من النوع
+  if (userType !== 'Sales') {
+    console.warn(`⚠️ SalesDashboard: نوع "${userType}" غير مسموح`);
     
-    // التحقق من صحة الجلسة
-    if (!checkSessionValidity()) {
-      return;
-    }
+    const redirectMap = {
+      'Admin':                'Dashboard.html',
+      'Owner':                'OwnerDashboard.html',
+      'Accountant':           'AccountantDashboard.html',
+      'AccountantManager':    'AccountantDashboard.html',
+      'FinancialManager':     'AccountantDashboard.html',
+      'OperationsManager':    'OperationManager.html',
+      'OperationsSupervisor': 'OperationSupervisor.html',
+      'Customer':             'CustomerDashboard.html',
+      'Supplier':             'CustomerDashboard.html'
+    };
     
-    // جلب بيانات المستخدم
-    let userData = null;
-    const storedUser = localStorage.getItem('currentUser');
-    if (storedUser) {
-      try {
-        const parsed = JSON.parse(storedUser);
-        userData = parsed.user;
-      } catch(e) {}
-    }
+    const targetPage = redirectMap[userType] || 'index.html';
+    console.log(`🔀 توجيه إلى: ${targetPage}`);
     
-    if (!userData) {
-      const sessionData = sessionStorage.getItem('currentUser');
-      if (sessionData) {
-        try {
-          userData = JSON.parse(sessionData);
-        } catch(e) {}
-      }
+    if (window.Session && window.Session.safeRedirect) {
+      window.Session.safeRedirect(targetPage);
     }
+    return;
+  }
+  
+  // ✅ المستخدم سيلز صحيح → استمر
+  try {
+    currentUser = userData;
+    document.getElementById('userNameDisplay').textContent = currentUser.name || 'Sales Rep';
     
-    if (!userData) { 
-      window.location.href = 'index.html'; 
-      return; 
+    // استعادة الفرع
+    const savedBranch = sessionStorage.getItem('selectedBranch');
+    if (savedBranch) {
+      selectedBranch = JSON.parse(savedBranch);
+      updateBranchDisplay();
+      showDashboard();
+    } else {
+      await loadUserBranches();
     }
-
-    try {
-      currentUser = userData;
-      document.getElementById('userNameDisplay').textContent = currentUser.name || 'Sales Rep';
-
-      if (currentUser.type !== 'Sales') {
-        const map = { Admin:'Dashboard', Owner:'OwnerDashboard', Accountant:'AccountantDashboard' };
-        window.location.href = (map[currentUser.type] || 'Dashboard') + '.html';
-        return;
-      }
-
-      // استعادة الفرع المحفوظ
-      const savedBranch = sessionStorage.getItem('selectedBranch');
-      if (savedBranch) {
-        selectedBranch = JSON.parse(savedBranch);
-        updateBranchDisplay();
-        showDashboard();
-      } else {
-        await loadUserBranches();
-      }
-    } catch(e) {
-      console.error(e);
-      window.location.href = 'index.html';
+  } catch(e) {
+    console.error('❌ خطأ:', e);
+    if (window.Session && window.Session.safeRedirect) {
+      window.Session.safeRedirect('index.html');
     }
-  });
+  }
+});
+ 
 </script>
 </body>
 </html>
