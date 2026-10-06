@@ -2,6 +2,7 @@
 // session.js - نظام إدارة الجلسة (جلسة لكل تبويب)
 // ============================================================
 // ✅ يعتمد على sessionStorage فقط — جلسة مستقلة لكل تبويب
+// ✅ يستخدم window._redirecting لمنع التوجيه المتكرر
 // ⚠️ مهم: يجب تحميل config.js قبله
 // ============================================================
 
@@ -29,6 +30,20 @@
   };
   
   // ============================================================
+  // ✅ دالة مساعدة: التوجيه الآمن (مرة واحدة فقط)
+  // ============================================================
+  function safeRedirect(url) {
+    if (window._redirecting) {
+      console.log('⚠️ توجيه مرفوض — يوجد توجيه قيد التنفيذ');
+      return false;
+    }
+    window._redirecting = true;
+    console.log('🔀 توجيه آمن إلى:', url);
+    window.location.replace(url);
+    return true;
+  }
+  
+  // ============================================================
   // Session Object
   // ============================================================
   const Session = {
@@ -51,9 +66,7 @@
       
       try {
         // ✅ إعادة تعيين _redirecting
-        if (typeof _redirecting !== 'undefined') {
-          window._redirecting = false;
-        }
+        window._redirecting = false;
         
         // ✅ مسح sessionStorage القديم
         sessionStorage.clear();
@@ -156,10 +169,9 @@
         
         // ✅ لا يوجد مستخدم
         if (!user || !user.type) {
-          if (redirectOnFail && !_redirecting) {
-            _redirecting = true;
+          if (redirectOnFail) {
             this.clear();
-            window.location.href = 'index.html';
+            safeRedirect('index.html');
           }
           return false;
         }
@@ -230,13 +242,17 @@
     // ----------------------------------------------------------
     // 8️⃣ التحقق من نوع المستخدم مع إعادة توجيه
     // ----------------------------------------------------------
+    /**
+     * @param {string[]} allowedTypes
+     * @param {boolean} redirectOnFail
+     * @returns {boolean}
+     */
     checkUserTypeWithRedirect(allowedTypes, redirectOnFail = true) {
       const user = this.getUser();
       
       if (!user || !user.type) {
-        if (redirectOnFail && !_redirecting) {
-          _redirecting = true;
-          window.location.href = 'index.html';
+        if (redirectOnFail) {
+          safeRedirect('index.html');
         }
         return false;
       }
@@ -246,9 +262,11 @@
       const typesArray = Array.isArray(allowedTypes) ? allowedTypes : [allowedTypes];
       if (typesArray.includes(user.type)) return true;
       
-      if (redirectOnFail && !_redirecting) {
-        _redirecting = true;
-        window.location.href = 'index.html';
+      // ✅ المستخدم غير مسموح → توجيه ذكي للصفحة الصحيحة
+      if (redirectOnFail) {
+        const target = CONFIG.DASHBOARD_PAGES[user.type] || 'index.html';
+        console.log(`🔀 نوع "${user.type}" غير مسموح هنا → توجيه إلى: ${target}`);
+        safeRedirect(target);
       }
       return false;
     },
@@ -258,20 +276,20 @@
     // ----------------------------------------------------------
     logout() {
       try {
-        // ✅ مسح sessionStorage فقط (لا نلمس localStorage)
+        // ✅ مسح sessionStorage فقط
         sessionStorage.clear();
         
         console.log('✅ Session.logout() - تم تسجيل الخروج من هذا التبويب');
         
-        // ✅ إعادة توجيه (مرة واحدة فقط)
-        if (!_redirecting) {
-          _redirecting = true;
-          window.location.href = 'index.html';
-        }
+        // ✅ إعادة تعيين _redirecting للتوجيه
+        window._redirecting = false;
+        
+        // ✅ إعادة توجيه آمنة
+        safeRedirect('index.html');
         
       } catch(e) {
         console.error('❌ Session.logout() error:', e);
-        window.location.href = 'index.html';
+        window.location.replace('index.html');
       }
     },
     
@@ -295,7 +313,7 @@
         const user = this.getUser();
         if (!user || !user.type) return;
         
-        // ✅ تحديث expiry فقط (بدون مسح sessionStorage)
+        // ✅ تحديث expiry فقط
         user.expiry = Date.now() + SESSION_CONFIG.DURATION;
         sessionStorage.setItem('currentUser', JSON.stringify(user));
         
@@ -357,6 +375,13 @@
         branchName: user.branchName || '',
         permissionsCount: (user.permissions || []).length
       };
+    },
+    
+    // ----------------------------------------------------------
+    // 1️⃣5️⃣ ✅ دالة التوجيه الآمن (مكشوفة للاستخدام الخارجي)
+    // ----------------------------------------------------------
+    safeRedirect(url) {
+      return safeRedirect(url);
     }
   };
   
