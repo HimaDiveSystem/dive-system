@@ -449,20 +449,54 @@ function setDefaultDates() {
 }
 
 // ============ دوال موحدة للتعامل مع التاريخ ============
+// ============ دوال موحدة للتعامل مع التاريخ ============
+// ✅ تدعم: dd/MMM/yyyy, dd-MMM-yyyy, yyyy-MM-dd, d/M/yyyy
 function parseDate(str) {
   if (!str) return null;
-  const parts = str.split('/');
-  if (parts.length === 3) {
-    const day = parseInt(parts[0]);
-    const monthIndex = MONTHS.findIndex(m => m.toLowerCase() === parts[1].toLowerCase());
-    const year = parseInt(parts[2]);
+  
+  // ✅ إذا كان Date object
+  if (str instanceof Date) return isNaN(str) ? null : str;
+  
+  const s = String(str).trim();
+  if (!s) return null;
+  
+  // ✅ صيغة ISO: 2026-05-01 (من input type="date")
+  const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    return new Date(
+      parseInt(isoMatch[1]),
+      parseInt(isoMatch[2]) - 1,
+      parseInt(isoMatch[3])
+    );
+  }
+  
+  // ✅ صيغة dd/MMM/yyyy أو d/MMM/yyyy
+  const dmyMatch = s.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1]);
+    const monthIndex = MONTHS.findIndex(m => 
+      m.toLowerCase() === dmyMatch[2].toLowerCase()
+    );
+    const year = parseInt(dmyMatch[3]);
     if (!isNaN(day) && monthIndex !== -1 && !isNaN(year)) {
       return new Date(year, monthIndex, day);
     }
   }
-  return null;
+  
+  // ✅ صيغة dd/MM/yyyy أو d/M/yyyy
+  const dmyNumMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (dmyNumMatch) {
+    return new Date(
+      parseInt(dmyNumMatch[3]),
+      parseInt(dmyNumMatch[2]) - 1,
+      parseInt(dmyNumMatch[1])
+    );
+  }
+  
+  // ✅ محاولة أخيرة: Date constructor
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
 }
-
 function formatDate(date) {
   return `${String(date.getDate()).padStart(2,'0')}/${MONTHS[date.getMonth()]}/${date.getFullYear()}`;
 }
@@ -483,27 +517,48 @@ async function preloadExchangeRates(from, to) {
     }
   });
   
-  const datesArray = Array.from(dates);
-  console.log(`💰 تحميل ${datesArray.length} سعر صرف...`);
+  // ✅ فلترة التواريخ غير المخزنة
+  const missingDates = Array.from(dates).filter(d => !exchangeRatesCache[d]);
   
+  if (missingDates.length === 0) {
+    console.log(`✅ جميع الأسعار مخزّنة (${dates.size})`);
+    return;
+  }
+  
+  console.log(`💰 تحميل ${missingDates.length} سعر صرف (من ${dates.size})...`);
+  
+  // ✅ تحميل متوازي (5 في نفس الوقت)
+  const BATCH_SIZE = 5;
   let loaded = 0;
-  for (const dateStr of datesArray) {
-    if (!exchangeRatesCache[dateStr]) {
-      try {
-        const rate = await callGAS('getExchangeRate', { dateStr: dateStr });
-        if (rate) {
-          exchangeRatesCache[dateStr] = rate;
-          loaded++;
+  
+  for (let i = 0; i < missingDates.length; i += BATCH_SIZE) {
+    const batch = missingDates.slice(i, i + BATCH_SIZE);
+    
+    const results = await Promise.all(
+      batch.map(async (dateStr) => {
+        try {
+          const rate = await callGAS('getExchangeRate', { dateStr });
+          return { dateStr, rate };
+        } catch (e) {
+          console.warn(`⚠️ فشل ${dateStr}:`, e.message);
+          return { dateStr, rate: null };
         }
-      } catch(e) {
-        console.warn(`⚠️ فشل تحميل سعر ${dateStr}:`, e.message);
+      })
+    );
+    
+    results.forEach(({ dateStr, rate }) => {
+      if (rate) {
+        exchangeRatesCache[dateStr] = rate;
+        loaded++;
       }
-    }
+    });
+    
+    // ✅ عرض التقدم
+    console.log(`   ⏳ ${Math.min(i + BATCH_SIZE, missingDates.length)}/${missingDates.length}...`);
   }
   
   console.log(`✅ تم تحميل ${loaded} سعر جديد (المجموع: ${Object.keys(exchangeRatesCache).length})`);
 }
-
 // ============ حساب إجمالي الفاتورة بالجنيه المصري ============
 function calculateTotalEGP(inv, rate) {
   if (!rate) return 0;
@@ -770,6 +825,11 @@ function createTips(values, type, total, labels = [], extraData = {}) {
 
 // ============ 1. الرسم البياني اليومي ============
 async function showDailyChart(from, to) {
+  console.log('🔍 showDailyChart START');
+  console.log('   from:', from, '| to:', to);
+  console.log('   from valid?', from instanceof Date && !isNaN(from));
+  console.log('   to valid?', to instanceof Date && !isNaN(to));
+  
   const dailyData = {};
   const dates = [];
   
@@ -779,10 +839,12 @@ async function showDailyChart(from, to) {
     dailyData[dateStr] = 0;
   }
   
-  // ✅ تحميل أسعار الصرف مسبقاً (مرة واحدة)
+  console.log(`   📅 نطاق التواريخ: ${dates.length} يوم (${dates[0]} → ${dates[dates.length-1]})`);
+  
+  // ✅ تحميل أسعار الصرف مسبقاً
   await preloadExchangeRates(from, to);
   
-  // ✅ بدون await في الحلقة
+  let matchedInvoices = 0;
   for (const inv of invoices) {
     const invDate = parseDate(inv.activeDate);
     if (invDate && invDate >= from && invDate <= to) {
@@ -790,13 +852,19 @@ async function showDailyChart(from, to) {
       const rate = getExchangeRateForDate(dateStr);
       if (rate) {
         dailyData[dateStr] += calculateTotalEGP(inv, rate);
+        matchedInvoices++;
       }
     }
   }
   
+  console.log(`   📊 فواتير محسوبة: ${matchedInvoices} من ${invoices.length}`);
+  
   const values = dates.map(d => dailyData[d]);
   const total = values.reduce((a, b) => a + b, 0);
   
+  console.log(`   💰 إجمالي: ${total} EGP`);
+  
+ 
   document.getElementById('analyticsContent').innerHTML = `
     <div class="chart-container">
       <div class="chart-title">📅 Daily Sales (EGP)</div>
