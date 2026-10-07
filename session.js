@@ -30,7 +30,7 @@
   };
   
   // ============================================================
-  // ✅ دالة مساعدة: التوجيه الآمن (مرة واحدة فقط)
+  // ✅ دالة مساعدة: التوجيه الآمن
   // ============================================================
   function safeRedirect(url) {
     if (window._redirecting) {
@@ -49,57 +49,61 @@
   const Session = {
     
     // ----------------------------------------------------------
-    // 1️⃣ توليد معرّف جلسة فريد لكل تبويب
+    // 1️⃣ توليد معرّف جلسة فريد
     // ----------------------------------------------------------
     _generateSessionId() {
       return 'tab_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
     },
     
     // ----------------------------------------------------------
-    // 2️⃣ حفظ بيانات المستخدم (في sessionStorage فقط)
+    // 2️⃣ حفظ بيانات المستخدم (نسخة بسيطة)
     // ----------------------------------------------------------
-   save(user) {
-  if (!user) return;
-  
-  try {
-    window._redirecting = false;
-    sessionStorage.clear();
-    
-    const sessionId = this._generateSessionId();
-    sessionStorage.setItem('sessionId', sessionId);
-    
-    const permissions = user.permissions || [];
-    
-    const userWithMeta = {
-      ...user,
-      permissions: permissions,
-      sessionId: sessionId,
-      expiry: Date.now() + SESSION_CONFIG.DURATION,
-      createdAt: Date.now()
-    };
-    
-    sessionStorage.setItem('currentUser', JSON.stringify(userWithMeta));
-    sessionStorage.setItem('userPermissions', JSON.stringify(permissions));
-    sessionStorage.setItem('userType', userWithMeta.type || '');
-    sessionStorage.setItem('userId', userWithMeta.id || '');
-    sessionStorage.setItem('userName', userWithMeta.name || '');
-    sessionStorage.setItem('centerName', userWithMeta.centerName || '');
-    sessionStorage.setItem('centerId', userWithMeta.centerId || '');
-    sessionStorage.setItem('branchId', userWithMeta.branchId || '');
-    sessionStorage.setItem('branchName', userWithMeta.branchName || '');
-    
-    console.log('✅ Session.save() - تم حفظ الجلسة');
-  } catch(e) {
-    console.error('❌ Session.save() error:', e);
-  }
-}
+    save(user) {
+      if (!user) {
+        console.warn('⚠️ Session.save: محاولة حفظ مستخدم فارغ');
+        return;
+      }
+      
+      try {
+        window._redirecting = false;
+        sessionStorage.clear();
+        
+        const sessionId = this._generateSessionId();
+        sessionStorage.setItem('sessionId', sessionId);
+        
+        const permissions = user.permissions || [];
+        
+        const userWithMeta = {
+          ...user,
+          permissions: permissions,
+          sessionId: sessionId,
+          expiry: Date.now() + SESSION_CONFIG.DURATION,
+          createdAt: Date.now()
+        };
+        
+        sessionStorage.setItem('currentUser', JSON.stringify(userWithMeta));
+        sessionStorage.setItem('userPermissions', JSON.stringify(permissions));
+        sessionStorage.setItem('userType', userWithMeta.type || '');
+        sessionStorage.setItem('userId', userWithMeta.id || '');
+        sessionStorage.setItem('userName', userWithMeta.name || '');
+        sessionStorage.setItem('centerName', userWithMeta.centerName || '');
+        sessionStorage.setItem('centerId', userWithMeta.centerId || '');
+        sessionStorage.setItem('branchId', userWithMeta.branchId || '');
+        sessionStorage.setItem('branchName', userWithMeta.branchName || '');
+        
+        console.log('✅ Session.save() - تم حفظ الجلسة');
+        console.log('   📌 النوع:', userWithMeta.type);
+        
+      } catch(e) {
+        console.error('❌ Session.save() error:', e);
+      }
+    },
     
     // ----------------------------------------------------------
     // 3️⃣ جلب بيانات المستخدم الحالي
     // ----------------------------------------------------------
     getUser() {
       try {
-        // ✅ sessionStorage فقط
         const sessionUser = sessionStorage.getItem('currentUser');
         
         if (!sessionUser) {
@@ -110,19 +114,17 @@
         try {
           user = JSON.parse(sessionUser);
         } catch(e) {
-          console.warn('⚠️ Session.getUser: فشل تحليل JSON، سيتم مسح الجلسة');
+          console.warn('⚠️ Session.getUser: فشل تحليل JSON');
           this.clear();
           return null;
         }
         
-        // ✅ التحقق من انتهاء الصلاحية
         if (user.expiry && Date.now() > user.expiry) {
           console.warn('⚠️ Session.getUser: الجلسة منتهية');
           this.clear();
           return null;
         }
         
-        // ✅ استرجاع الصلاحيات إذا كانت مفقودة
         if (!user.permissions || user.permissions.length === 0) {
           const permStored = sessionStorage.getItem('userPermissions');
           if (permStored) {
@@ -147,15 +149,10 @@
     // ----------------------------------------------------------
     // 4️⃣ التحقق من صحة الجلسة
     // ----------------------------------------------------------
-    /**
-     * @param {boolean} redirectOnFail - هل يتم إعادة التوجيه عند الفشل؟
-     * @returns {boolean}
-     */
     checkValidity(redirectOnFail = true) {
       try {
         const user = this.getUser();
         
-        // ✅ لا يوجد مستخدم
         if (!user || !user.type) {
           if (redirectOnFail) {
             this.clear();
@@ -164,9 +161,7 @@
           return false;
         }
         
-        // ✅ تمديد الجلسة
         this.refresh();
-        
         return true;
         
       } catch(e) {
@@ -182,7 +177,6 @@
       const user = this.getUser();
       if (!user) return false;
       
-      // Admin لديه كل الصلاحيات
       if (user.type === 'Admin') return true;
       
       if (!user.permissions || user.permissions.length === 0) return false;
@@ -193,7 +187,7 @@
     },
     
     // ----------------------------------------------------------
-    // 6️⃣ التحقق من عدة صلاحيات (أي واحدة)
+    // 6️⃣ التحقق من عدة صلاحيات
     // ----------------------------------------------------------
     checkMultiplePermissions(permissions) {
       if (!Array.isArray(permissions) || permissions.length === 0) return false;
@@ -217,7 +211,6 @@
       const user = this.getUser();
       if (!user || !user.type) return false;
       
-      // Admin مسموح دائماً
       if (user.type === 'Admin') return true;
       
       if (!Array.isArray(allowedTypes)) {
@@ -230,11 +223,6 @@
     // ----------------------------------------------------------
     // 8️⃣ التحقق من نوع المستخدم مع إعادة توجيه
     // ----------------------------------------------------------
-    /**
-     * @param {string[]} allowedTypes
-     * @param {boolean} redirectOnFail
-     * @returns {boolean}
-     */
     checkUserTypeWithRedirect(allowedTypes, redirectOnFail = true) {
       const user = this.getUser();
       
@@ -250,10 +238,9 @@
       const typesArray = Array.isArray(allowedTypes) ? allowedTypes : [allowedTypes];
       if (typesArray.includes(user.type)) return true;
       
-      // ✅ المستخدم غير مسموح → توجيه ذكي للصفحة الصحيحة
       if (redirectOnFail) {
         const target = CONFIG.DASHBOARD_PAGES[user.type] || 'index.html';
-        console.log(`🔀 نوع "${user.type}" غير مسموح هنا → توجيه إلى: ${target}`);
+        console.log(`🔀 نوع "${user.type}" غير مسموح → ${target}`);
         safeRedirect(target);
       }
       return false;
@@ -264,18 +251,13 @@
     // ----------------------------------------------------------
     logout() {
       try {
-        // ✅ مسح sessionStorage
         sessionStorage.clear();
-        
-        // ✅ ✅ ✅ امسح الفرع من localStorage أيضاً (لأمان)
         localStorage.removeItem('selectedBranch');
         
-        console.log('✅ Session.logout() - تم تسجيل الخروج من هذا التبويب');
+        console.log('✅ Session.logout() - تم تسجيل الخروج');
         
-        // ✅ إعادة تعيين _redirecting للتوجيه
         window._redirecting = false;
         
-        // ✅ إعادة توجيه آمنة
         if (typeof safeRedirect === 'function') {
           safeRedirect('index.html');
         } else {
@@ -288,7 +270,7 @@
     },
     
     // ----------------------------------------------------------
-    // 🔟 مسح البيانات (بدون إعادة توجيه)
+    // 🔟 مسح البيانات
     // ----------------------------------------------------------
     clear() {
       try {
@@ -307,7 +289,6 @@
         const user = this.getUser();
         if (!user || !user.type) return;
         
-        // ✅ تحديث expiry فقط
         user.expiry = Date.now() + SESSION_CONFIG.DURATION;
         sessionStorage.setItem('currentUser', JSON.stringify(user));
         
@@ -317,7 +298,7 @@
     },
     
     // ----------------------------------------------------------
-    // 1️⃣2️⃣ الحصول على الصلاحيات الحالية
+    // 1️⃣2️⃣ الحصول على الصلاحيات
     // ----------------------------------------------------------
     getPermissions() {
       const user = this.getUser();
@@ -342,7 +323,7 @@
         sessionStorage.setItem('currentUser', JSON.stringify(user));
         sessionStorage.setItem('userPermissions', JSON.stringify(user.permissions));
         
-        console.log('✅ Session.updatePermissions() - تم تحديث الصلاحيات:', user.permissions.length);
+        console.log('✅ Session.updatePermissions()');
         return true;
         
       } catch(e) {
@@ -352,7 +333,7 @@
     },
     
     // ----------------------------------------------------------
-    // 1️⃣4️⃣ الحصول على بيانات مختصرة للمستخدم
+    // 1️⃣4️⃣ بيانات مختصرة
     // ----------------------------------------------------------
     getUserSummary() {
       const user = this.getUser();
@@ -372,7 +353,7 @@
     },
     
     // ----------------------------------------------------------
-    // 1️⃣5️⃣ ✅ دالة التوجيه الآمن (مكشوفة للاستخدام الخارجي)
+    // 1️⃣5️⃣ التوجيه الآمن (مكشوفة)
     // ----------------------------------------------------------
     safeRedirect(url) {
       return safeRedirect(url);
@@ -384,7 +365,7 @@
   // ============================================================
   if (typeof window !== 'undefined') {
     window.Session = Session;
-    console.log('✅ session.js - تم التحميل (جلسة لكل تبويب)');
+    console.log('✅ session.js - تم التحميل');
     console.log('⏱️ مدة الجلسة:', SESSION_CONFIG.DURATION / 1000 / 60 / 60, 'ساعات');
   }
   
