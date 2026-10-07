@@ -420,14 +420,85 @@ let currentTab = 'daily';
 let exchangeRatesCache = {};
 let invoices = [];
 
-// ============ دالة مساعدة للعثور على الدوال ============
-function safeCall(fnName, ...args) {
-  const fn = window[fnName] || eval(fnName);
-  if (typeof fn === 'function') {
-    return fn(...args);
-  } else {
-    console.warn(`⚠️ الدالة ${fnName} غير معرّفة`);
+// ═══════════════════════════════════════════════════════════════════
+// ✅ نظام موحّد للتعامل مع أسعار الصرف
+// ═══════════════════════════════════════════════════════════════════
+
+// ✅ مفتاح موحّد دائماً بصيغة dd/MMM/yyyy
+function dateKey(v) {
+  const d = parseDate(v);
+  return d ? formatDate(d) : null;
+}
+
+let rateTimes = [];            // أوقات التواريخ المتاحة مرتبة
+const rateFallbackMemo = {};
+
+// ✅ تُغذّي الـ Cache وتُحدّث rateTimes
+function ingestRates(ratesArray) {
+  if (!Array.isArray(ratesArray)) return 0;
+  
+  let n = 0;
+  ratesArray.forEach(item => {
+    const key = dateKey(item && item.date);
+    if (!key) return;
+    
+    exchangeRatesCache[key] = {
+      cash: {
+        USD: parseFloat(item.bUSD) || 0, 
+        EUR: parseFloat(item.bEUR) || 0,
+        GBP: parseFloat(item.bGBP) || 0, 
+        LE: parseFloat(item.bLE) || 1
+      },
+      visa: {
+        USD: parseFloat(item.bVUSD) || 0, 
+        EUR: parseFloat(item.bVEUR) || 0,
+        GBP: parseFloat(item.bVGBP) || 0, 
+        LE: parseFloat(item.bVLE) || 1
+      }
+    };
+    n++;
+  });
+  
+  // ✅ ترتيب الأوقات للبحث السريع
+  rateTimes = Object.keys(exchangeRatesCache)
+    .map(k => ({ t: parseDate(k).getTime(), k }))
+    .filter(x => !isNaN(x.t))
+    .sort((a, b) => a.t - b.t);
+  
+  Object.keys(rateFallbackMemo).forEach(k => delete rateFallbackMemo[k]);
+  return n;
+}
+
+// ✅ البحث مع Fallback لأقرب سعر سابق
+function getExchangeRateForDate(dateStr) {
+  const key = dateKey(dateStr);
+  if (!key) return null;
+  
+  // ✅ 1. البحث المباشر
+  if (exchangeRatesCache[key]) return exchangeRatesCache[key];
+  
+  // ✅ 2. Cache الـ Fallback
+  if (key in rateFallbackMemo) return rateFallbackMemo[key];
+  
+  // ✅ 3. أقرب سعر سابق (نفس منطق الخادم)
+  const t = parseDate(key).getTime();
+  if (isNaN(t)) return null;
+  
+  let best = null;
+  for (let i = rateTimes.length - 1; i >= 0; i--) {
+    if (rateTimes[i].t <= t) {
+      best = exchangeRatesCache[rateTimes[i].k];
+      break;
+    }
   }
+  
+  rateFallbackMemo[key] = best;
+  return best;
+}
+
+// ✅ لا حاجة لطلب منفصل — الأسعار تأتي مع البيانات
+async function preloadExchangeRates() { 
+  /* no-op */ 
 }
 
 // ============ تعيين التواريخ الافتراضية ============
@@ -451,7 +522,8 @@ function setDefaultDates() {
     to: formatForInput(today) 
   });
 }
-  // ============ دوال موحدة للتعامل مع التاريخ ============
+
+// ============ دوال موحدة للتعامل مع التاريخ ============
 // ✅ تدعم: dd/MMM/yyyy, dd-MMM-yyyy, yyyy-MM-dd, d/M/yyyy
 function parseDate(str) {
   if (!str) return null;
@@ -499,83 +571,11 @@ function parseDate(str) {
   const d = new Date(s);
   return isNaN(d.getTime()) ? null : d;
 }
+
 function formatDate(date) {
   return `${String(date.getDate()).padStart(2,'0')}/${MONTHS[date.getMonth()]}/${date.getFullYear()}`;
 }
 
-// ============ ✅ جلب سعر صرف (متزامن - من الـ Cache) ============
-function getExchangeRateForDate(dateStr) {
-  return exchangeRatesCache[dateStr] || null;
-}
-
-// ============ ✅ تحميل أسعار الصرف مسبقاً (لتحسين الأداء) ============
-async function preloadExchangeRates(from, to) {
-  // ✅ إذا كان الـ Cache يحوي كل الأسعار → لا حاجة
-  const fromStr = formatDate(from);
-  const toStr = formatDate(to);
-  
-  console.log(`💰 تحميل أسعار الصرف من ${fromStr} إلى ${toStr}...`);
-  
-  try {
-    // ✅ طلب واحد يجلب كل الأسعار في النطاق
-    const ratesArray = await callGAS('getExchangeRatesInRange', {
-      fromDate: fromStr,
-      toDate: toStr,
-      centerName: currentUser?.centerName || ''
-    });
-    
-    if (Array.isArray(ratesArray)) {
-      let loaded = 0;
-      ratesArray.forEach(item => {
-        if (item && item.date) {
-          // ✅ تحويل البيانات إلى الشكل المتوقع: { cash: {...}, visa: {...} }
-          exchangeRatesCache[item.date] = {
-            cash: {
-              USD: parseFloat(item.bUSD) || 0,
-              EUR: parseFloat(item.bEUR) || 0,
-              GBP: parseFloat(item.bGBP) || 0,
-              LE:  parseFloat(item.bLE) || 1
-            },
-            visa: {
-              USD: parseFloat(item.bVUSD) || 0,
-              EUR: parseFloat(item.bVEUR) || 0,
-              GBP: parseFloat(item.bVGBP) || 0,
-              LE:  parseFloat(item.bVLE) || 1
-            }
-          };
-          loaded++;
-        }
-      });
-      
-      console.log(`✅ تم تحميل ${loaded} سعر صرف بطلب واحد! (المجموع: ${Object.keys(exchangeRatesCache).length})`);
-    } else {
-      console.warn('⚠️ getExchangeRatesInRange لم تُرجع مصفوفة');
-    }
-  } catch (e) {
-    console.error('❌ فشل تحميل أسعار الصرف:', e);
-    
-    // ⚠️ Fallback: التحميل الفردي (بطيء لكن يعمل)
-    console.log('🔄 محاولة التحميل الفردي...');
-    const dates = new Set();
-    invoices.forEach(inv => {
-      const invDate = parseDate(inv.activeDate);
-      if (invDate && invDate >= from && invDate <= to) {
-        dates.add(formatDate(invDate));
-      }
-    });
-    
-    for (const dateStr of dates) {
-      if (!exchangeRatesCache[dateStr]) {
-        try {
-          const rate = await callGAS('getExchangeRate', { dateStr });
-          if (rate) exchangeRatesCache[dateStr] = rate;
-        } catch (err) {
-          console.warn(`⚠️ فشل ${dateStr}:`, err.message);
-        }
-      }
-    }
-  }
-}
 // ============ حساب إجمالي الفاتورة بالجنيه المصري ============
 function calculateTotalEGP(inv, rate) {
   if (!rate) return 0;
@@ -595,69 +595,55 @@ function calculateTotalEGP(inv, rate) {
   return total;
 }
 
-// ============ تحميل البيانات ============
-// ============ تحميل البيانات ============
+// ═══════════════════════════════════════════════════════════════════
+// ✅ loadData — طلب واحد خفيف (فواتير + أسعار)
+// ═══════════════════════════════════════════════════════════════════
 async function loadData() {
   try {
-    // ✅ التحقق من وجود centerName
     if (!currentUser || !currentUser.centerName) {
-      console.error('❌ لا يوجد centerName');
-      document.getElementById('analyticsContent').innerHTML = 
+      document.getElementById('analyticsContent').innerHTML =
         '<div class="no-data">⚠️ لم يتم تحديد المركز. الرجاء تسجيل الدخول مرة أخرى.</div>';
       return;
     }
-    
-    console.log('📥 تحميل الفواتير...');
+
+    const t0 = Date.now();
+    console.log('📥 تحميل البيانات...');
     console.log('   Center:', currentUser.centerName);
     console.log('   User ID:', currentUser.id);
-    console.log('   User Name:', currentUser.name);
-    
-    const startTime = Date.now();
-    
-    // ✅ استخدام callGAS من config.js
-    const invData = await callGAS('getAllInvoices', {
+
+    // ✅ طلب واحد خفيف (فواتير + أسعار)
+    const res = await callGAS('getSalesAnalyticsData', {
       centerName: currentUser.centerName,
-      includeCollection: 'false'
+      salesId: currentUser.id
     });
+
+    if (!res || !res.success) {
+      throw new Error((res && res.message) || 'فشل جلب البيانات');
+    }
+
+    invoices = res.invoices || [];
+    const nRates = ingestRates(res.rates);
     
-    const duration = Date.now() - startTime;
-    
-    // ✅ تحقق من النتيجة
-    invoices = Array.isArray(invData) ? invData : [];
-    
-    console.log(`📊 إجمالي الفواتير: ${invoices.length} (تم التحميل في ${duration}ms)`);
-    
-    // ✅ فلترة حسب المستخدم
-    const beforeFilter = invoices.length;
-    invoices = invoices.filter(inv => 
-      inv.salesId && inv.salesId.toString() === currentUser.id
-    );
-    const afterFilter = invoices.length;
-    
-    console.log(`📊 فواتير السيلز: ${afterFilter} (تم استبعاد ${beforeFilter - afterFilter})`);
-    
-    // ✅ ✅ ✅ الإضافة الجديدة: تعيين نطاق تاريخ تلقائي
+    const duration = Date.now() - t0;
+    console.log(`✅ ${invoices.length} فاتورة + ${nRates} سعر صرف في ${duration}ms`);
+
     if (invoices.length > 0) {
       autoSetDateRangeFromInvoices();
     } else {
       console.warn('⚠️ لا توجد فواتير لهذا السيلز');
     }
     
-    // ✅ تحميل التحليلات
     loadAnalytics();
-    
+
   } catch (error) {
     console.error('❌ خطأ:', error);
-    document.getElementById('analyticsContent').innerHTML = 
+    document.getElementById('analyticsContent').innerHTML =
       `<div class="no-data">خطأ في تحميل البيانات: ${error.message}</div>`;
   }
 }
 
 // ═══════════════════════════════════════════════════════════════════
 // ✅ autoSetDateRangeFromInvoices — تعيين نطاق التاريخ تلقائياً
-// ═══════════════════════════════════════════════════════════════════
-// 📌 يجد أقدم وأحدث فاتورة ويُعيّن الفلتر عليهما
-// 📌 يضمن عرض جميع فواتير السيلز افتراضياً
 // ═══════════════════════════════════════════════════════════════════
 function autoSetDateRangeFromInvoices() {
   if (!invoices || invoices.length === 0) {
@@ -717,9 +703,15 @@ async function loadAnalytics() {
   
   if (!fromDate || !toDate) return;
   
-  // ✅ ضبط الساعات لتجنب مشاكل التوقيت
-  const from = new Date(fromDate);
-  const to = new Date(toDate);
+  // ✅ استخدام parseDate (تدعم ISO و dd/MMM/yyyy)
+  const from = parseDate(fromDate);
+  const to = parseDate(toDate);
+  
+  if (!from || !to) {
+    console.warn('⚠️ تواريخ غير صالحة:', fromDate, toDate);
+    return;
+  }
+  
   from.setHours(0, 0, 0, 0);
   to.setHours(23, 59, 59, 999);
   
@@ -912,9 +904,9 @@ function createTips(values, type, total, labels = [], extraData = {}) {
 // ============ 1. الرسم البياني اليومي ============
 async function showDailyChart(from, to) {
   console.log('🔍 showDailyChart START');
-  console.log('   📅 from:', formatDate(from));
-  console.log('   📅 to:', formatDate(to));
-  console.log('   📊 invoices:', invoices.length);
+  console.log(`   📅 from: ${formatDate(from)}`);
+  console.log(`   📅 to: ${formatDate(to)}`);
+  console.log(`   📊 invoices: ${invoices.length}`);
   
   const dailyData = {};
   const dates = [];
@@ -928,12 +920,11 @@ async function showDailyChart(from, to) {
   console.log(`   📅 نطاق التواريخ: ${dates.length} يوم`);
   console.log(`   📅 ${dates[0]} → ${dates[dates.length-1]}`);
   
-  // ✅ تحميل الأسعار
-  await preloadExchangeRates(from, to);
-  
+  // ✅ الأسعار محمّلة بالفعل في الـ Cache
   let matchedCount = 0;
   let skippedNoRate = 0;
   let skippedOutOfRange = 0;
+  const skippedInvoices = [];  // ✅ للتنبيه
   
   for (const inv of invoices) {
     const invDate = parseDate(inv.activeDate);
@@ -946,8 +937,12 @@ async function showDailyChart(from, to) {
     
     const dateStr = formatDate(invDate);
     const rate = getExchangeRateForDate(dateStr);
+    
     if (!rate) {
       skippedNoRate++;
+      if (skippedInvoices.length < 5) {
+        skippedInvoices.push(`${inv.voucherNo} (${inv.activeDate})`);
+      }
       continue;
     }
     
@@ -959,12 +954,15 @@ async function showDailyChart(from, to) {
   console.log(`   ⏭️ خارج النطاق: ${skippedOutOfRange}`);
   console.log(`   ⚠️ بدون سعر صرف: ${skippedNoRate}`);
   
+  if (skippedNoRate > 0) {
+    console.warn(`   ⚠️ فواتير بدون سعر صرف (أول 5):`, skippedInvoices);
+  }
+  
   const values = dates.map(d => dailyData[d]);
   const total = values.reduce((a, b) => a + b, 0);
   
   console.log(`   💰 الإجمالي: ${total} EGP`);
-    
- 
+
   document.getElementById('analyticsContent').innerHTML = `
     <div class="chart-container">
       <div class="chart-title">📅 Daily Sales (EGP)</div>
@@ -1019,15 +1017,13 @@ async function showMonthlyChart(from, to) {
   const monthlyData = {};
   const months = [];
   
-  for (let d = new Date(from); d <= to; d.setMonth(d.getMonth() + 1)) {
+  // ✅ ابدأ من أول الشهر (لتجنب مشكلة setMonth في أيام 29-31)
+  for (let d = new Date(from.getFullYear(), from.getMonth(), 1); d <= to; d.setMonth(d.getMonth() + 1)) {
     const monthStr = `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
     months.push(monthStr);
     monthlyData[monthStr] = 0;
   }
-  
-  // ✅ تحميل أسعار الصرف مسبقاً
-  await preloadExchangeRates(from, to);
-  
+
   for (const inv of invoices) {
     const invDate = parseDate(inv.activeDate);
     if (invDate && invDate >= from && invDate <= to) {
@@ -1096,9 +1092,6 @@ async function showMonthlyChart(from, to) {
 // ============ 3. الرسم حسب الرحلات ============
 async function showTripsChart(from, to) {
   const tripsData = {};
-  
-  // ✅ تحميل أسعار الصرف مسبقاً
-  await preloadExchangeRates(from, to);
   
   for (const inv of invoices) {
     const invDate = parseDate(inv.activeDate);
@@ -1171,9 +1164,6 @@ async function showTripsChart(from, to) {
 // ============ 4. الرسم حسب الجنسيات ============
 async function showNationalitiesChart(from, to) {
   const natData = {};
-  
-  // ✅ تحميل أسعار الصرف مسبقاً
-  await preloadExchangeRates(from, to);
   
   for (const inv of invoices) {
     const invDate = parseDate(inv.activeDate);
@@ -1257,9 +1247,6 @@ async function showCommissionChart(from, to) {
   
   // حساب إجمالي المبيعات لنفس الفترة
   let totalSales = 0;
-  
-  // ✅ تحميل أسعار الصرف مسبقاً
-  await preloadExchangeRates(from, to);
   
   invoices.forEach(inv => {
     const invDate = parseDate(inv.activeDate);
