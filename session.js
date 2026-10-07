@@ -58,67 +58,41 @@
     // ----------------------------------------------------------
     // 2️⃣ حفظ بيانات المستخدم (في sessionStorage فقط)
     // ----------------------------------------------------------
-    save(user) {
-      if (!user) {
-        console.warn('⚠️ Session.save: محاولة حفظ مستخدم فارغ');
-        return;
-      }
-      
-      try {
-        // ✅ ✅ ✅ احفظ القيم المهمة قبل المسح
-        const savedBranch = sessionStorage.getItem('selectedBranch');
-        const selectedData = sessionStorage.getItem('selectedData');
-        
-        // ✅ إعادة تعيين _redirecting
-        window._redirecting = false;
-        
-        // ✅ مسح sessionStorage القديم
-        sessionStorage.clear();
-        
-        // ✅ ✅ ✅ استعد القيم المهمة بعد المسح
-        if (savedBranch) {
-          sessionStorage.setItem('selectedBranch', savedBranch);
-          console.log('   🌿 تم استعادة الفرع:', savedBranch);
-        }
-        if (selectedData) {
-          sessionStorage.setItem('selectedData', selectedData);
-        }
-        
-        // ✅ إنشاء sessionId جديد
-        const sessionId = this._generateSessionId();
-        sessionStorage.setItem('sessionId', sessionId);
-        
-        const permissions = user.permissions || [];
-        
-        const userWithMeta = {
-          ...user,
-          permissions: permissions,
-          sessionId: sessionId,
-          expiry: Date.now() + SESSION_CONFIG.DURATION,
-          createdAt: Date.now()
-        };
-        
-        // ✅ حفظ كل شيء في sessionStorage
-        sessionStorage.setItem('currentUser', JSON.stringify(userWithMeta));
-        sessionStorage.setItem('userPermissions', JSON.stringify(permissions));
-        sessionStorage.setItem('userType', userWithMeta.type || '');
-        sessionStorage.setItem('userId', userWithMeta.id || '');
-        sessionStorage.setItem('userName', userWithMeta.name || '');
-        sessionStorage.setItem('centerName', userWithMeta.centerName || '');
-        sessionStorage.setItem('centerId', userWithMeta.centerId || '');
-        sessionStorage.setItem('branchId', userWithMeta.branchId || '');
-        sessionStorage.setItem('branchName', userWithMeta.branchName || '');
-        
-        console.log('✅ Session.save() - تم حفظ الجلسة لهذا التبويب فقط');
-        console.log('   📌 النوع:', userWithMeta.type);
-        console.log('   📋 الصلاحيات:', permissions.length);
-        console.log('   🆔 sessionId:', sessionId);
-        console.log('   🌿 الفرع:', savedBranch ? '✅ محفوظ' : '⚠️ غير محدد');
-        
-      } catch(e) {
-        console.error('❌ Session.save() error:', e);
-      }
-    },
+   save(user) {
+  if (!user) return;
+  
+  try {
+    window._redirecting = false;
+    sessionStorage.clear();
+    
+    const sessionId = this._generateSessionId();
+    sessionStorage.setItem('sessionId', sessionId);
+    
+    const permissions = user.permissions || [];
+    
+    const userWithMeta = {
+      ...user,
+      permissions: permissions,
+      sessionId: sessionId,
+      expiry: Date.now() + SESSION_CONFIG.DURATION,
+      createdAt: Date.now()
+    };
+    
+    sessionStorage.setItem('currentUser', JSON.stringify(userWithMeta));
+    sessionStorage.setItem('userPermissions', JSON.stringify(permissions));
+    sessionStorage.setItem('userType', userWithMeta.type || '');
+    sessionStorage.setItem('userId', userWithMeta.id || '');
+    sessionStorage.setItem('userName', userWithMeta.name || '');
+    sessionStorage.setItem('centerName', userWithMeta.centerName || '');
+    sessionStorage.setItem('centerId', userWithMeta.centerId || '');
+    sessionStorage.setItem('branchId', userWithMeta.branchId || '');
+    sessionStorage.setItem('branchName', userWithMeta.branchName || '');
+    
+    console.log('✅ Session.save() - تم حفظ الجلسة');
+  } catch(e) {
+    console.error('❌ Session.save() error:', e);
+  }
+}
     
     // ----------------------------------------------------------
     // 3️⃣ جلب بيانات المستخدم الحالي
