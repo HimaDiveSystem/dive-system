@@ -433,23 +433,25 @@ function safeCall(fnName, ...args) {
 // ============ تعيين التواريخ الافتراضية ============
 function setDefaultDates() {
   const today = new Date();
-  const year = today.getFullYear();
-  const month = String(today.getMonth() + 1).padStart(2, '0');
-  const day = String(today.getDate()).padStart(2, '0');
-  const todayStr = `${year}-${month}-${day}`;
-  
-  // أول يوم في الشهر الحالي
   const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-  const firstDayStr = firstDay.toISOString().split('T')[0];
   
-  document.getElementById('filterDateFrom').value = firstDayStr;
-  document.getElementById('filterDateTo').value = todayStr;
+  // ✅ تنسيق محلي (لا UTC)
+  const formatForInput = (d) => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
   
-  console.log('📅 تواريخ اليوم:', { from: firstDayStr, to: todayStr });
+  document.getElementById('filterDateFrom').value = formatForInput(firstDay);
+  document.getElementById('filterDateTo').value = formatForInput(today);
+  
+  console.log('📅 تواريخ اليوم:', { 
+    from: formatForInput(firstDay), 
+    to: formatForInput(today) 
+  });
 }
-
-// ============ دوال موحدة للتعامل مع التاريخ ============
-// ============ دوال موحدة للتعامل مع التاريخ ============
+  // ============ دوال موحدة للتعامل مع التاريخ ============
 // ✅ تدعم: dd/MMM/yyyy, dd-MMM-yyyy, yyyy-MM-dd, d/M/yyyy
 function parseDate(str) {
   if (!str) return null;
@@ -508,56 +510,71 @@ function getExchangeRateForDate(dateStr) {
 
 // ============ ✅ تحميل أسعار الصرف مسبقاً (لتحسين الأداء) ============
 async function preloadExchangeRates(from, to) {
-  const dates = new Set();
+  // ✅ إذا كان الـ Cache يحوي كل الأسعار → لا حاجة
+  const fromStr = formatDate(from);
+  const toStr = formatDate(to);
   
-  invoices.forEach(inv => {
-    const invDate = parseDate(inv.activeDate);
-    if (invDate && invDate >= from && invDate <= to) {
-      dates.add(formatDate(invDate));
-    }
-  });
+  console.log(`💰 تحميل أسعار الصرف من ${fromStr} إلى ${toStr}...`);
   
-  // ✅ فلترة التواريخ غير المخزنة
-  const missingDates = Array.from(dates).filter(d => !exchangeRatesCache[d]);
-  
-  if (missingDates.length === 0) {
-    console.log(`✅ جميع الأسعار مخزّنة (${dates.size})`);
-    return;
-  }
-  
-  console.log(`💰 تحميل ${missingDates.length} سعر صرف (من ${dates.size})...`);
-  
-  // ✅ تحميل متوازي (5 في نفس الوقت)
-  const BATCH_SIZE = 5;
-  let loaded = 0;
-  
-  for (let i = 0; i < missingDates.length; i += BATCH_SIZE) {
-    const batch = missingDates.slice(i, i + BATCH_SIZE);
+  try {
+    // ✅ طلب واحد يجلب كل الأسعار في النطاق
+    const ratesArray = await callGAS('getExchangeRatesInRange', {
+      fromDate: fromStr,
+      toDate: toStr,
+      centerName: currentUser?.centerName || ''
+    });
     
-    const results = await Promise.all(
-      batch.map(async (dateStr) => {
-        try {
-          const rate = await callGAS('getExchangeRate', { dateStr });
-          return { dateStr, rate };
-        } catch (e) {
-          console.warn(`⚠️ فشل ${dateStr}:`, e.message);
-          return { dateStr, rate: null };
+    if (Array.isArray(ratesArray)) {
+      let loaded = 0;
+      ratesArray.forEach(item => {
+        if (item && item.date) {
+          // ✅ تحويل البيانات إلى الشكل المتوقع: { cash: {...}, visa: {...} }
+          exchangeRatesCache[item.date] = {
+            cash: {
+              USD: parseFloat(item.bUSD) || 0,
+              EUR: parseFloat(item.bEUR) || 0,
+              GBP: parseFloat(item.bGBP) || 0,
+              LE:  parseFloat(item.bLE) || 1
+            },
+            visa: {
+              USD: parseFloat(item.bVUSD) || 0,
+              EUR: parseFloat(item.bVEUR) || 0,
+              GBP: parseFloat(item.bVGBP) || 0,
+              LE:  parseFloat(item.bVLE) || 1
+            }
+          };
+          loaded++;
         }
-      })
-    );
+      });
+      
+      console.log(`✅ تم تحميل ${loaded} سعر صرف بطلب واحد! (المجموع: ${Object.keys(exchangeRatesCache).length})`);
+    } else {
+      console.warn('⚠️ getExchangeRatesInRange لم تُرجع مصفوفة');
+    }
+  } catch (e) {
+    console.error('❌ فشل تحميل أسعار الصرف:', e);
     
-    results.forEach(({ dateStr, rate }) => {
-      if (rate) {
-        exchangeRatesCache[dateStr] = rate;
-        loaded++;
+    // ⚠️ Fallback: التحميل الفردي (بطيء لكن يعمل)
+    console.log('🔄 محاولة التحميل الفردي...');
+    const dates = new Set();
+    invoices.forEach(inv => {
+      const invDate = parseDate(inv.activeDate);
+      if (invDate && invDate >= from && invDate <= to) {
+        dates.add(formatDate(invDate));
       }
     });
     
-    // ✅ عرض التقدم
-    console.log(`   ⏳ ${Math.min(i + BATCH_SIZE, missingDates.length)}/${missingDates.length}...`);
+    for (const dateStr of dates) {
+      if (!exchangeRatesCache[dateStr]) {
+        try {
+          const rate = await callGAS('getExchangeRate', { dateStr });
+          if (rate) exchangeRatesCache[dateStr] = rate;
+        } catch (err) {
+          console.warn(`⚠️ فشل ${dateStr}:`, err.message);
+        }
+      }
+    }
   }
-  
-  console.log(`✅ تم تحميل ${loaded} سعر جديد (المجموع: ${Object.keys(exchangeRatesCache).length})`);
 }
 // ============ حساب إجمالي الفاتورة بالجنيه المصري ============
 function calculateTotalEGP(inv, rate) {
