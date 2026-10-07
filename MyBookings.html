@@ -690,26 +690,60 @@ let ftimer = null;
 // ============================================================
 function checkSessionValidity() {
   try {
-    const stored = localStorage.getItem('currentUser');
+    // ✅ اقرأ من sessionStorage أولاً
+    let stored = sessionStorage.getItem('currentUser');
+    
+    // ✅ Fallback إلى localStorage
     if (!stored) {
+      stored = localStorage.getItem('currentUser');
+    }
+    
+    if (!stored) {
+      console.warn('⚠️ لا توجد جلسة');
       window.location.href = 'index.html';
       return false;
     }
-    const data = JSON.parse(stored);
-    if (data.expiry && Date.now() < data.expiry) {
+    
+    // ✅ حاول تحليل البيانات
+    let data;
+    try {
+      data = JSON.parse(stored);
+    } catch(e) {
+      console.warn('⚠️ فشل تحليل الجلسة');
+      window.location.href = 'index.html';
+      return false;
+    }
+    
+    // ✅ التعامل مع شكلين مختلفين:
+    // 1. { user: {...}, expiry: <timestamp> }  ← من المحاسب
+    // 2. { id, name, type, ..., expiry }        ← من session.js
+    const user = data.user || data;
+    const expiry = data.expiry || user.expiry;
+    
+    // ✅ إذا لم يوجد expiry → اعتبرها صالحة
+    if (!expiry) {
+      console.log('✅ جلسة بدون expiry — تُعتبر صالحة');
       return true;
-    } else {
-      localStorage.removeItem('currentUser');
+    }
+    
+    // ✅ إذا انتهت المدة
+    if (Date.now() > expiry) {
+      console.warn('⚠️ الجلسة منتهية');
       sessionStorage.clear();
+      localStorage.removeItem('currentUser');
       window.location.href = 'index.html';
       return false;
     }
+    
+    console.log('✅ الجلسة صالحة');
+    return true;
+    
   } catch(e) {
+    console.error('❌ خطأ في checkSessionValidity:', e);
     window.location.href = 'index.html';
     return false;
   }
 }
-
 // ============================================================
 // DATE HELPERS
 // ============================================================
@@ -1237,19 +1271,47 @@ document.addEventListener('DOMContentLoaded', () => {
     return;
   }
   
-  // ✅ جلب بيانات المستخدم
-  let ud = sessionStorage.getItem('currentUser');
-  if (!ud) {
-    const p = new URLSearchParams(location.search).get('user');
-    if (p) {
-      ud = decodeURIComponent(p);
+// ✅ جلب بيانات المستخدم
+let ud = sessionStorage.getItem('currentUser');
+
+// ✅ Fallback إلى localStorage
+if (!ud) {
+  const stored = localStorage.getItem('currentUser');
+  if (stored) {
+    try {
+      const data = JSON.parse(stored);
+      const user = data.user || data;
+      ud = JSON.stringify(user);
       sessionStorage.setItem('currentUser', ud);
+    } catch(e) {
+      console.warn('⚠️ فشل تحليل localStorage.currentUser');
     }
   }
-  if (!ud) {
-    location.href = 'index.html';
-    return;
+}
+
+// ✅ Fallback أخير: URL parameter
+if (!ud) {
+  const p = new URLSearchParams(location.search).get('user');
+  if (p) {
+    ud = decodeURIComponent(p);
+    sessionStorage.setItem('currentUser', ud);
   }
+}
+
+if (!ud) {
+  console.warn('⚠️ لا يوجد مستخدم');
+  location.href = 'index.html';
+  return;
+}
+
+try {
+  const parsed = JSON.parse(ud);
+  currentUser = parsed.user || parsed;  // ✅ التعامل مع الشكلين
+} catch(e) {
+  console.error('❌ فشل تحليل بيانات المستخدم:', e);
+  location.href = 'index.html';
+  return;
+}
   
   try {
     currentUser = JSON.parse(ud);
