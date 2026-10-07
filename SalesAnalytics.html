@@ -435,7 +435,7 @@ function setDefaultDates() {
   const today = new Date();
   const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
   
-  // ✅ تنسيق محلي (لا UTC)
+  // ✅ تنسيق محلي
   const formatForInput = (d) => {
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -596,6 +596,7 @@ function calculateTotalEGP(inv, rate) {
 }
 
 // ============ تحميل البيانات ============
+// ============ تحميل البيانات ============
 async function loadData() {
   try {
     // ✅ التحقق من وجود centerName
@@ -609,6 +610,9 @@ async function loadData() {
     console.log('📥 تحميل الفواتير...');
     console.log('   Center:', currentUser.centerName);
     console.log('   User ID:', currentUser.id);
+    console.log('   User Name:', currentUser.name);
+    
+    const startTime = Date.now();
     
     // ✅ استخدام callGAS من config.js
     const invData = await callGAS('getAllInvoices', {
@@ -616,24 +620,80 @@ async function loadData() {
       includeCollection: 'false'
     });
     
+    const duration = Date.now() - startTime;
+    
     // ✅ تحقق من النتيجة
     invoices = Array.isArray(invData) ? invData : [];
     
-    console.log('📊 إجمالي الفواتير:', invoices.length);
+    console.log(`📊 إجمالي الفواتير: ${invoices.length} (تم التحميل في ${duration}ms)`);
     
     // ✅ فلترة حسب المستخدم
+    const beforeFilter = invoices.length;
     invoices = invoices.filter(inv => 
       inv.salesId && inv.salesId.toString() === currentUser.id
     );
+    const afterFilter = invoices.length;
     
-    console.log('📊 فواتير السيلز:', invoices.length);
+    console.log(`📊 فواتير السيلز: ${afterFilter} (تم استبعاد ${beforeFilter - afterFilter})`);
     
+    // ✅ ✅ ✅ الإضافة الجديدة: تعيين نطاق تاريخ تلقائي
+    if (invoices.length > 0) {
+      autoSetDateRangeFromInvoices();
+    } else {
+      console.warn('⚠️ لا توجد فواتير لهذا السيلز');
+    }
+    
+    // ✅ تحميل التحليلات
     loadAnalytics();
+    
   } catch (error) {
     console.error('❌ خطأ:', error);
     document.getElementById('analyticsContent').innerHTML = 
       `<div class="no-data">خطأ في تحميل البيانات: ${error.message}</div>`;
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ✅ autoSetDateRangeFromInvoices — تعيين نطاق التاريخ تلقائياً
+// ═══════════════════════════════════════════════════════════════════
+// 📌 يجد أقدم وأحدث فاتورة ويُعيّن الفلتر عليهما
+// 📌 يضمن عرض جميع فواتير السيلز افتراضياً
+// ═══════════════════════════════════════════════════════════════════
+function autoSetDateRangeFromInvoices() {
+  if (!invoices || invoices.length === 0) {
+    console.warn('⚠️ autoSetDateRangeFromInvoices: لا توجد فواتير');
+    return;
+  }
+  
+  // ✅ إيجاد أقدم وأحدث فاتورة
+  let minDate = null;
+  let maxDate = null;
+  
+  invoices.forEach(inv => {
+    const d = parseDate(inv.activeDate);
+    if (!d) return;
+    if (!minDate || d < minDate) minDate = d;
+    if (!maxDate || d > maxDate) maxDate = d;
+  });
+  
+  if (!minDate || !maxDate) {
+    console.warn('⚠️ autoSetDateRangeFromInvoices: لا توجد تواريخ صالحة');
+    return;
+  }
+  
+  // ✅ تنسيق محلي (لا UTC) لـ <input type="date">
+  const formatForInput = (d) => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+  
+  document.getElementById('filterDateFrom').value = formatForInput(minDate);
+  document.getElementById('filterDateTo').value = formatForInput(maxDate);
+  
+  console.log(`📅 تم تحديد النطاق تلقائياً: ${formatDate(minDate)} → ${formatDate(maxDate)}`);
+  console.log(`   (${invoices.length} فاتورة)`);
 }
 
 // ============ التبديل بين التحليلات ============
@@ -657,8 +717,17 @@ async function loadAnalytics() {
   
   if (!fromDate || !toDate) return;
   
+  // ✅ ضبط الساعات لتجنب مشاكل التوقيت
   const from = new Date(fromDate);
   const to = new Date(toDate);
+  from.setHours(0, 0, 0, 0);
+  to.setHours(23, 59, 59, 999);
+  
+  console.log('🔍 loadAnalytics:');
+  console.log(`   من: ${fromDate} | إلى: ${toDate}`);
+  console.log(`   from (ISO): ${from.toISOString()}`);
+  console.log(`   to (ISO): ${to.toISOString()}`);
+  console.log(`   التبويب: ${currentTab}`);
   
   if (currentTab === 'daily') await showDailyChart(from, to);
   else if (currentTab === 'monthly') await showMonthlyChart(from, to);
@@ -843,9 +912,9 @@ function createTips(values, type, total, labels = [], extraData = {}) {
 // ============ 1. الرسم البياني اليومي ============
 async function showDailyChart(from, to) {
   console.log('🔍 showDailyChart START');
-  console.log('   from:', from, '| to:', to);
-  console.log('   from valid?', from instanceof Date && !isNaN(from));
-  console.log('   to valid?', to instanceof Date && !isNaN(to));
+  console.log('   📅 from:', formatDate(from));
+  console.log('   📅 to:', formatDate(to));
+  console.log('   📊 invoices:', invoices.length);
   
   const dailyData = {};
   const dates = [];
@@ -856,31 +925,45 @@ async function showDailyChart(from, to) {
     dailyData[dateStr] = 0;
   }
   
-  console.log(`   📅 نطاق التواريخ: ${dates.length} يوم (${dates[0]} → ${dates[dates.length-1]})`);
+  console.log(`   📅 نطاق التواريخ: ${dates.length} يوم`);
+  console.log(`   📅 ${dates[0]} → ${dates[dates.length-1]}`);
   
-  // ✅ تحميل أسعار الصرف مسبقاً
+  // ✅ تحميل الأسعار
   await preloadExchangeRates(from, to);
   
-  let matchedInvoices = 0;
+  let matchedCount = 0;
+  let skippedNoRate = 0;
+  let skippedOutOfRange = 0;
+  
   for (const inv of invoices) {
     const invDate = parseDate(inv.activeDate);
-    if (invDate && invDate >= from && invDate <= to) {
-      const dateStr = formatDate(invDate);
-      const rate = getExchangeRateForDate(dateStr);
-      if (rate) {
-        dailyData[dateStr] += calculateTotalEGP(inv, rate);
-        matchedInvoices++;
-      }
+    if (!invDate) continue;
+    
+    if (invDate < from || invDate > to) {
+      skippedOutOfRange++;
+      continue;
     }
+    
+    const dateStr = formatDate(invDate);
+    const rate = getExchangeRateForDate(dateStr);
+    if (!rate) {
+      skippedNoRate++;
+      continue;
+    }
+    
+    dailyData[dateStr] += calculateTotalEGP(inv, rate);
+    matchedCount++;
   }
   
-  console.log(`   📊 فواتير محسوبة: ${matchedInvoices} من ${invoices.length}`);
+  console.log(`   ✅ فواتير محسوبة: ${matchedCount}`);
+  console.log(`   ⏭️ خارج النطاق: ${skippedOutOfRange}`);
+  console.log(`   ⚠️ بدون سعر صرف: ${skippedNoRate}`);
   
   const values = dates.map(d => dailyData[d]);
   const total = values.reduce((a, b) => a + b, 0);
   
-  console.log(`   💰 إجمالي: ${total} EGP`);
-  
+  console.log(`   💰 الإجمالي: ${total} EGP`);
+    
  
   document.getElementById('analyticsContent').innerHTML = `
     <div class="chart-container">
