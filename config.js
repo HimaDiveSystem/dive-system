@@ -12,7 +12,7 @@ const CONFIG = {
   SESSION_DURATION: 24 * 60 * 60 * 1000,
   
   // ✅ مهلة الطلب الواحد (بالمللي ثانية) - 60 ثانية
-  REQUEST_TIMEOUT: 60000,
+  REQUEST_TIMEOUT: 90000,
   
   // ✅ التأخير بين الطلبات في الطابور (بالمللي ثانية)
   QUEUE_DELAY: 400,
