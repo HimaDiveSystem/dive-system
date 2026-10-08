@@ -1,9 +1,9 @@
 // ============================================================
-// session.js - نظام إدارة الجلسة (Hybrid: sessionStorage + Fallback)
+// session.js - نظام إدارة الجلسة (مستقل تماماً لكل تبويب)
 // ============================================================
-// ✅ الجلسة الأساسية في sessionStorage (خاصة بكل تبويب)
-// ✅ localStorage = Fallback فقط (آخر جلسة ناجحة)
-// ✅ كل تبويب مستقل تماماً عن الآخر
+// ✅ الجلسة في sessionStorage فقط (خاصة بكل تبويب)
+// ✅ لا Fallback — لا تداخل بين التبويبات
+// ✅ كل تبويب مستقل 100%
 // ⚠️ مهم: يجب تحميل config.js قبله
 // ============================================================
 
@@ -30,9 +30,8 @@
     DURATION: CONFIG.SESSION_DURATION || 24 * 60 * 60 * 1000
   };
   
-  // ✅ مفاتيح التخزين
-  const LS_KEY = 'currentUser';           // localStorage (Fallback)
-  const SS_KEY = 'currentUser';           // sessionStorage (أساسي)
+  // ✅ مفتاح sessionStorage فقط
+  const SS_KEY = 'currentUser';
   
   // ============================================================
   // ✅ دالة مساعدة: التوجيه الآمن
@@ -49,45 +48,6 @@
   }
   
   // ============================================================
-  // ✅ دالة مساعدة: حفظ في localStorage (Fallback فقط)
-  // ============================================================
-  function saveToLocalStorage(userWithMeta) {
-    try {
-      localStorage.setItem(LS_KEY, JSON.stringify({
-        user: userWithMeta,
-        expiry: userWithMeta.expiry,
-        savedAt: Date.now()
-      }));
-      console.log('💾 Fallback → localStorage (آخر جلسة ناجحة)');
-    } catch(e) {
-      console.error('❌ فشل الحفظ في localStorage:', e);
-    }
-  }
-  
-  // ============================================================
-  // ✅ دالة مساعدة: قراءة من localStorage (Fallback)
-  // ============================================================
-  function readFromLocalStorage() {
-    try {
-      const stored = localStorage.getItem(LS_KEY);
-      if (!stored) return null;
-      
-      const data = JSON.parse(stored);
-      
-      // ✅ الشكل الجديد: { user: {...}, expiry: <timestamp> }
-      if (data.user) {
-        return data.user;
-      }
-      
-      // ✅ الشكل القديم: {...user fields...}
-      return data;
-    } catch(e) {
-      console.error('❌ فشل القراءة من localStorage:', e);
-      return null;
-    }
-  }
-  
-  // ============================================================
   // Session Object
   // ============================================================
   const Session = {
@@ -100,10 +60,7 @@
     },
     
     // ----------------------------------------------------------
-    // 2️⃣ حفظ بيانات المستخدم
-    // ----------------------------------------------------------
-    // ✅ sessionStorage = الأساسي (خاص بالتبويب)
-    // ✅ localStorage = Fallback (آخر جلسة ناجحة)
+    // 2️⃣ حفظ بيانات المستخدم (sessionStorage فقط)
     // ----------------------------------------------------------
     save(user) {
       if (!user) {
@@ -114,17 +71,8 @@
       try {
         window._redirecting = false;
         
-        // ✅ احفظ الفرع قبل المسح
-        const savedBranch = sessionStorage.getItem('selectedBranch') 
-                         || localStorage.getItem('selectedBranch');
-        
         // ✅ امسح sessionStorage (خاص بالتبويب الحالي فقط)
         sessionStorage.clear();
-        
-        // ✅ استعد الفرع
-        if (savedBranch) {
-          sessionStorage.setItem('selectedBranch', savedBranch);
-        }
         
         const sessionId = this._generateSessionId();
         sessionStorage.setItem('sessionId', sessionId);
@@ -139,7 +87,7 @@
           createdAt: Date.now()
         };
         
-        // ✅ 1. sessionStorage (الأساسي - خاص بالتبويب)
+        // ✅ حفظ في sessionStorage فقط
         sessionStorage.setItem(SS_KEY, JSON.stringify(userWithMeta));
         sessionStorage.setItem('userPermissions', JSON.stringify(permissions));
         sessionStorage.setItem('userType', userWithMeta.type || '');
@@ -150,12 +98,9 @@
         sessionStorage.setItem('branchId', userWithMeta.branchId || '');
         sessionStorage.setItem('branchName', userWithMeta.branchName || '');
         
-        // ✅ 2. localStorage (Fallback - آخر جلسة ناجحة)
-        saveToLocalStorage(userWithMeta);
-        
-        console.log('✅ Session.save() - تم الحفظ');
-        console.log('   📌 sessionStorage (خاص بالتبويب):', userWithMeta.type);
-        console.log('   💾 localStorage (Fallback):', userWithMeta.type);
+        console.log('✅ Session.save() - تم الحفظ في sessionStorage (هذا التبويب فقط)');
+        console.log('   📌 النوع:', userWithMeta.type);
+        console.log('   🆔 sessionId:', sessionId);
         console.log('   ⏱️ ينتهي:', new Date(userWithMeta.expiry).toLocaleString());
         
       } catch(e) {
@@ -164,76 +109,48 @@
     },
     
     // ----------------------------------------------------------
-    // 3️⃣ جلب بيانات المستخدم
-    // ----------------------------------------------------------
-    // ✅ الأولوية: sessionStorage (خاص بالتبويب)
-    // ✅ Fallback: localStorage (فقط إذا لم يوجد في sessionStorage)
+    // 3️⃣ جلب بيانات المستخدم (sessionStorage فقط)
     // ----------------------------------------------------------
     getUser() {
       try {
-        // ✅ ✅ ✅ 1. sessionStorage أولاً (لا نلمس localStorage إذا وُجد)
+        // ✅ اقرأ من sessionStorage فقط
         const sessionUser = sessionStorage.getItem(SS_KEY);
         
-        if (sessionUser) {
-          try {
-            const user = JSON.parse(sessionUser);
-            
-            // ✅ تحقق من expiry
-            if (user.expiry && Date.now() > user.expiry) {
-              console.warn('⚠️ الجلسة منتهية (sessionStorage)');
-              this.clear();
-              return null;
+        if (!sessionUser) {
+          return null;
+        }
+        
+        let user;
+        try {
+          user = JSON.parse(sessionUser);
+        } catch(e) {
+          console.warn('⚠️ Session.getUser: فشل تحليل JSON');
+          this.clear();
+          return null;
+        }
+        
+        // ✅ تحقق من expiry
+        if (user.expiry && Date.now() > user.expiry) {
+          console.warn('⚠️ Session.getUser: الجلسة منتهية');
+          this.clear();
+          return null;
+        }
+        
+        // ✅ استرجع الصلاحيات إذا كانت مفقودة
+        if (!user.permissions || user.permissions.length === 0) {
+          const permStored = sessionStorage.getItem('userPermissions');
+          if (permStored) {
+            try {
+              user.permissions = JSON.parse(permStored);
+            } catch(e) {
+              user.permissions = [];
             }
-            
-            // ✅ استرجع الصلاحيات إذا كانت مفقودة
-            if (!user.permissions || user.permissions.length === 0) {
-              const permStored = sessionStorage.getItem('userPermissions');
-              if (permStored) {
-                try {
-                  user.permissions = JSON.parse(permStored);
-                } catch(e) {
-                  user.permissions = [];
-                }
-              }
-            }
-            
-            // ✅ ✅ ✅ مهم جداً: نرجع فوراً - لا نقرأ من localStorage
-            return user;
-          } catch(e) {
-            console.warn('⚠️ فشل تحليل sessionStorage');
+          } else {
+            user.permissions = [];
           }
         }
         
-        // ✅ 2. Fallback إلى localStorage (فقط إذا لم توجد جلسة في sessionStorage)
-        const localUser = readFromLocalStorage();
-        
-        if (localUser) {
-          // ✅ تحقق من expiry
-          if (localUser.expiry && Date.now() > localUser.expiry) {
-            console.warn('⚠️ الجلسة منتهية (localStorage)');
-            localStorage.removeItem(LS_KEY);
-            return null;
-          }
-          
-          // ✅ انسخ إلى sessionStorage لهذا التبويب
-          sessionStorage.setItem(SS_KEY, JSON.stringify(localUser));
-          sessionStorage.setItem('userPermissions', JSON.stringify(localUser.permissions || []));
-          sessionStorage.setItem('userType', localUser.type || '');
-          sessionStorage.setItem('userId', localUser.id || '');
-          sessionStorage.setItem('userName', localUser.name || '');
-          sessionStorage.setItem('centerName', localUser.centerName || '');
-          sessionStorage.setItem('centerId', localUser.centerId || '');
-          sessionStorage.setItem('branchId', localUser.branchId || '');
-          sessionStorage.setItem('branchName', localUser.branchName || '');
-          sessionStorage.setItem('sessionId', localUser.sessionId || 'restored_from_ls');
-          
-          console.log('✅ تم استعادة الجلسة من localStorage → sessionStorage');
-          console.log('   📌 النوع:', localUser.type);
-          return localUser;
-        }
-        
-        // ✅ 3. لا جلسة
-        return null;
+        return user;
         
       } catch(e) {
         console.error('❌ Session.getUser() error:', e);
@@ -256,7 +173,7 @@
           return false;
         }
         
-        // ✅ تمديد الجلسة
+        // ✅ تمديد الجلسة (sessionStorage فقط)
         this.refresh();
         
         return true;
@@ -335,21 +252,14 @@
     },
     
     // ----------------------------------------------------------
-    // 9️⃣ تسجيل الخروج
-    // ----------------------------------------------------------
-    // ✅ امسح sessionStorage فقط (لا تمس localStorage)
-    //    حتى لا يُفقد Fallback للتبويبات الأخرى
+    // 9️⃣ تسجيل الخروج (sessionStorage فقط)
     // ----------------------------------------------------------
     logout() {
       try {
-        // ✅ امسح sessionStorage (خاص بالتبويب الحالي)
+        // ✅ امسح sessionStorage فقط (هذا التبويب)
         sessionStorage.clear();
         
-        // ✅ امسح الفرع من localStorage (اختياري - حسب السياسة)
-        // ⚠️ نترك currentUser في localStorage كـ Fallback
-        localStorage.removeItem('selectedBranch');
-        
-        console.log('✅ Session.logout() - تم تسجيل الخروج من هذا التبويب');
+        console.log('✅ Session.logout() - تم تسجيل الخروج من هذا التبويب فقط');
         
         window._redirecting = false;
         
@@ -370,28 +280,27 @@
     clear() {
       try {
         sessionStorage.clear();
-        console.log('✅ Session.clear() - تم مسح الجلسة الحالية (sessionStorage)');
+        console.log('✅ Session.clear() - تم مسح الجلسة (هذا التبويب)');
       } catch(e) {
         console.error('❌ Session.clear() error:', e);
       }
     },
     
     // ----------------------------------------------------------
-    // 1️⃣1️⃣ تمديد الجلسة
+    // 1️⃣1️⃣ تمديد الجلسة (sessionStorage فقط - لا يلمس localStorage)
     // ----------------------------------------------------------
     refresh() {
       try {
         const user = this.getUser();
         if (!user || !user.type) return;
         
-        // ✅ مدد الجلسة
+        // ✅ حدّث expiry
         user.expiry = Date.now() + SESSION_CONFIG.DURATION;
         
-        // ✅ احفظ في sessionStorage (الأساسي)
+        // ✅ احفظ في sessionStorage فقط (لا نلمس localStorage)
         sessionStorage.setItem(SS_KEY, JSON.stringify(user));
         
-        // ✅ حدّث localStorage (Fallback)
-        saveToLocalStorage(user);
+        // ⚠️ ملاحظة: لا نكتب في localStorage — تجنباً للتداخل بين التبويبات
         
       } catch(e) {
         console.warn('⚠️ Session.refresh error:', e);
@@ -424,8 +333,6 @@
         
         sessionStorage.setItem(SS_KEY, JSON.stringify(user));
         sessionStorage.setItem('userPermissions', JSON.stringify(user.permissions));
-        
-        saveToLocalStorage(user);
         
         console.log('✅ Session.updatePermissions()');
         return true;
@@ -471,9 +378,9 @@
   // ============================================================
   if (typeof window !== 'undefined') {
     window.Session = Session;
-    console.log('✅ session.js - تم التحميل (v3 — Hybrid)');
+    console.log('✅ session.js - تم التحميل (v4 — مستقل تماماً)');
     console.log('⏱️ مدة الجلسة:', SESSION_CONFIG.DURATION / 1000 / 60 / 60, 'ساعات');
-    console.log('📌 sessionStorage: أساسي | localStorage: Fallback');
+    console.log('📌 sessionStorage فقط — لا تداخل بين التبويبات');
   }
   
 })();
