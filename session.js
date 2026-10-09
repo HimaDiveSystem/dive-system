@@ -346,38 +346,30 @@
     // ----------------------------------------------------------
     // 🔟 تسجيل الخروج
     // ----------------------------------------------------------
-    logout() {
-      try {
-        const sessionId = sessionStorage.getItem('sessionId');
-        
-        // ✅ حذف من localStorage
-        if (sessionId) {
-          localStorage.removeItem('currentUser_' + sessionId);
-        }
-        localStorage.removeItem('userPermissions');
-        
-        // ✅ تحديث activeSessionId
-        const activeSessionId = localStorage.getItem('activeSessionId');
-        if (activeSessionId === sessionId) {
-          localStorage.removeItem('activeSessionId');
-        }
-        
-        // ✅ حذف من sessionStorage
-        sessionStorage.clear();
-        
-        console.log('✅ Session.logout() - تم تسجيل الخروج');
-        
-        // ✅ إعادة توجيه (مرة واحدة فقط)
-        if (!_redirecting) {
-          _redirecting = true;
-          window.location.href = 'index.html';
-        }
-        
-      } catch(e) {
-        console.error('❌ Session.logout() error:', e);
-        window.location.href = 'index.html';
+   logout() {
+  try {
+    // ✅ امسح sessionStorage
+    sessionStorage.clear();
+    
+    // ✅ امسح مفاتيح الفرع من localStorage
+    localStorage.removeItem('selectedBranch');
+    Object.keys(localStorage).forEach(key => {
+      if (key.startsWith('selectedBranch_')) {
+        localStorage.removeItem(key);
       }
-    },
+    });
+    
+    console.log('✅ logout - تم حذف كل البيانات');
+    
+    if (!window._redirecting) {
+      window._redirecting = true;
+      window.location.href = 'index.html';
+    }
+  } catch(e) {
+    console.error('❌ logout error:', e);
+    window.location.href = 'index.html';
+  }
+}
     
     // ----------------------------------------------------------
     // 1️⃣1️⃣ مسح البيانات (بدون إعادة توجيه)
