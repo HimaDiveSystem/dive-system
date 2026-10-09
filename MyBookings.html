@@ -678,9 +678,17 @@
 // ============================================================
 // CONFIGURATION
 // ============================================================
-const data = await callGAS('getAllInvoices', { centerName: currentUser.centerName });
+ 
+// ============================================================
+// CONFIGURATION
+// ============================================================
 const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const DASH = { Admin:'Dashboard.html', Owner:'OwnerDashboard.html', Sales:'SalesDashboard.html', Accountant:'AccountantDashboard.html' };
+const DASH = { 
+  Admin:'Dashboard.html', 
+  Owner:'OwnerDashboard.html', 
+  Sales:'SalesDashboard.html', 
+  Accountant:'AccountantDashboard.html' 
+};
 
 let currentUser = null, allInv = [], filtInv = [];
 let curStatus = 'all', pg = 1, PS = 20;
@@ -875,7 +883,8 @@ function closeAlert() {
 }
 
 function goBack() {
-  if (currentUser && Session) {
+  // ✅ تحقق من وجود Session قبل استخدامها
+  if (currentUser && typeof Session !== 'undefined' && Session.save) {
     Session.save(currentUser);
   }
   window.location.href = DASH[currentUser?.type] || 'SalesDashboard.html';
@@ -907,9 +916,19 @@ async function loadInv() {
   
   try {
     // ✅ استخدام callGAS بدلاً من fetch
-    const data = await callGAS('getAllInvoices', { centerName: centerName });
+    const response = await callGAS('getAllInvoices', { centerName: centerName });
     
-    const invoices = Array.isArray(data) ? data : [];
+    // ✅ تعامل مع كلا الشكلين (مصفوفة مباشرة أو كائن {data: [...]})
+    let invoices = [];
+    if (Array.isArray(response)) {
+      invoices = response;
+    } else if (response && Array.isArray(response.data)) {
+      invoices = response.data;
+    } else if (response && response.success === false) {
+      throw new Error(response.message || 'فشل تحميل الفواتير');
+    }
+    
+    console.log(`📋 تم تحميل ${invoices.length} فاتورة`);
     
     // ✅ فلترة حسب salesId (للسيلز فقط)
     allInv = invoices.filter(inv => {
@@ -1260,17 +1279,20 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   
   // ============================================================
-  // ✅ جلب بيانات المستخدم — sessionStorage أولاً
+  // ✅ جلب بيانات المستخدم من Session (موحّد)
   // ============================================================
-  let ud = sessionStorage.getItem('currentUser');
+  currentUser = (typeof Session !== 'undefined' && Session.getUser) 
+    ? Session.getUser() 
+    : null;
   
   // ✅ Fallback: URL parameter (إن وُجد)
-  if (!ud) {
+  if (!currentUser || !currentUser.type) {
     const p = new URLSearchParams(location.search).get('user');
     if (p) {
       try {
-        ud = decodeURIComponent(p);
-        sessionStorage.setItem('currentUser', ud);
+        const parsed = JSON.parse(decodeURIComponent(p));
+        currentUser = parsed.user || parsed;
+        sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
         console.log('✅ تم استرجاع المستخدم من URL parameter');
       } catch(e) {
         console.warn('⚠️ فشل decode URL parameter');
@@ -1279,30 +1301,13 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   
   // ✅ إذا لم يوجد مستخدم → index.html
-  if (!ud) {
+  if (!currentUser || !currentUser.type) {
     console.warn('⚠️ لا يوجد مستخدم — العودة لتسجيل الدخول');
     location.href = 'index.html';
     return;
   }
   
-  // ✅ تحليل بيانات المستخدم (مرة واحدة فقط)
-  try {
-    const parsed = JSON.parse(ud);
-    // ✅ التعامل مع الشكلين: {user: {...}} أو {...}
-    currentUser = parsed.user || parsed;
-    
-    if (!currentUser || !currentUser.type) {
-      throw new Error('بيانات المستخدم غير مكتملة');
-    }
-    
-    console.log('👤 المستخدم:', currentUser.name, '|', currentUser.type);
-    
-  } catch(e) {
-    console.error('❌ فشل تحليل بيانات المستخدم:', e);
-    sessionStorage.removeItem('currentUser');
-    location.href = 'index.html';
-    return;
-  }
+  console.log('👤 المستخدم:', currentUser.name, '|', currentUser.type);
   
   // ============================================================
   // ✅ عرض اسم المستخدم
@@ -1316,12 +1321,6 @@ document.addEventListener('DOMContentLoaded', () => {
     console.warn(`⚠️ نوع المستخدم "${currentUser.type}" غير مسموح`);
     showAlert('No permission', '❌');
     setTimeout(() => {
-      const DASH = { 
-        Admin: 'Dashboard.html', 
-        Owner: 'OwnerDashboard.html', 
-        Sales: 'SalesDashboard.html', 
-        Accountant: 'AccountantDashboard.html' 
-      };
       location.href = DASH[currentUser.type] || 'index.html';
     }, 2000);
     return;
