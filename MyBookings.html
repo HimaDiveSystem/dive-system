@@ -663,7 +663,9 @@
   <div class="summary-title">📊 Trips Summary</div>
   <div style="overflow-x:auto"><table class="summary-table" id="summaryTbl"></table></div>
 </div>
-
+<div style="text-align:center;padding:10px 0 2px 0;color:#94a3b8;font-size:10px;border-top:1px solid #e2e8f0;margin-top:auto;">
+  <span>© 2025 <strong style="color:#1e2b4f;">🌊 Dive System</strong> — جميع الحقوق محفوظة</span>
+</div>
 <div id="alertModal" class="a-modal">
   <div class="a-box">
     <div style="font-size:40px;margin-bottom:10px" id="aIcon">ℹ️</div>
@@ -676,7 +678,7 @@
 // ============================================================
 // CONFIGURATION
 // ============================================================
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec';
+const data = await callGAS('getAllInvoices', { centerName: currentUser.centerName });
 const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const DASH = { Admin:'Dashboard.html', Owner:'OwnerDashboard.html', Sales:'SalesDashboard.html', Accountant:'AccountantDashboard.html' };
 
@@ -689,29 +691,27 @@ let ftimer = null;
 // ✅ التحقق من صحة الجلسة (مثل الملفات الأخرى)
 // ============================================================
 function checkSessionValidity() {
+  // ✅ استخدام Session.checkValidity من session.js
+  if (typeof Session !== 'undefined' && Session.checkValidity) {
+    return Session.checkValidity();
+  }
+  
+  // ⚠️ Fallback (نادراً ما يُستخدم)
+  console.warn('⚠️ Session غير محمّل — استخدام Fallback');
   try {
-    // ✅ sessionStorage فقط
     const stored = sessionStorage.getItem('currentUser');
-    
     if (!stored) {
-      console.warn('⚠️ لا توجد جلسة في هذا التبويب');
       window.location.href = 'index.html';
       return false;
     }
-    
     const user = JSON.parse(stored);
-    
     if (user.expiry && Date.now() > user.expiry) {
-      console.warn('⚠️ الجلسة منتهية');
       sessionStorage.clear();
       window.location.href = 'index.html';
       return false;
     }
-    
     return true;
-    
   } catch(e) {
-    console.error('❌ خطأ في checkSessionValidity:', e);
     window.location.href = 'index.html';
     return false;
   }
@@ -900,37 +900,56 @@ function debounce() {
   ftimer = setTimeout(apply, 300);
 }
 
-function loadInv() {
+async function loadInv() {
   document.getElementById('tblCont').innerHTML = '<div class="loader-wrap"><div class="spinner"></div>Loading...</div>';
+  
   const centerName = currentUser?.centerName || '';
-  fetch(GAS_URL + '?action=getAllInvoices&centerName=' + encodeURIComponent(centerName))
-    .then(r => r.json())
-    .then(data => {
-      if (!Array.isArray(data)) data = [];
-      allInv = data.filter(inv => inv.salesId === currentUser?.id);
-      allInv.forEach(inv => {
-        if (inv.activeDate) inv.activeDate = fmtDDMMMYYYY(inv.activeDate);
-        if (inv.issueDate) inv.issueDate = fmtDDMMMYYYY(inv.issueDate);
-      });
-      const counts = { all: allInv.length, pending: 0, confirmed: 0, cancel: 0, refund: 0 };
-      allInv.forEach(inv => {
-        const s = (inv.state || '').toLowerCase();
-        if (s === 'pending') counts.pending++;
-        else if (s === 'confirmed') counts.confirmed++;
-        else if (s === 'cancel') counts.cancel++;
-        else if (s === 'refund') counts.refund++;
-      });
-      document.getElementById('cntAll').textContent = counts.all;
-      document.getElementById('cntPending').textContent = counts.pending;
-      document.getElementById('cntConfirmed').textContent = counts.confirmed;
-      document.getElementById('cntCancel').textContent = counts.cancel;
-      document.getElementById('cntRefund').textContent = counts.refund;
-      loadBranchesFilter();
-      apply();
-    })
-    .catch(e => {
-      document.getElementById('tblCont').innerHTML = '<div class="no-data">Error: ' + e.message + '</div>';
+  
+  try {
+    // ✅ استخدام callGAS بدلاً من fetch
+    const data = await callGAS('getAllInvoices', { centerName: centerName });
+    
+    const invoices = Array.isArray(data) ? data : [];
+    
+    // ✅ فلترة حسب salesId (للسيلز فقط)
+    allInv = invoices.filter(inv => {
+      // إذا كان المستخدم Sales → فلترة حسب salesId
+      if (currentUser?.type === 'Sales') {
+        return inv.salesId === currentUser?.id;
+      }
+      // للمحاسب والمدير → كل الفواتير
+      return true;
     });
+    
+    // ✅ تنسيق التواريخ
+    allInv.forEach(inv => {
+      if (inv.activeDate) inv.activeDate = fmtDDMMMYYYY(inv.activeDate);
+      if (inv.issueDate) inv.issueDate = fmtDDMMMYYYY(inv.issueDate);
+    });
+    
+    // ✅ حساب العدادات
+    const counts = { all: allInv.length, pending: 0, confirmed: 0, cancel: 0, refund: 0 };
+    allInv.forEach(inv => {
+      const s = (inv.state || '').toLowerCase();
+      if (s === 'pending') counts.pending++;
+      else if (s === 'confirmed') counts.confirmed++;
+      else if (s === 'cancel') counts.cancel++;
+      else if (s === 'refund') counts.refund++;
+    });
+    
+    document.getElementById('cntAll').textContent = counts.all;
+    document.getElementById('cntPending').textContent = counts.pending;
+    document.getElementById('cntConfirmed').textContent = counts.confirmed;
+    document.getElementById('cntCancel').textContent = counts.cancel;
+    document.getElementById('cntRefund').textContent = counts.refund;
+    
+    loadBranchesFilter();
+    apply();
+    
+  } catch(e) {
+    console.error('❌ فشل تحميل الفواتير:', e);
+    document.getElementById('tblCont').innerHTML = '<div class="no-data">Error: ' + e.message + '</div>';
+  }
 }
 
 function apply() {
@@ -1228,9 +1247,6 @@ function gotoPage(p) {
   renderTable();
 }
 
-// ============================================================
-// INITIALIZATION
-// ============================================================
 document.addEventListener('DOMContentLoaded', () => {
   // ✅ تطبيق الثيم الموحد
   if (typeof Theme !== 'undefined' && Theme.applyToPage) {
@@ -1243,69 +1259,86 @@ document.addEventListener('DOMContentLoaded', () => {
     return;
   }
   
-// ✅ جلب بيانات المستخدم
-let ud = sessionStorage.getItem('currentUser');
-
-// ✅ Fallback إلى localStorage
-if (!ud) {
-  const stored = localStorage.getItem('currentUser');
-  if (stored) {
-    try {
-      const data = JSON.parse(stored);
-      const user = data.user || data;
-      ud = JSON.stringify(user);
-      sessionStorage.setItem('currentUser', ud);
-    } catch(e) {
-      console.warn('⚠️ فشل تحليل localStorage.currentUser');
+  // ============================================================
+  // ✅ جلب بيانات المستخدم — sessionStorage أولاً
+  // ============================================================
+  let ud = sessionStorage.getItem('currentUser');
+  
+  // ✅ Fallback: URL parameter (إن وُجد)
+  if (!ud) {
+    const p = new URLSearchParams(location.search).get('user');
+    if (p) {
+      try {
+        ud = decodeURIComponent(p);
+        sessionStorage.setItem('currentUser', ud);
+        console.log('✅ تم استرجاع المستخدم من URL parameter');
+      } catch(e) {
+        console.warn('⚠️ فشل decode URL parameter');
+      }
     }
   }
-}
-
-// ✅ Fallback أخير: URL parameter
-if (!ud) {
-  const p = new URLSearchParams(location.search).get('user');
-  if (p) {
-    ud = decodeURIComponent(p);
-    sessionStorage.setItem('currentUser', ud);
-  }
-}
-
-if (!ud) {
-  console.warn('⚠️ لا يوجد مستخدم');
-  location.href = 'index.html';
-  return;
-}
-
-try {
-  const parsed = JSON.parse(ud);
-  currentUser = parsed.user || parsed;  // ✅ التعامل مع الشكلين
-} catch(e) {
-  console.error('❌ فشل تحليل بيانات المستخدم:', e);
-  location.href = 'index.html';
-  return;
-}
   
-  try {
-    currentUser = JSON.parse(ud);
-  } catch {
+  // ✅ إذا لم يوجد مستخدم → index.html
+  if (!ud) {
+    console.warn('⚠️ لا يوجد مستخدم — العودة لتسجيل الدخول');
     location.href = 'index.html';
     return;
   }
   
-  document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
-  
-  if (!['Admin', 'Owner', 'Sales', 'Accountant'].includes(currentUser.type)) {
-    showAlert('No permission', '❌');
-    setTimeout(() => location.href = 'Dashboard.html', 2000);
+  // ✅ تحليل بيانات المستخدم (مرة واحدة فقط)
+  try {
+    const parsed = JSON.parse(ud);
+    // ✅ التعامل مع الشكلين: {user: {...}} أو {...}
+    currentUser = parsed.user || parsed;
+    
+    if (!currentUser || !currentUser.type) {
+      throw new Error('بيانات المستخدم غير مكتملة');
+    }
+    
+    console.log('👤 المستخدم:', currentUser.name, '|', currentUser.type);
+    
+  } catch(e) {
+    console.error('❌ فشل تحليل بيانات المستخدم:', e);
+    sessionStorage.removeItem('currentUser');
+    location.href = 'index.html';
     return;
   }
   
+  // ============================================================
+  // ✅ عرض اسم المستخدم
+  // ============================================================
+  document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
+  
+  // ============================================================
+  // ✅ التحقق من نوع المستخدم
+  // ============================================================
+  if (!['Admin', 'Owner', 'Sales', 'Accountant'].includes(currentUser.type)) {
+    console.warn(`⚠️ نوع المستخدم "${currentUser.type}" غير مسموح`);
+    showAlert('No permission', '❌');
+    setTimeout(() => {
+      const DASH = { 
+        Admin: 'Dashboard.html', 
+        Owner: 'OwnerDashboard.html', 
+        Sales: 'SalesDashboard.html', 
+        Accountant: 'AccountantDashboard.html' 
+      };
+      location.href = DASH[currentUser.type] || 'index.html';
+    }, 2000);
+    return;
+  }
+  
+  // ============================================================
+  // ✅ تهيئة التواريخ (اليوم افتراضياً)
+  // ============================================================
   const todayISO = new Date().toISOString().split('T')[0];
   document.getElementById('fFromNat').value = todayISO;
   document.getElementById('fFromTxt').value = isoToTxt(todayISO);
   document.getElementById('fToNat').value = todayISO;
   document.getElementById('fToTxt').value = isoToTxt(todayISO);
   
+  // ============================================================
+  // ✅ تحميل الفواتير
+  // ============================================================
   switchTab('all');
   loadInv();
 });
