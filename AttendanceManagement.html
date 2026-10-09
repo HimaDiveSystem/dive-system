@@ -221,11 +221,18 @@ function jsonp(action, params = {}) {
     params.action = action;
     params.callback = callbackName;
     
-    // ✅ أضف centerId و centerName تلقائياً إذا كان المستخدم موجوداً
+    // ✅ أضف بيانات المستخدم تلقائياً
     if (currentUser) {
       if (!params.centerId && currentUser.centerId) params.centerId = currentUser.centerId;
       if (!params.centerName && currentUser.centerName) params.centerName = currentUser.centerName;
+      // ✅ جديد: أضف userType و userBranch
+      if (!params.userType && currentUser.type) params.userType = currentUser.type;
+      if (!params.userBranch) {
+        params.userBranch = currentUser.branchName || currentUser.branchId || '';
+      }
     }
+ 
+    
     
     
     const queryString = Object.entries(params)
@@ -297,8 +304,130 @@ function toSheetDate(ymd){ const [y,m,d]=ymd.split('-'); return parseInt(d)+'-'+
 const MN_AR=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
 function toDisplayDate(ymd){ const [y,m,d]=ymd.split('-'); return parseInt(d)+' '+MN_AR[parseInt(m)-1]+' '+y; }
 function onDateChange(){ const dv=document.getElementById('attDate').value; document.getElementById('btnNext2').disabled=!dv; document.getElementById('dateTag').style.display='none'; }
-async function loadAttendance(){ const dv=document.getElementById('attDate').value; if(!dv){showToast('اختر تاريخاً أولاً','error');return;} const sheetDate=toSheetDate(dv); currentDate=sheetDate; const btn=document.getElementById('btnNext2'); btn.disabled=true; btn.innerHTML='<span class="loader" style="width:16px;height:16px;border-width:2px;margin:0;display:inline-block;vertical-align:middle;margin-left:6px;"></span> جاري التحميل...'; try{ const r=await jsonp('getOrCreateAttendanceDate',{dateStr:sheetDate}); if(!r||!r.success) throw new Error(r?.message||'فشل التحميل'); employees=r.employees||[]; statusMap={}; balanceMap=r.balanceMap||{}; currentDateCol=r.dateColNum||-1; if(r.existingData){ Object.keys(r.existingData).forEach(serial=>{ const val=r.existingData[serial]; if(typeof val==='string' && STATUSES.find(s=>s.key===val)){ statusMap[serial]=val; } else { const num=parseFloat(val); if(num===1) statusMap[serial]='حضور'; else if(num===0) statusMap[serial]='غياب'; else if(num===2) statusMap[serial]='إجازة'; else if(num===0.5) statusMap[serial]='نصف يوم'; else if(num===-1) statusMap[serial]='غياب بدون إذن'; else if(num===-2) statusMap[serial]='غياب يوم بيومين'; } }); } const tag=document.getElementById('dateTag'); tag.style.display='inline-block'; if(r.isNew){ tag.className='date-tag tag-new'; tag.textContent='🆕 تاريخ جديد'; } else { tag.className='date-tag tag-exists'; tag.textContent='✏️ بيانات موجودة'; } document.getElementById('step2Card').style.display='none'; document.getElementById('step3Card').style.display='block'; const [_y,_m,_d]=dv.split('-'); const dt=new Date(parseInt(_y),parseInt(_m)-1,parseInt(_d)); const days=['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت']; document.getElementById('dayLabel').textContent=days[dt.getDay()]+' '+toDisplayDate(dv)+' | '+employees.length+' موظف'; setStep(3); if(!employees.length){ document.getElementById('tableArea').innerHTML='<div class="empty"><span class="empty-icon">⚠️</span>لا يوجد موظفون في شيت Working_Days<br><small>أضف موظفين من صفحة إدارة الموظفين</small></div>'; document.getElementById('summaryBar').style.display='none'; return; } renderTable(); document.getElementById('summaryBar').style.display='grid'; updateSummary(); showToast('تم تحميل '+employees.length+' موظف'+(r.isNew?'':' — بيانات موجودة'),'info'); }catch(e){ showToast('❌ '+e.message,'error'); document.getElementById('tableArea').innerHTML='<div class="empty" style="color:#e74c3c"><span class="empty-icon">❌</span>'+e.message+'</div>'; }finally{ btn.disabled=false; btn.innerHTML='📋 تحميل قائمة الحضور'; } }
-function renderTable(){ let html='<div class="table-wrap"><table><thead><tr><th>رصيد الشهر</th><th>#</th><th>الرقم الوظيفي</th><th>الاسم</th><th>الوظيفة</th><th>الحالة</th></tr></thead><tbody>'; employees.forEach((emp,i)=>{ const cur=statusMap[emp.serial]||''; const bal=balanceMap[emp.serial]??'—'; const balNum=parseFloat(bal); const balCls=isNaN(balNum)?'bal-zero':(balNum>0?'bal-pos':balNum<0?'bal-neg':'bal-zero'); const btns=STATUSES.map(s=>{ const sel=(cur===s.key)?'sel-'+s.cls:''; const safeSerial=emp.serial.replace(/\\/g,'\\\\').replace(/'/g,"\\'"); return `<button class="sb ${sel}" onclick="setStatus('${safeSerial}','${s.key}')">${s.label}</button>`; }).join(''); html+=`<tr id="row_${emp.serial.replace(/[^a-zA-Z0-9]/g,'_')}"><td><div class="balance-box ${balCls}" id="bal_${emp.serial.replace(/[^a-zA-Z0-9]/g,'_')}"><div class="balance-num">${isNaN(balNum)?'—':balNum}</div><div class="balance-lbl">يوم</div></div></td><td><span class="emp-num">${i+1}</span></td><td><span class="emp-serial">${emp.serial||'—'}</span></td><td><div class="emp-name">${emp.name||'—'}</div></td><td><span style="font-size:11px;color:#95a5a6;">${emp.position||'—'}</span></td><td><div class="sg">${btns}</div></td></tr>`; }); html+='</tbody></table></div>'; document.getElementById('tableArea').innerHTML=html; }
+async function loadAttendance() {
+  const dv = document.getElementById('attDate').value;
+  if (!dv) { showToast('اختر تاريخاً أولاً', 'error'); return; }
+  
+  const sheetDate = toSheetDate(dv);
+  currentDate = sheetDate;
+  
+  const btn = document.getElementById('btnNext2');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="loader" style="width:16px;height:16px;border-width:2px;margin:0;display:inline-block;vertical-align:middle;margin-left:6px;"></span> جاري التحميل...';
+  
+  try {
+    // ✅ إرسال userType و userBranch للفلترة
+    const r = await jsonp('getOrCreateAttendanceDate', {
+      dateStr: sheetDate,
+      userType: currentUser.type,
+      userBranch: currentUser.branchName || currentUser.branchId || ''
+    });
+    
+    if (!r || !r.success) throw new Error(r?.message || 'فشل التحميل');
+    
+    employees = r.employees || [];
+    statusMap = {};
+    balanceMap = r.balanceMap || {};
+    currentDateCol = r.dateColNum || -1;
+    
+    if (r.existingData) {
+      Object.keys(r.existingData).forEach(serial => {
+        const val = r.existingData[serial];
+        if (typeof val === 'string' && STATUSES.find(s => s.key === val)) {
+          statusMap[serial] = val;
+        } else {
+          const num = parseFloat(val);
+          if (num === 1) statusMap[serial] = 'حضور';
+          else if (num === 0) statusMap[serial] = 'غياب';
+          else if (num === 0.5) statusMap[serial] = 'نصف يوم';
+          else if (num === -1) statusMap[serial] = 'غياب بدون إذن';
+          else if (num === -2) statusMap[serial] = 'غياب يوم بيومين';
+        }
+      });
+    }
+    
+    const tag = document.getElementById('dateTag');
+    tag.style.display = 'inline-block';
+    if (r.isNew) {
+      tag.className = 'date-tag tag-new';
+      tag.textContent = '🆕 تاريخ جديد (سيُضاف عند الحفظ)';
+    } else {
+      tag.className = 'date-tag tag-exists';
+      tag.textContent = '✏️ بيانات موجودة';
+    }
+    
+    document.getElementById('step2Card').style.display = 'none';
+    document.getElementById('step3Card').style.display = 'block';
+    
+    const [_y, _m, _d] = dv.split('-');
+    const dt = new Date(parseInt(_y), parseInt(_m) - 1, parseInt(_d));
+    const days = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+    document.getElementById('dayLabel').textContent = days[dt.getDay()] + ' ' + toDisplayDate(dv) + ' | ' + employees.length + ' موظف';
+    
+    setStep(3);
+    
+    if (!employees.length) {
+      document.getElementById('tableArea').innerHTML = '<div class="empty"><span class="empty-icon">⚠️</span>لا يوجد موظفون في شيت Working_Days<br><small>أضف موظفين من صفحة إدارة الموظفين</small></div>';
+      document.getElementById('summaryBar').style.display = 'none';
+      return;
+    }
+    
+    renderTable();
+    document.getElementById('summaryBar').style.display = 'grid';
+    updateSummary();
+    showToast('تم تحميل ' + employees.length + ' موظف' + (r.isNew ? ' — تاريخ جديد' : ' — بيانات موجودة'), 'info');
+    
+  } catch (e) {
+    showToast('❌ ' + e.message, 'error');
+    document.getElementById('tableArea').innerHTML = '<div class="empty" style="color:#e74c3c"><span class="empty-icon">❌</span>' + e.message + '</div>';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '📋 تحميل قائمة الحضور';
+  }
+}
+  
+function renderTable() {
+  let html = '<div class="table-wrap"><table><thead><tr><th>رصيد الشهر</th><th>#</th><th>الرقم الوظيفي</th><th>الاسم</th><th>الوظيفة</th><th>الحالة</th></tr></thead><tbody>';
+  
+  employees.forEach((emp, i) => {
+    const cur = statusMap[emp.serial] || '';
+    const bal = balanceMap[emp.serial] ?? '—';
+    const balNum = parseFloat(bal);
+    const balCls = isNaN(balNum) ? 'bal-zero' : (balNum > 0 ? 'bal-pos' : balNum < 0 ? 'bal-neg' : 'bal-zero');
+    
+    // ✅ إضافة شارة لنوع الدفع
+    const paymentBadge = emp.paymentSystem
+      ? `<span style="font-size:9px;background:#e0e7ff;color:#3730a3;padding:2px 6px;border-radius:8px;margin-right:4px;">${emp.paymentSystem}</span>`
+      : '';
+    
+    // ✅ إضافة شارة للفرع (للمحاسب)
+    const branchBadge = (currentUser.type === 'Accountant' && emp.branchName)
+      ? `<span style="font-size:9px;background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:8px;margin-right:4px;">🏢 ${emp.branchName}</span>`
+      : '';
+    
+    const btns = STATUSES.map(s => {
+      const sel = (cur === s.key) ? 'sel-' + s.cls : '';
+      const safeSerial = emp.serial.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      return `<button class="sb ${sel}" onclick="setStatus('${safeSerial}','${s.key}')">${s.label}</button>`;
+    }).join('');
+    
+    html += `<tr id="row_${emp.serial.replace(/[^a-zA-Z0-9]/g, '_')}">
+      <td><div class="balance-box ${balCls}" id="bal_${emp.serial.replace(/[^a-zA-Z0-9]/g, '_')}"><div class="balance-num">${isNaN(balNum) ? '—' : balNum}</div><div class="balance-lbl">يوم</div></div></td>
+      <td><span class="emp-num">${i + 1}</span></td>
+      <td><span class="emp-serial">${emp.serial || '—'}</span></td>
+      <td>
+        <div class="emp-name">${emp.name || '—'}</div>
+        <div style="margin-top:3px;">${paymentBadge}${branchBadge}</div>
+      </td>
+      <td><span style="font-size:11px;color:#95a5a6;">${emp.position || '—'}</span></td>
+      <td><div class="sg">${btns}</div></td>
+    </tr>`;
+  });
+  
+  html += '</tbody></table></div>';
+  document.getElementById('tableArea').innerHTML = html;
+}
+  
 function setStatus(serial,status){ if(statusMap[serial]===status){ delete statusMap[serial]; } else { statusMap[serial]=status; } const cur=statusMap[serial]||''; const safeId=serial.replace(/[^a-zA-Z0-9]/g,'_'); const row=document.getElementById('row_'+safeId); if(!row) return; row.querySelectorAll('.sb').forEach((btn,i)=>{ STATUSES.forEach(s=>btn.classList.remove('sel-'+s.cls)); if(STATUSES[i]?.key===cur) btn.classList.add('sel-'+STATUSES[i].cls); }); const base=parseFloat(balanceMap[serial])||0; const box=document.getElementById('bal_'+safeId); if(box){ box.classList.remove('bal-pos','bal-neg','bal-zero'); if(base>0) box.classList.add('bal-pos'); else if(base<0) box.classList.add('bal-neg'); else box.classList.add('bal-zero'); } updateSummary(); }
 function fillAll(status){ employees.forEach(e=>{statusMap[e.serial]=status;}); renderTable(); updateSummary(); }
 function updateSummary(){ let p=0,l=0,a=0,h=0,u=0,d=0,n=0; employees.forEach(e=>{ const s=statusMap[e.serial]||''; if(s==='حضور')p++; else if(s==='إجازة')l++; else if(s==='غياب')a++; else if(s==='نصف يوم')h++; else if(s==='غياب بدون إذن')u++; else if(s==='غياب يوم بيومين')d++; else n++; }); document.getElementById('sP').textContent=p; document.getElementById('sL').textContent=l; document.getElementById('sA').textContent=a; document.getElementById('sH').textContent=h; document.getElementById('sU').textContent=u; document.getElementById('sD').textContent=d; document.getElementById('sN').textContent=n; }
