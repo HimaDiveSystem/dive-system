@@ -349,13 +349,15 @@ let currentDestination = 'dashboard';
   // ============================================================
 // ✅ دالة jsonp — يجب إضافتها لأن الصفحة تستخدمها
 // ============================================================
+// ============================================================
+// ✅ دالة jsonp
+// ============================================================
 function jsonp(action, params = {}) {
   return new Promise((resolve, reject) => {
     const callbackName = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 99999);
     params.action = action;
     params.callback = callbackName;
     
-    // ✅ أضف بيانات المستخدم تلقائياً
     if (currentUser) {
       if (!params.centerId && currentUser.centerId) params.centerId = currentUser.centerId;
       if (!params.centerName && currentUser.centerName) params.centerName = currentUser.centerName;
@@ -666,72 +668,116 @@ function closeCustomerSelect() {
   document.getElementById('customerSelectModal').classList.remove('open');
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// 👤 openEmployeeAttendance — سجل حضور موظف آخر
+// ═══════════════════════════════════════════════════════════════════
 async function openEmployeeAttendance() {
   try {
-    // ✅ التأكد من وجود currentUser
-    if (!currentUser) {
-      currentUser = Session.getUser();
-    }
+    if (!currentUser) currentUser = Session.getUser();
     if (!currentUser) {
       showAlert('يرجى تسجيل الدخول أولاً');
       return;
     }
     
-    console.log("===== بدء سجل حضور موظف آخر =====");
+    console.log("===== سجل حضور موظف آخر =====");
     console.log("المستخدم:", currentUser.name, "| الفرع:", currentUser.branchName);
     
-    // ✅ جلب الموظفين من ملف المركز (مع الفلترة)
-    // ✅ ✅ ✅ استخدم الدالة المُفلترة
-const employees = await jsonp('getEmployeesForDeduction', {
-  centerName: currentUser.centerName
-});
+    // ✅ ✅ ✅ استخدام getEmployeesByCenter (يُرجع serial)
+    const allEmployees = await jsonp('getEmployeesByCenter', {
+      centerId: currentUser.centerId,
+      centerName: currentUser.centerName
+    });
     
-    console.log("عدد الموظفين المستلمين:", employees?.length);
+    const empList = Array.isArray(allEmployees) ? allEmployees : [];
+    console.log("📊 إجمالي الموظفين:", empList.length);
     
-    if (!Array.isArray(employees) || employees.length === 0) {
-      showAlert('لا توجد بيانات موظفين');
-      return;
-    }
+    // ═══════════════════════════════════════════════════════════════
+    // ✅ ✅ ✅ الفلترة الصارمة:
+    //   1. استبعاد Admin, Owner, Customer, Supplier
+    //   2. استبعاد من ليس له راتب (مرتب فقط / مرتب+عمولة)
+    //   3. فلترة الفرع للمحاسب
+    // ═══════════════════════════════════════════════════════════════
     
-    // ✅ الفلترة مضمّنة في getEmployeesByCenter
-    let filtered = employees;
-    
-    // ✅ فلترة إضافية للفرع للمحاسب
-    if (currentUser.type === 'Accountant' && currentUser.branchName) {
-      const branchFiltered = employees.filter(e => 
-        e.branchName === currentUser.branchName || 
-        e.branchId === currentUser.branchId
-      );
-      
-      if (branchFiltered.length > 0) {
-        filtered = branchFiltered;
-        console.log(`✅ بعد فلترة الفرع: ${filtered.length} موظف`);
-      } else {
-        console.log(`⚠️ لا يوجد موظفون في فرع "${currentUser.branchName}"، عرض الكل`);
+    const filtered = empList.filter(emp => {
+      // ✅ 1. استبعاد الأنواع غير المرغوبة
+      const userType = (emp.type || '').trim();
+      if (['Admin', 'Owner', 'Customer', 'Supplier'].includes(userType)) {
+        return false;
       }
-    }
+      
+      // ✅ 2. الفلترة حسب الفرع (للمحاسب فقط)
+      if (currentUser.type === 'Accountant' && currentUser.branchName) {
+        const empBranch = (emp.branchName || '').trim();
+        const empBranchId = (emp.branchId || '').trim();
+        const userBranch = (currentUser.branchName || '').trim();
+        const userBranchId = (currentUser.branchId || '').trim();
+        
+        if (empBranch !== userBranch && empBranchId !== userBranchId) {
+          return false;
+        }
+      }
+      
+      // ✅ 3. فلترة نظام الدفع
+      const ps = (emp.paymentSystem || '').trim();
+      
+      // إذا لا يوجد paymentSystem → افحص الراتب
+      if (!ps) {
+        return parseFloat(emp.monthlySalary) > 0;
+      }
+      
+      // استبعاد "عمولة فقط"
+      if (ps.includes('عمولة') && !ps.includes('مرتب')) {
+        return false;
+      }
+      
+      // قبول "مرتب فقط" أو "مرتب+عمولة"
+      if (ps.includes('مرتب') || ps.includes('راتب')) {
+        return true;
+      }
+      
+      // افتراضياً: رفض (للأمان)
+      return false;
+    });
+    
+    console.log(`📊 بعد الفلترة: ${filtered.length} موظف`);
     
     if (filtered.length === 0) {
-      showAlert('لا يوجد موظفون لعرضهم');
+      showAlert('لا يوجد موظفون لعرضهم\n\nتأكد من تسجيل رواتب الموظفين في صفحة إدارة الموظفين');
       return;
     }
     
+    // ═══════════════════════════════════════════════════════════════
     // ✅ بناء قائمة الخيارات
+    // ═══════════════════════════════════════════════════════════════
     let options = filtered.map(emp => {
-      const branchInfo = emp.branchName ? ` - ${emp.branchName}` : '';
-      return `<option value="${safeEscape(emp.serial)}">${safeEscape(emp.name)} (${safeEscape(emp.position || 'موظف')})${branchInfo}</option>`;
+      const serial = emp.serial || emp.id || '';
+      const name = emp.name || 'بدون اسم';
+      const position = emp.position || 'موظف';
+      const branch = emp.branchName ? ` | ${emp.branchName}` : '';
+      const payment = emp.paymentSystem ? ` | ${emp.paymentSystem}` : '';
+      
+      return `<option value="${safeEscape(serial)}">${safeEscape(name)} (${safeEscape(position)})${safeEscape(branch)}${safeEscape(payment)}</option>`;
     }).join('');
     
+    // ═══════════════════════════════════════════════════════════════
     // ✅ بناء المودال
+    // ═══════════════════════════════════════════════════════════════
     const modal = document.createElement('div');
     modal.className = 'modal';
     modal.style.display = 'flex';
+    modal.style.position = 'fixed';
+    modal.style.inset = '0';
+    modal.style.background = 'rgba(0,0,0,.5)';
+    modal.style.alignItems = 'center';
+    modal.style.justifyContent = 'center';
+    modal.style.zIndex = '99999';
+    
     modal.innerHTML = `
       <div class="modal-box" style="max-width:420px;text-align:center;">
         <div class="modal-icon">👤</div>
         <div class="modal-title">اختر الموظف</div>
         <div style="margin-bottom:14px;font-size:12px;color:#64748b;">
-          📊 عدد الموظفين: ${filtered.length}
+          📊 عدد الموظفين المتاحين: <strong>${filtered.length}</strong>
         </div>
         <select id="empSelect" style="width:100%;padding:12px;border-radius:12px;border:2px solid #dde4f0;margin-bottom:16px;font-family:'Cairo',sans-serif;font-size:14px;">
           ${options}
@@ -744,18 +790,17 @@ const employees = await jsonp('getEmployeesForDeduction', {
     `;
     document.body.appendChild(modal);
     
+    // ═══════════════════════════════════════════════════════════════
     // ✅ ربط الأزرار
+    // ═══════════════════════════════════════════════════════════════
     document.getElementById('viewEmpBtn').onclick = function() {
-      const select = document.getElementById('empSelect');
-      const serial = select?.value;
+      const serial = document.getElementById('empSelect')?.value;
       if (!serial) {
         showAlert('الرجاء اختيار موظف أولاً');
         return;
       }
       
       modal.remove();
-      
-      // ✅ تمرير serial في URL
       const userParam = encodeURIComponent(JSON.stringify(currentUser));
       window.location.href = `MyAttendance.html?serial=${encodeURIComponent(serial)}&user=${userParam}`;
     };
@@ -764,16 +809,18 @@ const employees = await jsonp('getEmployeesForDeduction', {
       modal.remove();
     };
     
-    // ✅ إغلاق عند الضغط على الخلفية
     modal.onclick = function(e) {
       if (e.target === modal) modal.remove();
     };
     
+    console.log(`✅ تم عرض ${filtered.length} موظف في القائمة`);
+    
   } catch(e) {
-    console.error("🔥 خطأ في openEmployeeAttendance:", e);
+    console.error("❌ خطأ في openEmployeeAttendance:", e);
     showAlert('خطأ في تحميل بيانات الموظفين: ' + e.message);
   }
 }
+  
   
 function showDashboard(){
   if (!currentUser) {
