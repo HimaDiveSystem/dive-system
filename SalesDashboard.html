@@ -933,12 +933,21 @@ function checkSessionValidity() {
     }
   }
 
- async function openBranchSelector() {
+async function openBranchSelector() {
   const modal = document.getElementById('branchModal');
   const select = document.getElementById('branchSelectModal');
   
-  // ✅ إذا كانت القائمة فارغة، حمّلها أولاً
-  if (branchesList.length === 0 && currentUser?.centerId) {
+  // ✅ إذا كانت القائمة فارغة
+  if (branchesList.length === 0) {
+    // تحقق من centerId
+    if (!currentUser?.centerId) {
+      console.error('❌ لا يوجد centerId للمستخدم');
+      select.innerHTML = '<option value="">⚠️ لا يوجد مركز مرتبط بحسابك</option>';
+      modal.style.display = 'flex';
+      return;
+    }
+    
+    // حمّل الفروع
     console.log('📡 القائمة فارغة — جاري التحميل...');
     showLoading(true, 'جاري تحميل الفروع...');
     
@@ -956,7 +965,7 @@ function checkSessionValidity() {
     }
   }
   
-  // ✅ الآن املأ القائمة
+  // ✅ املأ القائمة
   select.innerHTML = '<option value="">-- اختر الفرع --</option>';
   
   if (branchesList.length > 0) {
@@ -970,12 +979,12 @@ function checkSessionValidity() {
   
   modal.style.display = 'flex';
 }
-
+   
   function closeBranchModal() {
     document.getElementById('branchModal').style.display = 'none';
   }
 
- function confirmBranchModal() {
+function confirmBranchModal() {
   const select = document.getElementById('branchSelectModal');
   const branchId = select.value;
   const branchName = select.options[select.selectedIndex]?.text;
@@ -987,23 +996,15 @@ function checkSessionValidity() {
   
   selectedBranch = { id: branchId, name: branchName };
   
-  // ✅ حفظ الفرع في جميع الأماكن الممكنة
+  // ✅ sessionStorage فقط (لا localStorage)
   const branchJSON = JSON.stringify(selectedBranch);
   sessionStorage.setItem('selectedBranch', branchJSON);
-  localStorage.setItem('selectedBranch', branchJSON);
   
-  // ✅ ✅ ✅ الأهم: احفظ داخل currentUser
+  // ✅ حفظ داخل currentUser
   if (currentUser) {
     currentUser.branchId = selectedBranch.id;
     currentUser.branchName = selectedBranch.name;
     currentUser.selectedBranch = selectedBranch;
-    
-    // احفظ في user-specific key
-    if (currentUser.id) {
-      localStorage.setItem('selectedBranch_' + currentUser.id, branchJSON);
-    }
-    
-    // احفظ currentUser محدّث في sessionStorage
     sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
   }
   
@@ -1039,48 +1040,52 @@ function confirmBranch() {
   
   selectedBranch = { id: branchId, name: branchName };
   
-  // ✅ حفظ في جميع الأماكن
+  // ✅ sessionStorage فقط (لا localStorage)
   const branchJSON = JSON.stringify(selectedBranch);
   sessionStorage.setItem('selectedBranch', branchJSON);
-  localStorage.setItem('selectedBranch', branchJSON);
   
-  // ✅ الأهم: احفظ داخل currentUser
+  // ✅ حفظ داخل currentUser
   if (currentUser) {
     currentUser.branchId = selectedBranch.id;
     currentUser.branchName = selectedBranch.name;
     currentUser.selectedBranch = selectedBranch;
-    
-    if (currentUser.id) {
-      localStorage.setItem('selectedBranch_' + currentUser.id, branchJSON);
-    }
-    
     sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
   }
   
   updateBranchDisplay();
   showDashboard();
 }
-
-  async function loadUserBranches() {
-    if (!currentUser?.centerId) { showDashboard(); return; }
-    showLoading(true, 'جاري تحميل الفروع...');
-    try {
-      const data = await callGAS('getBranchesByCenter', { centerId: currentUser.centerId });
-      const branches = Array.isArray(data) ? data : (data.branches || []);
-      branchesList = branches;
-      if (branches.length > 0) showBranchSelector(branches);
-      else { showAlert('لا توجد فروع متاحة'); showDashboard(); }
-    } catch(e) {
-      showAlert('فشل في تحميل الفروع');
-      showDashboard();
-    } finally {
-      showLoading(false);
-    }
+   
+ async function loadUserBranches() {
+  // ✅ حماية من الاستدعاء المتكرر
+  if (window._loadingBranches) {
+    console.warn('⚠️ loadUserBranches قيد التنفيذ — تجاهل');
+    return;
   }
-
-  // ============================================================
-  // ✅ عرض Dashboard
-  // ============================================================
+  window._loadingBranches = true;
+  
+  if (!currentUser?.centerId) { 
+    showDashboard(); 
+    window._loadingBranches = false;
+    return; 
+  }
+  
+  showLoading(true, 'جاري تحميل الفروع...');
+  try {
+    const data = await callGAS('getBranchesByCenter', { centerId: currentUser.centerId });
+    const branches = Array.isArray(data) ? data : (data.branches || []);
+    branchesList = branches;
+    if (branches.length > 0) showBranchSelector(branches);
+    else { showAlert('لا توجد فروع متاحة'); showDashboard(); }
+  } catch(e) {
+    showAlert('فشل في تحميل الفروع');
+    showDashboard();
+  } finally {
+    showLoading(false);
+    window._loadingBranches = false;
+  }
+}
+   
  // ============================================================
 // ✅ عرض Dashboard - أزرار دائرية
 // ============================================================
@@ -1156,63 +1161,49 @@ function showDashboard() {
   // ✅ دوال التنقل
   // ============================================================
   
-  // ✅ دالة فتح PackageInvoice
-function openPackageInvoice() {
+ function openPackageInvoice() {
   if (!currentUser) {
     showAlert('⚠️ بيانات المستخدم غير متوفرة');
     return;
   }
   
-  // ✅ تأكد من حفظ الفرع داخل currentUser قبل التنقل
   let userToPass = currentUser;
   if (selectedBranch) {
     userToPass = { 
       ...currentUser, 
       branchId: selectedBranch.id, 
       branchName: selectedBranch.name,
-      selectedBranch: selectedBranch  // ← ✅ مهم جداً
+      selectedBranch: selectedBranch
     };
     
-    // ✅ احفظ في جميع الأماكن
+    // ✅ sessionStorage فقط
     const branchJSON = JSON.stringify(selectedBranch);
     sessionStorage.setItem('selectedBranch', branchJSON);
-    localStorage.setItem('selectedBranch', branchJSON);
-    
-    if (currentUser.id) {
-      localStorage.setItem('selectedBranch_' + currentUser.id, branchJSON);
-    }
   }
   
-  // ✅ حفظ currentUser محدّث
   sessionStorage.setItem('currentUser', JSON.stringify(userToPass));
   
   window.location.href = 'PackageInvoice.html';
 }
-
+   
 function openInvoicePage() {
   if (!currentUser) {
     showAlert('⚠️ بيانات المستخدم غير متوفرة');
     return;
   }
   
-  // ✅ تأكد من حفظ الفرع داخل currentUser قبل التنقل
   let userToPass = currentUser;
   if (selectedBranch) {
     userToPass = { 
       ...currentUser, 
       branchId: selectedBranch.id, 
       branchName: selectedBranch.name,
-      selectedBranch: selectedBranch  // ← ✅ مهم جداً
+      selectedBranch: selectedBranch
     };
     
-    // ✅ احفظ في جميع الأماكن
+    // ✅ sessionStorage فقط
     const branchJSON = JSON.stringify(selectedBranch);
     sessionStorage.setItem('selectedBranch', branchJSON);
-    localStorage.setItem('selectedBranch', branchJSON);
-    
-    if (currentUser.id) {
-      localStorage.setItem('selectedBranch_' + currentUser.id, branchJSON);
-    }
   }
   
   sessionStorage.setItem('currentUser', JSON.stringify(userToPass));
@@ -1232,27 +1223,20 @@ function showTab(tab, el) {
       return;
     }
     
-    // ✅ تأكد من حفظ الفرع داخل currentUser قبل التنقل
     let userToPass = currentUser;
     if (selectedBranch) {
       userToPass = { 
         ...currentUser, 
         branchId: selectedBranch.id, 
         branchName: selectedBranch.name,
-        selectedBranch: selectedBranch  // ← ✅ مهم جداً
+        selectedBranch: selectedBranch
       };
       
-      // ✅ احفظ في جميع الأماكن
+      // ✅ sessionStorage فقط
       const branchJSON = JSON.stringify(selectedBranch);
       sessionStorage.setItem('selectedBranch', branchJSON);
-      localStorage.setItem('selectedBranch', branchJSON);
-      
-      if (currentUser.id) {
-        localStorage.setItem('selectedBranch_' + currentUser.id, branchJSON);
-      }
     }
     
-    // ✅ حفظ currentUser محدّث
     sessionStorage.setItem('currentUser', JSON.stringify(userToPass));
     
     console.log('✅ showTab(analytics) — المستخدم:', userToPass.name);
@@ -1266,26 +1250,13 @@ function showTab(tab, el) {
    
 // ✅ فتح المودال
 function openChangePasswordModal() {
-  document.getElementById('passwordModal').classList.add('open');
-}
-// ✅ إغلاق المودال
-function closePasswordModal() {
-  document.getElementById('passwordModal').classList.remove('open');
-  
+  // ✅ امسح الحقول أولاً
   const inputs = ['currentPassword', 'newPassword', 'confirmPassword'];
   inputs.forEach(id => {
     const el = document.getElementById(id);
     if (el) {
       el.value = '';
       el.type = 'password';
-      const wrapper = el.closest('.password-input-wrapper');
-      if (wrapper) {
-        const btn = wrapper.querySelector('.toggle-password-btn');
-        if (btn) {
-          btn.textContent = '👁️';
-          btn.setAttribute('aria-label', 'إظهار كلمة المرور');
-        }
-      }
     }
   });
   
@@ -1295,6 +1266,15 @@ function closePasswordModal() {
     msgEl.style.display = 'none';
     msgEl.textContent = '';
   }
+  
+  // ✅ إعادة تفعيل زر التأكيد
+  const submitBtn = document.getElementById('passwordSubmitBtn');
+  if (submitBtn) {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'تأكيد';
+  }
+  
+  document.getElementById('passwordModal').classList.add('open');
 }
 // 3️⃣ إظهار/إخفاء كلمة المرور
 function togglePassword(inputId, btn) {
@@ -1426,27 +1406,20 @@ function filterInvoices(status) {
     return;
   }
   
-  // ✅ تأكد من حفظ الفرع داخل currentUser قبل التنقل
   let userToPass = currentUser;
   if (selectedBranch) {
     userToPass = { 
       ...currentUser, 
       branchId: selectedBranch.id, 
       branchName: selectedBranch.name,
-      selectedBranch: selectedBranch  // ← ✅ مهم جداً
+      selectedBranch: selectedBranch
     };
     
-    // ✅ احفظ في جميع الأماكن
+    // ✅ sessionStorage فقط
     const branchJSON = JSON.stringify(selectedBranch);
     sessionStorage.setItem('selectedBranch', branchJSON);
-    localStorage.setItem('selectedBranch', branchJSON);
-    
-    if (currentUser.id) {
-      localStorage.setItem('selectedBranch_' + currentUser.id, branchJSON);
-    }
   }
   
-  // ✅ حفظ currentUser محدّث
   sessionStorage.setItem('currentUser', JSON.stringify(userToPass));
   
   // ✅ توحيد الحالة
@@ -1466,27 +1439,20 @@ function openPassportScanner() {
     return;
   }
   
-  // ✅ تأكد من حفظ الفرع داخل currentUser قبل التنقل
   let userToPass = currentUser;
   if (selectedBranch) {
     userToPass = { 
       ...currentUser, 
       branchId: selectedBranch.id, 
       branchName: selectedBranch.name,
-      selectedBranch: selectedBranch  // ← ✅ مهم جداً
+      selectedBranch: selectedBranch
     };
     
-    // ✅ احفظ في جميع الأماكن
+    // ✅ sessionStorage فقط
     const branchJSON = JSON.stringify(selectedBranch);
     sessionStorage.setItem('selectedBranch', branchJSON);
-    localStorage.setItem('selectedBranch', branchJSON);
-    
-    if (currentUser.id) {
-      localStorage.setItem('selectedBranch_' + currentUser.id, branchJSON);
-    }
   }
   
-  // ✅ حفظ currentUser محدّث
   sessionStorage.setItem('currentUser', JSON.stringify(userToPass));
   
   window.location.href = 'PassportScan.html';
@@ -1498,27 +1464,20 @@ function openMyBookings(status) {
     return;
   }
   
-  // ✅ تأكد من حفظ الفرع داخل currentUser قبل التنقل
   let userToPass = currentUser;
   if (selectedBranch) {
     userToPass = { 
       ...currentUser, 
       branchId: selectedBranch.id, 
       branchName: selectedBranch.name,
-      selectedBranch: selectedBranch  // ← ✅ مهم جداً
+      selectedBranch: selectedBranch
     };
     
-    // ✅ احفظ في جميع الأماكن
+    // ✅ sessionStorage فقط
     const branchJSON = JSON.stringify(selectedBranch);
     sessionStorage.setItem('selectedBranch', branchJSON);
-    localStorage.setItem('selectedBranch', branchJSON);
-    
-    if (currentUser.id) {
-      localStorage.setItem('selectedBranch_' + currentUser.id, branchJSON);
-    }
   }
   
-  // ✅ حفظ currentUser محدّث
   sessionStorage.setItem('currentUser', JSON.stringify(userToPass));
   
   // ✅ توحيد الحالة
@@ -1532,75 +1491,56 @@ function openMyBookings(status) {
   window.location.href = `MyBookings.html?status=${statusParam}`;
 }
    
-  // ═══════════════════════════════════════════════════════════════════
-// ✅ go() — دالة تنقل موحّدة (نفس نمط AccountantDashboard)
-// ═══════════════════════════════════════════════════════════════════
-function go(url) {
+ function go(url) {
   if (currentUser) {
-    // ✅ حفظ في Session
-    if (typeof Session !== 'undefined' && Session.save) {
-      Session.save(currentUser);
-    }
-    
-    // ✅ حفظ في sessionStorage
-    sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
-    
-    // ✅ حفظ الفرع في sessionStorage + localStorage
+    // ✅ 1. أضف الفرع داخل currentUser أولاً
     if (selectedBranch) {
-      const branchJSON = JSON.stringify(selectedBranch);
-      sessionStorage.setItem('selectedBranch', branchJSON);
-      localStorage.setItem('selectedBranch', branchJSON);
-      
-      if (currentUser.id) {
-        localStorage.setItem('selectedBranch_' + currentUser.id, branchJSON);
-      }
-      
-      // ✅ احفظ داخل currentUser
       currentUser.branchId = selectedBranch.id;
       currentUser.branchName = selectedBranch.name;
       currentUser.selectedBranch = selectedBranch;
+    }
+    
+    // ✅ 2. الآن احفظ في Session
+    if (typeof Session !== 'undefined' && Session.save) {
+      Session.save(currentUser);
+    } else {
       sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
+    }
+    
+    // ✅ 3. احفظ الفرع منفصلاً أيضاً
+    if (selectedBranch) {
+      sessionStorage.setItem('selectedBranch', JSON.stringify(selectedBranch));
     }
     
     console.log('✅ تم حفظ المستخدم قبل التوجيه:', currentUser.name);
     console.log('✅ الفرع المحفوظ:', selectedBranch?.name || 'غير محدد');
   }
   
-  // ✅ تأخير بسيط لضمان حفظ البيانات
   setTimeout(() => {
     location.href = url;
   }, 100);
 }
-// ═══════════════════════════════════════════════════════════════════
-// openCommissionDashboard — فتح صفحة العمولات (للسيلز)
-// ═══════════════════════════════════════════════════════════════════
+   
 function openCommissionDashboard() {
   if (!currentUser) {
     showAlert('⚠️ بيانات المستخدم غير متوفرة');
     return;
   }
   
-  // ✅ تحديث بيانات المستخدم مع الفرع
   let userToPass = currentUser;
   if (selectedBranch) {
     userToPass = { 
       ...currentUser, 
       branchId: selectedBranch.id, 
       branchName: selectedBranch.name,
-      selectedBranch: selectedBranch  // ← ✅ مهم جداً
+      selectedBranch: selectedBranch
     };
     
-    // ✅ احفظ في جميع الأماكن
+    // ✅ sessionStorage فقط
     const branchJSON = JSON.stringify(selectedBranch);
     sessionStorage.setItem('selectedBranch', branchJSON);
-    localStorage.setItem('selectedBranch', branchJSON);
-    
-    if (currentUser.id) {
-      localStorage.setItem('selectedBranch_' + currentUser.id, branchJSON);
-    }
   }
   
-  // ✅ حفظ currentUser محدّث
   sessionStorage.setItem('currentUser', JSON.stringify(userToPass));
   
   // ✅ بناء URL مع تمرير معلومات النطاق
@@ -1695,77 +1635,52 @@ document.addEventListener('DOMContentLoaded', async function() {
     currentUser = userData;
     document.getElementById('userNameDisplay').textContent = currentUser.name || 'Sales Rep';
     
-    // ✅ ✅ ✅ استعادة الفرع (sessionStorage أولاً، ثم localStorage)
-    // ✅ ✅ ✅ استعادة الفرع — بترتيب محسّن مع أولوية
+       // ✅ ✅ ✅ استعادة الفرع — sessionStorage فقط (جلسة التبويب الحالي)
     let branchData = null;
     let branchSource = '';
     
-    // 1️⃣ الأولوية 1: من داخل currentUser (إن وُجد)
-    if (currentUser.selectedBranch && currentUser.selectedBranch.id) {
-      branchData = currentUser.selectedBranch;
-      branchSource = 'currentUser.selectedBranch';
-    }
-    // 2️⃣ الأولوية 2: من sessionStorage.selectedBranch
-    else {
-      const sessionBranch = sessionStorage.getItem('selectedBranch');
-      if (sessionBranch) {
-        try {
-          branchData = JSON.parse(sessionBranch);
-          branchSource = 'sessionStorage';
-        } catch(e) {
-          console.warn('⚠️ فشل تحليل sessionStorage.selectedBranch');
-        }
-      }
-    }
-    // 3️⃣ الأولوية 3: من localStorage.selectedBranch
-    if (!branchData) {
-      const localBranch = localStorage.getItem('selectedBranch');
-      if (localBranch) {
-        try {
-          branchData = JSON.parse(localBranch);
-          branchSource = 'localStorage';
-        } catch(e) {
-          console.warn('⚠️ فشل تحليل localStorage.selectedBranch');
-        }
-      }
-    }
-    // 4️⃣ الأولوية 4: من localStorage.selectedBranch_<userId>
-    if (!branchData && currentUser.id) {
-      const userBranch = localStorage.getItem('selectedBranch_' + currentUser.id);
-      if (userBranch) {
-        try {
-          branchData = JSON.parse(userBranch);
-          branchSource = 'localStorage (user-specific)';
-        } catch(e) {}
+    // 1️⃣ الأولوية 1: من sessionStorage.selectedBranch (التبويب الحالي)
+    const sessionBranch = sessionStorage.getItem('selectedBranch');
+    if (sessionBranch) {
+      try {
+        branchData = JSON.parse(sessionBranch);
+        branchSource = 'sessionStorage';
+      } catch(e) {
+        console.warn('⚠️ فشل تحليل sessionStorage.selectedBranch');
       }
     }
     
-   if (branchData && branchData.id) {
-  selectedBranch = branchData;
-  console.log(`🌿 تم استعادة الفرع من [${branchSource}]:`, selectedBranch.name);
-  
-  // ✅ تأكد من كتابته في كل الأماكن
-  sessionStorage.setItem('selectedBranch', JSON.stringify(selectedBranch));
-  localStorage.setItem('selectedBranch', JSON.stringify(selectedBranch));
-  if (currentUser.id) {
-    localStorage.setItem('selectedBranch_' + currentUser.id, JSON.stringify(selectedBranch));
-  }
-  
-  // ✅ الأهم: احفظ الفرع داخل currentUser نفسه
-  currentUser.branchId = selectedBranch.id;
-  currentUser.branchName = selectedBranch.name;
-  currentUser.selectedBranch = selectedBranch;
-  sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
-  
-  updateBranchDisplay();
-  showDashboard();
-  
-  // ✅ ✅ ✅ جديد: حمّل قائمة الفروع في الخلفية (بدون إظهار أي شيء)
-  loadBranchesInBackground();
-} else {
-  console.log('⚠️ لا يوجد فرع محفوظ، جاري تحميل الفروع...');
-  await loadUserBranches();
-}
+    // 2️⃣ الأولوية 2: من currentUser.selectedBranch (إذا كان محفوظاً)
+    if (!branchData && currentUser.selectedBranch && currentUser.selectedBranch.id) {
+      branchData = currentUser.selectedBranch;
+      branchSource = 'currentUser.selectedBranch';
+    }
+    
+    // ⚠️ لا نستخدم localStorage.selectedBranch — لأنه قد يكون قديماً
+    
+    if (branchData && branchData.id) {
+      selectedBranch = branchData;
+      console.log(`🌿 تم استعادة الفرع من [${branchSource}]:`, selectedBranch.name);
+      
+      // ✅ sessionStorage فقط
+      sessionStorage.setItem('selectedBranch', JSON.stringify(selectedBranch));
+      
+      // ✅ حفظ داخل currentUser
+      currentUser.branchId = selectedBranch.id;
+      currentUser.branchName = selectedBranch.name;
+      currentUser.selectedBranch = selectedBranch;
+      sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
+      
+      updateBranchDisplay();
+      showDashboard();
+      
+      // ✅ حمّل قائمة الفروع في الخلفية
+      loadBranchesInBackground();
+    } else {
+      // 🔴 لا يوجد فرع في التبويب الحالي → اطلب اختيار الفرع
+      console.log('⚠️ لا يوجد فرع محفوظ لهذا التبويب، جاري تحميل الفروع...');
+      await loadUserBranches();
+    }
   } catch(e) {
     console.error('❌ خطأ:', e);
     if (window.Session && window.Session.safeRedirect) {
