@@ -933,21 +933,43 @@ function checkSessionValidity() {
     }
   }
 
-  function openBranchSelector() {
-    const modal = document.getElementById('branchModal');
-    const select = document.getElementById('branchSelectModal');
+ async function openBranchSelector() {
+  const modal = document.getElementById('branchModal');
+  const select = document.getElementById('branchSelectModal');
+  
+  // ✅ إذا كانت القائمة فارغة، حمّلها أولاً
+  if (branchesList.length === 0 && currentUser?.centerId) {
+    console.log('📡 القائمة فارغة — جاري التحميل...');
+    showLoading(true, 'جاري تحميل الفروع...');
     
-    // ملء القائمة
-    select.innerHTML = '<option value="">-- اختر الفرع --</option>';
-    if (branchesList.length > 0) {
-      branchesList.forEach(b => {
-        const selected = (selectedBranch && selectedBranch.id === b.id) ? 'selected' : '';
-        select.innerHTML += `<option value="${b.id}" ${selected}>${b.name}</option>`;
-      });
+    try {
+      const data = await callGAS('getBranchesByCenter', { centerId: currentUser.centerId });
+      branchesList = Array.isArray(data) ? data : (data.branches || []);
+      console.log(`✅ تم تحميل ${branchesList.length} فرع`);
+    } catch(e) {
+      console.error('❌ فشل تحميل الفروع:', e);
+      showAlert('❌ فشل تحميل الفروع. تحقق من الاتصال.');
+      showLoading(false);
+      return;
+    } finally {
+      showLoading(false);
     }
-    
-    modal.style.display = 'flex';
   }
+  
+  // ✅ الآن املأ القائمة
+  select.innerHTML = '<option value="">-- اختر الفرع --</option>';
+  
+  if (branchesList.length > 0) {
+    branchesList.forEach(b => {
+      const isSelected = (selectedBranch && selectedBranch.id === b.id) ? 'selected' : '';
+      select.innerHTML += `<option value="${b.id}" ${isSelected}>${b.name}</option>`;
+    });
+  } else {
+    select.innerHTML = '<option value="">⚠️ لا توجد فروع متاحة</option>';
+  }
+  
+  modal.style.display = 'flex';
+}
 
   function closeBranchModal() {
     document.getElementById('branchModal').style.display = 'none';
@@ -1585,6 +1607,27 @@ function openCommissionDashboard() {
   const userParam = encodeURIComponent(JSON.stringify(userToPass));
   window.location.href = `CommissionDashboard.html?user=${userParam}`;
 }
+   // ✅ تحميل الفروع في الخلفية (بدون إظهار أي شيء)
+async function loadBranchesInBackground() {
+  if (!currentUser?.centerId) {
+    console.warn('⚠️ loadBranchesInBackground: لا يوجد centerId');
+    return;
+  }
+  
+  try {
+    console.log('📡 تحميل الفروع في الخلفية...');
+    
+    const data = await callGAS('getBranchesByCenter', { centerId: currentUser.centerId });
+    const branches = Array.isArray(data) ? data : (data.branches || []);
+    
+    branchesList = branches;
+    console.log(`✅ تم تحميل ${branches.length} فرع في الخلفية`);
+    
+  } catch(e) {
+    console.warn('⚠️ فشل تحميل الفروع في الخلفية:', e);
+    // لا نعرض خطأ — سيُحمّل عند الحاجة
+  }
+}
   // ============================================================
   // ✅ التحميل الأولي
   // ============================================================
@@ -1697,29 +1740,32 @@ document.addEventListener('DOMContentLoaded', async function() {
       }
     }
     
-    if (branchData && branchData.id) {
-      selectedBranch = branchData;
-      console.log(`🌿 تم استعادة الفرع من [${branchSource}]:`, selectedBranch.name);
-      
-      // ✅ تأكد من كتابته في كل الأماكن
-      sessionStorage.setItem('selectedBranch', JSON.stringify(selectedBranch));
-      localStorage.setItem('selectedBranch', JSON.stringify(selectedBranch));
-      if (currentUser.id) {
-        localStorage.setItem('selectedBranch_' + currentUser.id, JSON.stringify(selectedBranch));
-      }
-      
-      // ✅ ✅ ✅ الأهم: احفظ الفرع داخل currentUser نفسه
-      currentUser.branchId = selectedBranch.id;
-      currentUser.branchName = selectedBranch.name;
-      currentUser.selectedBranch = selectedBranch;
-      sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
-      
-      updateBranchDisplay();
-      showDashboard();
-    } else {
-      console.log('⚠️ لا يوجد فرع محفوظ، جاري تحميل الفروع...');
-      await loadUserBranches();
-    }
+   if (branchData && branchData.id) {
+  selectedBranch = branchData;
+  console.log(`🌿 تم استعادة الفرع من [${branchSource}]:`, selectedBranch.name);
+  
+  // ✅ تأكد من كتابته في كل الأماكن
+  sessionStorage.setItem('selectedBranch', JSON.stringify(selectedBranch));
+  localStorage.setItem('selectedBranch', JSON.stringify(selectedBranch));
+  if (currentUser.id) {
+    localStorage.setItem('selectedBranch_' + currentUser.id, JSON.stringify(selectedBranch));
+  }
+  
+  // ✅ الأهم: احفظ الفرع داخل currentUser نفسه
+  currentUser.branchId = selectedBranch.id;
+  currentUser.branchName = selectedBranch.name;
+  currentUser.selectedBranch = selectedBranch;
+  sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
+  
+  updateBranchDisplay();
+  showDashboard();
+  
+  // ✅ ✅ ✅ جديد: حمّل قائمة الفروع في الخلفية (بدون إظهار أي شيء)
+  loadBranchesInBackground();
+} else {
+  console.log('⚠️ لا يوجد فرع محفوظ، جاري تحميل الفروع...');
+  await loadUserBranches();
+}
   } catch(e) {
     console.error('❌ خطأ:', e);
     if (window.Session && window.Session.safeRedirect) {
@@ -1752,6 +1798,7 @@ window.showDashboard = showDashboard;
 window.loadUserBranches = loadUserBranches;
 window.navigateTo = navigateTo;
 window.showAlert = showAlert;
+window.loadBranchesInBackground = loadBranchesInBackground;
 window.showLoading = showLoading;
 
 console.log('✅ تم تصدير جميع الدوال إلى window');
