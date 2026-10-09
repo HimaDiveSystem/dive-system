@@ -579,9 +579,6 @@ async function loadEmployeeInfo() {
   }
 }
 
-// ============================================================
-// ✅ GET MONTHLY ATTENDANCE (من ملف المركز)
-// ============================================================
 async function loadMyAttendance() {
   const serialToUse = targetSerial || currentUser?.id || '';
   if (!serialToUse) {
@@ -596,7 +593,6 @@ async function loadMyAttendance() {
   btn.innerHTML = '<span class="loader"></span> جاري التحميل...';
 
   try {
-    // ✅ ✅ ✅ استخدام ملف المركز المنفصل
     const result = await gas('getMonthlyAttendance', {
       month: month,
       year: year,
@@ -611,7 +607,7 @@ async function loadMyAttendance() {
     }
 
     const employees = result.employees || [];
-    const emp = employees.find(e => e.serial === serialToUse);
+    const emp = employees.find(e => String(e.serial) === String(serialToUse));
     
     if (!emp) {
       document.getElementById('summaryRow').style.display = 'none';
@@ -619,40 +615,42 @@ async function loadMyAttendance() {
         <div class="empty">
           <span class="empty-icon">🔍</span>
           <p>الرقم الوظيفي <strong>${serialToUse}</strong> غير موجود في سجل الحضور</p>
-          <small style="color:#aaa;display:block;margin-top:8px;">تأكد من إضافته في شيت Working_Days</small>
         </div>`;
       showToast('الرقم الوظيفي غير موجود في الشيت', 'error');
       return;
     }
 
-     const myData = (result.data || {})[serialToUse] || {};
-      const allDates = (result.dates || []).sort((a, b) => new Date(a) - new Date(b));
-      
-      // ✅ ✅ ✅ فلترة الأيام: احتفظ فقط بالأيام التي بها بيانات فعلية
-      const dates = allDates.filter(ds => {
-        const st = myData[ds];
-        return st && String(st).trim() !== '';
-      });
+    const myData = (result.data || {})[serialToUse] || {};
+    const allDates = (result.dates || []).sort((a, b) => new Date(a) - new Date(b));
 
-console.log(`📊 إجمالي الأيام: ${allDates.length}, الأيام المسجلة: ${dates.length}`);
-    if (!dates.length) {
+    // ✅ ✅ ✅ فلترة: احتفظ فقط بالأيام التي بها بيانات
+    const datesWithData = allDates.filter(ds => {
+      const st = myData[ds];
+      return st && String(st).trim() !== '';
+    });
+
+    console.log(`📊 إجمالي الأيام: ${allDates.length}, الأيام المسجلة: ${datesWithData.length}`);
+
+    if (datesWithData.length === 0) {
       document.getElementById('summaryRow').style.display = 'none';
       document.getElementById('tableArea').innerHTML = `
         <div class="empty">
           <span class="empty-icon">📭</span>
-          <p>لا توجد بيانات لـ ${MN_AR[MN_KEYS.indexOf(month)]} ${year}</p>
+          <p>لا توجد بيانات حضور مسجلة لـ ${MN_AR[MN_KEYS.indexOf(month)]} ${year}</p>
+          <small style="color:#aaa;display:block;margin-top:8px;">لم يتم تسجيل أي يوم لهذا الموظف في هذا الشهر</small>
         </div>`;
-      showToast('لا توجد بيانات لهذه الفترة', 'info');
+      showToast('لا توجد بيانات مسجلة لهذا الشهر', 'info');
       return;
     }
 
     // ✅ حساب الإحصائيات
     const counts = {};
     STATUSES.forEach(s => { counts[s.key] = 0; });
-    dates.forEach(d => {
+    datesWithData.forEach(d => {
       const st = myData[d];
       if (st && counts[st] !== undefined) counts[st]++;
     });
+    
     const balance = parseFloat((result.balanceMap || {})[serialToUse]) || 0;
 
     // ✅ عرض الملخص
@@ -665,25 +663,36 @@ console.log(`📊 إجمالي الأيام: ${allDates.length}, الأيام ا
       `<div class="sbadge sb-T">⚖️ الرصيد: <strong>${balance}</strong></div>`;
 
     // ✅ عرض الجدول
-    const rows = dates.map(ds => {
+    const rows = datesWithData.map(ds => {
       const dt = parseDS(ds);
       const dayName = dt ? DAYS_AR[dt.getDay()] : '';
       const st = myData[ds];
       const stObj = STATUSES.find(s => s.key === st);
-      const chip = st ? `<span class="chip chip-${stObj?.chip || 'A'}">${stObj?.icon || ''} ${st}</span>`
-                      : `<span style="color:#ccc;font-size:12px;">—</span>`;
-      return `<tr><td class="date-col">${fmtDate(ds)}</td><td class="day-col">${dayName}</td><td>${chip}</td></tr>`;
+      const chip = st 
+        ? `<span class="chip chip-${stObj?.chip || 'A'}">${stObj?.icon || ''} ${st}</span>`
+        : `<span style="color:#ccc;font-size:12px;">—</span>`;
+      return `<tr>
+        <td class="date-col">${fmtDate(ds)}</td>
+        <td class="day-col">${dayName}</td>
+        <td>${chip}</td>
+      </tr>`;
     }).join('');
 
     document.getElementById('tableArea').innerHTML = `
       <div class="table-wrap">
         <table>
-          <thead><tr><th>📅 التاريخ</th><th>اليوم</th><th>الحالة</th></tr></thead>
+          <thead>
+            <tr>
+              <th>📅 التاريخ</th>
+              <th>اليوم</th>
+              <th>الحالة</th>
+            </tr>
+          </thead>
           <tbody>${rows}</tbody>
         </table>
       </div>`;
       
-    showToast(`✅ ${dates.length} يوم مسجّل`, 'success');
+    showToast(`✅ ${datesWithData.length} يوم مسجّل`, 'success');
 
   } catch(e) {
     console.error('❌ loadMyAttendance error:', e);
@@ -698,7 +707,7 @@ console.log(`📊 إجمالي الأيام: ${allDates.length}, الأيام ا
     btn.innerHTML = '🔍 عرض السجل';
   }
 }
-
+  
 // ============================================================
 // ✅ INITIALIZATION
 // ============================================================
