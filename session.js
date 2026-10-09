@@ -343,33 +343,33 @@
       return false;
     },
     
-    // ----------------------------------------------------------
+        // ----------------------------------------------------------
     // 🔟 تسجيل الخروج
     // ----------------------------------------------------------
-   logout() {
-  try {
-    // ✅ امسح sessionStorage
-    sessionStorage.clear();
-    
-    // ✅ امسح مفاتيح الفرع من localStorage
-    localStorage.removeItem('selectedBranch');
-    Object.keys(localStorage).forEach(key => {
-      if (key.startsWith('selectedBranch_')) {
-        localStorage.removeItem(key);
+    logout() {
+      try {
+        // ✅ امسح sessionStorage
+        sessionStorage.clear();
+        
+        // ✅ امسح مفاتيح الفرع من localStorage
+        localStorage.removeItem('selectedBranch');
+        Object.keys(localStorage).forEach(key => {
+          if (key.startsWith('selectedBranch_')) {
+            localStorage.removeItem(key);
+          }
+        });
+        
+        console.log('✅ logout - تم حذف كل البيانات');
+        
+        if (!window._redirecting) {
+          window._redirecting = true;
+          window.location.href = 'index.html';
+        }
+      } catch(e) {
+        console.error('❌ logout error:', e);
+        window.location.href = 'index.html';
       }
-    });
-    
-    console.log('✅ logout - تم حذف كل البيانات');
-    
-    if (!window._redirecting) {
-      window._redirecting = true;
-      window.location.href = 'index.html';
-    }
-  } catch(e) {
-    console.error('❌ logout error:', e);
-    window.location.href = 'index.html';
-  }
-}
+    },
     
     // ----------------------------------------------------------
     // 1️⃣1️⃣ مسح البيانات (بدون إعادة توجيه)
