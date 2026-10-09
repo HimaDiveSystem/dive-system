@@ -436,7 +436,79 @@ function showModernConfirmModal(unsetEmployees, onConfirm, onCancel){ const exis
 async function saveDay(){ 
     if(!currentDate){showToast('لم يُحدَّد تاريخ','error');return;} 
     const unsetEmployees = employees.filter(e => !statusMap[e.serial]); if(unsetEmployees.length>0){ showModernConfirmModal(unsetEmployees, async()=>{await executeSaveAttendance();}, ()=>{showToast('تم إلغاء الحفظ','info');}); return; } await executeSaveAttendance(); }
-async function executeSaveAttendance(){ const saveButton=document.getElementById('saveBtn'); const originalText=saveButton.innerHTML; saveButton.disabled=true; saveButton.innerHTML='<span style="display:inline-block;width:16px;height:16px;border:2px solid white;border-top:2px solid #ffd966;border-radius:50%;animation:spin 0.8s linear infinite;vertical-align:middle;margin-left:8px;"></span> جاري الحفظ...'; try{ const entries=[]; for(const emp of employees){ if(statusMap[emp.serial]){ entries.push({serial:emp.serial,status:statusMap[emp.serial]}); } } if(entries.length===0){showToast('لا توجد بيانات للحفظ','error');return;} const response=await jsonp('saveAttendance',{dateStr:currentDate,month:currentMonth,year:currentYear,dateColNum:currentDateCol||-1,entries:JSON.stringify(entries)}); if(response&&response.success){ if(response.balanceMap){ balanceMap=response.balanceMap; for(const emp of employees){ const safeId=emp.serial.replace(/[^a-zA-Z0-9]/g,'_'); const balanceBox=document.getElementById('bal_'+safeId); if(balanceBox){ const newBalance=balanceMap[emp.serial]; const balanceNum=parseFloat(newBalance); balanceBox.querySelector('.balance-num').textContent=isNaN(balanceNum)?'—':balanceNum; balanceBox.classList.remove('bal-pos','bal-neg','bal-zero'); if(balanceNum>0) balanceBox.classList.add('bal-pos'); else if(balanceNum<0) balanceBox.classList.add('bal-neg'); else balanceBox.classList.add('bal-zero'); } } } showToast(`✅ تم حفظ ${response.saved||entries.length} موظف بنجاح`,'success'); try{ await jsonp('syncWorkingDaysToSalaries',{month:currentMonth,year:currentYear}); }catch(syncErr){console.warn('خطأ في المزامنة:',syncErr);} } else { throw new Error(response?.message||'فشل في حفظ البيانات'); } }catch(error){ console.error('خطأ في الحفظ:',error); showToast('❌ '+(error.message||'حدث خطأ أثناء الحفظ'),'error'); }finally{ saveButton.disabled=false; saveButton.innerHTML=originalText; } }
+async function executeSaveAttendance() {
+  const saveButton = document.getElementById('saveBtn');
+  const originalText = saveButton.innerHTML;
+  saveButton.disabled = true;
+  saveButton.innerHTML = '<span style="display:inline-block;width:16px;height:16px;border:2px solid white;border-top:2px solid #ffd966;border-radius:50%;animation:spin 0.8s linear infinite;vertical-align:middle;margin-left:8px;"></span> جاري الحفظ...';
+  
+  try {
+    const entries = [];
+    for (const emp of employees) {
+      if (statusMap[emp.serial]) {
+        entries.push({ serial: emp.serial, status: statusMap[emp.serial] });
+      }
+    }
+    
+    if (entries.length === 0) {
+      showToast('لا توجد بيانات للحفظ', 'error');
+      return;
+    }
+    
+    // ✅ ✅ ✅ لا تُرسل dateColNum — دع الباك إند يبحث
+    const response = await jsonp('saveAttendance', {
+      dateStr: currentDate,
+      month: currentMonth,
+      year: currentYear,
+      // dateColNum: currentDateCol || -1,  ← احذف هذا السطر
+      entries: JSON.stringify(entries)
+    });
+    
+    if (response && response.success) {
+      // ✅ حفظ العمود الصحيح المُرجَع من الباك إند
+      if (response.dateColNum) {
+        currentDateCol = response.dateColNum;
+        console.log(`✅ العمود الصحيح: ${String.fromCharCode(64 + response.dateColNum)} (${response.dateColNum})`);
+      }
+      
+      if (response.balanceMap) {
+        balanceMap = response.balanceMap;
+        for (const emp of employees) {
+          const safeId = emp.serial.replace(/[^a-zA-Z0-9]/g, '_');
+          const balanceBox = document.getElementById('bal_' + safeId);
+          if (balanceBox) {
+            const newBalance = balanceMap[emp.serial];
+            const balanceNum = parseFloat(newBalance);
+            balanceBox.querySelector('.balance-num').textContent = isNaN(balanceNum) ? '—' : balanceNum;
+            balanceBox.classList.remove('bal-pos', 'bal-neg', 'bal-zero');
+            if (balanceNum > 0) balanceBox.classList.add('bal-pos');
+            else if (balanceNum < 0) balanceBox.classList.add('bal-neg');
+            else balanceBox.classList.add('bal-zero');
+          }
+        }
+      }
+      
+      showToast(`✅ تم حفظ ${response.saved || entries.length} موظف بنجاح`, 'success');
+      
+      try {
+        await jsonp('syncWorkingDaysToSalaries', { 
+          month: currentMonth, 
+          year: currentYear 
+        });
+      } catch (syncErr) {
+        console.warn('خطأ في المزامنة:', syncErr);
+      }
+    } else {
+      throw new Error(response?.message || 'فشل في حفظ البيانات');
+    }
+  } catch (error) {
+    console.error('خطأ في الحفظ:', error);
+    showToast('❌ ' + (error.message || 'حدث خطأ أثناء الحفظ'), 'error');
+  } finally {
+    saveButton.disabled = false;
+    saveButton.innerHTML = originalText;
+  }
+}
 async function saveAndOpenSalary() {
   const btn = document.getElementById('salaryBtn');
   const originalText = btn.innerHTML;
