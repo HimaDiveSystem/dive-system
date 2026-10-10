@@ -3702,137 +3702,169 @@ function resetFilters() {
   }
 }
 async function openVehiclesModal() {
-    const currentDate = getCurrentDateISO();
-    if (!currentDate) {
-        showToast('Please select a single date first', 'error');
-        return;
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) {
+    showToast('Please select a single date first', 'error');
+    return;
+  }
+  
+  // ✅ 1. افتح المودال فوراً
+  openModal('vehiclesModal');
+  document.getElementById('vehiclesList').innerHTML = 
+    '<div class="loader"><div class="spinner"></div>Loading...</div>';
+  
+  try {
+    // ✅ 2. استخدام الكاش المحلي
+    let allVehicles = cachedVehicles;
+    if (!allVehicles || allVehicles.length === 0) {
+      const result = await gas('getVehicles', { centerName: currentUser?.centerName });
+      allVehicles = Array.isArray(result) ? result : (result?.data || []);
+      cachedVehicles = allVehicles;
     }
     
-    showToast('Loading vehicles...', 'info');
+    // ✅ 3. تصفية سيارات الركاب النشطة فقط
+    const passengerVehicles = allVehicles.filter(v =>
+      v.isActive === true && v.usageType === 'passengers' && v.capacity > 0
+    );
     
-    const container = document.getElementById('vehiclesList');
-    if (container) container.innerHTML = '<div class="loader"><div class="spinner"></div>Loading...</div>';
+    if (passengerVehicles.length === 0) {
+      document.getElementById('vehiclesList').innerHTML = `
+        <div style="padding: 40px; text-align: center; color: var(--text-lt);">
+          <div style="font-size: 32px; margin-bottom: 12px;">🚗</div>
+          <h3>لا توجد سيارات ركاب متاحة</h3>
+          <p style="font-size: 12px; margin-top: 8px;">تأكد من إضافة سيارات بنوع استخدام "Passengers"</p>
+        </div>
+      `;
+      return;
+    }
     
-    openModal('vehiclesModal');
-    
+    // ✅ 4. جلب السجلات المحفوظة لهذا اليوم
+    let savedRecords = [];
     try {
-        let allVehicles = await getCachedData(
-            () => gas('getVehicles', { centerName: currentUser?.centerName }),
-            'vehicles'
-        );
-        cachedVehicles = allVehicles;
-        
-        const passengerVehicles = allVehicles.filter(v => 
-            v.isActive === true && v.usageType === 'passengers' && v.capacity > 0
-        );
-        
-        if (passengerVehicles.length === 0) {
-            showToast('⚠️ No passenger vehicles available', 'error');
-            return;
-        }
-        
-        const tripsOnDate = [...new Set(filteredInvoices.map(inv => inv.trip).filter(t => t))];
-        
-        // ✅ جلب السجلات المحفوظة
-        let savedRecords = [];
-        try {
-            const result = await gas('getVehicleTripRecords', { 
-                date: currentDate,
-                centerName: currentUser?.centerName 
-            });
-            console.log('📊 VehicleTripRecords result:', result);
-            if (result?.success && Array.isArray(result.data)) {
-                savedRecords = result.data;
-            }
-        } catch(e) {
-            console.warn('Failed to load vehicle records:', e);
-        }
-        
-        // ✅ ✅ ✅ بناء قائمة السيارات: دمج السيارات المختارة مع السجلات المحفوظة
-        let rowsToShow = [];
-        
-        // أولاً: إضافة السجلات المحفوظة
-        for (const record of savedRecords) {
-            const vehicleId = record.VehicleID || record.vehicleId;
-            const tripName = record.TripName || record.tripName;
-            const goCount = record.GoCount || record.goCount || 0;
-            const returnCount = record.ReturnCount || record.returnCount || 0;
-            
-            // ✅ التحقق من أن السيارة موجودة في قائمة passengerVehicles
-            const vehicleExists = passengerVehicles.some(v => v.id === vehicleId);
-            if (vehicleExists) {
-                rowsToShow.push({ vehicleId, tripName, goCount, returnCount, fromSaved: true });
-            }
-        }
-        
-        // ✅ ثانياً: إضافة السيارات المختارة التي ليس لها سجلات محفوظة
-        for (const vehicleId of selectedVehicles) {
-            const alreadyAdded = rowsToShow.some(r => r.vehicleId === vehicleId);
-            if (!alreadyAdded) {
-                const vehicle = passengerVehicles.find(v => v.id === vehicleId);
-                if (vehicle) {
-                    rowsToShow.push({ 
-                        vehicleId, 
-                        tripName: tripsOnDate[0] || '', 
-                        goCount: 0, 
-                        returnCount: 0,
-                        fromSaved: false 
-                    });
-                }
-            }
-        }
-        
-        // ✅ إذا لم توجد سيارات على الإطلاق، أضف صفاً فارغاً
-        if (rowsToShow.length === 0) {
-            rowsToShow.push({ vehicleId: '', tripName: '', goCount: 0, returnCount: 0, fromSaved: false });
-        }
-        
-        // ✅ بناء HTML
-        let html = `
-            <div style="max-height: 450px; overflow-y: auto;">
-                <div style="margin-bottom: 12px; padding: 8px; background: var(--gray-100); border-radius: 8px;">
-                    <strong>📅 Date:</strong> ${currentDate}<br>
-                    <strong>🚌 Available Trips:</strong> ${tripsOnDate.join(', ') || 'No trips'}
-                    <br><strong>🚗 Selected Vehicles:</strong> ${selectedVehicles.length > 0 ? selectedVehicles.join(', ') : 'None'}
-                    <br><strong>📊 Records Found:</strong> ${rowsToShow.length}
-                </div>
-                <div id="vehicleRowsContainer" style="display: flex; flex-direction: column; gap: 10px;">
-        `;
-        
-        for (let i = 0; i < rowsToShow.length; i++) {
-            const row = rowsToShow[i];
-            html += generateVehicleTripRow(i, row.vehicleId, row.tripName, row.goCount, row.returnCount, passengerVehicles, tripsOnDate);
-        }
-        
-        html += `
-                </div>
-            </div>
-            <div style="display: flex; gap: 10px; justify-content: space-between; margin-top: 12px; flex-wrap: wrap;">
-                <button class="btn btn-success" onclick="addVehicleTripRow()" style="padding: 6px 12px; font-size: 12px;">➕ Add Row</button>
-                <div style="display: flex; gap: 8px;">
-                    <button class="btn btn-secondary" onclick="closeModal('vehiclesModal')" style="padding: 6px 16px; font-size: 12px;">Cancel</button>
-                    <button class="btn btn-primary" onclick="saveAllVehicleTripRows()" style="padding: 6px 16px; font-size: 12px;">✅ Save All</button>
-                </div>
-            </div>
-        `;
-        
-        document.getElementById('vehiclesList').innerHTML = html;
-        
-        // ✅ تحديث المتغيرات
-        vehicleTripRows = rowsToShow.map(r => ({ 
-            vehicleId: r.vehicleId, 
-            tripName: r.tripName, 
-            goCount: r.goCount, 
-            returnCount: r.returnCount 
-        }));
-        
-        for (let i = 0; i < vehicleTripRows.length; i++) {
-            attachVehicleTripEvents(i);
-        }
-        
+      const result = await gas('getVehicleTripRecords', {
+        date: currentDate,
+        centerName: currentUser?.centerName
+      });
+      if (result?.success && Array.isArray(result.data)) {
+        savedRecords = result.data;
+      }
     } catch(e) {
-        showToast('Error loading vehicles: ' + e.message, 'error');
+      console.warn('Failed to load vehicle records:', e);
     }
+    
+    const tripsOnDate = [...new Set(filteredInvoices.map(inv => inv.trip).filter(t => t))];
+    
+    // ✅ ✅ ✅ الإصلاح الرئيسي: بناء قائمة السيارات
+    // 1. السجلات المحفوظة (أولاً)
+    // 2. السيارات المختارة (selectedVehicles)
+    // 3. ✅ جميع السيارات المتاحة (الجديد!)
+    let rowsToShow = [];
+    const alreadyShownIds = new Set();
+    
+    // ✅ 1. السجلات المحفوظة
+    for (const record of savedRecords) {
+      const vehicleId = record.VehicleID || record.vehicleId;
+      const tripName = record.TripName || record.tripName;
+      const goCount = record.GoCount || record.goCount || 0;
+      const returnCount = record.ReturnCount || record.returnCount || 0;
+      
+      const vehicleExists = passengerVehicles.some(v => v.id === vehicleId);
+      if (vehicleExists && !alreadyShownIds.has(vehicleId)) {
+        rowsToShow.push({ vehicleId, tripName, goCount, returnCount, fromSaved: true });
+        alreadyShownIds.add(vehicleId);
+      }
+    }
+    
+    // ✅ 2. السيارات المختارة يدوياً (إن لم تكن ظاهرة)
+    for (const vehicleId of selectedVehicles) {
+      if (!alreadyShownIds.has(vehicleId)) {
+        const vehicle = passengerVehicles.find(v => v.id === vehicleId);
+        if (vehicle) {
+          rowsToShow.push({
+            vehicleId,
+            tripName: tripsOnDate[0] || '',
+            goCount: 0,
+            returnCount: 0,
+            fromSaved: false
+          });
+          alreadyShownIds.add(vehicleId);
+        }
+      }
+    }
+    
+    // ✅ ✅ ✅ 3. الجديد: إظهار جميع السيارات المتاحة (حتى لو لم تكن مختارة)
+    for (const v of passengerVehicles) {
+      if (!alreadyShownIds.has(v.id)) {
+        rowsToShow.push({
+          vehicleId: v.id,
+          tripName: tripsOnDate[0] || '',
+          goCount: 0,
+          returnCount: 0,
+          fromSaved: false
+        });
+        alreadyShownIds.add(v.id);
+      }
+    }
+    
+    // ✅ 5. بناء HTML
+    let html = `
+      <div style="max-height: 450px; overflow-y: auto;">
+        <div style="margin-bottom: 12px; padding: 8px; background: var(--gray-100); border-radius: 8px;">
+          <strong>📅 Date:</strong> ${currentDate}<br>
+          <strong>🚌 Available Trips:</strong> ${tripsOnDate.join(', ') || 'No trips'}
+          <br><strong>🚗 Passenger Vehicles:</strong> ${passengerVehicles.length}
+          <br><strong>📊 Records:</strong> ${savedRecords.length}
+        </div>
+        <div id="vehicleRowsContainer" style="display: flex; flex-direction: column; gap: 10px;">
+    `;
+    
+    for (let i = 0; i < rowsToShow.length; i++) {
+      const row = rowsToShow[i];
+      html += generateVehicleTripRow(
+        i,
+        row.vehicleId,
+        row.tripName,
+        row.goCount,
+        row.returnCount,
+        passengerVehicles,
+        tripsOnDate
+      );
+    }
+    
+    html += `
+        </div>
+      </div>
+      <div style="display: flex; gap: 10px; justify-content: space-between; margin-top: 12px; flex-wrap: wrap;">
+        <button class="btn btn-success" onclick="addVehicleTripRow()" style="padding: 6px 12px; font-size: 12px;">➕ Add Row</button>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-secondary" onclick="closeModal('vehiclesModal')" style="padding: 6px 16px; font-size: 12px;">Cancel</button>
+          <button class="btn btn-primary" onclick="saveAllVehicleTripRows()" style="padding: 6px 16px; font-size: 12px;">✅ Save All</button>
+        </div>
+      </div>
+    `;
+    
+    document.getElementById('vehiclesList').innerHTML = html;
+    
+    // ✅ 6. تحديث المتغيرات وربط الأحداث
+    vehicleTripRows = rowsToShow.map(r => ({
+      vehicleId: r.vehicleId,
+      tripName: r.tripName,
+      goCount: r.goCount,
+      returnCount: r.returnCount
+    }));
+    
+    for (let i = 0; i < vehicleTripRows.length; i++) {
+      attachVehicleTripEvents(i);
+    }
+    
+  } catch(e) {
+    console.error('❌ openVehiclesModal error:', e);
+    document.getElementById('vehiclesList').innerHTML = `
+      <div style="padding: 20px; text-align: center; color: red;">
+        ❌ Error: ${escapeHtml(e.message)}
+      </div>
+    `;
+  }
 }
   // دالة توليد صف السيارة مع حقول Go/Return
 function generateVehicleTripRow(index, selectedVehicleId, selectedTrip, goCount, returnCount, vehicles, trips) {
@@ -4490,40 +4522,7 @@ function closeUpsellModal() {
   }
 }
 
-// ✅ دالة عرض رسالة تأكيد مخصصة
-function showConfirmDialog(title, message) {
-  return new Promise((resolve) => {
-    // إزالة أي نافذة تأكيد موجودة مسبقاً
-    const existingModal = document.getElementById('customConfirmModal');
-    if (existingModal) existingModal.remove();
-    
-    const confirmHtml = `
-      <div id="customConfirmModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 100001;">
-        <div style="background: white; border-radius: 16px; max-width: 400px; width: 90%; padding: 20px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.2);">
-          <h3 style="margin: 0 0 10px 0; color: #0f1f3d;">${escapeHtml(title)}</h3>
-          <p style="margin: 0 0 20px 0; font-size: 14px; white-space: pre-line;">${escapeHtml(message)}</p>
-          <div style="display: flex; gap: 10px; justify-content: center;">
-            <button id="confirmYes" style="padding: 8px 20px; background: #0f1f3d; color: #f5c842; border: none; border-radius: 8px; cursor: pointer;">نعم</button>
-            <button id="confirmNo" style="padding: 8px 20px; background: #e2e8f0; color: #1e293b; border: none; border-radius: 8px; cursor: pointer;">لا</button>
-          </div>
-        </div>
-      </div>
-    `;
-    
-    document.body.insertAdjacentHTML('beforeend', confirmHtml);
-    const modal = document.getElementById('customConfirmModal');
-    
-    document.getElementById('confirmYes').onclick = () => {
-      if (modal) modal.remove();
-      resolve(true);
-    };
-    
-    document.getElementById('confirmNo').onclick = () => {
-      if (modal) modal.remove();
-      resolve(false);
-    };
-  });
-}
+
 // ✅ دالة تحديث المبلغ المتبقي مع أسعار الصرف (مثل SalesInvoice.html)
 function formatPrice(value) {
   if (value === null || value === undefined) return '0';
@@ -4911,42 +4910,41 @@ async function openBeachInstructorsModal() {
     return;
   }
   
-  showToast('Loading instructors...', 'info');
-  
-  const container = document.getElementById('beachInstructorsList');
-  if (container) container.innerHTML = '<div class="loader"><div class="spinner"></div>Loading...</div>';
-  
+  // ✅ 1. افتح المودال فوراً مع loader
   openModal('beachInstructorsModal');
+  document.getElementById('beachInstructorsList').innerHTML = 
+    '<div class="loader"><div class="spinner"></div>Loading...</div>';
   
   try {
-    // ✅ استخدام التخزين المؤقت
-    let instructors = await getCachedData(
-      () => gas('getInstructors', { centerName: currentUser?.centerName }),
-      'instructors'
-    );
-    cachedInstructors = instructors;
-    
-    const savedAssignments = await gas('getDailyAssignments', { date: currentDate, centerName: currentUser?.centerName });
-    if (savedAssignments?.success && savedAssignments.data) {
-      selectedBeachInstructors = savedAssignments.data.beachInstructors || [];
-      selectedBoats = savedAssignments.data.boats || [];
-      boatInstructorsMap = savedAssignments.data.boatInstructorsMap || {};
-      selectedVehicles = savedAssignments.data.vehicles || [];
-      updateSelectionBadges();
+    // ✅ 2. استخدام الكاش المحلي (لا استدعاء للخادم إلا عند الضرورة)
+    let instructors = cachedInstructors;
+    if (!instructors || instructors.length === 0) {
+      instructors = await gas('getInstructors', { centerName: currentUser?.centerName });
+      cachedInstructors = Array.isArray(instructors) ? instructors : [];
     }
     
+    // ✅ 3. استخدام currentAssignments مباشرة (لا استدعاء للخادم!)
+    if (currentAssignments) {
+      selectedBeachInstructors = currentAssignments.beachInstructors || [];
+      selectedBoats = currentAssignments.boats || [];
+      boatInstructorsMap = currentAssignments.boatInstructorsMap || {};
+      selectedVehicles = currentAssignments.vehicles || [];
+    }
+    
+    // ✅ 4. المدربون المشغولون في المراكب
     const busyInstructors = new Set();
     for (const boatId in boatInstructorsMap) {
-      const instructorsList = boatInstructorsMap[boatId];
-      if (Array.isArray(instructorsList)) {
-        instructorsList.forEach(id => busyInstructors.add(id));
-      } else if (instructorsList) {
-        busyInstructors.add(instructorsList);
+      const list = boatInstructorsMap[boatId];
+      if (Array.isArray(list)) {
+        list.forEach(id => busyInstructors.add(id));
+      } else if (list) {
+        busyInstructors.add(list);
       }
     }
     
-    const availableInstructors = instructors.filter(inst => !busyInstructors.has(inst.id));
+    const availableInstructors = cachedInstructors.filter(inst => !busyInstructors.has(inst.id));
     
+    // ✅ 5. بناء HTML
     let html = `
       <div style="max-height: 350px; overflow-y: auto;">
         <div style="margin-bottom: 10px; padding: 6px 10px; background: var(--gray-100); border-radius: 8px;">
@@ -4963,13 +4961,13 @@ async function openBeachInstructorsModal() {
       html += `
         <div style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: white; border: 1px solid var(--border); border-radius: 8px;">
           <input type="checkbox" class="instructor-checkbox" value="${inst.id}" ${isSelected ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer;">
-          <div style="font-size: 13px; font-weight: 500;">👨🏫 ${escapeHtml(inst.name)}</div>
+          <div style="font-size: 13px; font-weight: 500;">👨‍🏫 ${escapeHtml(inst.name)}</div>
         </div>
       `;
     }
     
     if (availableInstructors.length === 0) {
-      html += '<div style="padding: 20px; text-align: center; font-size: 12px;">⚠️ No instructors available for beach</div>';
+      html += '<div style="padding: 20px; text-align: center; font-size: 12px;">⚠️ No instructors available</div>';
     }
     
     html += `
@@ -4983,19 +4981,28 @@ async function openBeachInstructorsModal() {
     
     document.getElementById('beachInstructorsList').innerHTML = html;
     
+    // ✅ 6. Select All
     setTimeout(() => {
       const selectAll = document.getElementById('selectAllInstructors');
       if (selectAll) {
-        selectAll.addEventListener('change', (e) => {
+        // إزالة المستمع القديم قبل الإضافة
+        const newSelectAll = selectAll.cloneNode(true);
+        selectAll.parentNode.replaceChild(newSelectAll, selectAll);
+        newSelectAll.addEventListener('change', (e) => {
           document.querySelectorAll('#instructorsListContainer .instructor-checkbox').forEach(cb => {
             cb.checked = e.target.checked;
           });
         });
       }
-    }, 100);
+    }, 30);
     
   } catch(e) {
-    showToast('Error loading instructors: ' + e.message, 'error');
+    console.error('❌ openBeachInstructorsModal error:', e);
+    document.getElementById('beachInstructorsList').innerHTML = `
+      <div style="padding: 20px; text-align: center; color: red;">
+        ❌ Error: ${escapeHtml(e.message)}
+      </div>
+    `;
   }
 }
   
@@ -5126,47 +5133,42 @@ async function saveBeachInstructorsV2() {
     return;
   }
   
-  showToast('Loading boats...', 'info');
-  
-  const container = document.getElementById('boatsSelectionContainer');
-  if (container) container.innerHTML = '<div class="loader"><div class="spinner"></div>Loading...</div>';
-  
+  // ✅ 1. افتح المودال فوراً
   openModal('boatsModal');
+  document.getElementById('boatsSelectionContainer').innerHTML = 
+    '<div class="loader"><div class="spinner"></div>Loading...</div>';
   
   try {
-    if (cachedInstructors.length === 0) {
+    // ✅ 2. استخدام الكاش المحلي (لا استدعاء للخادم إلا عند الضرورة)
+    if (!cachedInstructors || cachedInstructors.length === 0) {
       const instructors = await gas('getInstructors', { centerName: currentUser?.centerName });
-      cachedInstructors = instructors;
+      cachedInstructors = Array.isArray(instructors) ? instructors : [];
     }
     
-    const boats = await getCachedData(
-      () => gas('getBoats', { centerName: currentUser?.centerName }),
-      'boats'
-    );
-    cachedBoats = boats;
+    if (!cachedBoats || cachedBoats.length === 0) {
+      const boats = await gas('getBoats', { centerName: currentUser?.centerName });
+      cachedBoats = Array.isArray(boats) ? boats : [];
+    }
     
-    const savedAssignments = await gas('getDailyAssignments', { date: currentDate, centerName: currentUser?.centerName });
-    if (savedAssignments?.success && savedAssignments.data) {
-      selectedBoats = savedAssignments.data.boats || [];
-      boatInstructorsMap = savedAssignments.data.boatInstructorsMap || {};
-      selectedBeachInstructors = savedAssignments.data.beachInstructors || [];
-      updateSelectionBadges();
+    const boats = cachedBoats;
+    
+    // ✅ 3. استخدام currentAssignments مباشرة
+    if (currentAssignments) {
+      selectedBoats = currentAssignments.boats || [];
+      boatInstructorsMap = currentAssignments.boatInstructorsMap || {};
+      selectedBeachInstructors = currentAssignments.beachInstructors || [];
     }
     
     const tripsOnDate = [...new Set(filteredInvoices.map(inv => inv.trip).filter(t => t))];
     
-    // ✅ تعريف واحد فقط لـ renderBoatsList
+    // ✅ 4. دالة عرض قائمة المراكب
     function renderBoatsList(preserveSelections = false) {
       const busyInstructors = new Set();
       
-      for (const [boatId, instructorsList] of Object.entries(boatInstructorsMap)) {
-        if (Array.isArray(instructorsList)) {
-          instructorsList.forEach(id => busyInstructors.add(id));
-        } else if (instructorsList) {
-          busyInstructors.add(instructorsList);
-        }
+      for (const [boatId, list] of Object.entries(boatInstructorsMap)) {
+        if (Array.isArray(list)) list.forEach(id => busyInstructors.add(id));
+        else if (list) busyInstructors.add(list);
       }
-      
       selectedBeachInstructors.forEach(id => busyInstructors.add(id));
       
       let previousSelectedBoats = [];
@@ -5188,7 +5190,7 @@ async function saveBeachInstructorsV2() {
       `;
       
       for (const boat of boats) {
-        let isSelected = preserveSelections 
+        let isSelected = preserveSelections
           ? previousSelectedBoats.includes(boat.id)
           : selectedBoats.includes(boat.id);
         
@@ -5222,7 +5224,7 @@ async function saveBeachInstructorsV2() {
               </div>
             </div>
             <div id="boat-instructors-${boat.id}" style="padding: 8px 10px; ${isSelected ? '' : 'display: none;'}">
-              <div style="font-size: 11px; font-weight: 600; margin-bottom: 6px;">👨🏫 Select Instructors:</div>
+              <div style="font-size: 11px; font-weight: 600; margin-bottom: 6px;">👨‍🏫 Select Instructors:</div>
               <div style="display: flex; flex-direction: column; gap: 6px; max-height: 120px; overflow-y: auto;">
         `;
         
@@ -5231,7 +5233,7 @@ async function saveBeachInstructorsV2() {
           html += `
             <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px; padding: 4px; border-radius: 4px; background: var(--gray-50);">
               <input type="checkbox" class="boat-instructor-cb" data-boat="${boat.id}" data-instructor="${inst.id}" ${isChecked ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer;">
-              <span>👨🏫 ${escapeHtml(inst.name)}</span>
+              <span>👨‍🏫 ${escapeHtml(inst.name)}</span>
             </label>
           `;
         }
@@ -5258,10 +5260,14 @@ async function saveBeachInstructorsV2() {
       
       document.getElementById('boatsSelectionContainer').innerHTML = html;
       
+      // ✅ 5. ربط الأحداث (مع إزالة المستمعين القدامى)
       setTimeout(() => {
+        // Select All
         const selectAll = document.getElementById('selectAllBoats');
         if (selectAll) {
-          selectAll.addEventListener('change', (e) => {
+          const newSelectAll = selectAll.cloneNode(true);
+          selectAll.parentNode.replaceChild(newSelectAll, selectAll);
+          newSelectAll.addEventListener('change', (e) => {
             document.querySelectorAll('.boat-checkbox').forEach(cb => {
               cb.checked = e.target.checked;
               const boatId = cb.dataset.id;
@@ -5271,62 +5277,76 @@ async function saveBeachInstructorsV2() {
           });
         }
         
+        // Boat checkbox
         document.querySelectorAll('.boat-checkbox').forEach(cb => {
-          cb.addEventListener('change', (e) => {
+          const newCb = cb.cloneNode(true);
+          cb.parentNode.replaceChild(newCb, cb);
+          newCb.addEventListener('change', (e) => {
             const boatId = e.target.dataset.id;
             const div = document.getElementById(`boat-instructors-${boatId}`);
             if (div) div.style.display = e.target.checked ? 'block' : 'none';
             
             if (e.target.checked) {
-              if (!selectedBoats.includes(boatId)) {
-                selectedBoats.push(boatId);
-              }
+              if (!selectedBoats.includes(boatId)) selectedBoats.push(boatId);
             } else {
-              const index = selectedBoats.indexOf(boatId);
-              if (index !== -1) selectedBoats.splice(index, 1);
+              const idx = selectedBoats.indexOf(boatId);
+              if (idx !== -1) selectedBoats.splice(idx, 1);
             }
           });
         });
         
+        // Instructor checkbox
         document.querySelectorAll('.boat-instructor-cb').forEach(cb => {
-          cb.addEventListener('change', () => {
-            const boatId = cb.dataset.boat;
-            const instructorId = cb.dataset.instructor;
+          const newCb = cb.cloneNode(true);
+          cb.parentNode.replaceChild(newCb, cb);
+          newCb.addEventListener('change', () => {
+            const boatId = newCb.dataset.boat;
+            const instructorId = newCb.dataset.instructor;
             
             if (!boatInstructorsMap[boatId]) boatInstructorsMap[boatId] = [];
             
-            if (cb.checked) {
+            if (newCb.checked) {
               if (!boatInstructorsMap[boatId].includes(instructorId)) {
                 boatInstructorsMap[boatId].push(instructorId);
               }
             } else {
-              const index = boatInstructorsMap[boatId].indexOf(instructorId);
-              if (index !== -1) boatInstructorsMap[boatId].splice(index, 1);
+              const idx = boatInstructorsMap[boatId].indexOf(instructorId);
+              if (idx !== -1) boatInstructorsMap[boatId].splice(idx, 1);
             }
             
             renderBoatsList(true);
           });
         });
         
+        // Trip select
         document.querySelectorAll('.boat-trip-select').forEach(select => {
-          select.addEventListener('change', () => {
-            const boatId = select.dataset.boat;
-            const tripName = select.value;
+          const newSelect = select.cloneNode(true);
+          select.parentNode.replaceChild(newSelect, select);
+          newSelect.addEventListener('change', () => {
+            const boatId = newSelect.dataset.boat;
+            const tripName = newSelect.value;
             if (!currentAssignments) currentAssignments = {};
             if (!currentAssignments.boatTripMap) currentAssignments.boatTripMap = {};
             currentAssignments.boatTripMap[boatId] = tripName;
           });
         });
-        
-      }, 50);
+      }, 30);
     }
     
+    // ✅ 6. عرض القائمة
     renderBoatsList(false);
     
   } catch(e) {
-    showToast('Error loading boats: ' + e.message, 'error');
+    console.error('❌ openBoatsModal error:', e);
+    document.getElementById('boatsSelectionContainer').innerHTML = `
+      <div style="padding: 20px; text-align: center; color: red;">
+        ❌ Error: ${escapeHtml(e.message)}
+      </div>
+    `;
   }
 }
+  
+  
   
   // ✅ تحميل قائمة الفروع
 async function loadBranches() {
@@ -5400,55 +5420,77 @@ async function loadBranches() {
 }
 
 async function openLogisticsVehicles() {
-    showToast('Loading logistics data...', 'info');
-    
-    const currentDate = getCurrentDateISO();
-    if (!currentDate) {
-        showToast('Please select a single date first', 'error');
-        return;
-    }
-    
-    // ✅ تحديث العداد فوراً عند الفتح
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) {
+    showToast('Please select a single date first', 'error');
+    return;
+  }
+  
+  // ✅ 1. افتح المودال فوراً مع loader
+  openModal('logisticsVehiclesModal');
+  document.getElementById('logisticsVehiclesContent').innerHTML = 
+    '<div class="loader"><div class="spinner"></div>Loading...</div>';
+  
+  try {
+    // ✅ 2. تحديث العداد فوراً
     updateLogisticsBadge();
     updateSelectionBadges();
     
-    // ✅ استخدام البيانات المخزنة مؤقتاً إذا كانت موجودة
+    // ✅ 3. استخدام الكاش أولاً
     let existingRecords = preloadedData.logisticsRecords || [];
     
-    // ✅ إذا كانت البيانات مخزنة، استخدمها فوراً
-    if (existingRecords.length > 0) {
-        console.log('📋 Using cached logistics records:', existingRecords.length);
-        renderLogisticsModal(existingRecords, currentDate);
-        return;
-    }
-    
-    // ✅ إذا لم تكن مخزنة، قم بجلبها
-    try {
-        const result = await gas('getLogisticsRecords', { 
-            date: currentDate,
-            centerName: currentUser?.centerName 
+    // ✅ 4. إذا لم تكن مخزنة، اجلبها (مع loader ظاهر)
+    if (!existingRecords || existingRecords.length === 0) {
+      try {
+        const result = await gas('getLogisticsRecords', {
+          date: currentDate,
+          centerName: currentUser?.centerName
         });
-        console.log('📥 LogisticsRecords result:', result);
         if (result?.success && Array.isArray(result.data)) {
-            existingRecords = result.data;
-            preloadedData.logisticsRecords = existingRecords;
+          existingRecords = result.data;
+          preloadedData.logisticsRecords = existingRecords;
         }
-    } catch(e) {
+      } catch(e) {
         console.warn('Failed to load logistics records:', e);
+      }
     }
     
+    // ✅ 5. جلب السيارات إذا لم تكن مخزنة
+    if (!cachedVehicles || cachedVehicles.length === 0) {
+      try {
+        const vehiclesResult = await gas('getVehicles', { centerName: currentUser?.centerName });
+        cachedVehicles = Array.isArray(vehiclesResult) ? vehiclesResult : (vehiclesResult?.data || []);
+      } catch(e) {
+        console.warn('Failed to load vehicles:', e);
+      }
+    }
+    
+    // ✅ 6. عرض المودال
     renderLogisticsModal(existingRecords, currentDate);
     
-    // ✅ تحديث العداد بعد التحميل
+    // ✅ 7. تحديث العداد بعد التحميل
     updateLogisticsBadge();
     updateSelectionBadges();
+    
+  } catch(e) {
+    console.error('❌ openLogisticsVehicles error:', e);
+    document.getElementById('logisticsVehiclesContent').innerHTML = `
+      <div style="padding: 20px; text-align: center; color: red;">
+        ❌ Error: ${escapeHtml(e.message)}
+      </div>
+    `;
+  }
 }
 
 // ✅ دالة منفصلة لعرض المودال
 function renderLogisticsModal(existingRecords, currentDate) {
     const tripsOnDate = [...new Set(filteredInvoices.map(inv => inv.trip).filter(t => t))];
     if (tripsOnDate.length === 0) {
-        showToast('No trips available for this date', 'error');
+        document.getElementById('logisticsVehiclesContent').innerHTML = `
+            <div style="padding: 20px; text-align: center; color: var(--text-lt);">
+                ⚠️ No trips available for this date
+            </div>
+        `;
         return;
     }
     
@@ -5456,18 +5498,22 @@ function renderLogisticsModal(existingRecords, currentDate) {
     if (!allVehicles || allVehicles.length === 0) {
         // جلب السيارات إذا لم تكن مخزنة
         gas('getVehicles', { centerName: currentUser?.centerName }).then(v => {
-            cachedVehicles = v;
+            cachedVehicles = Array.isArray(v) ? v : (v?.data || []);
             renderLogisticsModal(existingRecords, currentDate);
         });
         return;
     }
     
-    const luggageVehicles = allVehicles.filter(v => 
+    const luggageVehicles = allVehicles.filter(v =>
         v.isActive === true && v.usageType === 'luggage'
     );
     
     if (luggageVehicles.length === 0) {
-        showToast('⚠️ No logistics vehicles available', 'error');
+        document.getElementById('logisticsVehiclesContent').innerHTML = `
+            <div style="padding: 20px; text-align: center; color: var(--text-lt);">
+                ⚠️ No logistics vehicles available
+            </div>
+        `;
         return;
     }
     
@@ -5484,7 +5530,15 @@ function renderLogisticsModal(existingRecords, currentDate) {
     if (existingRecords.length > 0) {
         for (let i = 0; i < existingRecords.length; i++) {
             const record = existingRecords[i];
-            html += generateLogisticsRowHTML(i, record.VehicleID || record.vehicleId, record.TripName || record.tripName, record.GoCount || record.goCount || 0, record.ReturnCount || record.returnCount || 0, luggageVehicles, tripsOnDate);
+            html += generateLogisticsRowHTML(
+                i,
+                record.VehicleID || record.vehicleId,
+                record.TripName || record.tripName,
+                record.GoCount || record.goCount || 0,
+                record.ReturnCount || record.returnCount || 0,
+                luggageVehicles,
+                tripsOnDate
+            );
         }
     } else {
         html += generateLogisticsRowHTML(0, '', '', 0, 0, luggageVehicles, tripsOnDate);
@@ -5503,9 +5557,11 @@ function renderLogisticsModal(existingRecords, currentDate) {
     `;
     
     document.getElementById('logisticsVehiclesContent').innerHTML = html;
-    openModal('logisticsVehiclesModal');
+    // ❌ حذفنا openModal('logisticsVehiclesModal'); لأنه مفتوح بالفعل
     
-    tempLogisticsRows = existingRecords.length > 0 ? existingRecords : [{ vehicleId: '', tripName: '', goCount: 0, returnCount: 0 }];
+    tempLogisticsRows = existingRecords.length > 0
+        ? existingRecords
+        : [{ vehicleId: '', tripName: '', goCount: 0, returnCount: 0 }];
     
     for (let i = 0; i < tempLogisticsRows.length; i++) {
         attachLogisticsRowEvents(i);
@@ -5513,8 +5569,9 @@ function renderLogisticsModal(existingRecords, currentDate) {
     if (tempLogisticsRows.length === 0) attachLogisticsRowEvents(0);
     
     updateLogisticsBadge();
-   updateSelectionBadges();
+    updateSelectionBadges();
 }
+  
   let tempLogisticsRows = [];
 
 async function saveAllLogisticsRows() {
