@@ -913,9 +913,10 @@ th:hover {
   <button class="selection-btn" id="btnVehicles" onclick="openVehiclesModal()">🚗 Vehicles <span id="selectedVehiclesBadge" class="selection-badge">0</span></button>
   <button class="selection-btn" id="btnLogisticsVehicles" onclick="openLogisticsVehicles()">🚛 Logistics <span id="selectedLogisticsBadge" class="selection-badge">0</span></button>
  <button class="back-btn" onclick="openReportsPage()" style="background: var(--green); border-color: var(--green); margin-right: 8px;">📊 Reports</button>
+  <button class="back-btn" onclick="openDailyPlan()" style="background: var(--gold); border-color: var(--gold); color: var(--navy); margin-right: 8px; font-weight: 900;">📅 خطة العمل اليومية</button>
   <button class="reset-selection" onclick="resetAllSelections()">🗑️ Clear All</button>
 </div>
-
+   
 <div class="filter-bar">
  <div class="filter-group">
     <label>📅 From Date</label>
@@ -6574,6 +6575,347 @@ document.addEventListener('DOMContentLoaded', () => {
     // ✅ 6. تحميل البيانات في الخلفية (لا يعطل الواجهة)
     loadBackgroundData();
 });
+  // ============================================================
+// ✅ فتح صفحة خطة العمل اليومية - مع التحقق من البيانات
+// ============================================================
+async function openDailyPlan() {
+  // ═══════════════════════════════════════════════════════
+  // 1. التحقق من التاريخ
+  // ═══════════════════════════════════════════════════════
+  const currentDate = getCurrentDateISO();
+  if (!currentDate) {
+    showToast('⚠️ يجب اختيار تاريخ محدد أولاً', 'error');
+    return;
+  }
+  
+  // ═══════════════════════════════════════════════════════
+  // 2. جلب البيانات المحفوظة من السيرفر (للتأكد)
+  // ═══════════════════════════════════════════════════════
+  showToast('🔍 جاري التحقق من البيانات...', 'info');
+  
+  let serverAssignments = null;
+  let serverLogistics = [];
+  
+  try {
+    const [assignmentsRes, logisticsRes] = await Promise.all([
+      gas('getDailyAssignments', { 
+        date: currentDate,
+        centerName: currentUser?.centerName 
+      }),
+      gas('getLogisticsRecords', { 
+        date: currentDate,
+        centerName: currentUser?.centerName 
+      })
+    ]);
+    
+    if (assignmentsRes?.success && assignmentsRes.data) {
+      serverAssignments = assignmentsRes.data;
+    }
+    if (logisticsRes?.success && Array.isArray(logisticsRes.data)) {
+      serverLogistics = logisticsRes.data;
+    }
+  } catch(e) {
+    console.error('❌ Failed to fetch verification data:', e);
+    // نتابع بالبيانات المحلية
+  }
+  
+  // ═══════════════════════════════════════════════════════
+  // 3. تحليل الحالة (استخدم البيانات المحلية كمرجع احتياطي)
+  // ═══════════════════════════════════════════════════════
+  const beachCount = (serverAssignments?.beachInstructors || selectedBeachInstructors || []).length;
+  const boatsCount = (serverAssignments?.boats || selectedBoats || []).length;
+  const vehiclesCount = (serverAssignments?.vehicles || selectedVehicles || []).length;
+  const boatInstructorsCount = Object.keys(serverAssignments?.boatInstructorsMap || boatInstructorsMap || {}).length;
+  const logisticsCount = serverLogistics.filter(r => 
+    (r.GoCount || r.goCount || 0) > 0 || (r.ReturnCount || r.returnCount || 0) > 0
+  ).length;
+  
+  // تحقق من وجود فواتير في هذا اليوم
+  const invoicesCount = (filteredInvoices || []).length;
+  
+  // ═══════════════════════════════════════════════════════
+  // 4. تحديد العناصر الناقصة
+  // ═══════════════════════════════════════════════════════
+  const missing = [];
+  const warnings = [];
+  
+  // ✅ فواتير
+  if (invoicesCount === 0) {
+    warnings.push({
+      icon: '📋',
+      title: 'لا توجد فواتير',
+      desc: 'لا توجد فواتير في هذا التاريخ — قد تكون الصفحة فارغة',
+      severity: 'warning'
+    });
+  }
+  
+  // ✅ سيارات
+  if (vehiclesCount === 0) {
+    missing.push({
+      icon: '🚗',
+      title: 'لم يتم تعيين السيارات',
+      desc: 'اضغط على زر "🚗 Vehicles" لتعيين السيارات للرحلات',
+      severity: 'missing'
+    });
+  }
+  
+  // ✅ مراكب
+  if (boatsCount === 0) {
+    missing.push({
+      icon: '⛵',
+      title: 'لم يتم تعيين المراكب',
+      desc: 'اضغط على زر "⛵ Boats" لتعيين المراكب للرحلات',
+      severity: 'missing'
+    });
+  }
+  
+  // ✅ مدربو المراكب
+  if (boatsCount > 0 && boatInstructorsCount === 0) {
+    warnings.push({
+      icon: '👨‍🏫',
+      title: 'لم يتم تعيين مدربين للمراكب',
+      desc: 'يمكنك المتابعة، لكن لن يظهر أي مدرب لخطة المراكب',
+      severity: 'warning'
+    });
+  }
+  
+  // ✅ مدربو الشاطئ
+  if (beachCount === 0) {
+    warnings.push({
+      icon: '🏖️',
+      title: 'لم يتم تعيين مدربي الشاطئ',
+      desc: 'يمكنك المتابعة، لكن لن تظهر خطة عمل لمدربي الشاطئ',
+      severity: 'warning'
+    });
+  }
+  
+  // ✅ اللوجستيات
+  if (logisticsCount === 0) {
+    warnings.push({
+      icon: '🚛',
+      title: 'لم يتم تعيين سيارات اللوجستيات',
+      desc: 'يمكنك المتابعة، لكن لن تظهر خطة نقل الأمتعة',
+      severity: 'warning'
+    });
+  }
+  
+  // ═══════════════════════════════════════════════════════
+  // 5. عرض النتيجة
+  // ═══════════════════════════════════════════════════════
+  
+  // ✅ حالة 1: كل شيء تمام → افتح مباشرة
+  if (missing.length === 0 && warnings.length === 0) {
+    const confirmOpen = await showDailyPlanConfirm({
+      title: '✅ جميع البيانات مكتملة',
+      message: `التاريخ: ${currentDate}
+
+📊 ملخص:
+• 🚗 سيارات: ${vehiclesCount}
+• ⛵ مراكب: ${boatsCount}
+• 🏖️ مدربو الشاطئ: ${beachCount}
+• 👨‍🏫 مدربو المراكب: ${boatInstructorsCount}
+• 🚛 لوجستيات: ${logisticsCount}
+• 📋 فواتير: ${invoicesCount}
+
+هل تريد فتح خطة العمل؟`,
+      type: 'success',
+      openButton: '📅 فتح الخطة الآن'
+    });
+    
+    if (confirmOpen) {
+      navigateToDailyPlan(currentDate);
+    }
+    return;
+  }
+  
+  // ✅ حالة 2: هناك نواقص → اعرض قائمة تفصيلية
+  const missingHtml = missing.length > 0 
+    ? `
+      <div style="margin-bottom: 12px;">
+        <div style="font-weight: 800; color: #dc2626; font-size: 13px; margin-bottom: 8px;">
+          ❌ بيانات مطلوبة ناقصة (${missing.length})
+        </div>
+        ${missing.map(m => `
+          <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 10px; margin-bottom: 6px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 20px;">${m.icon}</span>
+              <div style="flex: 1;">
+                <div style="font-weight: 700; color: #991b1b; font-size: 13px;">${m.title}</div>
+                <div style="font-size: 11px; color: #7f1d1d; margin-top: 2px;">${m.desc}</div>
+              </div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    ` 
+    : '';
+  
+  const warningsHtml = warnings.length > 0 
+    ? `
+      <div style="margin-bottom: 12px;">
+        <div style="font-weight: 800; color: #ea580c; font-size: 13px; margin-bottom: 8px;">
+          ⚠️ تنبيهات (${warnings.length})
+        </div>
+        ${warnings.map(w => `
+          <div style="background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 10px; margin-bottom: 6px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 20px;">${w.icon}</span>
+              <div style="flex: 1;">
+                <div style="font-weight: 700; color: #9a3412; font-size: 13px;">${w.title}</div>
+                <div style="font-size: 11px; color: #7c2d12; margin-top: 2px;">${w.desc}</div>
+              </div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    ` 
+    : '';
+  
+  const summaryHtml = `
+    <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; margin-bottom: 14px;">
+      <div style="font-weight: 800; color: #0f1f3d; font-size: 12px; margin-bottom: 8px;">
+        📊 ملخص البيانات الحالية:
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 12px;">
+        <div>🚗 سيارات: <strong>${vehiclesCount}</strong></div>
+        <div>⛵ مراكب: <strong>${boatsCount}</strong></div>
+        <div>🏖️ مدربو الشاطئ: <strong>${beachCount}</strong></div>
+        <div>👨‍🏫 مدربو المراكب: <strong>${boatInstructorsCount}</strong></div>
+        <div>🚛 لوجستيات: <strong>${logisticsCount}</strong></div>
+        <div>📋 فواتير: <strong>${invoicesCount}</strong></div>
+      </div>
+    </div>
+  `;
+  
+  const showConfirm = await showDailyPlanConfirm({
+    title: missing.length > 0 
+      ? '⚠️ بيانات ناقصة' 
+      : '⚠️ تنبيهات فقط',
+    message: summaryHtml + missingHtml + warningsHtml,
+    type: missing.length > 0 ? 'danger' : 'warning',
+    openButton: missing.length > 0 
+      ? '⚠️ فتح على أي حال' 
+      : '📅 فتح الخطة',
+    isHtml: true
+  });
+  
+  if (showConfirm) {
+    navigateToDailyPlan(currentDate);
+  }
+}
+
+// ============================================================
+// ✅ فتح صفحة DailyOperationsPlan
+// ============================================================
+function navigateToDailyPlan(dateStr) {
+  // حفظ التاريخ في sessionStorage ليقرأه الملف الجديد
+  try {
+    sessionStorage.setItem('dailyPlanDate', dateStr);
+    sessionStorage.setItem('dailyPlanFrom', window.location.href);
+    sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
+  } catch(e) {}
+  
+  // حفظ في localStorage كاحتياطي
+  try {
+    localStorage.setItem('previousPage', window.location.href);
+  } catch(e) {}
+  
+  // تحديث الجلسة
+  if (currentUser) {
+    currentUser.lastActivity = new Date().toISOString();
+    Session.save(currentUser);
+  }
+  
+  // فتح الصفحة
+  window.location.href = 'DailyOperationsPlan.html?date=' + encodeURIComponent(dateStr);
+}
+
+// ============================================================
+// ✅ نافذة تأكيد احترافية
+// ============================================================
+function showDailyPlanConfirm(options) {
+  return new Promise((resolve) => {
+    const existing = document.getElementById('dailyPlanConfirmModal');
+    if (existing) existing.remove();
+    
+    const typeColors = {
+      success: { bg: '#0f1f3d', accent: '#16a34a', border: '#22c55e' },
+      warning: { bg: '#0f1f3d', accent: '#ea580c', border: '#f59e0b' },
+      danger:  { bg: '#0f1f3d', accent: '#dc2626', border: '#ef4444' }
+    };
+    const colors = typeColors[options.type] || typeColors.warning;
+    
+    const modalHtml = `
+      <div id="dailyPlanConfirmModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 99999; padding: 20px;" onclick="if(event.target===this) window._dailyPlanResolve && window._dailyPlanResolve(false)">
+        <div style="background: white; border-radius: 16px; max-width: 480px; width: 100%; max-height: 85vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.4); animation: modalSlideIn 0.3s ease;">
+          
+          <!-- Header -->
+          <div style="background: ${colors.bg}; color: #f5c842; padding: 14px 18px; border-radius: 16px 16px 0 0; display: flex; align-items: center; gap: 10px; border-bottom: 3px solid ${colors.border};">
+            <span style="font-size: 24px;">${options.type === 'success' ? '✅' : options.type === 'danger' ? '🚫' : '⚠️'}</span>
+            <h3 style="margin: 0; font-size: 16px; font-weight: 900; color: #f5c842;">${options.title}</h3>
+          </div>
+          
+          <!-- Body -->
+          <div style="padding: 18px; font-family: 'Cairo', sans-serif;">
+            ${options.isHtml 
+              ? options.message 
+              : `<div style="white-space: pre-line; font-size: 13px; color: #1e293b; line-height: 1.8;">${options.message}</div>`
+            }
+          </div>
+          
+          <!-- Footer -->
+          <div style="padding: 14px 18px; border-top: 1px solid #e2e8f0; display: flex; gap: 10px; justify-content: flex-end; background: #f8fafc; border-radius: 0 0 16px 16px;">
+            <button id="dailyPlanCancelBtn" style="padding: 10px 20px; background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; border-radius: 8px; font-weight: 700; font-size: 12px; cursor: pointer; font-family: inherit;">
+              ✖️ إلغاء
+            </button>
+            <button id="dailyPlanConfirmBtn" style="padding: 10px 20px; background: ${colors.bg}; color: #f5c842; border: none; border-radius: 8px; font-weight: 800; font-size: 12px; cursor: pointer; font-family: inherit;">
+              ${options.openButton || '📅 فتح'}
+            </button>
+          </div>
+        </div>
+      </div>
+      <style>
+        @keyframes modalSlideIn {
+          from { opacity: 0; transform: translateY(30px) scale(0.95); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+      </style>
+    `;
+    
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    const modal = document.getElementById('dailyPlanConfirmModal');
+    const confirmBtn = document.getElementById('dailyPlanConfirmBtn');
+    const cancelBtn = document.getElementById('dailyPlanCancelBtn');
+    
+    let resolved = false;
+    const closeAndResolve = (value) => {
+      if (resolved) return;
+      resolved = true;
+      window._dailyPlanResolve = null;
+      modal.style.opacity = '0';
+      modal.style.transition = 'opacity 0.2s';
+      setTimeout(() => {
+        modal.remove();
+        resolve(value);
+      }, 200);
+    };
+    
+    window._dailyPlanResolve = closeAndResolve;
+    
+    confirmBtn.onclick = () => closeAndResolve(true);
+    cancelBtn.onclick = () => closeAndResolve(false);
+    
+    // ESC للإغلاق
+    const keyHandler = (e) => {
+      if (e.key === 'Escape') {
+        document.removeEventListener('keydown', keyHandler);
+        closeAndResolve(false);
+      }
+    };
+    document.addEventListener('keydown', keyHandler);
+  });
+}
   </script>
 </body>
 </html>
