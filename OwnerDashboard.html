@@ -1181,41 +1181,80 @@ async function loadStats() {
     if (!currentUser?.centerId) return;
 
     try {
-        // ✅ مصدر واحد للبيانات: getStaffByCenter
-        const staffData = await callGAS('getStaffByCenter', { centerId: currentUser.centerId });
-        const staffCount = Array.isArray(staffData) ? staffData.length : 0;
-        staff = Array.isArray(staffData) ? staffData : [];
+        // ═══════════════════════════════════════════════════════════════
+        // ✅ 1. الموظفين — استخدام getEmployeesByCenter (موجودة)
+        // ═══════════════════════════════════════════════════════════════
+        let staffCount = 0;
+        try {
+            const staffData = await callGAS('getEmployeesByCenter', { 
+                centerId: currentUser.centerId,
+                centerName: currentUser.centerName 
+            });
+            staff = Array.isArray(staffData) ? staffData : [];
+            staffCount = staff.length;
+            console.log('✅ [loadStats] الموظفين:', staffCount);
+        } catch(e) {
+            console.warn('⚠️ [loadStats] فشل جلب الموظفين:', e);
+        }
         
-        const branches = await callGAS('getOwnerBranchesCount', { centerId: currentUser.centerId });
+        // ═══════════════════════════════════════════════════════════════
+        // ✅ 2. الفروع — استخدام getActiveBranches + فلترة (موجودة)
+        // ═══════════════════════════════════════════════════════════════
+        let branchesCount = 0;
+        try {
+            const branchesData = await callGAS('getActiveBranches');
+            if (Array.isArray(branchesData)) {
+                branchesCount = branchesData.filter(b => b.centerId === currentUser.centerId).length;
+            }
+            console.log('✅ [loadStats] الفروع:', branchesCount);
+        } catch(e) {
+            console.warn('⚠️ [loadStats] فشل جلب الفروع:', e);
+        }
 
-        document.getElementById('cnt-branches').textContent = typeof branches === 'number' ? branches : 0;
-        document.getElementById('cnt-staff').textContent = staffCount;
+        // ═══════════════════════════════════════════════════════════════
+        // ✅ 3. تحديث الأرقام في الواجهة
+        // ═══════════════════════════════════════════════════════════════
+        const cntBranches = document.getElementById('cnt-branches');
+        const cntStaff = document.getElementById('cnt-staff');
         
-        // جلب فواتير اليوم
+        if (cntBranches) cntBranches.textContent = branchesCount;
+        if (cntStaff) cntStaff.textContent = staffCount;
+        
+        // ═══════════════════════════════════════════════════════════════
+        // ✅ 4. فواتير اليوم
+        // ═══════════════════════════════════════════════════════════════
         try {
             const today = new Date();
             const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
             const dateStr = String(today.getDate()).padStart(2,'0') + '/' + months[today.getMonth()] + '/' + today.getFullYear();
-            const invoices = await callGAS('getInvoicesByDate', { dateStr: dateStr, centerName: currentUser.centerName });
+            const invoices = await callGAS('getInvoicesByDate', { dateStr: dateStr });
             const count = Array.isArray(invoices) ? invoices.length : 0;
-            document.getElementById('cnt-invoices').textContent = count;
+            const cntInv = document.getElementById('cnt-invoices');
+            if (cntInv) cntInv.textContent = count;
+            console.log('✅ [loadStats] فواتير اليوم (' + dateStr + '):', count);
         } catch(e) {
-            console.warn('⚠️ فشل جلب فواتير اليوم:', e);
+            console.warn('⚠️ [loadStats] فشل جلب فواتير اليوم:', e);
         }
         
+        // ═══════════════════════════════════════════════════════════════
+        // ✅ 5. التنبيهات
+        // ═══════════════════════════════════════════════════════════════
         try {
             const notifData = await callGAS('getAllInvoicesEdit');
             if (Array.isArray(notifData)) {
                 const cnt = notifData.filter(n => !n.isRead).length;
-                document.getElementById('cnt-notif').textContent = cnt;
+                const cntNotif = document.getElementById('cnt-notif');
+                if (cntNotif) cntNotif.textContent = cnt;
+                console.log('✅ [loadStats] تنبيهات غير مقروءة:', cnt);
             }
         } catch(e) {
-            console.warn('⚠️ فشل جلب التنبيهات:', e);
+            console.warn('⚠️ [loadStats] فشل جلب التنبيهات:', e);
         }
         
-        console.log('✅ loadStats تم تحديثها بنجاح، عدد الموظفين:', staffCount);
+        console.log('✅ [loadStats] اكتمل — موظفين:', staffCount, '| فروع:', branchesCount);
+        
     } catch(e) {
-        console.warn('⚠️ loadStats error:', e);
+        console.warn('⚠️ [loadStats] خطأ عام:', e);
     }
 }
 // ═══════════════════════════════════════════════════════════════════
