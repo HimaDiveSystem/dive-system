@@ -3,6 +3,8 @@
 // ============================================================
 // ⚠️ مهم: هذا الملف يجب أن يُحمّل أولاً قبل session.js و ui.js
 // ============================================================
+// 🆕 V2: تمت إضافة Client-Side Cache في callGAS
+// ============================================================
 
 const CONFIG = {
   // ✅ الرابط الأساسي لـ Google Apps Script
@@ -11,8 +13,8 @@ const CONFIG = {
   // ✅ صلاحية الجلسة (بالمللي ثانية) - 24 ساعة
   SESSION_DURATION: 24 * 60 * 60 * 1000,
   
- REQUEST_TIMEOUT: 90000,  // 90 ثانية
-QUEUE_DELAY: 100,        // 100ms بدلاً من 400ms (أسرع)
+  REQUEST_TIMEOUT: 90000,  // 90 ثانية
+  QUEUE_DELAY: 100,        // 100ms
   
   // ✅ أسماء الصفحات حسب نوع المستخدم
   DASHBOARD_PAGES: {
@@ -44,8 +46,6 @@ QUEUE_DELAY: 100,        // 100ms بدلاً من 400ms (أسرع)
 // ============================================================
 // 2️⃣ العلامات العالمية - تُعرّف مرة واحدة على window
 // ============================================================
-// ✅ مهم جداً: نستخدم window مباشرة لضمان المشاركة بين جميع الملفات
-
 if (typeof window._redirecting === 'undefined') {
   window._redirecting = false;
 }
@@ -60,18 +60,159 @@ if (typeof window._pageInitialized === 'undefined') {
 }
 
 // ============================================================
-// 3️⃣ callGAS - دالة JSONP الموحدة الوحيدة في المشروع
+// 3️⃣ 🆕 Client Cache — تخزين نتائج callGAS في الذاكرة
+// ============================================================
+// 📌 الفكرة:
+//   - بعض الأكشنز ترجع بيانات ثابتة نسبياً (الموظفين، الفروع، المراكب، ...)
+//   - بدلاً من إرسال طلب لـ Apps Script كل مرة، نخزّن النتيجة 5 دقائق
+//   - عند أي تعديل → إبطال Cache (clearGASClientCache)
+// ============================================================
+
+// ✅ Cache في الذاكرة (Map) — صالح طوال عمر الصفحة
+const _gasClientCache = new Map();
+
+// ✅ قائمة الأكشنز القابلة للتخزين (بيانات ثابتة نسبياً)
+const CACHEABLE_ACTIONS = [
+  'getEmployeesByCenter',
+  'getActiveBranches',
+  'getBranchesByCenter',
+  'getBranchesByCenterId',
+  'getVehicles',
+  'getBoats',
+  'getInstructors',
+  'getAllSuppliersCustomers',
+  'getCustomers',
+  'getSuppliers',
+  'getCenterUsersWithPermissions',
+  'getTripDefinitions',
+  'getAllTrips',
+  'getAllCategories',
+  'getAllActivities',
+  'getAllExchangeRatesNew',
+  'getLatestExchangeRates',
+  'getAllJobTitles',
+  'getCenterCommissionSettings',
+  'getDashboardStats',
+  'getDashboardBootstrap'
+];
+
+// ✅ مدة Cache (5 دقائق بالمللي ثانية)
+const CLIENT_CACHE_TTL = 5 * 60 * 1000;
+
+/**
+ * 🆕 بناء مفتاح فريد للطلب (action + params)
+ */
+function _buildCacheKey(action, params) {
+  const cleanParams = { ...params };
+  // ✅ تجاهل الحقول الديناميكية
+  delete cleanParams._t;
+  delete cleanParams.callback;
+  
+  // ✅ ترتيب المفاتيح لضمان تطابق المفتاح
+  const sortedKeys = Object.keys(cleanParams).sort();
+  const sortedParams = {};
+  sortedKeys.forEach(k => {
+    sortedParams[k] = cleanParams[k];
+  });
+  
+  return action + '|' + JSON.stringify(sortedParams);
+}
+
+/**
+ * 🆕 إبطال Client Cache
+ * @param {string} actionPattern - اسم الأكشن (أو فارغ لكل شيء)
+ */
+function clearGASClientCache(actionPattern) {
+  if (!actionPattern) {
+    const count = _gasClientCache.size;
+    _gasClientCache.clear();
+    console.log(`🗑️ clearGASClientCache: تم إبطال كل Cache (${count} مفتاح)`);
+    return;
+  }
+  
+  let cleared = 0;
+  for (const key of Array.from(_gasClientCache.keys())) {
+    if (key.startsWith(actionPattern + '|')) {
+      _gasClientCache.delete(key);
+      cleared++;
+    }
+  }
+  console.log(`🗑️ clearGASClientCache: تم إبطال ${cleared} مفتاح لـ ${actionPattern}`);
+}
+
+/**
+ * 🆕 عرض حالة Client Cache (للتشخيص)
+ */
+function showGASClientCacheStatus() {
+  console.log('═══════════════════════════════════════');
+  console.log('📊 حالة Client Cache');
+  console.log('═══════════════════════════════════════');
+  console.log('   العدد:', _gasClientCache.size);
+  
+  let idx = 1;
+  for (const [key, value] of _gasClientCache.entries()) {
+    const age = Math.round((Date.now() - value.timestamp) / 1000);
+    const actionName = key.split('|')[0];
+    console.log(`   [${idx}] ${actionName} (عمر ${age}s)`);
+    idx++;
+  }
+  console.log('═══════════════════════════════════════');
+}
+
+// ============================================================
+// 4️⃣ callGAS - دالة JSONP الموحدة + Client Cache
 // ============================================================
 /**
- * استدعاء Google Apps Script عبر JSONP مع طابور لمنع التعارض
- * @param {string} action - اسم الإجراء
- * @param {Object} params - المعاملات (اختياري)
- * @param {number} retries - عدد المحاولات المتبقية
- * @returns {Promise<any>}
+ * استدعاء Google Apps Script عبر JSONP
+ * - مع طابور لمنع التعارض
+ * - مع Client Cache للأكشنز الثابتة
+ * - مع Retry Logic
  */
 function callGAS(action, params = {}, retries = 2) {
+  // ═══════════════════════════════════════════════════════════
+  // ✅ 1. فحص Client Cache أولاً
+  // ═══════════════════════════════════════════════════════════
+  const isCacheable = CACHEABLE_ACTIONS.includes(action);
+  
+  if (isCacheable) {
+    const cacheKey = _buildCacheKey(action, params);
+    const cached = _gasClientCache.get(cacheKey);
+    
+    if (cached) {
+      const age = Date.now() - cached.timestamp;
+      if (age < CLIENT_CACHE_TTL) {
+        console.log(`⚡ callGAS [${action}] ← Client Cache HIT (عمر ${Math.round(age / 1000)}s)`);
+        return Promise.resolve(cached.data);
+      } else {
+        // ✅ انتهت المدة — احذف وأعد الجلب
+        _gasClientCache.delete(cacheKey);
+        console.log(`⏰ callGAS [${action}] — انتهت مدة Cache، سيُعاد الجلب`);
+      }
+    }
+  }
+  
+  // ═══════════════════════════════════════════════════════════
+  // ✅ 2. إضافة للطابور
+  // ═══════════════════════════════════════════════════════════
   return new Promise((resolve, reject) => {
-    window._jsonpQueue.push({ action, params, resolve, reject, retries });
+    window._jsonpQueue.push({ 
+      action, 
+      params, 
+      resolve: (data) => {
+        // ✅ تخزين في Cache قبل الإرجاع
+        if (isCacheable && data) {
+          const cacheKey = _buildCacheKey(action, params);
+          _gasClientCache.set(cacheKey, {
+            data: data,
+            timestamp: Date.now()
+          });
+          console.log(`💾 callGAS [${action}] ← تم التخزين في Client Cache`);
+        }
+        resolve(data);
+      }, 
+      reject, 
+      retries 
+    });
     _processQueue();
   });
 }
@@ -87,7 +228,7 @@ function _processQueue() {
   
   const { action, params, resolve, reject, retries } = task;
   
-  // ✅ إضافة centerName تلقائياً إذا كان المستخدم مسجلاً
+  // ✅ إضافة centerName/centerId تلقائياً
   let user = null;
   try {
     user = (typeof Session !== 'undefined' && Session.getUser) ? Session.getUser() : null;
@@ -101,7 +242,7 @@ function _processQueue() {
     finalParams.centerId = user.centerId;
   }
   
-  // ✅ بناء URL مع callback فريد
+  // ✅ بناء URL
   const callbackName = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 10);
   const url = new URL(CONFIG.GAS_URL);
   url.searchParams.set('action', action);
@@ -139,11 +280,11 @@ function _processQueue() {
     
     try { delete window[callbackName]; } catch(e) {}
     
-    // ✅ معالجة الطلب التالي بعد تأخير بسيط
+    // ✅ معالجة الطلب التالي
     setTimeout(() => _processQueue(), CONFIG.QUEUE_DELAY);
   };
   
-  // ✅ تعريف callback في النطاق العام
+  // ✅ callback
   window[callbackName] = function(data) {
     if (isResolved) return;
     isResolved = true;
@@ -152,14 +293,13 @@ function _processQueue() {
     resolve(data);
   };
   
-  // ✅ مهلة الطلب
+  // ✅ timeout
   timeoutId = setTimeout(() => {
     if (isResolved) return;
     isResolved = true;
     console.error(`❌ callGAS [${action}] timeout after ${CONFIG.REQUEST_TIMEOUT}ms`);
     cleanup();
     
-    // ✅ Retry Logic
     if (retries > 0) {
       console.log(`🔄 إعادة محاولة [${action}]... (${retries} متبقية)`);
       setTimeout(() => {
@@ -170,7 +310,7 @@ function _processQueue() {
     }
   }, CONFIG.REQUEST_TIMEOUT);
   
-  // ✅ إنشاء عنصر script
+  // ✅ إنشاء script
   script = document.createElement('script');
   script.src = url.toString();
   script.async = true;
@@ -181,7 +321,6 @@ function _processQueue() {
     console.error(`❌ callGAS [${action}] script load error`);
     cleanup();
     
-    // ✅ Retry Logic
     if (retries > 0) {
       console.log(`🔄 إعادة محاولة [${action}]... (${retries} متبقية)`);
       setTimeout(() => {
@@ -196,9 +335,7 @@ function _processQueue() {
 }
 
 // ============================================================
-// 4️⃣ getDefaultPermissionsForType - الصلاحيات الافتراضية حسب نوع المستخدم
-// ============================================================
-// ⚠️ مهم جداً: هذه القائمة يجب أن تكون مطابقة تماماً للقائمة في Code.gs
+// 5️⃣ getDefaultPermissionsForType - الصلاحيات الافتراضية
 // ============================================================
 function getDefaultPermissionsForType(userType) {
   const permissionsMap = {
@@ -268,21 +405,14 @@ function getDefaultPermissionsForType(userType) {
 }
 
 // ============================================================
-// 5️⃣ checkUserPermission - التحقق من صلاحية المستخدم الحالي
+// 6️⃣ checkUserPermission - التحقق من صلاحية
 // ============================================================
-/**
- * يتحقق من صلاحية المستخدم الحالي (يستخدم Session)
- * @param {string} permission - اسم الصلاحية
- * @returns {boolean}
- */
 function checkUserPermission(permission) {
   try {
-    // ✅ 1. محاولة استخدام Session
     if (typeof Session !== 'undefined' && Session.getUser) {
       const user = Session.getUser();
       if (!user) return false;
       
-      // Admin لديه كل الصلاحيات
       if (user.type === 'Admin') return true;
       
       const perms = user.permissions || [];
@@ -300,7 +430,7 @@ function checkUserPermission(permission) {
 }
 
 // ============================================================
-// 6️⃣ getCenterNameById - البحث عن اسم المركز بالمعرف
+// 7️⃣ getCenterNameById
 // ============================================================
 function getCenterNameById(centerId) {
   try {
@@ -322,12 +452,9 @@ function getCenterNameById(centerId) {
 }
 
 // ============================================================
-// 7️⃣ دوال مساعدة عامة
+// 8️⃣ دوال مساعدة للتواريخ والأرقام
 // ============================================================
 
-/**
- * تحويل التاريخ إلى صيغة dd/MMM/yyyy
- */
 function formatDateToDDMMMYYYY(date) {
   if (!date) return '';
   const d = date instanceof Date ? date : new Date(date);
@@ -337,9 +464,6 @@ function formatDateToDDMMMYYYY(date) {
   return `${day}/${months[d.getMonth()]}/${d.getFullYear()}`;
 }
 
-/**
- * تحويل التاريخ من صيغة YYYY-MM-DD إلى dd/MMM/yyyy
- */
 function isoToDDMMMYYYY(isoDate) {
   if (!isoDate) return '';
   const parts = isoDate.split('-');
@@ -350,13 +474,12 @@ function isoToDDMMMYYYY(isoDate) {
   return `${parts[2].padStart(2, '0')}/${months[monthIndex]}/${parts[0]}`;
 }
 
-/**
- * تحويل التاريخ من صيغة dd/MMM/yyyy إلى YYYY-MM-DD
- */
 function ddmmyyyyToISO(dateStr) {
   if (!dateStr) return '';
-  const monthsMap = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',
-                     Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
+  const monthsMap = {
+    Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',
+    Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'
+  };
   const match = String(dateStr).match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
   if (!match) return dateStr;
   const day = match[1].padStart(2, '0');
@@ -365,9 +488,6 @@ function ddmmyyyyToISO(dateStr) {
   return `${year}-${month}-${day}`;
 }
 
-/**
- * تنسيق رقم الهاتف بشكل موحد
- */
 function formatPhoneNumber(phone) {
   if (!phone) return '';
   let p = String(phone).replace(/^=/, '').trim();
@@ -378,11 +498,13 @@ function formatPhoneNumber(phone) {
 }
 
 // ============================================================
-// 8️⃣ تصدير الوظائف للنطاق العام
+// 9️⃣ تصدير الوظائف للنطاق العام
 // ============================================================
 if (typeof window !== 'undefined') {
   window.CONFIG = CONFIG;
   window.callGAS = callGAS;
+  window.clearGASClientCache = clearGASClientCache;
+  window.showGASClientCacheStatus = showGASClientCacheStatus;
   window.getDefaultPermissionsForType = getDefaultPermissionsForType;
   window.checkUserPermission = checkUserPermission;
   window.getCenterNameById = getCenterNameById;
@@ -395,4 +517,5 @@ if (typeof window !== 'undefined') {
   console.log('📡 GAS_URL:', CONFIG.GAS_URL);
   console.log('⏱️ SESSION_DURATION:', CONFIG.SESSION_DURATION / 1000 / 60 / 60, 'hours');
   console.log('🔄 _redirecting (initial):', window._redirecting);
+  console.log('🚀 Client Cache: مُفعّل (5 دقائق، ' + CACHEABLE_ACTIONS.length + ' أكشن)');
 }
