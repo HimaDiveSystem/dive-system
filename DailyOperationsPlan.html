@@ -151,10 +151,40 @@
 
     /* SECTION GROUP */
     .section-group{margin-bottom:18px;}
-    .section-header{display:flex;align-items:center;gap:10px;padding:10px 14px;background:linear-gradient(135deg,var(--navy),var(--navy2));color:var(--gold);border-radius:12px 12px 0 0;font-weight:800;font-size:14px;}
-    .section-header-icon{font-size:20px;}
-    .section-header-count{margin-right:auto;background:rgba(245,200,66,.2);border:1px solid rgba(245,200,66,.4);padding:3px 12px;border-radius:20px;font-size:12px;}
-    .section-body{background:white;border:1px solid var(--border);border-top:none;border-radius:0 0 12px 12px;padding:8px;}
+    .section-header{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:10px 14px;
+  background:linear-gradient(135deg,var(--navy),var(--navy2));
+  color:var(--gold);
+  border-radius:12px 12px 0 0;
+  font-weight:800;
+  font-size:14px;
+  flex-wrap:nowrap;
+  overflow:hidden;
+}
+.section-header > span:not(.section-header-count):not(.section-header-icon){
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  flex:1;
+  min-width:0;
+}
+.section-header-icon{
+  flex-shrink:0;
+  font-size:20px;
+}
+.section-header-count{
+  flex-shrink:0;
+  margin-right:auto;
+  background:rgba(245,200,66,.2);
+  border:1px solid rgba(245,200,66,.4);
+  padding:3px 12px;
+  border-radius:20px;
+  font-size:12px;
+}
+       .section-body{background:white;border:1px solid var(--border);border-top:none;border-radius:0 0 12px 12px;padding:8px;}
 
     /* BENEFICIARY CARD */
     .beneficiary-card{background:white;border:2px solid var(--border);border-radius:12px;margin-bottom:6px;overflow:hidden;transition:all .2s;}
@@ -492,7 +522,16 @@
     <div id="stateModalBody"></div>
   </div>
 </div>
-
+<!-- MODAL: Time Selection -->
+<div id="timeModal" class="modal">
+  <div class="modal-content" style="max-width:400px;">
+    <div class="modal-header">
+      <h3>⏰ تغيير الوقت</h3>
+      <button class="modal-close" onclick="closeTimeModal()">×</button>
+    </div>
+    <div id="timeModalBody"></div>
+  </div>
+</div>
 <!-- TOAST -->
 <div id="toast" class="toast"></div>
 
@@ -794,7 +833,85 @@ function populateTripFilter() {
 // ═══════════════════════════════════════════════════════════════════════════
 // 📊 UPDATE SUMMARY
 // ═══════════════════════════════════════════════════════════════════════════
-function updateSummary(summary) {
+
+  // ═══════════════════════════════════════════════════════════════════════════
+// ⏰ TIME MODAL
+// ═══════════════════════════════════════════════════════════════════════════
+function openTimeModal(voucherNo) {
+  const trip = tripsData.find(t => t.voucherNo === voucherNo);
+  if (!trip) return;
+  
+  const body = document.getElementById('timeModalBody');
+  const currentTime = trip.time || '07:00';
+  
+  let html = '<div style="text-align:center;margin-bottom:12px;">';
+  html += '<div style="font-size:24px;font-weight:900;color:var(--navy);">' + escHtml(voucherNo) + '</div>';
+  html += '<div style="font-size:12px;color:var(--text-lt);">' + escHtml(trip.trip || '') + '</div>';
+  html += '</div>';
+  
+  html += '<div class="form-group">';
+  html += '<label>⏰ الوقت الجديد (HH:MM)</label>';
+  html += '<input type="time" id="newTimeInput" value="' + escHtml(currentTime) + '" style="text-align:center;font-size:18px;font-weight:900;padding:14px;">';
+  html += '</div>';
+  
+  // ✅ أزرار سريعة
+  html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px;">';
+  const quickTimes = ['06:00','07:00','08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00'];
+  for (const t of quickTimes) {
+    html += '<button class="modal-btn cancel" style="padding:8px 4px;font-size:12px;" onclick="setQuickTime(\'' + t + '\')">' + t + '</button>';
+  }
+  html += '</div>';
+  
+  html += '<div class="modal-btns">';
+  html += '<button class="modal-btn cancel" onclick="closeTimeModal()">إلغاء</button>';
+  html += '<button class="modal-btn primary" onclick="saveTime(\'' + escHtml(voucherNo) + '\')">💾 حفظ</button>';
+  html += '</div>';
+  
+  body.innerHTML = html;
+  document.getElementById('timeModal').classList.add('open');
+}
+
+function setQuickTime(t) {
+  const el = document.getElementById('newTimeInput');
+  if (el) el.value = t;
+}
+
+function closeTimeModal() {
+  document.getElementById('timeModal').classList.remove('open');
+}
+
+async function saveTime(voucherNo) {
+  const newTime = document.getElementById('newTimeInput')?.value || '';
+  if (!newTime) {
+    showToast('⚠️ الوقت مطلوب', 'error');
+    return;
+  }
+  
+  closeTimeModal();
+  showToast('⏳ جاري الحفظ...', 'info');
+  
+  try {
+    const user = Session.getUser();
+    const result = await gas('updateInvoiceTimeV2', {
+      voucherNo: voucherNo,
+      time: newTime,
+      centerName: user?.centerName || ''
+    });
+    
+    if (result && result.success) {
+      const trip = tripsData.find(t => t.voucherNo === voucherNo);
+      if (trip) trip.time = result.time || newTime;
+      showToast('✅ تم تحديث الوقت', 'success');
+      applyTripsFilters();
+    } else {
+      showToast('❌ ' + ((result && result.message) || 'فشل التحديث'), 'error');
+    }
+  } catch(e) {
+    console.error('❌ saveTime error:', e);
+    showToast('❌ ' + e.message, 'error');
+  }
+}
+  function updateSummary(summary) {
   if (!summary) return;
   document.getElementById('summaryBar').style.display = 'flex';
 
@@ -861,7 +978,7 @@ function renderTripsTable() {
     html += '<tr class="row-' + stateClass + '" data-voucher="' + escHtml(trip.voucherNo) + '">';
 
     // الوقت
-    html += '<td class="time-col">' + escHtml(trip.time || '—') + '</td>';
+        // الوقت (قابل للنقر)     html += '<td class="time-col clickable-cell" style="padding:4px 8px;" onclick="openTimeModal(\'' + escHtml(trip.voucherNo) + '\')" title="انقر لتغيير الوقت">' + escHtml(trip.time || '—') + '</td>';
 
     // الفاتورة
     html += '<td><span class="voucher-link" onclick="editInvoice(\'' + escHtml(trip.voucherNo) + '\')">' + escHtml(trip.voucherNo) + '</span></td>';
@@ -940,6 +1057,11 @@ function renderTripsTable() {
 // ═══════════════════════════════════════════════════════════════════════════
 // 🚗 RENDER VEHICLE CHIPS
 // ═══════════════════════════════════════════════════════════════════════════
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🚗 VEHICLE CHIPS (قابلة للنقر للعرض + التعديل)
+// ═══════════════════════════════════════════════════════════════════════════
 function renderVehicleChips(trip) {
   const vehicles = trip.vehiclesUsed || [];
   let html = '';
@@ -952,18 +1074,101 @@ function renderVehicleChips(trip) {
     else if (goCount > 0) label = 'ذهاب:' + goCount;
     else if (returnCount > 0) label = 'عودة:' + returnCount;
 
-    html += '<span class="chip driver" title="' + escHtml(v.vehicleId) + '">🚗 ' + escHtml(v.vehicleId) + ' (' + label + ') ';
-    html += '<span class="chip-remove" onclick="removeVehicleFromTrip(\'' + escHtml(trip.voucherNo) + '\', \'' + escHtml(v.vehicleId) + '\')" title="إزالة">×</span>';
+    html += '<span class="chip driver" title="انقر لعرض البيانات" onclick="event.stopPropagation(); openVehicleInfo(\'' + escHtml(v.vehicleId) + '\', ' + goCount + ', ' + returnCount + ')">🚗 ' + escHtml(v.vehicleId) + ' (' + label + ') ';
+    html += '<span class="chip-remove" onclick="event.stopPropagation(); removeVehicleFromTrip(\'' + escHtml(trip.voucherNo) + '\', \'' + escHtml(v.vehicleId) + '\')" title="إزالة">×</span>';
     html += '</span>';
   }
 
-  html += '<span class="clickable-cell ' + (vehicles.length > 0 ? '' : 'empty') + '" onclick="openVehicleSelection(\'' + escHtml(trip.voucherNo) + '\', \'' + escHtml(trip.trip) + '\', \'' + escHtml(trip.tripCategory) + '\')" style="display:inline-block;padding:3px 8px;font-size:10px;">' + (vehicles.length > 0 ? '✏️ تعديل' : '+ إضافة') + '</span>';
+  html += '<span class="clickable-cell ' + (vehicles.length > 0 ? '' : 'empty') + '" onclick="event.stopPropagation(); openVehicleSelection(\'' + escHtml(trip.voucherNo) + '\', \'' + escHtml(trip.trip) + '\', \'' + escHtml(trip.tripCategory) + '\')" style="display:inline-block;padding:3px 8px;font-size:10px;margin-top:2px;">' + (vehicles.length > 0 ? '✏️ تعديل' : '+ إضافة') + '</span>';
 
   return html;
 }
 
+
 // ═══════════════════════════════════════════════════════════════════════════
-// ⛵ RENDER BOAT CHIPS
+// 🚗 VEHICLE INFO MODAL
+// ═══════════════════════════════════════════════════════════════════════════
+async function openVehicleInfo(vehicleId, goCount, returnCount) {
+  showToast('⏳ جاري تحميل بيانات السيارة...', 'info');
+  
+  try {
+    const user = Session.getUser();
+    const result = await gas('getVehicles', {
+      centerName: user?.centerName || ''
+    });
+    
+    if (!Array.isArray(result)) {
+      showToast('❌ فشل التحميل', 'error');
+      return;
+    }
+    
+    const vehicle = result.find(v => v.id === vehicleId);
+    if (!vehicle) {
+      showToast('❌ السيارة غير موجودة', 'error');
+      return;
+    }
+    
+    const modal = document.getElementById('vehicleModal');
+    const title = document.getElementById('vehicleModalTitle');
+    const body = document.getElementById('vehicleModalBody');
+    
+    title.textContent = '🚗 بيانات السيارة — ' + vehicleId;
+    
+    let html = '';
+    
+    // ✅ معلومات السيارة
+    html += '<div style="background:#f0f4f8;border-radius:12px;padding:14px;margin-bottom:12px;">';
+    html += '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">';
+    html += '<div><strong>🚗 اللوحة:</strong> ' + escHtml(vehicle.licensePlate) + '</div>';
+    html += '<div><strong>📋 النوع:</strong> ' + escHtml(vehicle.type === 'owned' ? 'مملوكة' : 'إيجار') + '</div>';
+    html += '<div><strong>👤 المالك:</strong> ' + escHtml(vehicle.ownerName || '—') + '</div>';
+    html += '<div><strong>👥 السعة:</strong> ' + (vehicle.capacity || 0) + '</div>';
+    html += '<div><strong>👨‍✈️ السائق:</strong> ' + escHtml(vehicle.driverName || '—') + '</div>';
+    html += '<div><strong>📞 الهاتف:</strong> <span dir="ltr">' + escHtml(vehicle.driverPhone || '—') + '</span></div>';
+    html += '<div><strong>💰 سعر اليوم:</strong> ' + (vehicle.dailyRate || 0) + ' LE</div>';
+    html += '<div><strong>💰 سعر التشغيلة:</strong> ' + (vehicle.roundTripRate || 0) + ' LE</div>';
+    html += '</div>';
+    html += '</div>';
+    
+    // ✅ الصلاحية
+    if (!vehicle.licenseValid) {
+      html += '<div style="background:#fee2e2;color:#991b1b;padding:8px 12px;border-radius:8px;margin-bottom:12px;font-weight:700;">❌ رخصة منتهية</div>';
+    } else if (vehicle.licenseWarning) {
+      html += '<div style="background:#ffedd5;color:#9a3412;padding:8px 12px;border-radius:8px;margin-bottom:12px;font-weight:700;">⚠️ الرخصة تنتهي خلال ' + vehicle.licenseDaysLeft + ' يوم</div>';
+    }
+    
+    // ✅ الاستخدام الحالي
+    html += '<div style="background:#fef9e7;border-radius:12px;padding:14px;margin-bottom:12px;">';
+    html += '<div style="font-weight:800;color:var(--navy);margin-bottom:8px;">📊 الاستخدام الحالي</div>';
+    html += '<div><strong>🔵 الذهاب:</strong> ' + goCount + ' فرد</div>';
+    html += '<div><strong>🔴 العودة:</strong> ' + returnCount + ' فرد</div>';
+    html += '</div>';
+    
+    // ✅ أزرار
+    html += '<div class="modal-btns">';
+    html += '<button class="modal-btn cancel" onclick="closeVehicleModal()">إغلاق</button>';
+    html += '<button class="modal-btn primary" onclick="closeVehicleModal(); openVehicleEditFromInfo(\'' + escHtml(vehicleId) + '\')">✏️ تعديل السيارة</button>';
+    html += '</div>';
+    
+    body.innerHTML = html;
+    modal.classList.add('open');
+    
+  } catch(e) {
+    console.error('❌ openVehicleInfo error:', e);
+    showToast('❌ ' + e.message, 'error');
+  }
+}
+
+function openVehicleEditFromInfo(vehicleId) {
+  // ✅ فتح صفحة OperationManager مع تمرير معرف السيارة للتعديل
+  sessionStorage.setItem('editVehicleId', vehicleId);
+  sessionStorage.setItem('sourcePage', 'DailyOperationsPlan');
+  window.location.href = 'OperationManager.html?edit=vehicle&id=' + encodeURIComponent(vehicleId);
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ⛵ BOAT CHIPS
 // ═══════════════════════════════════════════════════════════════════════════
 function renderBoatChips(trip) {
   const boats = trip.boatsUsed || [];
@@ -971,18 +1176,92 @@ function renderBoatChips(trip) {
 
   for (const b of boats) {
     const pax = parseInt(b.totalPax) || 0;
-    html += '<span class="chip captain" title="' + escHtml(b.boatId) + '">⛵ ' + escHtml(b.boatId) + ' (' + pax + ') ';
-    html += '<span class="chip-remove" onclick="removeBoatFromTrip(\'' + escHtml(trip.voucherNo) + '\', \'' + escHtml(b.boatId) + '\')" title="إزالة">×</span>';
+    html += '<span class="chip captain" title="انقر لعرض البيانات" onclick="event.stopPropagation(); openBoatInfo(\'' + escHtml(b.boatId) + '\', ' + (parseInt(b.adults)||0) + ', ' + (parseInt(b.children)||0) + ', ' + (parseInt(b.infants)||0) + ')">⛵ ' + escHtml(b.boatId) + ' (' + pax + ') ';
+    html += '<span class="chip-remove" onclick="event.stopPropagation(); removeBoatFromTrip(\'' + escHtml(trip.voucherNo) + '\', \'' + escHtml(b.boatId) + '\')" title="إزالة">×</span>';
     html += '</span>';
   }
 
-  html += '<span class="clickable-cell ' + (boats.length > 0 ? '' : 'empty') + '" onclick="openBoatSelection(\'' + escHtml(trip.voucherNo) + '\', \'' + escHtml(trip.trip) + '\', \'' + escHtml(trip.tripCategory) + '\')" style="display:inline-block;padding:3px 8px;font-size:10px;">' + (boats.length > 0 ? '✏️ تعديل' : '+ إضافة') + '</span>';
+  html += '<span class="clickable-cell ' + (boats.length > 0 ? '' : 'empty') + '" onclick="event.stopPropagation(); openBoatSelection(\'' + escHtml(trip.voucherNo) + '\', \'' + escHtml(trip.trip) + '\', \'' + escHtml(trip.tripCategory) + '\')" style="display:inline-block;padding:3px 8px;font-size:10px;margin-top:2px;">' + (boats.length > 0 ? '✏️ تعديل' : '+ إضافة') + '</span>';
 
   return html;
 }
 
+async function openBoatInfo(boatId, adults, children, infants) {
+  showToast('⏳ جاري تحميل بيانات المركب...', 'info');
+  
+  try {
+    const user = Session.getUser();
+    const result = await gas('getBoats', {
+      centerName: user?.centerName || ''
+    });
+    
+    if (!Array.isArray(result)) {
+      showToast('❌ فشل التحميل', 'error');
+      return;
+    }
+    
+    const boat = result.find(b => b.id === boatId);
+    if (!boat) {
+      showToast('❌ المركب غير موجود', 'error');
+      return;
+    }
+    
+    const modal = document.getElementById('boatModal');
+    const title = document.getElementById('boatModalTitle');
+    const body = document.getElementById('boatModalBody');
+    
+    title.textContent = '⛵ بيانات المركب — ' + boatId;
+    
+    let html = '';
+    
+    html += '<div style="background:#f0f4f8;border-radius:12px;padding:14px;margin-bottom:12px;">';
+    html += '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">';
+    html += '<div><strong>⛵ الاسم:</strong> ' + escHtml(boat.name) + '</div>';
+    html += '<div><strong>👥 الحمولة:</strong> ' + (boat.capacity || 0) + '</div>';
+    html += '<div><strong>📋 الترخيص:</strong> ' + escHtml(boat.licenseNumber || '—') + '</div>';
+    html += '<div><strong>👤 المالك:</strong> ' + escHtml(boat.ownerName || '—') + '</div>';
+    html += '<div><strong>👨‍✈️ القائد:</strong> ' + escHtml(boat.captainName || '—') + '</div>';
+    html += '<div><strong>📞 هاتف القائد:</strong> <span dir="ltr">' + escHtml(boat.captainPhone || '—') + '</span></div>';
+    html += '</div>';
+    html += '</div>';
+    
+    if (!boat.licenseValid) {
+      html += '<div style="background:#fee2e2;color:#991b1b;padding:8px 12px;border-radius:8px;margin-bottom:12px;font-weight:700;">❌ ترخيص منتهي</div>';
+    } else if (boat.licenseWarning) {
+      html += '<div style="background:#ffedd5;color:#9a3412;padding:8px 12px;border-radius:8px;margin-bottom:12px;font-weight:700;">⚠️ الترخيص ينتهي خلال ' + boat.licenseDaysLeft + ' يوم</div>';
+    }
+    
+    html += '<div style="background:#fef9e7;border-radius:12px;padding:14px;margin-bottom:12px;">';
+    html += '<div style="font-weight:800;color:var(--navy);margin-bottom:8px;">📊 الأفراد الحاليون</div>';
+    html += '<div><strong>👤 بالغ:</strong> ' + adults + '</div>';
+    html += '<div><strong>👶 طفل:</strong> ' + children + '</div>';
+    html += '<div><strong>🍼 رضيع:</strong> ' + infants + '</div>';
+    html += '<div style="margin-top:6px;font-weight:800;color:var(--navy);">📊 الإجمالي: ' + (adults + children + infants) + '</div>';
+    html += '</div>';
+    
+    html += '<div class="modal-btns">';
+    html += '<button class="modal-btn cancel" onclick="closeBoatModal()">إغلاق</button>';
+    html += '<button class="modal-btn primary" onclick="closeBoatModal(); openBoatEditFromInfo(\'' + escHtml(boatId) + '\')">✏️ تعديل المركب</button>';
+    html += '</div>';
+    
+    body.innerHTML = html;
+    modal.classList.add('open');
+    
+  } catch(e) {
+    console.error('❌ openBoatInfo error:', e);
+    showToast('❌ ' + e.message, 'error');
+  }
+}
+
+function openBoatEditFromInfo(boatId) {
+  sessionStorage.setItem('editBoatId', boatId);
+  sessionStorage.setItem('sourcePage', 'DailyOperationsPlan');
+  window.location.href = 'OperationManager.html?edit=boat&id=' + encodeURIComponent(boatId);
+}
+
+
 // ═══════════════════════════════════════════════════════════════════════════
-// 👨‍🏫 RENDER INSTRUCTOR CHIPS
+// 👨‍🏫 INSTRUCTOR CHIPS
 // ═══════════════════════════════════════════════════════════════════════════
 function renderInstructorChips(trip) {
   const instructors = trip.instructorsExec || [];
@@ -990,16 +1269,89 @@ function renderInstructorChips(trip) {
 
   for (const ie of instructors) {
     const actCount = (ie.activities || []).reduce((s, a) => s + (a.quantity || 0), 0);
-    html += '<span class="chip instructor" title="' + escHtml(ie.instructorId) + '">👨‍🏫 ' + escHtml(ie.instructorId) + ' (' + actCount + ') ';
-    html += '<span class="chip-remove" onclick="removeInstructorFromTrip(\'' + escHtml(trip.voucherNo) + '\', \'' + escHtml(ie.instructorId) + '\')" title="إزالة">×</span>';
+    html += '<span class="chip instructor" title="انقر لعرض البيانات" onclick="event.stopPropagation(); openInstructorInfo(\'' + escHtml(ie.instructorId) + '\')">👨‍🏫 ' + escHtml(ie.instructorId) + ' (' + actCount + ') ';
+    html += '<span class="chip-remove" onclick="event.stopPropagation(); removeInstructorFromTrip(\'' + escHtml(trip.voucherNo) + '\', \'' + escHtml(ie.instructorId) + '\')" title="إزالة">×</span>';
     html += '</span>';
   }
 
-  html += '<span class="clickable-cell ' + (instructors.length > 0 ? '' : 'empty') + '" onclick="openInstructorSelection(\'' + escHtml(trip.voucherNo) + '\', \'' + escHtml(trip.trip) + '\', \'' + escHtml(trip.tripCategory) + '\')" style="display:inline-block;padding:3px 8px;font-size:10px;">' + (instructors.length > 0 ? '✏️ تعديل' : '+ إضافة') + '</span>';
+  html += '<span class="clickable-cell ' + (instructors.length > 0 ? '' : 'empty') + '" onclick="event.stopPropagation(); openInstructorSelection(\'' + escHtml(trip.voucherNo) + '\', \'' + escHtml(trip.trip) + '\', \'' + escHtml(trip.tripCategory) + '\')" style="display:inline-block;padding:3px 8px;font-size:10px;margin-top:2px;">' + (instructors.length > 0 ? '✏️ تعديل' : '+ إضافة') + '</span>';
 
   return html;
 }
 
+async function openInstructorInfo(instructorId) {
+  showToast('⏳ جاري تحميل بيانات المدرب...', 'info');
+  
+  try {
+    const user = Session.getUser();
+    const result = await gas('getInstructors', {
+      centerName: user?.centerName || ''
+    });
+    
+    if (!Array.isArray(result)) {
+      showToast('❌ فشل التحميل', 'error');
+      return;
+    }
+    
+    const inst = result.find(i => i.id === instructorId);
+    if (!inst) {
+      showToast('❌ المدرب غير موجود', 'error');
+      return;
+    }
+    
+    const modal = document.getElementById('instructorModal');
+    const title = document.getElementById('instructorModalTitle');
+    const body = document.getElementById('instructorModalBody');
+    
+    title.textContent = '👨‍🏫 بيانات المدرب — ' + instructorId;
+    
+    let html = '';
+    
+    html += '<div style="background:#f0f4f8;border-radius:12px;padding:14px;margin-bottom:12px;">';
+    html += '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">';
+    html += '<div><strong>👤 الاسم:</strong> ' + escHtml(inst.name) + '</div>';
+    html += '<div><strong>🎭 الدور:</strong> ' + escHtml(inst.role || '—') + '</div>';
+    html += '<div><strong>📋 التوظيف:</strong> ' + escHtml(inst.employmentType || '—') + '</div>';
+    html += '<div><strong>📞 الهاتف:</strong> <span dir="ltr">' + escHtml(inst.phone || '—') + '</span></div>';
+    html += '<div><strong>🎫 الرخصة:</strong> ' + escHtml(inst.licenseNumber || '—') + '</div>';
+    html += '<div><strong>💳 CDWS:</strong> ' + escHtml(inst.cdwsCard || '—') + '</div>';
+    html += '<div><strong>💰 اليومية:</strong> ' + (inst.dailyGuarantee || 0) + ' LE</div>';
+    html += '<div><strong>🌐 اللغات:</strong> ' + escHtml(inst.language || '—') + '</div>';
+    html += '</div>';
+    html += '</div>';
+    
+    // التحذيرات
+    if (!inst.licenseValid) {
+      html += '<div style="background:#fee2e2;color:#991b1b;padding:8px 12px;border-radius:8px;margin-bottom:8px;font-weight:700;">❌ رخصة منتهية</div>';
+    } else if (inst.licenseWarning) {
+      html += '<div style="background:#ffedd5;color:#9a3412;padding:8px 12px;border-radius:8px;margin-bottom:8px;font-weight:700;">⚠️ الرخصة تنتهي خلال ' + inst.licenseDaysLeft + ' يوم</div>';
+    }
+    
+    if (!inst.cdwsValid) {
+      html += '<div style="background:#fee2e2;color:#991b1b;padding:8px 12px;border-radius:8px;margin-bottom:8px;font-weight:700;">❌ CDWS منتهية</div>';
+    } else if (inst.cdwsWarning) {
+      html += '<div style="background:#ffedd5;color:#9a3412;padding:8px 12px;border-radius:8px;margin-bottom:8px;font-weight:700;">⚠️ CDWS تنتهي خلال ' + inst.cdwsDaysLeft + ' يوم</div>';
+    }
+    
+    html += '<div class="modal-btns">';
+    html += '<button class="modal-btn cancel" onclick="closeInstructorModal()">إغلاق</button>';
+    html += '<button class="modal-btn primary" onclick="closeInstructorModal(); openInstructorEditFromInfo(\'' + escHtml(instructorId) + '\')">✏️ تعديل المدرب</button>';
+    html += '</div>';
+    
+    body.innerHTML = html;
+    modal.classList.add('open');
+    
+  } catch(e) {
+    console.error('❌ openInstructorInfo error:', e);
+    showToast('❌ ' + e.message, 'error');
+  }
+}
+
+function openInstructorEditFromInfo(instructorId) {
+  sessionStorage.setItem('editInstructorId', instructorId);
+  sessionStorage.setItem('sourcePage', 'DailyOperationsPlan');
+  window.location.href = 'OperationManager.html?edit=instructor&id=' + encodeURIComponent(instructorId);
+}
 // ═══════════════════════════════════════════════════════════════════════════
 // 🔍 FILTER TRIPS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1137,8 +1489,12 @@ async function updateInvoiceField(voucherNo, fieldType, value) {
         if (field === 'supplier') trip.supplier = value;
         else trip.customer = value;
       }
-      showToast('✅ تم التحديث', 'success');
+            showToast('✅ تم التحديث', 'success');
+      
+      // ✅ إعادة بناء المستفيدين + إعادة العرض
       applyTripsFilters();
+      buildBeneficiariesFromTrips();
+      displayBeneficiaries();
     } else {
       showToast('❌ ' + ((result && result.message) || 'فشل التحديث'), 'error');
     }
@@ -2298,14 +2654,18 @@ document.addEventListener('DOMContentLoaded', async function() {
   let incomingFrom = '';
   let incomingTo = '';
   try {
-    const urlParams = new URLSearchParams(window.location.search);
-    incomingFrom = urlParams.get('from') || urlParams.get('date') || '';
-    incomingTo = urlParams.get('to') || incomingFrom;
-    if (!incomingFrom) {
-      const stored = sessionStorage.getItem('dailyPlanDate');
-      if (stored) { incomingFrom = stored; incomingTo = stored; sessionStorage.removeItem('dailyPlanDate'); }
-    }
-  } catch(e) {}
+  const urlParams = new URLSearchParams(window.location.search);
+  const editType = urlParams.get('edit');
+  const editId = urlParams.get('id');
+  
+  if (editType === 'vehicle' && editId) {
+    setTimeout(() => openEditVehicleModal(editId), 800);
+  } else if (editType === 'boat' && editId) {
+    setTimeout(() => openEditBoatModal(editId), 800);
+  } else if (editType === 'instructor' && editId) {
+    setTimeout(() => openEditInstructorModal(editId), 800);
+  }
+} catch(e) {}
 
   function normalizeISO(val) {
     if (!val) return '';
@@ -2340,6 +2700,7 @@ document.addEventListener('keydown', e => {
     closeBoatModal();
     closeInstructorModal();
     closeStateModal();
+    closeTimeModal();
   }
 });
 </script>
