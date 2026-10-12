@@ -1490,11 +1490,11 @@ async function updateInvoiceField(voucherNo, fieldType, value) {
         if (field === 'supplier') trip.supplier = value;
         else trip.customer = value;
       }
-            showToast('✅ تم التحديث', 'success');
+                 showToast('✅ تم التحديث', 'success');
       
       // ✅ إعادة بناء المستفيدين + إعادة العرض
       applyTripsFilters();
-      buildBeneficiariesFromTrips();
+      await buildBeneficiariesFromTrips();  // ← ✅ await
       displayBeneficiaries();
     } else {
       showToast('❌ ' + ((result && result.message) || 'فشل التحديث'), 'error');
@@ -2145,35 +2145,84 @@ async function changeState(voucherNo, newState, hasPayments) {
 // 📋 BENEFICIARIES (نفس الملف السابق - مع تحسين)
 // ═══════════════════════════════════════════════════════════════════════════
 async function renderBeneficiaries() {
-  // ✅ نستخدم نفس بيانات الرحلات لتجميع المستفيدين
-  buildBeneficiariesFromTrips();
+  await buildBeneficiariesFromTrips();  // ← ✅ await
   displayBeneficiaries();
 }
 
-function buildBeneficiariesFromTrips() {
+async function buildBeneficiariesFromTrips() {
   beneficiaries = { vehicles: [], boats: [], instructors: [], suppliers: [], customers: [] };
 
-  // تجميع السيارات
-  const vehicleMap = new Map();
-  const boatMap = new Map();
-  const instructorMap = new Map();
-  const supplierMap = new Map();
-  const customerMap = new Map();
+  const user = Session.getUser();
+  const centerName = user?.centerName || '';
+
+  // ═══════════════════════════════════════════════
+  // 1. جلب البيانات الأصلية (مرة واحدة)
+  // ═══════════════════════════════════════════════
+  let allVehicles = [];
+  let allBoats = [];
+  let allInstructors = [];
+  let allSuppliers = [];
+
+  try {
+    const [vehiclesRes, boatsRes, instructorsRes, suppliersRes] = await Promise.all([
+      gas('getVehicles', { centerName }).catch(() => []),
+      gas('getBoats', { centerName }).catch(() => []),
+      gas('getInstructors', { centerName }).catch(() => []),
+      gas('getAllSuppliersCustomers', { centerName }).catch(() => [])
+    ]);
+
+    allVehicles = Array.isArray(vehiclesRes) ? vehiclesRes : [];
+    allBoats = Array.isArray(boatsRes) ? boatsRes : [];
+    allInstructors = Array.isArray(instructorsRes) ? instructorsRes : [];
+    allSuppliers = Array.isArray(suppliersRes) ? suppliersRes : [];
+
+    console.log('✅ [Beneficiaries] تم جلب البيانات الأصلية:', {
+      vehicles: allVehicles.length,
+      boats: allBoats.length,
+      instructors: allInstructors.length,
+      suppliers: allSuppliers.length
+    });
+  } catch(e) {
+    console.error('❌ [Beneficiaries] فشل جلب البيانات الأصلية:', e);
+  }
+
+  // ═══════════════════════════════════════════════
+  // 2. إنشاء خرائط للبحث السريع
+  // ═══════════════════════════════════════════════
+  const vehiclesMap = new Map();
+  const boatsMap = new Map();
+  const instructorsMap = new Map();
+  const suppliersMap = new Map();
+
+  allVehicles.forEach(v => vehiclesMap.set(v.id, v));
+  allBoats.forEach(b => boatsMap.set(b.id, b));
+  allInstructors.forEach(i => instructorsMap.set(i.id, i));
+  allSuppliers.forEach(s => suppliersMap.set(s.customerName, s));
+
+  // ═══════════════════════════════════════════════
+  // 3. تجميع الفواتير حسب النوع
+  // ═══════════════════════════════════════════════
+  const vehicleGroups = new Map();
+  const boatGroups = new Map();
+  const instructorGroups = new Map();
+  const supplierGroups = new Map();
+  const customerGroups = new Map();
 
   for (const trip of tripsData) {
-    // Vehicles
+    // ✅ Vehicles
     (trip.vehiclesUsed || []).forEach(v => {
-      if (!vehicleMap.has(v.vehicleId)) {
-        vehicleMap.set(v.vehicleId, {
+      if (!vehicleGroups.has(v.vehicleId)) {
+        vehicleGroups.set(v.vehicleId, {
           id: v.vehicleId,
           type: 'vehicle',
-          name: v.vehicleId,
-          phone: '',
           invoices: [],
-          totalGoCount: 0, totalReturnCount: 0, totalPax: 0, totalRest: {}
+          totalGoCount: 0,
+          totalReturnCount: 0,
+          totalPax: 0,
+          totalRest: {}
         });
       }
-      const e = vehicleMap.get(v.vehicleId);
+      const e = vehicleGroups.get(v.vehicleId);
       e.invoices.push(trip);
       e.totalGoCount += parseInt(v.goCount) || 0;
       e.totalReturnCount += parseInt(v.returnCount) || 0;
@@ -2181,29 +2230,35 @@ function buildBeneficiariesFromTrips() {
       if (trip.rest > 0) e.totalRest[trip.currency] = (e.totalRest[trip.currency] || 0) + trip.rest;
     });
 
-    // Boats
+    // ✅ Boats
     (trip.boatsUsed || []).forEach(b => {
-      if (!boatMap.has(b.boatId)) {
-        boatMap.set(b.boatId, {
-          id: b.boatId, type: 'boat', name: b.boatId, phone: '',
-          invoices: [], totalPax: 0, totalRest: {}
+      if (!boatGroups.has(b.boatId)) {
+        boatGroups.set(b.boatId, {
+          id: b.boatId,
+          type: 'boat',
+          invoices: [],
+          totalPax: 0,
+          totalRest: {}
         });
       }
-      const e = boatMap.get(b.boatId);
+      const e = boatGroups.get(b.boatId);
       e.invoices.push(trip);
       e.totalPax += (parseInt(b.adults) || 0) + (parseInt(b.children) || 0) + (parseInt(b.infants) || 0);
       if (trip.rest > 0) e.totalRest[trip.currency] = (e.totalRest[trip.currency] || 0) + trip.rest;
     });
 
-    // Instructors
+    // ✅ Instructors
     (trip.instructorsExec || []).forEach(ie => {
-      if (!instructorMap.has(ie.instructorId)) {
-        instructorMap.set(ie.instructorId, {
-          id: ie.instructorId, type: 'instructor', name: ie.instructorId, phone: '',
-          invoices: [], activitiesMap: {}, totalRest: {}
+      if (!instructorGroups.has(ie.instructorId)) {
+        instructorGroups.set(ie.instructorId, {
+          id: ie.instructorId,
+          type: 'instructor',
+          invoices: [],
+          activitiesMap: {},
+          totalRest: {}
         });
       }
-      const e = instructorMap.get(ie.instructorId);
+      const e = instructorGroups.get(ie.instructorId);
       e.invoices.push(trip);
       (ie.activities || []).forEach(a => {
         const n = a.displayName || a.activityName || 'Unknown';
@@ -2212,42 +2267,112 @@ function buildBeneficiariesFromTrips() {
       if (trip.rest > 0) e.totalRest[trip.currency] = (e.totalRest[trip.currency] || 0) + trip.rest;
     });
 
-    // Suppliers
+    // ✅ Suppliers
     if (trip.supplier) {
-      if (!supplierMap.has(trip.supplier)) {
-        supplierMap.set(trip.supplier, {
-          id: trip.supplier, type: 'supplier', name: trip.supplier, phone: '',
-          invoices: [], totalPax: 0, totalRest: {}
+      if (!supplierGroups.has(trip.supplier)) {
+        supplierGroups.set(trip.supplier, {
+          id: trip.supplier,
+          type: 'supplier',
+          invoices: [],
+          totalPax: 0,
+          totalRest: {}
         });
       }
-      const e = supplierMap.get(trip.supplier);
+      const e = supplierGroups.get(trip.supplier);
       e.invoices.push(trip);
       e.totalPax += trip.pax || 0;
       if (trip.rest > 0) e.totalRest[trip.currency] = (e.totalRest[trip.currency] || 0) + trip.rest;
     }
 
-    // Customers
+    // ✅ Customers
     if (trip.customer) {
-      if (!customerMap.has(trip.customer)) {
-        customerMap.set(trip.customer, {
-          id: trip.customer, type: 'customer', name: trip.customer, phone: '',
-          invoices: [], totalPax: 0, totalRest: {}
+      if (!customerGroups.has(trip.customer)) {
+        customerGroups.set(trip.customer, {
+          id: trip.customer,
+          type: 'customer',
+          invoices: [],
+          totalPax: 0,
+          totalRest: {}
         });
       }
-      const e = customerMap.get(trip.customer);
+      const e = customerGroups.get(trip.customer);
       e.invoices.push(trip);
       e.totalPax += trip.pax || 0;
       if (trip.rest > 0) e.totalRest[trip.currency] = (e.totalRest[trip.currency] || 0) + trip.rest;
     }
   }
 
-  beneficiaries.vehicles = Array.from(vehicleMap.values());
-  beneficiaries.boats = Array.from(boatMap.values());
-  beneficiaries.instructors = Array.from(instructorMap.values());
-  beneficiaries.suppliers = Array.from(supplierMap.values());
-  beneficiaries.customers = Array.from(customerMap.values());
-}
+  // ═══════════════════════════════════════════════
+  // 4. ✅ ✅ ✅ دمج أرقام الهواتف
+  // ═══════════════════════════════════════════════
 
+  // 🚗 السيارات → driverPhone
+  beneficiaries.vehicles = Array.from(vehicleGroups.values()).map(e => {
+    const v = vehiclesMap.get(e.id) || {};
+    return {
+      ...e,
+      name: v.driverName || e.id,           // ← اسم السائق
+      phone: v.driverPhone || '',            // ← ✅ رقم السائق
+      licensePlate: v.licensePlate || '',
+      capacity: v.capacity || 0
+    };
+  });
+
+  // ⛵ المراكب → captainPhone
+  beneficiaries.boats = Array.from(boatGroups.values()).map(e => {
+    const b = boatsMap.get(e.id) || {};
+    return {
+      ...e,
+      name: b.name || e.id,                  // ← اسم المركب
+      phone: b.captainPhone || '',           // ← ✅ رقم الكابتن
+      captainName: b.captainName || '',
+      capacity: b.capacity || 0
+    };
+  });
+
+  // 👨‍🏫 المدربين → phone
+  beneficiaries.instructors = Array.from(instructorGroups.values()).map(e => {
+    const i = instructorsMap.get(e.id) || {};
+    return {
+      ...e,
+      name: i.name || e.id,                  // ← اسم المدرب
+      phone: i.phone || '',                  // ← ✅ رقم المدرب
+      role: i.role || ''
+    };
+  });
+
+  // 🏢 المنفذين → phone
+  beneficiaries.suppliers = Array.from(supplierGroups.values()).map(e => {
+    const s = suppliersMap.get(e.id) || {};
+    return {
+      ...e,
+      name: e.id,
+      phone: s.phone || '',                  // ← ✅ رقم المنفذ
+      category: s.category || ''
+    };
+  });
+
+  // 👤 العملاء → phone
+  beneficiaries.customers = Array.from(customerGroups.values()).map(e => {
+    const s = suppliersMap.get(e.id) || {};
+    return {
+      ...e,
+      name: e.id,
+      phone: s.phone || '',                  // ← ✅ رقم العميل
+      category: s.category || ''
+    };
+  });
+
+  // ═══════════════════════════════════════════════
+  // 5. ✅ التحقق من الأرقام (للتشخيص)
+  // ═══════════════════════════════════════════════
+  console.log('✅ [Beneficiaries] تم البناء:');
+  console.log('  🚗', beneficiaries.vehicles.map(v => `${v.name} → ${v.phone || '❌'}`));
+  console.log('  ⛵', beneficiaries.boats.map(b => `${b.name} → ${b.phone || '❌'}`));
+  console.log('  👨‍🏫', beneficiaries.instructors.map(i => `${i.name} → ${i.phone || '❌'}`));
+  console.log('  🏢', beneficiaries.suppliers.map(s => `${s.name} → ${s.phone || '❌'}`));
+  console.log('  👤', beneficiaries.customers.map(c => `${c.name} → ${c.phone || '❌'}`));
+}
 function displayBeneficiaries() {
   const container = document.getElementById('beneficiariesContent');
 
