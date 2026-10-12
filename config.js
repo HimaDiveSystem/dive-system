@@ -3,7 +3,7 @@
 // ============================================================
 // ⚠️ مهم: هذا الملف يجب أن يُحمّل أولاً قبل session.js و ui.js
 // ============================================================
-// 🆕 V2: تمت إضافة Client-Side Cache في callGAS
+// 🆕 V3: Parallel Execution + Client Cache
 // ============================================================
 
 const CONFIG = {
@@ -14,7 +14,7 @@ const CONFIG = {
   SESSION_DURATION: 24 * 60 * 60 * 1000,
   
   REQUEST_TIMEOUT: 90000,  // 90 ثانية
-  QUEUE_DELAY: 100,        // 100ms
+  QUEUE_DELAY: 10,         // ✅ تم التخفيض من 100ms إلى 10ms
   
   // ✅ أسماء الصفحات حسب نوع المستخدم
   DASHBOARD_PAGES: {
@@ -46,6 +46,7 @@ const CONFIG = {
 // ============================================================
 // 2️⃣ العلامات العالمية - تُعرّف مرة واحدة على window
 // ============================================================
+
 if (typeof window._redirecting === 'undefined') {
   window._redirecting = false;
 }
@@ -62,16 +63,9 @@ if (typeof window._pageInitialized === 'undefined') {
 // ============================================================
 // 3️⃣ 🆕 Client Cache — تخزين نتائج callGAS في الذاكرة
 // ============================================================
-// 📌 الفكرة:
-//   - بعض الأكشنز ترجع بيانات ثابتة نسبياً (الموظفين، الفروع، المراكب، ...)
-//   - بدلاً من إرسال طلب لـ Apps Script كل مرة، نخزّن النتيجة 5 دقائق
-//   - عند أي تعديل → إبطال Cache (clearGASClientCache)
-// ============================================================
 
-// ✅ Cache في الذاكرة (Map) — صالح طوال عمر الصفحة
 const _gasClientCache = new Map();
 
-// ✅ قائمة الأكشنز القابلة للتخزين (بيانات ثابتة نسبياً)
 const CACHEABLE_ACTIONS = [
   'getEmployeesByCenter',
   'getActiveBranches',
@@ -96,19 +90,13 @@ const CACHEABLE_ACTIONS = [
   'getDashboardBootstrap'
 ];
 
-// ✅ مدة Cache (5 دقائق بالمللي ثانية)
 const CLIENT_CACHE_TTL = 5 * 60 * 1000;
 
-/**
- * 🆕 بناء مفتاح فريد للطلب (action + params)
- */
 function _buildCacheKey(action, params) {
   const cleanParams = { ...params };
-  // ✅ تجاهل الحقول الديناميكية
   delete cleanParams._t;
   delete cleanParams.callback;
   
-  // ✅ ترتيب المفاتيح لضمان تطابق المفتاح
   const sortedKeys = Object.keys(cleanParams).sort();
   const sortedParams = {};
   sortedKeys.forEach(k => {
@@ -118,10 +106,6 @@ function _buildCacheKey(action, params) {
   return action + '|' + JSON.stringify(sortedParams);
 }
 
-/**
- * 🆕 إبطال Client Cache
- * @param {string} actionPattern - اسم الأكشن (أو فارغ لكل شيء)
- */
 function clearGASClientCache(actionPattern) {
   if (!actionPattern) {
     const count = _gasClientCache.size;
@@ -140,9 +124,6 @@ function clearGASClientCache(actionPattern) {
   console.log(`🗑️ clearGASClientCache: تم إبطال ${cleared} مفتاح لـ ${actionPattern}`);
 }
 
-/**
- * 🆕 عرض حالة Client Cache (للتشخيص)
- */
 function showGASClientCacheStatus() {
   console.log('═══════════════════════════════════════');
   console.log('📊 حالة Client Cache');
@@ -160,17 +141,17 @@ function showGASClientCacheStatus() {
 }
 
 // ============================================================
-// 4️⃣ callGAS - دالة JSONP الموحدة + Client Cache
+// 4️⃣ callGAS - دالة JSONP مع Client Cache (بدون Queue)
 // ============================================================
 /**
  * استدعاء Google Apps Script عبر JSONP
- * - مع طابور لمنع التعارض
- * - مع Client Cache للأكشنز الثابتة
- * - مع Retry Logic
+ * - Client Cache للأكشنز الثابتة
+ * - تنفيذ متوازي (بدون Queue)
+ * - Retry Logic
  */
 function callGAS(action, params = {}, retries = 2) {
   // ═══════════════════════════════════════════════════════════
-  // ✅ 1. فحص Client Cache أولاً
+  // ✅ 1. فحص Client Cache
   // ═══════════════════════════════════════════════════════════
   const isCacheable = CACHEABLE_ACTIONS.includes(action);
   
@@ -184,154 +165,130 @@ function callGAS(action, params = {}, retries = 2) {
         console.log(`⚡ callGAS [${action}] ← Client Cache HIT (عمر ${Math.round(age / 1000)}s)`);
         return Promise.resolve(cached.data);
       } else {
-        // ✅ انتهت المدة — احذف وأعد الجلب
         _gasClientCache.delete(cacheKey);
-        console.log(`⏰ callGAS [${action}] — انتهت مدة Cache، سيُعاد الجلب`);
+        console.log(`⏰ callGAS [${action}] — انتهت مدة Cache`);
       }
     }
   }
   
   // ═══════════════════════════════════════════════════════════
-  // ✅ 2. إضافة للطابور
+  // ✅ 2. تنفيذ مباشر (بدون Queue — تنفيذ متوازي)
   // ═══════════════════════════════════════════════════════════
   return new Promise((resolve, reject) => {
-    window._jsonpQueue.push({ 
-      action, 
-      params, 
-      resolve: (data) => {
-        // ✅ تخزين في Cache قبل الإرجاع
-        if (isCacheable && data) {
-          const cacheKey = _buildCacheKey(action, params);
-          _gasClientCache.set(cacheKey, {
-            data: data,
-            timestamp: Date.now()
-          });
-          console.log(`💾 callGAS [${action}] ← تم التخزين في Client Cache`);
+    // ✅ إضافة centerName/centerId تلقائياً
+    let user = null;
+    try {
+      user = (typeof Session !== 'undefined' && Session.getUser) ? Session.getUser() : null;
+    } catch(e) {}
+    
+    const finalParams = { ...params };
+    if (user && user.centerName && !finalParams.centerName) {
+      finalParams.centerName = user.centerName;
+    }
+    if (user && user.centerId && !finalParams.centerId) {
+      finalParams.centerId = user.centerId;
+    }
+    
+    // ✅ بناء URL
+    const callbackName = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 10);
+    const url = new URL(CONFIG.GAS_URL);
+    url.searchParams.set('action', action);
+    url.searchParams.set('callback', callbackName);
+    url.searchParams.set('_t', Date.now() + '_' + Math.random().toString(36).substr(2, 8));
+    
+    Object.entries(finalParams).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') {
+        if (typeof v === 'object') {
+          url.searchParams.set(k, JSON.stringify(v));
+        } else {
+          url.searchParams.set(k, String(v));
         }
-        resolve(data);
-      }, 
-      reject, 
-      retries 
-    });
-    _processQueue();
-  });
-}
-
-/**
- * معالجة الطابور - طلب واحد في كل مرة
- */
-function _processQueue() {
-  if (window._jsonpInProgress || window._jsonpQueue.length === 0) return;
-  
-  const task = window._jsonpQueue.shift();
-  window._jsonpInProgress = true;
-  
-  const { action, params, resolve, reject, retries } = task;
-  
-  // ✅ إضافة centerName/centerId تلقائياً
-  let user = null;
-  try {
-    user = (typeof Session !== 'undefined' && Session.getUser) ? Session.getUser() : null;
-  } catch(e) {}
-  
-  const finalParams = { ...params };
-  if (user && user.centerName && !finalParams.centerName) {
-    finalParams.centerName = user.centerName;
-  }
-  if (user && user.centerId && !finalParams.centerId) {
-    finalParams.centerId = user.centerId;
-  }
-  
-  // ✅ بناء URL
-  const callbackName = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 10);
-  const url = new URL(CONFIG.GAS_URL);
-  url.searchParams.set('action', action);
-  url.searchParams.set('callback', callbackName);
-  url.searchParams.set('_t', Date.now() + '_' + Math.random().toString(36).substr(2, 8));
-  
-  Object.entries(finalParams).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== '') {
-      if (typeof v === 'object') {
-        url.searchParams.set(k, JSON.stringify(v));
-      } else {
-        url.searchParams.set(k, String(v));
       }
-    }
+    });
+    
+    console.log(`📡 callGAS [${action}] → START`);
+    const startTime = Date.now();
+    
+    let script = null;
+    let timeoutId = null;
+    let isResolved = false;
+    
+    // ✅ دالة التنظيف
+    const cleanup = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      
+      if (script && script.parentNode) {
+        try { script.parentNode.removeChild(script); } catch(e) {}
+      }
+      
+      try { delete window[callbackName]; } catch(e) {}
+    };
+    
+    // ✅ callback
+    window[callbackName] = function(data) {
+      if (isResolved) return;
+      isResolved = true;
+      
+      const elapsed = Date.now() - startTime;
+      console.log(`✅ callGAS [${action}] ← END (${elapsed}ms)`);
+      
+      cleanup();
+      
+      // ✅ تخزين في Cache قبل الإرجاع
+      if (isCacheable && data) {
+        _gasClientCache.set(_buildCacheKey(action, params), {
+          data: data,
+          timestamp: Date.now()
+        });
+        console.log(`💾 callGAS [${action}] ← تم التخزين في Client Cache`);
+      }
+      
+      resolve(data);
+    };
+    
+    // ✅ timeout
+    timeoutId = setTimeout(() => {
+      if (isResolved) return;
+      isResolved = true;
+      console.error(`❌ callGAS [${action}] timeout after ${CONFIG.REQUEST_TIMEOUT}ms`);
+      cleanup();
+      
+      if (retries > 0) {
+        console.log(`🔄 إعادة محاولة [${action}]... (${retries} متبقية)`);
+        setTimeout(() => {
+          callGAS(action, params, retries - 1).then(resolve).catch(reject);
+        }, 1000);
+      } else {
+        reject(new Error('انتهى وقت الاتصال'));
+      }
+    }, CONFIG.REQUEST_TIMEOUT);
+    
+    // ✅ إنشاء script
+    script = document.createElement('script');
+    script.src = url.toString();
+    script.async = true;
+    
+    script.onerror = function() {
+      if (isResolved) return;
+      isResolved = true;
+      console.error(`❌ callGAS [${action}] script load error`);
+      cleanup();
+      
+      if (retries > 0) {
+        console.log(`🔄 إعادة محاولة [${action}]... (${retries} متبقية)`);
+        setTimeout(() => {
+          callGAS(action, params, retries - 1).then(resolve).catch(reject);
+        }, 1000);
+      } else {
+        reject(new Error('فشل تحميل السكربت'));
+      }
+    };
+    
+    document.head.appendChild(script);
   });
-  
-  console.log(`📡 callGAS [${action}] →`, url.toString());
-  
-  let script = null;
-  let timeoutId = null;
-  let isResolved = false;
-  
-  // ✅ دالة التنظيف
-  const cleanup = () => {
-    window._jsonpInProgress = false;
-    
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-      timeoutId = null;
-    }
-    
-    if (script && script.parentNode) {
-      try { script.parentNode.removeChild(script); } catch(e) {}
-    }
-    
-    try { delete window[callbackName]; } catch(e) {}
-    
-    // ✅ معالجة الطلب التالي
-    setTimeout(() => _processQueue(), CONFIG.QUEUE_DELAY);
-  };
-  
-  // ✅ callback
-  window[callbackName] = function(data) {
-    if (isResolved) return;
-    isResolved = true;
-    console.log(`✅ callGAS [${action}] ← response received`);
-    cleanup();
-    resolve(data);
-  };
-  
-  // ✅ timeout
-  timeoutId = setTimeout(() => {
-    if (isResolved) return;
-    isResolved = true;
-    console.error(`❌ callGAS [${action}] timeout after ${CONFIG.REQUEST_TIMEOUT}ms`);
-    cleanup();
-    
-    if (retries > 0) {
-      console.log(`🔄 إعادة محاولة [${action}]... (${retries} متبقية)`);
-      setTimeout(() => {
-        callGAS(action, params, retries - 1).then(resolve).catch(reject);
-      }, 1000);
-    } else {
-      reject(new Error('انتهى وقت الاتصال'));
-    }
-  }, CONFIG.REQUEST_TIMEOUT);
-  
-  // ✅ إنشاء script
-  script = document.createElement('script');
-  script.src = url.toString();
-  script.async = true;
-  
-  script.onerror = function() {
-    if (isResolved) return;
-    isResolved = true;
-    console.error(`❌ callGAS [${action}] script load error`);
-    cleanup();
-    
-    if (retries > 0) {
-      console.log(`🔄 إعادة محاولة [${action}]... (${retries} متبقية)`);
-      setTimeout(() => {
-        callGAS(action, params, retries - 1).then(resolve).catch(reject);
-      }, 1000);
-    } else {
-      reject(new Error('فشل تحميل السكربت'));
-    }
-  };
-  
-  document.head.appendChild(script);
 }
 
 // ============================================================
@@ -518,4 +475,5 @@ if (typeof window !== 'undefined') {
   console.log('⏱️ SESSION_DURATION:', CONFIG.SESSION_DURATION / 1000 / 60 / 60, 'hours');
   console.log('🔄 _redirecting (initial):', window._redirecting);
   console.log('🚀 Client Cache: مُفعّل (5 دقائق، ' + CACHEABLE_ACTIONS.length + ' أكشن)');
+  console.log('⚡ Parallel Execution: مُفعّل (بدون Queue)');
 }
