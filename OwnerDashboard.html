@@ -790,23 +790,23 @@ async function loadPermissionsTable() {
   if (!container) return;
 
   try {
-    // ✅ جلب جميع المستخدمين مع صلاحياتهم من الخادم
-    const result = await callGAS('getAllUsersWithPermissions');
-    const allUsers = result?.data || [];
-
-    // ✅ فلترة المستخدمين الذين ينتمون إلى مركز المالك فقط
-    const centerId = currentUser.centerId;
-    const filteredUsers = allUsers.filter(u => u.centerId === centerId);
-
-    // ✅ حفظ المستخدمين في متغير عام
+    // ✅ استخدام الدالة الجديدة
+    const result = await callGAS('getCenterUsersWithPermissions', {
+      centerId: currentUser.centerId
+    });
+    
+    const filteredUsers = result?.data || [];
     centerUsers = filteredUsers;
-
+    
+    console.log(`✅ [Permissions] تم جلب ${filteredUsers.length} مستخدم`);
     renderPermissionsTable(filteredUsers);
-  } catch (e) {
-    container.innerHTML = `<div style="text-align:center;padding:40px;color:red;">❌ خطأ في تحميل البيانات: ${safeEscape(e.message)}</div>`;
+    
+  } catch(e) {
+    console.error('❌ loadPermissionsTable error:', e);
+    container.innerHTML = `<div style="text-align:center;padding:40px;color:red;">❌ خطأ: ${safeEscape(e.message)}</div>`;
   }
 }
-
+  
 function parsePermissions(perms) {
   if (!perms) return [];
   if (Array.isArray(perms)) {
@@ -1061,18 +1061,24 @@ async function saveUserPermissions(e) {
 // ═══════════════════════════════════════════════════════════════════
 
 async function loadBranches() {
-    const ca = document.getElementById('contentArea');
-    if (!ca) return;
-    
-    ca.innerHTML = '<div style="text-align:center;padding:40px;">⏳ جاري تحميل الفروع...</div>';
+  const ca = document.getElementById('contentArea');
+  if (!ca) return;
+  
+  ca.innerHTML = '<div style="text-align:center;padding:40px;">⏳ جاري تحميل الفروع...</div>';
 
-    try {
-        const data = await callGAS('getBranchesByCenter', { centerId: currentUser.centerId });
-        displayBranches(data);
-    } catch(e) {
-        ca.innerHTML = `<div style="text-align:center;padding:40px;color:red;">❌ فشل تحميل الفروع: ${safeEscape(e.message)}</div>`;
-    }
+  try {
+    const data = await callGAS('getActiveBranches');
+    const filtered = Array.isArray(data) 
+      ? data.filter(b => b.centerId === currentUser.centerId)
+      : [];
+    
+    displayBranches(filtered);
+    
+  } catch(e) {
+    ca.innerHTML = `<div style="text-align:center;padding:40px;color:red;">❌ فشل: ${safeEscape(e.message)}</div>`;
+  }
 }
+  
   
 function displayBranches(data) {
   const arr = Array.isArray(data) ? data : (data.branches || []);
@@ -1104,191 +1110,168 @@ function displayBranches(data) {
 }
 
 async function loadStaff() {
-    const ca = document.getElementById('contentArea');
-    if (!ca) return;
-    
-    ca.innerHTML = '<div style="text-align:center;padding:40px;">⏳ جاري تحميل الموظفين...</div>';
+  const ca = document.getElementById('contentArea');
+  if (!ca) return;
+  
+  ca.innerHTML = '<div style="text-align:center;padding:40px;">⏳ جاري تحميل الموظفين...</div>';
 
-    try {
-        const data = await callGAS('getStaffByCenter', { centerId: currentUser.centerId });
-        staff = Array.isArray(data) ? data : [];
-        displayStaff(staff);
-        document.getElementById('cnt-staff').textContent = staff.length;
-    } catch(e) {
-        ca.innerHTML = `<div style="text-align:center;padding:40px;color:red;">❌ فشل تحميل الموظفين: ${safeEscape(e.message)}</div>`;
-    }
+  try {
+    const data = await callGAS('getEmployeesByCenter', { 
+      centerId: currentUser.centerId,
+      centerName: currentUser.centerName
+    });
+    
+    staff = Array.isArray(data) ? data : [];
+    
+    const cntStaff = document.getElementById('cnt-staff');
+    if (cntStaff) cntStaff.textContent = staff.length;
+    
+    displayStaff(staff);
+    
+  } catch(e) {
+    ca.innerHTML = `<div style="text-align:center;padding:40px;color:red;">❌ فشل: ${safeEscape(e.message)}</div>`;
+  }
 }
   
 function displayStaff(data) {
-    const arr = Array.isArray(data) ? data : (data.staff || []);
-    
-    let html = `<div class="content-area"><div class="content-header"><h2>👥 الموظفون</h2>
-        <button class="btn-primary" onclick="goTo('EmployeesManagement.html')">➕ إدارة الموظفين</button>
-    </div>`;
-    
-    if (!arr.length) {
-        html += '<div style="text-align:center;padding:40px;color:#94a3b8;">لا يوجد موظفون حالياً</div></div>';
-        document.getElementById('contentArea').innerHTML = html;
-        return;
-    }
-    
-    html += `<div class="table-wrap"><table id="staffTable"><thead><tr>
-        <th>الاسم</th>
-        <th>الفرع</th>
-        <th>الوظيفة</th>
-        <th>الجوال</th>
-        <th>الحالة</th>
-        <th>الإجراءات</th>
-    </tr></thead><tbody>`;
-    
-    arr.forEach(u => {
-        const isActive = u.isActive === true || u.isActive === 'true' || u.isActive === 'TRUE';
-        const statusText = isActive ? 'نشط' : 'غير نشط';
-        const statusClass = isActive ? 'status-active' : 'status-inactive';
-        
-        html += `<tr data-user-id="${u.id}">
-            <td><strong>${safeEscape(u.name)}</strong></td>
-            <td>${safeEscape(u.branchName || 'الرئيسي')}</td>
-            <td>${safeEscape(u.type || 'موظف')}</td>
-            <td dir="ltr">${safeEscape(u.phone || '-')}</td>
-            <td>
-                <span class="status-cell">${statusText}</span>
-                <span class="status-badge ${statusClass}" style="cursor:pointer;" onclick="toggleEmployeeStatus('${u.id}')">
-                    🔄 تغيير
-                </span>
-            </td>
-            <td>
-                <div class="action-buttons" style="display:flex; gap:4px; flex-wrap:wrap; justify-content:center; align-items:center;">
-                    <button class="action-btn edit" onclick="editEmployee('${u.id}')" style="padding:4px 10px; border:none; border-radius:16px; cursor:pointer; font-size:10px; font-weight:700; color:white; background:#3498db; min-width:30px; text-align:center;">
-                        ✏️ تعديل
-                    </button>
-                    <button class="action-btn delete" onclick="deleteEmployee('${u.id}')" style="padding:4px 10px; border:none; border-radius:16px; cursor:pointer; font-size:10px; font-weight:700; color:white; background:#e74c3c; min-width:30px; text-align:center;">
-                        🗑️ حذف
-                    </button>
-                    <button class="action-btn" onclick="sendEmployeeCredentials('${u.id}')" style="padding:4px 10px; border:none; border-radius:16px; cursor:pointer; font-size:10px; font-weight:700; color:white; background:#25D366; min-width:30px; text-align:center;">
-                        📱 إرسال
-                    </button>
-                </div>
-            </td>
-        </tr>`;
-    });
-    
-    html += '</tbody></table></div></div>';
+  const arr = Array.isArray(data) ? data : (data.staff || []);
+  
+  let html = `<div class="content-area"><div class="content-header"><h2>👥 الموظفون</h2>
+      <button class="btn-primary" onclick="goTo('EmployeesManagement.html')">➕ إدارة الموظفين</button>
+  </div>`;
+  
+  if (!arr.length) {
+    html += '<div style="text-align:center;padding:40px;color:#94a3b8;">لا يوجد موظفون حالياً</div></div>';
     document.getElementById('contentArea').innerHTML = html;
+    return;
+  }
+  
+  html += `<div class="table-wrap"><table id="staffTable"><thead><tr>
+      <th>الاسم</th>
+      <th>الفرع</th>
+      <th>الوظيفة</th>
+      <th>الجوال</th>
+      <th>الحالة</th>
+      <th>الإجراءات</th>
+  </tr></thead><tbody>`;
+  
+  arr.forEach(u => {
+    // ✅ استخدام id أو serial
+    const empId = u.id || u.serial;
+    const isActive = u.isActive === true || u.status === 'نشط';
+    const statusText = isActive ? 'نشط' : 'غير نشط';
+    const statusClass = isActive ? 'status-active' : 'status-inactive';
+    
+    html += `<tr data-user-id="${safeEscape(empId)}">
+        <td><strong>${safeEscape(u.name)}</strong></td>
+        <td>${safeEscape(u.branchName || 'الرئيسي')}</td>
+        <td>${safeEscape(u.position || u.type || 'موظف')}</td>
+        <td dir="ltr">${safeEscape(u.phone || '-')}</td>
+        <td>
+            <span class="status-cell">${statusText}</span>
+            <span class="status-badge ${statusClass}" style="cursor:pointer;" onclick="toggleEmployeeStatus('${safeEscape(empId)}')">
+                🔄 تغيير
+            </span>
+        </td>
+        <td>
+            <div class="action-buttons" style="display:flex; gap:4px; flex-wrap:wrap; justify-content:center; align-items:center;">
+                <button class="action-btn edit" onclick="editEmployee('${safeEscape(empId)}')" style="padding:4px 10px; border:none; border-radius:16px; cursor:pointer; font-size:10px; font-weight:700; color:white; background:#3498db;">
+                    ✏️ تعديل
+                </button>
+                <button class="action-btn delete" onclick="deleteEmployee('${safeEscape(empId)}')" style="padding:4px 10px; border:none; border-radius:16px; cursor:pointer; font-size:10px; font-weight:700; color:white; background:#e74c3c;">
+                    🗑️ حذف
+                </button>
+                <button class="action-btn" onclick="sendEmployeeCredentials('${safeEscape(empId)}')" style="padding:4px 10px; border:none; border-radius:16px; cursor:pointer; font-size:10px; font-weight:700; color:white; background:#25D366;">
+                    📱 إرسال
+                </button>
+            </div>
+        </td>
+    </tr>`;
+  });
+  
+  html += '</tbody></table></div></div>';
+  document.getElementById('contentArea').innerHTML = html;
 }
   
 async function loadStats() {
-    if (!currentUser?.centerId) return;
+  if (!currentUser?.centerId) return;
 
-    try {
-        // ═══════════════════════════════════════════════════════════════
-        // ✅ 1. الموظفين — استخدام getEmployeesByCenter (موجودة)
-        // ═══════════════════════════════════════════════════════════════
-        let staffCount = 0;
-        try {
-            const staffData = await callGAS('getEmployeesByCenter', { 
-                centerId: currentUser.centerId,
-                centerName: currentUser.centerName 
-            });
-            staff = Array.isArray(staffData) ? staffData : [];
-            staffCount = staff.length;
-            console.log('✅ [loadStats] الموظفين:', staffCount);
-        } catch(e) {
-            console.warn('⚠️ [loadStats] فشل جلب الموظفين:', e);
-        }
-        
-        // ═══════════════════════════════════════════════════════════════
-        // ✅ 2. الفروع — استخدام getActiveBranches + فلترة (موجودة)
-        // ═══════════════════════════════════════════════════════════════
-        let branchesCount = 0;
-        try {
-            const branchesData = await callGAS('getActiveBranches');
-            if (Array.isArray(branchesData)) {
-                branchesCount = branchesData.filter(b => b.centerId === currentUser.centerId).length;
-            }
-            console.log('✅ [loadStats] الفروع:', branchesCount);
-        } catch(e) {
-            console.warn('⚠️ [loadStats] فشل جلب الفروع:', e);
-        }
-
-        // ═══════════════════════════════════════════════════════════════
-        // ✅ 3. تحديث الأرقام في الواجهة
-        // ═══════════════════════════════════════════════════════════════
-        const cntBranches = document.getElementById('cnt-branches');
-        const cntStaff = document.getElementById('cnt-staff');
-        
-        if (cntBranches) cntBranches.textContent = branchesCount;
-        if (cntStaff) cntStaff.textContent = staffCount;
-        
-        // ═══════════════════════════════════════════════════════════════
-        // ✅ 4. فواتير اليوم
-        // ═══════════════════════════════════════════════════════════════
-        try {
-            const today = new Date();
-            const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-            const dateStr = String(today.getDate()).padStart(2,'0') + '/' + months[today.getMonth()] + '/' + today.getFullYear();
-            const invoices = await callGAS('getInvoicesByDate', { dateStr: dateStr });
-            const count = Array.isArray(invoices) ? invoices.length : 0;
-            const cntInv = document.getElementById('cnt-invoices');
-            if (cntInv) cntInv.textContent = count;
-            console.log('✅ [loadStats] فواتير اليوم (' + dateStr + '):', count);
-        } catch(e) {
-            console.warn('⚠️ [loadStats] فشل جلب فواتير اليوم:', e);
-        }
-        
-        // ═══════════════════════════════════════════════════════════════
-        // ✅ 5. التنبيهات
-        // ═══════════════════════════════════════════════════════════════
-        try {
-            const notifData = await callGAS('getAllInvoicesEdit');
-            if (Array.isArray(notifData)) {
-                const cnt = notifData.filter(n => !n.isRead).length;
-                const cntNotif = document.getElementById('cnt-notif');
-                if (cntNotif) cntNotif.textContent = cnt;
-                console.log('✅ [loadStats] تنبيهات غير مقروءة:', cnt);
-            }
-        } catch(e) {
-            console.warn('⚠️ [loadStats] فشل جلب التنبيهات:', e);
-        }
-        
-        console.log('✅ [loadStats] اكتمل — موظفين:', staffCount, '| فروع:', branchesCount);
-        
-    } catch(e) {
-        console.warn('⚠️ [loadStats] خطأ عام:', e);
+  try {
+    const today = new Date();
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const dateStr = String(today.getDate()).padStart(2,'0') + '/' + months[today.getMonth()] + '/' + today.getFullYear();
+    
+    // ✅ جلب جميع البيانات بالتوازي
+    const [staffData, branchesData, invoicesData, notifData] = await Promise.all([
+      callGAS('getEmployeesByCenter', { 
+        centerId: currentUser.centerId,
+        centerName: currentUser.centerName 
+      }).catch(() => []),
+      
+      callGAS('getActiveBranches').catch(() => []),
+      
+      callGAS('getInvoicesByDate', { dateStr: dateStr }).catch(() => []),
+      
+      callGAS('getAllInvoicesEdit').catch(() => [])
+    ]);
+    
+    staff = Array.isArray(staffData) ? staffData : [];
+    const staffCount = staff.length;
+    
+    let branchesCount = 0;
+    if (Array.isArray(branchesData)) {
+      branchesCount = branchesData.filter(b => b.centerId === currentUser.centerId).length;
     }
+    
+    const invoicesCount = Array.isArray(invoicesData) ? invoicesData.length : 0;
+    
+    let notifCount = 0;
+    if (Array.isArray(notifData)) {
+      notifCount = notifData.filter(n => !n.isRead).length;
+    }
+    
+    document.getElementById('cnt-staff').textContent = staffCount;
+    document.getElementById('cnt-branches').textContent = branchesCount;
+    document.getElementById('cnt-invoices').textContent = invoicesCount;
+    document.getElementById('cnt-notif').textContent = notifCount;
+    
+    console.log(`✅ [loadStats] موظفين=${staffCount}, فروع=${branchesCount}, فواتير=${invoicesCount}, تنبيهات=${notifCount}`);
+    
+  } catch(e) {
+    console.warn('⚠️ [loadStats] خطأ:', e);
+  }
 }
 // ═══════════════════════════════════════════════════════════════════
 // ✅ Send Employee Login Credentials via WhatsApp (English)
 // ═══════════════════════════════════════════════════════════════════
 
 function sendEmployeeCredentials(userId) {
-    const user = staff.find(u => u.id === userId);
-    if (!user) {
-        showAlert('❌ User not found');
-        return;
-    }
-    
-    if (!user.phone) {
-        showAlert('⚠️ User has no phone number');
-        return;
-    }
-    
-    const userEmail = user.email || '';
-    if (!userEmail) {
-        showAlert('⚠️ User has no email address');
-        return;
-    }
-    
-    let phone = user.phone.replace(/[^0-9+]/g, '');
-    if (phone.startsWith('0')) phone = '20' + phone.substring(1);
-    if (!phone.startsWith('+')) phone = '+' + phone;
-    
-    const appUrl = 'https://himadivesystem.github.io/dive-system/';
-    const centerName = currentUser?.centerName || 'Dive System';
-    const password = user.password || '123456';
-    
-    // ✅ ✅ ✅ رسالة احترافية مع رموز جميلة
-    const msg = `🌊 *Welcome to ${centerName} Dive System* 🌊
+  const user = staff.find(u => (u.id || u.serial) === userId);
+  if (!user) {
+    showAlert('❌ User not found');
+    return;
+  }
+  
+  if (!user.phone) {
+    showAlert('⚠️ User has no phone number');
+    return;
+  }
+  
+  const userEmail = user.email || '';
+  if (!userEmail) {
+    showAlert('⚠️ User has no email address');
+    return;
+  }
+  
+  let phone = user.phone.replace(/[^0-9+]/g, '');
+  if (phone.startsWith('0')) phone = '20' + phone.substring(1);
+  if (!phone.startsWith('+')) phone = '+' + phone;
+  
+  const appUrl = 'https://himadivesystem.github.io/dive-system/';
+  const centerName = currentUser?.centerName || 'Dive System';
+  const password = user.password || '123456';
+  
+  const msg = `🌊 *Welcome to ${centerName} Dive System* 🌊
 
 ━━━━━━━━━━━━━━━━━━━━━━
 🔐 *YOUR LOGIN CREDENTIALS*
@@ -1298,7 +1281,7 @@ function sendEmployeeCredentials(userId) {
 📧 *Email:* ${userEmail}
 🔑 *Password:* ${password}
 
-📌 *Role:* ${user.type || 'Employee'}
+📌 *Role:* ${user.type || user.userType || 'Employee'}
 🏢 *Center:* ${centerName}
 
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -1310,54 +1293,45 @@ ${appUrl}
 
 🌊 *Thank you for choosing Dive System* 🐠`;
 
-    const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
-    window.open(url, '_blank');
-    
-    showAlert(`📱 WhatsApp opened to send credentials to ${user.name}`);
+  const url = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+  window.open(url, '_blank');
+  
+  showAlert(`📱 WhatsApp opened to send credentials to ${user.name}`);
 }
+  
  function toggleEmployeeStatus(userId) {
-    const user = staff.find(u => u.id === userId);
-    if (!user) {
-        showAlert('❌ المستخدم غير موجود');
-        return;
+  const user = staff.find(u => (u.id || u.serial) === userId);
+  if (!user) {
+    showAlert('❌ المستخدم غير موجود');
+    return;
+  }
+  
+  const currentStatus = user.isActive === true || user.status === 'نشط';
+  const newStatus = !currentStatus;
+  const statusText = newStatus ? 'نشط' : 'غير نشط';
+  
+  showConfirm(`تغيير صلاحية الدخول للموظف "${user.name}" إلى ${statusText}؟`, async function() {
+    try {
+      const result = await callGAS('updateUser', {
+        id: userId,
+        isActive: newStatus ? 'true' : 'false'
+      });
+      
+      if (result?.success) {
+        // تحديث محلي
+        user.isActive = newStatus;
+        user.status = statusText;
+        
+        updateStaffTableRow(userId, newStatus);
+        
+        showAlert('✅ تم تغيير صلاحية الدخول بنجاح');
+      } else {
+        showAlert('❌ ' + (result?.message || 'فشل التغيير'));
+      }
+    } catch(e) {
+      showAlert('❌ خطأ: ' + e.message);
     }
-    
-    const currentStatus = user.isActive === true || user.isActive === 'true' || user.isActive === 'TRUE';
-    const newStatus = !currentStatus;
-    const statusText = newStatus ? 'نشط' : 'غير نشط';
-    
-    showConfirm(`تغيير صلاحية الدخول للموظف "${user.name}" إلى ${statusText}؟`, async function() {
-        try {
-            const result = await callGAS('updateUser', {
-                id: userId,
-                isActive: newStatus ? 'true' : 'false'
-            });
-            
-            console.log('📡 toggleEmployeeStatus result:', result);
-            
-            if (result?.success) {
-                // ✅ تحديث البيانات محلياً (بدون إعادة تحميل)
-                const updatedUser = staff.find(u => u.id === userId);
-                if (updatedUser) {
-                    updatedUser.isActive = newStatus;
-                }
-                
-                // ✅ تحديث الجدول محلياً (بدون إعادة تحميل الصفحة)
-                updateStaffTableRow(userId, newStatus);
-                
-                // ✅ تحديث العدد في الزر
-                const activeCount = staff.filter(u => u.isActive === true || u.isActive === 'true' || u.isActive === 'TRUE').length;
-                document.getElementById('cnt-staff').textContent = staff.length;
-                
-                showAlert('✅ تم تغيير صلاحية الدخول بنجاح');
-            } else {
-                showAlert('❌ ' + (result?.message || 'فشل تغيير الصلاحية'));
-            }
-        } catch(e) {
-            console.error('❌ toggleEmployeeStatus error:', e);
-            showAlert('❌ خطأ في الاتصال: ' + e.message);
-        }
-    });
+  });
 }
   function updateStaffTableRow(userId, newStatus) {
     // ✅ البحث عن الصف في الجدول
@@ -1384,26 +1358,24 @@ ${appUrl}
   
   
 function editEmployee(userId) {
-    const user = staff.find(u => u.id === userId);
-    if (!user) {
-        showAlert('❌ المستخدم غير موجود');
-        return;
-    }
-    
-    // ✅ ملء النموذج ببيانات الموظف
-    document.getElementById('editEmployeeId').value = user.id;
-    document.getElementById('editEmployeeName').value = user.name || '';
-    document.getElementById('editEmployeePhone').value = user.phone || '';
-    document.getElementById('editEmployeeEmail').value = user.email || '';
-    document.getElementById('editEmployeePosition').value = user.type || 'موظف';
-    document.getElementById('editEmployeeSalary').value = user.salary || 0;
-    document.getElementById('editEmployeeStatus').value = user.isActive ? 'نشط' : 'غير نشط';
-    document.getElementById('editEmployeePassword').value = '';
-    
-    // ✅ عرض المودال
-    document.getElementById('editEmployeeModal').style.display = 'flex';
+  const user = staff.find(u => (u.id || u.serial) === userId);
+  if (!user) {
+    showAlert('❌ المستخدم غير موجود');
+    return;
+  }
+  
+  document.getElementById('editEmployeeId').value = user.id || user.serial;
+  document.getElementById('editEmployeeName').value = user.name || '';
+  document.getElementById('editEmployeePhone').value = user.phone || '';
+  document.getElementById('editEmployeeEmail').value = user.email || '';
+  document.getElementById('editEmployeePosition').value = user.position || user.type || 'موظف';
+  document.getElementById('editEmployeeSalary').value = user.monthlySalary || user.salary || 0;
+  document.getElementById('editEmployeeStatus').value = (user.status === 'نشط' || user.isActive === true) ? 'نشط' : 'غير نشط';
+  document.getElementById('editEmployeePassword').value = '';
+  
+  document.getElementById('editEmployeeModal').style.display = 'flex';
 }
-
+  
 // ✅ حفظ التعديلات
 async function saveEmployeeEdit(e) {
     e.preventDefault();
@@ -1451,32 +1423,31 @@ async function saveEmployeeEdit(e) {
     }
 }
 
-  function deleteEmployee(userId) {
-    const user = staff.find(u => u.id === userId);
-    if (!user) {
-        showAlert('❌ المستخدم غير موجود');
-        return;
+function deleteEmployee(userId) {
+  const user = staff.find(u => (u.id || u.serial) === userId);
+  if (!user) {
+    showAlert('❌ المستخدم غير موجود');
+    return;
+  }
+  
+  showConfirm(`⚠️ هل أنت متأكد من حذف الموظف "${user.name}" نهائياً؟`, async function() {
+    try {
+      const result = await callGAS('deleteUser', { userId: userId });
+      
+      if (result?.success) {
+        showAlert('✅ تم حذف الموظف بنجاح', () => {
+          loadStats();
+          loadStaff();
+        });
+      } else {
+        showAlert('❌ ' + (result?.message || 'فشل الحذف'));
+      }
+    } catch(e) {
+      showAlert('❌ خطأ: ' + e.message);
     }
-    
-    showConfirm(`⚠️ هل أنت متأكد من حذف الموظف "${user.name}" نهائياً؟`, async function() {
-        try {
-            const result = await callGAS('deleteUser', { userId: userId });
-            
-            if (result?.success) {
-                showAlert('✅ تم حذف الموظف بنجاح', () => {
-                    const ca = document.getElementById('contentArea');
-                    if (ca) ca.dataset.currentView = '';
-                    loadStats();
-                   loadStaff();
-                });
-            } else {
-                showAlert('❌ ' + (result?.message || 'فشل الحذف'));
-            }
-        } catch(e) {
-            showAlert('❌ خطأ في الاتصال: ' + e.message);
-        }
-    });
+  });
 }
+  
   // ═══════════════════════════════════════════════════════════════════
 // ✅ دالة الخروج الاحترافية
 // ═══════════════════════════════════════════════════════════════════
