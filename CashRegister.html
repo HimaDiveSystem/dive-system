@@ -1479,8 +1479,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 });
   
-
-
 async function prefetchAll() {
   console.log('🚀 prefetchAll: بدء تجميع البيانات...');
   
@@ -1502,24 +1500,25 @@ async function prefetchAll() {
       updateBranchSelectorButton();
     }
     
-    // ✅ للمالك: تأكد من بنية كل السنوات
-    if (canViewAllBranches) {
-      showToast('⏳ جاري التحقق من بنية الخزينة...', 'info', 3000);
+    // ✅ ✅ ✅ التعديل: بناء الشيتات لكل المستخدمين
+    showToast('⏳ جاري التحقق من بنية الخزينة...', 'info', 3000);
+    
+    try {
+      const rebuildResult = await callGAS('rebuildAllYears', {
+        centerName: currentUser.centerName
+      });
       
-      try {
-        const rebuildResult = await callGAS('rebuildAllYears', {
-          centerName: currentUser.centerName
-        });
-        
-        if (rebuildResult?.success) {
-          console.log('✅ rebuildAllYears:', rebuildResult.yearsBuilt);
-        } else {
-          console.warn('⚠️ rebuildAllYears failed:', rebuildResult?.message);
-        }
-      } catch(e) {
-        console.warn('⚠️ rebuildAllYears error:', e.message);
+      if (rebuildResult?.success) {
+        console.log('✅ rebuildAllYears:', rebuildResult.yearsBuilt);
+      } else {
+        console.warn('⚠️ rebuildAllYears failed:', rebuildResult?.message);
       }
+    } catch(e) {
+      console.warn('⚠️ rebuildAllYears error:', e.message);
     }
+    
+    // ✅ تحديث "آخر تاريخ" بعد البناء
+    await getLastCashDate();
     
     // ✅ تحميل بيانات اليوم
     console.log('📦 تحميل بيانات اليوم...');
@@ -1529,7 +1528,6 @@ async function prefetchAll() {
     console.error('❌ prefetchAll error:', e);
     showToast('❌ خطأ: ' + e.message, 'error');
     
-    // ✅ محاولة تحميل البيانات في حالة الفشل
     try {
       await loadData();
     } catch(e2) {
@@ -1796,9 +1794,29 @@ async function loadSingleBranchData() {
   });
   
   if (!result.success) {
+    // ✅ ✅ ✅ عرض رسالة واضحة بدلاً من رمي Error
+    if (result.message && result.message.includes('غير موجود')) {
+      document.getElementById('mainContent').innerHTML = `
+        <div class="load-state" style="padding:40px;">
+          <div style="font-size:48px;margin-bottom:16px;">📊</div>
+          <div style="font-size:16px;color:#1e2b4f;font-weight:700;margin-bottom:8px;">
+            شيت الخزينة غير مبني بعد
+          </div>
+          <div style="font-size:13px;color:#64748b;margin-bottom:20px;">
+            ${result.message}
+          </div>
+          <button class="btn-primary" onclick="updateCashSumAndReload()" 
+                  style="background:linear-gradient(135deg,#1e2b4f,#2563eb);color:#f5c842;">
+            🔄 بناء شيت الخزينة الآن
+          </button>
+        </div>
+      `;
+      return;
+    }
     throw new Error(result.message);
   }
   
+ 
   // ✅ عرض البيانات
   renderSingleBranch(result);
   previousDateISO = result.previousDateISO || '';
@@ -2027,22 +2045,35 @@ async function updateCashSumAndReload() {
     btn.innerHTML = '⏳';
   }
   
-  showToast('🔄 جاري تحديث الخزينة...', 'info', 30000);
+  showToast('🔄 جاري بناء/تحديث الخزينة...', 'info', 60000);
   
   try {
+    // ✅ 1. إذا لم يوجد أي شيت Cash_Sum → rebuildAllYears
+    if (!lastCashDateStr) {
+      console.log('📊 لا يوجد شيت Cash_Sum — بناء من الصفر...');
+      
+      const rebuildResult = await callGAS('rebuildAllYears', {
+        centerName: currentUser.centerName
+      });
+      
+      if (rebuildResult?.success) {
+        showToast('✅ تم بناء شيتات الخزينة بنجاح', 'success', 3000);
+        await getLastCashDate();
+        await loadData();
+        return;
+      } else {
+        throw new Error(rebuildResult?.message || 'فشل البناء');
+      }
+    }
+    
+    // ✅ 2. إذا كان هناك شيت → rebuildCashSumFromDate
     const result = await callGAS('rebuildCashSumFromDate', {
       centerName: currentUser.centerName,
       dateISO: currentDateISO
     });
     
     if (result?.success) {
-      showToast(
-        `✅ تم تحديث الخزينة من ${currentDateISO}`, 
-        'success', 
-        2000
-      );
-      
-      // ✅ إعادة تحميل البيانات
+      showToast(`✅ تم تحديث الخزينة من ${currentDateISO}`, 'success', 2000);
       await getLastCashDate();
       await loadData();
     } else {
@@ -2059,6 +2090,7 @@ async function updateCashSumAndReload() {
     }
   }
 }
+  
 
 // ─────────────────────────────────────
 // قراءة الفروع من Cache المتصفح
