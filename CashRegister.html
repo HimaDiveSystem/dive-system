@@ -299,7 +299,30 @@ body {
     font-size: 8px;
   }
 }
+/* أضف هذا في <style> */
+.view-mode-btn {
+  padding: 8px 16px;
+  background: white;
+  border: 2px solid #1e2b4f;
+  color: #1e2b4f;
+  border-radius: 40px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: 'Cairo', sans-serif;
+  transition: all 0.2s;
+}
 
+.view-mode-btn:hover {
+  background: #1e2b4f;
+  color: #f5c842;
+}
+
+.view-mode-btn.active {
+  background: linear-gradient(135deg, #1e2b4f, #2563eb);
+  color: #f5c842;
+  border-color: #2563eb;
+}
 /* للشاشات الصغيرة جداً */
 @media (max-width: 480px) {
   .scroll-container .cur-grid,
@@ -545,11 +568,12 @@ function spinDate(d) {
 function isDateAfterLastCashDate(dateToCheck) {
   if (!lastCashDateStr || !dateToCheck) return false;
   
-  // تحويل إلى كائنات Date للمقارنة
-  const checkDate = new Date(dateToCheck);
-  const lastDate = new Date(lastCashDateStr);
+  // ✅ استخدام parseDateFromDDMMMYYYY بدلاً من new Date()
+  const checkDate = parseDateFromDDMMMYYYY(dateToCheck);
+  const lastDate = parseDateFromDDMMMYYYY(lastCashDateStr);
   
-  if (isNaN(checkDate) || isNaN(lastDate)) return false;
+  if (!checkDate || !lastDate) return false;
+  if (isNaN(checkDate.getTime()) || isNaN(lastDate.getTime())) return false;
   
   return checkDate > lastDate;
 }
@@ -896,48 +920,7 @@ async function onBranchChange() {
   }
 }
 
-async function updateCashSumAndReload() {
-  if (!selectedBranch && canViewAllBranches) {
-    showToast('الرجاء اختيار فرع أولاً', 'info');
-    return;
-  }
-  if (!selectedBranch && !canViewAllBranches) {
-    selectedBranch = currentUser.branchName;
-  }
-  if (!currentDateISO) {
-    showToast('الرجاء اختيار تاريخ أولاً', 'info');
-    return;
-  }
-  
-  showToast('🔄 جاري تحديث بيانات الخزينة...', 'info', 5000);
-  document.getElementById('mainContent').innerHTML = '<div class="load-state"><div class="spinner"></div><br>جاري تحديث الخزينة...</div>';
-  
-  try {
-    const updateResult = await callGAS('updateAllCashSum', { 
-      branchName: selectedBranch,
-      centerName: currentUser?.centerName || ''
-    });
-    
-    if (updateResult.success) {
-      console.log('✅ تم تحديث Cash_Sum:', updateResult);
-      
-      // ✅ جلب آخر تاريخ بعد التحديث
-      await getLastCashDate();
-      
-      // ✅ تحميل البيانات من Cash_Sum
-      await loadData();
-      
-      showToast('✅ تم تحديث الخزينة بنجاح', 'success', 2000);
-    } else {
-      showToast('❌ فشل التحديث: ' + (updateResult.message || ''), 'error');
-      document.getElementById('mainContent').innerHTML = `<div class="load-state">❌ فشل التحديث: ${updateResult.message}</div>`;
-    }
-  } catch(e) {
-    console.error('❌ updateCashSumAndReload error:', e);
-    showToast('❌ خطأ: ' + e.message, 'error');
-    document.getElementById('mainContent').innerHTML = `<div class="load-state">❌ خطأ: ${e.message}</div>`;
-  }
-}
+
 async function prefetchAll() {
   console.log('🚀 prefetchAll: بدء تجميع البيانات تلقائياً...');
   
@@ -1002,8 +985,6 @@ async function prefetchAll() {
     isLoading = false;
   }
 }
-  
-
 
 function sumCur(rows,type){
   const r={USD:0,EUR:0,GBP:0,LE:0,VUSD:0,VEUR:0,VGBP:0,VLE:0};
@@ -1153,18 +1134,12 @@ function renderPage(invCnt, revCnt, expCnt) {
     </div>
   `;
   
-  buildCounters();
-  hasChanges = false;
-  markSavedStatus();
+ buildCounters();
+loadSavedCount();  // ✅ أضف هذا السطر
+hasChanges = false;
+markSavedStatus();
 }
-function curRow(section) {
-  const t = systemTotals[section] || {};
-  return CURRENCIES.map(c => {
-    const v = t[c.key] || 0;
-    const cls = v > 0 ? 'pos' : v < 0 ? 'neg' : 'zer';
-    return `<div class="cur-col"><div class="cur-val ${cls}">${v !== 0 ? fmtN(v) : '—'}</div></div>`;
-  }).join('');
-}
+
 // ✅ دالة عرض صف مع بيانات مخصصة
 function curRowWithData(data) {
   return CURRENCIES.map(c => {
@@ -1211,251 +1186,337 @@ function buildCounters() {
   grid.innerHTML = counterHtml;
 }
 
-    // ============================================================
-// ✅ دالة جلب رصيد اليوم السابق
-// ============================================================
-async function getPreviousDayBalance() {
-  // ✅ استخدام Cache لتجنب الطلبات المتكررة
-  if (previousDayBalance && Object.keys(previousDayBalance).length > 0 && previousDateISO) {
-    console.log('📦 استخدام رصيد الأمس المخزن:', previousDateISO);
-    return previousDayBalance;
+// ═══════════════════════════════════════════════════════════════════
+// ✅ Daily Cash Register V2
+// ═══════════════════════════════════════════════════════════════════
+
+let ownerAllBranchesData = null;   // بيانات كل الفروع
+let ownerViewMode = 'total';       // 'total' أو 'separate'
+
+// ─────────────────────────────────────
+// تحميل البيانات الرئيسية
+// ─────────────────────────────────────
+async function loadData(force = false) {
+  if (isLoadingData) return;
+  
+  if (!currentDateISO) {
+    document.getElementById('mainContent').innerHTML = 
+      '<div class="load-state">Please select a date</div>';
+    return;
   }
   
-  try {
-    const currentDate = parseDateFromDDMMMYYYY(currentDateISO);
-    if (!currentDate) {
-      previousDayBalance = { USD: 0, EUR: 0, GBP: 0, LE: 0, VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0 };
-      return previousDayBalance;
-    }
-    
-    const prevDate = new Date(currentDate);
-    prevDate.setDate(prevDate.getDate() - 1);
-    const prevDateStr = formatDateForCache(prevDate);
-    previousDateISO = prevDateStr;
-    
-    // ✅ جلب بيانات الأمس من Cash_Sum
-    const result = await callGAS('getCashSumData', {
-      dateISO: prevDateStr,
-      branchName: selectedBranch || currentUser?.branchName || '',
-      centerName: currentUser?.centerName || ''
-    });
-    
-    if (result?.success && result.found) {
-      previousDayBalance = result.accumulatedBalance || {};
-      console.log('✅ تم جلب رصيد الأمس:', previousDateISO, previousDayBalance);
-      return previousDayBalance;
-    }
-    
-    console.log('⚠️ لا توجد بيانات للأمس، استخدام أصفار');
-    previousDayBalance = {
-      USD: 0, EUR: 0, GBP: 0, LE: 0,
-      VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0
-    };
-    return previousDayBalance;
-    
-  } catch(e) {
-    console.error('❌ getPreviousDayBalance error:', e);
-    previousDayBalance = {
-      USD: 0, EUR: 0, GBP: 0, LE: 0,
-      VUSD: 0, VEUR: 0, VGBP: 0, VLE: 0
-    };
-    return previousDayBalance;
-  }
-}
-async function loadData(force = false) {
-  if (isLoadingData) {
-    console.log('⏳ جاري التحميل بالفعل، تخطي...');
-    return;
-  }
-
-  if (!currentDateISO) {
-    document.getElementById('mainContent').innerHTML = '<div class="load-state">Please select a date</div>';
-    return;
-  }
-
-  if (!selectedBranch && canViewAllBranches) {
-    document.getElementById('mainContent').innerHTML = '<div class="load-state">الرجاء اختيار فرع أولاً</div>';
-    return;
-  }
-  if (!selectedBranch && !canViewAllBranches) {
-    selectedBranch = currentUser.branchName;
-  }
-
-  const targetBranch = selectedBranch;
-
-  if (lastCashDateStr && isDateAfterLastCashDate(currentDateISO)) {
-    showDateWarning(currentDateISO);
-    return;
-  }
-
   isLoadingData = true;
-
-  showToast('⏳ جاري تحميل بيانات ' + currentDateISO + '...', 'info', 2000);
-  document.getElementById('mainContent').innerHTML = '<div class="load-state"><div class="spinner"></div><br>جاري تحميل بيانات ' + currentDateISO + '...</div>';
-
+  
+  showToast('⏳ جاري تحميل ' + currentDateISO + '...', 'info', 2000);
+  document.getElementById('mainContent').innerHTML = 
+    '<div class="load-state"><div class="spinner"></div><br>جاري التحميل...</div>';
+  
   try {
-    // ✅ طلب واحد فقط يجلب كل البيانات
-    const result = await callGAS('getCashRegisterDayData', {
-      dateStr: currentDateISO,
-      branchName: targetBranch,
-      centerName: currentUser?.centerName || ''
-    });
-
-    if (!result.success) {
-      throw new Error(result.message);
+    if (canViewAllBranches && !selectedBranch) {
+      // ✅ المالك: كل الفروع
+      await loadOwnerData();
+    } else {
+      // ✅ محاسب أو مالك بفرع محدد
+      await loadSingleBranchData();
     }
-
-    const invoiceTotals = result.invoices || {};
-    const revenueTotals = result.revenues || {};
-    const expenseTotals = result.expenses || {};
-    const invoiceCount = result.invoiceCount || 0;
-    const revenueCount = result.revenueCount || 0;
-    const expenseCount = result.expenseCount || 0;
-    previousDayBalance = result.previousBalance || { USD:0, EUR:0, GBP:0, LE:0, VUSD:0, VEUR:0, VGBP:0, VLE:0 };
-    previousDateISO = result.previousDateISO || '';
-
-    // ✅ حساب Daily Income = Invoices + Revenues
-    const dailyIncome = {};
-    Object.keys(invoiceTotals).forEach(key => {
-      dailyIncome[key] = roundTwo((invoiceTotals[key] || 0) + (revenueTotals[key] || 0));
-    });
-
-    // ✅ حساب Today Total = Previous Balance + Daily Income
-    const todayTotal = {};
-    Object.keys(previousDayBalance).forEach(key => {
-      const prev = previousDayBalance[key] || 0;
-      const inc = dailyIncome[key] || 0;
-      todayTotal[key] = roundTwo(prev + inc);
-    });
-
-    // ✅ الرصيد النهائي = Today Total - Expenses
-    const finalBalance = {};
-    Object.keys(todayTotal).forEach(key => {
-      finalBalance[key] = roundTwo((todayTotal[key] || 0) - (expenseTotals[key] || 0));
-    });
-
-    // ✅ تحديث systemTotals
-    systemTotals = {
-      invoices: invoiceTotals,
-      revenues: revenueTotals,
-      dailyIncome: dailyIncome,
-      expenses: expenseTotals,
-      previousBalance: previousDayBalance,
-      todayTotal: todayTotal,
-      finalBalance: finalBalance,
-      accumulatedBalance: finalBalance
-    };
-
-    // ✅ عرض الصفحة
-    renderPage(invoiceCount, revenueCount, expenseCount);
-    
-    // ✅ تحميل الجرد المحفوظ (إن وجد)
-    if (result.savedCount) {
-      savedCountData = result.savedCount;
-      // ملء الحقول من البيانات المحفوظة
-      if (savedCountData.notes) {
-        const n = document.getElementById('countNotes');
-        if (n) n.value = savedCountData.notes;
-      }
-      markSavedStatus();
-      const lbl = document.getElementById('lastSaveLabel');
-      if (lbl && savedCountData.savedAt) {
-        const t = new Date(savedCountData.savedAt).toLocaleTimeString('en', {hour:'2-digit', minute:'2-digit'});
-        lbl.textContent = '✅ Last saved: ' + t;
-      }
-    }
-
-    showToast(`✅ تم تحميل ${invoiceCount} فاتورة, ${revenueCount} إيراد, ${expenseCount} مصروف`, 'success', 2500);
-
   } catch(e) {
     console.error('❌ loadData error:', e);
-    document.getElementById('mainContent').innerHTML = `<div class="load-state">❌ خطأ في تحميل البيانات: ${e.message}</div>`;
-    showToast('❌ خطأ في تحميل البيانات', 'error');
+    document.getElementById('mainContent').innerHTML = 
+      `<div class="load-state">❌ خطأ: ${e.message}</div>`;
   } finally {
     isLoadingData = false;
   }
 }
-  async function expandCacheAroundDate(targetDateStr, branchName) {
-  // تحويل التاريخ إلى كائن Date
-  const targetDate = parseDateFromDDMMMYYYY(targetDateStr);
-  if (!targetDate) return;
-  
-  // حساب النطاق الجديد (5 أيام قبل + 5 أيام بعد) ✅ التصحيح هنا
-  const newStartDate = new Date(targetDate);
-  newStartDate.setDate(targetDate.getDate() - 5);  // ✅ 5 أيام قبل
-  
-  const newEndDate = new Date(targetDate);
-  newEndDate.setDate(targetDate.getDate() + 5);   // ✅ 5 أيام بعد
-  
-  const newStartStr = formatDateForCache(newStartDate);
-  const newEndStr = formatDateForCache(newEndDate);
-  
-  // التحقق مما إذا كان النطاق الجديد داخل النطاق الحالي
-  const currentStart = dataCache.range.startDate;
-  const currentEnd = dataCache.range.endDate;
-  
-  if (currentStart && currentEnd && 
-      isDateInRange(newStartStr, currentStart, currentEnd) &&
-      isDateInRange(newEndStr, currentStart, currentEnd)) {
-    console.log('📦 النطاق المطلوب موجود بالفعل في Cache');
+
+// ─────────────────────────────────────
+// تحميل بيانات فرع واحد (المحاسب)
+// ─────────────────────────────────────
+async function loadSingleBranchData() {
+  const branchName = selectedBranch || currentUser.branchName;
+  if (!branchName) {
+    document.getElementById('mainContent').innerHTML = 
+      '<div class="load-state">⚠️ لم يتم تحديد فرع</div>';
     return;
   }
   
-  console.log(`🔄 توسيع النطاق إلى: ${newStartStr} → ${newEndStr}`);
+  const result = await callGAS('getBranchDayData', {
+    branchName: branchName,
+    dateISO: currentDateISO,
+    centerName: currentUser.centerName
+  });
   
-  try {
-    const result = await callGAS('fetchCashDataInRange', {
-      startDate: newStartStr,
-      endDate: newEndStr,
-      branchName: branchName,
-      centerName: currentUser?.centerName || ''
-    });
-    
-    if (result?.success) {
-      // دمج البيانات الجديدة مع البيانات الموجودة
-      dataCache.invoices = { ...dataCache.invoices, ...(result.invoices || {}) };
-      dataCache.revenues = { ...dataCache.revenues, ...(result.revenues || {}) };
-      dataCache.expenses = { ...dataCache.expenses, ...(result.expenses || {}) };
-      dataCache.range.startDate = newStartStr;
-      dataCache.range.endDate = newEndStr;
-      isDataLoaded = true;
-      console.log('✅ تم توسيع Cache بنجاح');
-    }
-  } catch(e) {
-    console.error('❌ فشل توسيع Cache:', e);
+  if (!result.success) {
+    throw new Error(result.message);
   }
+  
+  // عرض
+  renderSingleBranch(result);
 }
-// ✅ تحديث نطاق Cache عند إضافة تاريخ جديد
-function updateCacheRange(newDateStr) {
-  if (!dataCache.range.startDate && !dataCache.range.endDate) {
-    dataCache.range.startDate = newDateStr;
-    dataCache.range.endDate = newDateStr;
-    return;
+
+// ─────────────────────────────────────
+// تحميل بيانات كل الفروع (المالك)
+// ─────────────────────────────────────
+async function loadOwnerData() {
+  const result = await callGAS('getAllBranchesDayData', {
+    dateISO: currentDateISO,
+    centerName: currentUser.centerName
+  });
+  
+  if (!result.success) {
+    throw new Error(result.message);
   }
   
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const monthMap = {'Jan':0,'Feb':1,'Mar':2,'Apr':3,'May':4,'Jun':5,'Jul':6,'Aug':7,'Sep':8,'Oct':9,'Nov':10,'Dec':11};
+  ownerAllBranchesData = result;
+  renderOwnerBranches();
+}
+
+// ─────────────────────────────────────
+// عرض بيانات فرع واحد
+// ─────────────────────────────────────
+function renderSingleBranch(data) {
+  const dt = currentDateISO;
   
-  const parseDate = (d) => {
-    const m = d.match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
-    if (!m) return null;
-    return new Date(parseInt(m[3]), monthMap[m[2]], parseInt(m[1]));
+  systemTotals = {
+    invoices: data.invoices || {},
+    revenues: data.revenues || {},
+    dailyIncome: data.dailyIncome || {},
+    expenses: data.expenses || {},
+    previousBalance: data.previousBalance || {},
+    todayTotal: data.todayTotal || {},
+    finalBalance: data.finalBalance || {}
   };
   
-  const currentStart = parseDate(dataCache.range.startDate);
-  const currentEnd = parseDate(dataCache.range.endDate);
-  const newDate = parseDate(newDateStr);
+  previousDateISO = data.previousDateISO || '';
   
-  if (!currentStart || !currentEnd || !newDate) return;
+  // ✅ استخدام renderPage الموجودة (بسيطة)
+  renderPage(0, 0, 0);
+}
+
+// ─────────────────────────────────────
+// عرض بيانات المالك (كل الفروع + مجموع)
+// ─────────────────────────────────────
+function renderOwnerBranches() {
+  if (!ownerAllBranchesData) return;
   
-  // توسيع النطاق إذا كان التاريخ الجديد خارج النطاق الحالي
-  if (newDate < currentStart) {
-    dataCache.range.startDate = newDateStr;
+  const dt = currentDateISO;
+  const branches = ownerAllBranchesData.branches || [];
+  const totals = ownerAllBranchesData.totals;
+  
+  // ✅ بناء RTL الصفحة
+  let html = `
+    <div style="display:flex; gap:10px; align-items:center; margin-bottom:16px; flex-wrap:wrap;">
+      <strong style="font-size:14px;">🏢 عرض:</strong>
+      <button onclick="setOwnerViewMode('total')" 
+        class="view-mode-btn ${ownerViewMode === 'total' ? 'active' : ''}"
+        data-mode="total">📊 المجموع الكلي</button>
+      <button onclick="setOwnerViewMode('separate')"
+        class="view-mode-btn ${ownerViewMode === 'separate' ? 'active' : ''}"
+        data-mode="separate">🏢 الفروع منفصلة</button>
+    </div>
+  `;
+  
+  if (ownerViewMode === 'total') {
+    // ✅ مجموع كل الفروع
+    html += renderBranchCard('🏢 All Branches (Total)', totals, dt);
+  } else {
+    // ✅ كل فرع منفصل
+    for (const branchData of branches) {
+      html += renderBranchCard(
+        '📍 ' + branchData.branchName, 
+        {
+          invoices: branchData.invoices,
+          revenues: branchData.revenues,
+          dailyIncome: branchData.dailyIncome,
+          expenses: branchData.expenses,
+          previousBalance: branchData.previousBalance,
+          todayTotal: branchData.todayTotal,
+          finalBalance: branchData.finalBalance
+        },
+        dt
+      );
+    }
   }
-  if (newDate > currentEnd) {
-    dataCache.range.endDate = newDateStr;
+  
+  document.getElementById('mainContent').innerHTML = html;
+}
+
+// ─────────────────────────────────────
+// عرض بطاقة فرع واحد
+// ─────────────────────────────────────
+function renderBranchCard(title, data, dt) {
+  const CURRENCIES = [
+    {key:'USD', flag:'🇺🇸', label:'Cash $'},
+    {key:'EUR', flag:'🇪🇺', label:'Cash €'},
+    {key:'GBP', flag:'🇬🇧', label:'Cash £'},
+    {key:'LE',  flag:'🇪🇬', label:'Cash LE'},
+    {key:'VUSD', flag:'💳', label:'Visa $'},
+    {key:'VEUR', flag:'💳', label:'Visa €'},
+    {key:'VGBP', flag:'💳', label:'Visa £'},
+    {key:'VLE',  flag:'💳', label:'Visa LE'}
+  ];
+  
+  const rowHtml = (rowData) => `
+    <div class="scroll-container">
+      <div class="cur-grid">
+        ${CURRENCIES.map(c => {
+          const v = rowData[c.key] || 0;
+          const cls = v > 0 ? 'pos' : v < 0 ? 'neg' : 'zer';
+          return `<div class="cur-col">
+            <div class="cur-val ${cls}">${v !== 0 ? fmtN(v) : '—'}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+  `;
+  
+  const headHtml = `
+    <div class="scroll-container">
+      <div class="cur-headers">
+        ${CURRENCIES.map(c => `
+          <div class="cur-header-cell">
+            <span class="flag">${c.flag}</span>
+            <span class="code">${c.label}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+  
+  return `
+    <div style="margin-bottom:24px; border:2px solid #1e2b4f; border-radius:16px; overflow:hidden;">
+      <div style="background:linear-gradient(135deg,#1e2b4f,#2563eb); padding:12px 20px;">
+        <h2 style="color:#f5c842; margin:0; font-size:16px;">${title}</h2>
+        <div style="color:#cbd5e1; font-size:11px; margin-top:2px;">${dt}</div>
+      </div>
+      
+      <div style="padding:14px;">
+        ${headHtml}
+        
+        <!-- 1. Invoices -->
+        <div class="section-card">
+          <div class="section-head sh-inv">
+            <h3>🧾 Invoices</h3>
+          </div>
+          <div class="section-body">${rowHtml(data.invoices || {})}</div>
+        </div>
+        
+        <!-- 2. Revenues -->
+        <div class="section-card">
+          <div class="section-head sh-rev">
+            <h3>💵 Other Revenues</h3>
+          </div>
+          <div class="section-body">${rowHtml(data.revenues || {})}</div>
+        </div>
+        
+        <!-- 3. Daily Income -->
+        <div class="section-card">
+          <div class="section-head sh-tin">
+            <h3>📈 Total Income</h3>
+          </div>
+          <div class="section-body">${rowHtml(data.dailyIncome || {})}</div>
+        </div>
+        
+        <!-- 4. Carry Over -->
+        <div class="section-card">
+          <div class="section-head" style="background:linear-gradient(90deg,#0f1f3d,#1a3260);">
+            <h3 style="color:#cbd5e1;">📤 Carry Over</h3>
+          </div>
+          <div class="section-body">${rowHtml(data.previousBalance || {})}</div>
+        </div>
+        
+        <!-- 5. Today Total -->
+        <div class="section-card">
+          <div class="section-head" style="background:linear-gradient(90deg,#1a3260,#2563eb);">
+            <h3 style="color:#bfdbfe;">📊 Today Total</h3>
+          </div>
+          <div class="section-body">${rowHtml(data.todayTotal || {})}</div>
+        </div>
+        
+        <!-- 6. Expenses -->
+        <div class="section-card">
+          <div class="section-head sh-exp">
+            <h3>📉 Expenses</h3>
+          </div>
+          <div class="section-body">${rowHtml(data.expenses || {})}</div>
+        </div>
+        
+        <!-- 7. Final Balance -->
+        <div class="section-card">
+          <div class="section-head sh-bal">
+            <h3>💰 Daily Cash Balance</h3>
+          </div>
+          <div class="section-body">${rowHtml(data.finalBalance || {})}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ─────────────────────────────────────
+// تبديل وضع العرض (للمالك)
+// ─────────────────────────────────────
+function setOwnerViewMode(mode) {
+  ownerViewMode = mode;
+  renderOwnerBranches();
+}
+
+// ─────────────────────────────────────
+// زر التحديث
+// ─────────────────────────────────────
+async function updateCashSumAndReload() {
+  showToast('🔄 جاري التحديث...', 'info', 3000);
+  
+  try {
+    if (canViewAllBranches && !selectedBranch) {
+      // ✅ المالك: حدّث كل الفروع
+      const branches = getBranchesForCenterFromCache();
+      
+      for (const branchName of branches) {
+        await callGAS('updateAllCashSum', {
+          branchName: branchName,
+          centerName: currentUser.centerName,
+          dateISO: currentDateISO
+        });
+      }
+      
+      // أعد التحميل
+      await loadData();
+      showToast('✅ تم تحديث كل الفروع', 'success', 2000);
+      
+    } else {
+      // ✅ محاسب أو مالك بفرع محدد
+      const branchName = selectedBranch || currentUser.branchName;
+      
+      const result = await callGAS('updateAllCashSum', {
+        branchName: branchName,
+        centerName: currentUser.centerName,
+        dateISO: currentDateISO
+      });
+      
+      if (result.success) {
+        // أعد التحميل
+        await loadData();
+        showToast('✅ تم التحديث', 'success', 2000);
+      } else {
+        showToast('❌ فشل التحديث: ' + result.message, 'error', 3000);
+      }
+    }
+  } catch(e) {
+    console.error('❌ updateCashSumAndReload error:', e);
+    showToast('❌ خطأ: ' + e.message, 'error', 3000);
   }
 }
+
+// ─────────────────────────────────────
+// قراءة الفروع من Cache المتصفح
+// ─────────────────────────────────────
+let _cachedBranches = null;
+function getBranchesForCenterFromCache() {
+  if (_cachedBranches) return _cachedBranches;
+  // سيتم ملؤها عند تحميل الصفحة
+  return allBranches || [];
+}
+ 
 
 // ✅ تحويل dd/MMM/yyyy إلى كائن Date
 function parseDateFromDDMMMYYYY(dateStr) {
