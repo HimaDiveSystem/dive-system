@@ -1463,13 +1463,39 @@ if (hasPending) {
 // ══════════════════════════════════════════════════════════
 
 async function viewHistory(serial) {
-  // ✅ البحث بـ data-serial (سريع وآمن)
-  const row = document.querySelector(`tr[data-serial="${serial}"]`);
-  const btns = row ? row.querySelectorAll('button') : [];
-  btns.forEach(b => { b.disabled = true; b.textContent = '⏳ جاري...'; });
+  // ✅ 1. البحث عن الصف بطريقة صحيحة (بدون :contains)
+  let targetRow = null;
+  document.querySelectorAll('table tbody tr').forEach(r => {
+    const firstCell = r.querySelector('td:first-child');
+    if (firstCell && firstCell.textContent.trim() === serial) {
+      targetRow = r;
+    }
+  });
+  
+  // ✅ 2. حفظ النصوص الأصلية للأزرار وتعطيلها
+  let btns = [];
+  let originalTexts = [];
+  
+  if (targetRow) {
+    btns = targetRow.querySelectorAll('button');
+    btns.forEach((b, i) => {
+      originalTexts[i] = b.innerHTML;  // حفظ النص الأصلي
+      b.disabled = true;
+      b.innerHTML = '⏳ جاري...';
+    });
+  }
+  
+  // ✅ 3. دالة إعادة التمكين
+  const reEnableButtons = () => {
+    btns.forEach((b, i) => {
+      b.disabled = false;
+      if (originalTexts[i]) {
+        b.innerHTML = originalTexts[i];
+      }
+    });
+  };
   
   try {
-    
     showToast('⏳ جاري تحميل السجل...', 'info');
     
     const [history, emp] = [
@@ -1549,21 +1575,14 @@ async function viewHistory(serial) {
     }
     
     html += `</div>`;
-    showInfo(html);
+    
+    // ✅ عرض المودال مع callback لإعادة التمكين عند الإغلاق
+    showInfoWithCallback(html, reEnableButtons);
     
   } catch(e) { 
     showToast('❌ خطأ في السجل: ' + e.message, 'error');
     console.error('viewHistory error:', e);
-  } finally {
-    // ✅ إعادة تمكين الأزرار
-    btns.forEach(b => { 
-      b.disabled = false; 
-      if (b.textContent.includes('جاري')) {
-        if (b.textContent.includes('سجل')) b.textContent = '📜 سجل';
-        else if (b.textContent.includes('تعديل')) b.textContent = '✏️ تعديل';
-        else if (b.textContent.includes('حضور')) b.textContent = '📅 حضور';
-      }
-    });
+    reEnableButtons();  // ✅ إعادة التمكين في حالة الخطأ
   }
 }
 function viewAttendance(serial) {
@@ -1718,6 +1737,68 @@ function showInfo(html) {
   document.getElementById('confirmModal').classList.add('open');
 }
 
+  // ══════════════════════════════════════════════════════════
+// ✅ دالة عرض معلومات مع callback عند الإغلاق
+// ══════════════════════════════════════════════════════════
+function showInfoWithCallback(html, onClose) {
+  const confirmModal = document.getElementById('confirmModal');
+  const confirmIco = document.getElementById('confirmIco');
+  const confirmMsg = document.getElementById('confirmMsg');
+  const confirmOkBtn = document.getElementById('confirmOkBtn');
+  const confirmCancelBtn = document.getElementById('confirmCancelBtn');
+  
+  confirmIco.textContent = '📋';
+  confirmMsg.innerHTML = html;
+  confirmOkBtn.textContent = 'إغلاق';
+  confirmCancelBtn.style.display = 'none';
+  
+  // ✅ تنظيف المستمعين القديمة
+  const newOkBtn = confirmOkBtn.cloneNode(true);
+  confirmOkBtn.parentNode.replaceChild(newOkBtn, confirmOkBtn);
+  
+  // ✅ إضافة مستمع جديد مع callback
+  newOkBtn.onclick = () => {
+    confirmModal.classList.remove('open');
+    if (typeof onClose === 'function') onClose();
+  };
+  
+  // ✅ إغلاق عند الضغط خارج المودال
+  confirmModal.onclick = (e) => {
+    if (e.target === confirmModal) {
+      confirmModal.classList.remove('open');
+      if (typeof onClose === 'function') onClose();
+      confirmModal.onclick = null;
+    }
+  };
+  
+  // ✅ ضبط حجم الصندوق
+  const box = confirmModal.querySelector('.confirm-box');
+  if (box) {
+    box.style.width = '600px';
+    box.style.maxWidth = '90vw';
+    box.style.maxHeight = '80vh';
+    box.style.overflowY = 'auto';
+    box.style.overflowX = 'auto';
+    box.style.textAlign = 'right';
+  }
+  
+  // ✅ إضافة CSS للجداول داخل المودال
+  const msgDiv = document.getElementById('confirmMsg');
+  if (msgDiv) {
+    const style = document.createElement('style');
+    style.textContent = `
+      #confirmMsg table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      #confirmMsg td { padding: 8px; border-bottom: 1px solid #eee; text-align: right; word-break: break-word; }
+      #confirmMsg tr:last-child td { border-bottom: none; }
+      #confirmMsg .status-active { color: #27ae60; font-weight: bold; }
+      #confirmMsg .status-inactive { color: #e74c3c; font-weight: bold; }
+      #confirmMsg .salary-record { background: white; border: 1px solid #e9ecef; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
+    `;
+    msgDiv.appendChild(style);
+  }
+  
+  confirmModal.classList.add('open');
+}
 function goBack() {
   // ✅ تحديث الجلسة
   if (currentUser) {
