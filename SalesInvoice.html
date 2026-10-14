@@ -67,6 +67,7 @@
     .fc:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.1);outline:none;background:white;}
     .fc::placeholder{color:#b0bac9;}
     select.fc{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%235a6a8a' stroke-width='2.5'><polyline points='6 9 12 15 18 9'/></svg>");background-repeat:no-repeat;background-position:left 11px center;padding-left:33px;}
+    input[list].fc{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%235a6a8a' stroke-width='2.5'><polyline points='6 9 12 15 18 9'/></svg>");background-repeat:no-repeat;background-position:left 11px center;padding-left:33px;}
     textarea.fc{height:auto;resize:vertical;}
     .phone-row{display:flex;gap:7px;align-items:center;}
     .phone-code{width:78px;flex-shrink:0;}
@@ -283,8 +284,8 @@ const C = {
 // 🌐 Cache keys (sessionStorage)
 // ═══════════════════════════════════════════════════════════════════
 const CACHE_KEYS = {
-  NATIONALITIES: 'sales_cached_nationalities_v1',
-  HOTELS: 'sales_cached_hotels_v1'
+  NATIONALITIES: 'sales_cached_nationalities_v2',
+  HOTELS: 'sales_cached_hotels_v2'
 };
 
 function getCachedList(key) {
@@ -442,9 +443,9 @@ function loadBackgroundData() {
     gas('getInvoiceCustomers', { centerName: currentUser?.centerName })
   ];
   
-  // ✅ جلب الجنسيات/الفنادق فقط إذا لم تُحمَّل من cache
-  promises.push(cachedNats ? Promise.resolve(null) : gas('getNationalities').catch(() => null));
-  promises.push(cachedHotels ? Promise.resolve(null) : gas('getHotels').catch(() => null));
+  // ✅ جلب الجنسيات/الفنادق من الدوال الجديدة
+  promises.push(cachedNats ? Promise.resolve(null) : gas('getNationalitiesForDropdown').catch(() => null));
+  promises.push(cachedHotels ? Promise.resolve(null) : gas('getHotelsForDropdown').catch(() => null));
   
   Promise.all(promises).then(([rates, status, trips, customers, nationalities, hotels]) => {
     
@@ -676,19 +677,15 @@ function renderForm() {
     </div>
     <div class="fgroup">
       <label class="req">Nationality</label>
-      <div class="ac-wrap">
-        <input type="text" class="fc" id="nationality" placeholder="Select or type" oninput="onNationalityInput()" autocomplete="off" style="width:100%">
-        <div class="ac-drop" id="acNationalityDrop"></div>
-      </div>
+      <input type="text" class="fc" id="nationality" list="nationalitiesList" placeholder="Search or select..." autocomplete="off" onblur="onNationalityBlur()">
+      <datalist id="nationalitiesList"></datalist>
     </div>
   </div>
   <div class="hotel-row">
     <div class="fgroup" style="grid-column: span 4; min-width: 0;">
       <label class="req">Hotel</label>
-      <div class="ac-wrap">
-        <input type="text" class="fc" id="hotel" placeholder="Hotel name" oninput="onHotelInput()" autocomplete="off" style="width:100%">
-        <div class="ac-drop" id="acHotelDrop"></div>
-      </div>
+      <input type="text" class="fc" id="hotel" list="hotelsList" placeholder="Search or select hotel..." autocomplete="off">
+      <datalist id="hotelsList"></datalist>
     </div>
     <div class="fgroup">
       <label>Room No.</label>
@@ -747,14 +744,17 @@ function renderForm() {
     <button class="btn btn-clear" id="btnClear" onclick="clearForm()">🔄 Clear All</button>
     <button class="btn btn-new" id="btnNewBooking" onclick="newBooking()">➕ New Booking</button>
   </div>`;
+  
+  // ✅ تعبئة الـ datalists بعد رسم النموذج
+  fillDatalist('nationalitiesList', _nationalitiesList);
+  fillDatalist('hotelsList', _hotelsList);
+  
   updateSessionBadge();
 }
 
 // ========== Timeouts ==========
 let phoneSearchTimeout = null;
 let nameSearchTimeout = null;
-let nationalitySearchTimeout = null;
-let hotelSearchTimeout = null;
 
 // ========== Phone Autocomplete ==========
 function onPhoneInput() {
@@ -772,9 +772,6 @@ function onGuestNameKeydown(e) {
   const el = e.target;
   if (!el) return;
   
-  // ═══════════════════════════════════════════════════════════════
-  // ✅ معالجة Space يدوياً (لأن المتصفح يقفز عنها)
-  // ═══════════════════════════════════════════════════════════════
   if (e.key === ' ' || e.keyCode === 32) {
     e.preventDefault();
     
@@ -783,45 +780,34 @@ function onGuestNameKeydown(e) {
     const beforeCursor = value.substring(0, cursorPos);
     const afterCursor = value.substring(cursorPos);
     
-    // استخراج الكلمة الحالية (بعد آخر مسافة وقبل المؤشر)
     const lastSpaceIdx = beforeCursor.lastIndexOf(' ');
     const currentWord = beforeCursor.substring(lastSpaceIdx + 1);
     
-    // Capitalize الكلمة الحالية
     let capitalized = currentWord;
     if (currentWord && currentWord.length > 0 && /^[a-zA-Z]/.test(currentWord)) {
       capitalized = currentWord.charAt(0).toUpperCase() + currentWord.slice(1).toLowerCase();
     }
     
-    // استبدال الكلمة الحالية بـ Capitalized
     const newValue = value.substring(0, lastSpaceIdx + 1) + capitalized + ' ' + afterCursor;
     el.value = newValue;
     
-    // المؤشر بعد المسافة
     const newPos = lastSpaceIdx + 1 + capitalized.length + 1;
     el.setSelectionRange(newPos, newPos);
     
-    // ✅ استدعاء Autocomplete بعد التعديل
     onNameInput();
     return;
   }
   
-  // ═══════════════════════════════════════════════════════════════
-  // Backspace عند وجود مسافة في البداية
-  // ═══════════════════════════════════════════════════════════════
   if (e.key === 'Backspace') {
-    // نترك المتصفح يعمل بشكل طبيعي
     setTimeout(() => onNameInput(), 0);
   }
 }
 
 function onGuestNameInput() {
-  // ✅ Autocomplete فقط (بدون تعديل على القيمة)
   onNameInput();
 }
 
 function onGuestNameBlur() {
-  // ✅ تطبيق Title Case على كل الكلمات عند الخروج
   applyTitleCase('guestName');
 }
 
@@ -859,145 +845,70 @@ function onNameInput() {
   }, 100);
 }
 
-// ========== Nationality Autocomplete ==========
+// ═══════════════════════════════════════════════════════════════════
+// 🌍 Nationality + Hotel — Datalist based
+// ═══════════════════════════════════════════════════════════════════
 let _nationalitiesList = [];
+let _hotelsList = [];
 
-function onNationalityInput() {
-  const input = document.getElementById('nationality');
-  if (!input) return;
-  const query = (input.value || '').trim();
-  if (nationalitySearchTimeout) clearTimeout(nationalitySearchTimeout);
-  if (!query) { closeAC('acNationalityDrop'); return; }
-  
-  // ✅ Fallback: إذا القائمة فارغة، حاول التحميل
-  if (_nationalitiesList.length === 0) {
-    console.warn('⚠️ Nationalities list empty — reloading');
-    gas('getNationalities').then(list => {
-      if (Array.isArray(list) && list.length > 0) {
-        setNationalitiesList(list);
-        setCachedList(CACHE_KEYS.NATIONALITIES, list);
-        onNationalityInput();
-      }
-    }).catch(() => {});
-    return;
-  }
-  
-  nationalitySearchTimeout = setTimeout(() => {
-    const lowerQuery = query.toLowerCase();
-    const startsWith = _nationalitiesList.filter(n => n.toLowerCase().startsWith(lowerQuery));
-    const contains = _nationalitiesList.filter(n => !n.toLowerCase().startsWith(lowerQuery) && n.toLowerCase().includes(lowerQuery));
-    const filtered = [...startsWith, ...contains].slice(0, 50);
-    renderNationalityAC(filtered, query);
-  }, 100);
+/**
+ * تعبئة datalist
+ */
+function fillDatalist(id, list) {
+  const dl = document.getElementById(id);
+  if (!dl || !Array.isArray(list) || list.length === 0) return;
+  dl.innerHTML = list.map(v => `<option value="${esc(v)}"></option>`).join('');
 }
 
-function renderNationalityAC(hits, query) {
-  const drop = document.getElementById('acNationalityDrop');
-  if (!drop) return;
-  if (!hits.length) { drop.classList.remove('open'); drop.innerHTML = ''; return; }
-  drop._hits = hits;
-  const html = hits.map((nat, i) => {
-    const lowerNat = nat.toLowerCase();
-    const lowerQuery = query.toLowerCase();
-    const matchIdx = lowerNat.indexOf(lowerQuery);
-    let display = esc(nat);
-    if (matchIdx >= 0) {
-      const before = esc(nat.substring(0, matchIdx));
-      const match = esc(nat.substring(matchIdx, matchIdx + query.length));
-      const after = esc(nat.substring(matchIdx + query.length));
-      display = `${before}<strong style="background:#fef08a;">${match}</strong>${after}`;
-    }
-    return `<div class="ac-item" onclick="acPickNationality(${i})"><span class="ac-n">${display}</span></div>`;
-  }).join('');
-  drop.innerHTML = html + (hits.length >= 50 ? `<div style="padding:8px;text-align:center;font-size:11px;color:#94a3b8;background:#f8fafc;border-top:1px solid #e2e8f0;">Showing first 50 — type more to filter</div>` : '');
-  drop.classList.add('open');
-}
-
-function acPickNationality(index) {
-  const drop = document.getElementById('acNationalityDrop');
-  if (!drop || !drop._hits) return;
-  const picked = drop._hits[index];
-  if (!picked) return;
-  const input = document.getElementById('nationality');
-  if (input) input.value = picked;
-  closeAC('acNationalityDrop');
-}
-
+/**
+ * تعيين قائمة الجنسيات + تعبئة datalist
+ */
 function setNationalitiesList(list) {
   if (Array.isArray(list) && list.length > 0) {
     _nationalitiesList = list;
+    fillDatalist('nationalitiesList', list);
     console.log('✅ Nationalities loaded:', list.length);
   }
 }
 
-// ========== Hotel Autocomplete ==========
-let _hotelsList = [];
-
-function onHotelInput() {
-  const input = document.getElementById('hotel');
-  if (!input) return;
-  const query = (input.value || '').trim();
-  if (hotelSearchTimeout) clearTimeout(hotelSearchTimeout);
-  if (!query) { closeAC('acHotelDrop'); return; }
-  
-  // ✅ Fallback: إذا القائمة فارغة، حاول التحميل
-  if (_hotelsList.length === 0) {
-    console.warn('⚠️ Hotels list empty — reloading');
-    gas('getHotels').then(list => {
-      if (Array.isArray(list) && list.length > 0) {
-        setHotelsList(list);
-        setCachedList(CACHE_KEYS.HOTELS, list);
-        onHotelInput();
-      }
-    }).catch(() => {});
-    return;
-  }
-  
-  hotelSearchTimeout = setTimeout(() => {
-    const lowerQuery = query.toLowerCase();
-    const startsWith = _hotelsList.filter(h => h.toLowerCase().startsWith(lowerQuery));
-    const contains = _hotelsList.filter(h => !h.toLowerCase().startsWith(lowerQuery) && h.toLowerCase().includes(lowerQuery));
-    const filtered = [...startsWith, ...contains].slice(0, 50);
-    renderHotelAC(filtered, query);
-  }, 100);
-}
-
-function renderHotelAC(hits, query) {
-  const drop = document.getElementById('acHotelDrop');
-  if (!drop) return;
-  if (!hits.length) { drop.classList.remove('open'); drop.innerHTML = ''; return; }
-  drop._hits = hits;
-  const html = hits.map((h, i) => {
-    const lowerH = h.toLowerCase();
-    const lowerQuery = query.toLowerCase();
-    const matchIdx = lowerH.indexOf(lowerQuery);
-    let display = esc(h);
-    if (matchIdx >= 0) {
-      const before = esc(h.substring(0, matchIdx));
-      const match = esc(h.substring(matchIdx, matchIdx + query.length));
-      const after = esc(h.substring(matchIdx + query.length));
-      display = `${before}<strong style="background:#fef08a;">${match}</strong>${after}`;
-    }
-    return `<div class="ac-item" onclick="acPickHotel(${i})"><span class="ac-n">${display}</span></div>`;
-  }).join('');
-  drop.innerHTML = html + (hits.length >= 50 ? `<div style="padding:8px;text-align:center;font-size:11px;color:#94a3b8;background:#f8fafc;border-top:1px solid #e2e8f0;">Showing first 50 — type more to filter</div>` : '');
-  drop.classList.add('open');
-}
-
-function acPickHotel(index) {
-  const drop = document.getElementById('acHotelDrop');
-  if (!drop || !drop._hits) return;
-  const picked = drop._hits[index];
-  if (!picked) return;
-  const input = document.getElementById('hotel');
-  if (input) input.value = picked;
-  closeAC('acHotelDrop');
-}
-
+/**
+ * تعيين قائمة الفنادق + تعبئة datalist
+ */
 function setHotelsList(list) {
   if (Array.isArray(list) && list.length > 0) {
     _hotelsList = list;
+    fillDatalist('hotelsList', list);
     console.log('✅ Hotels loaded:', list.length);
+  }
+}
+
+/**
+ * عند الخروج من حقل الجنسية — التحقق من القيمة
+ */
+function onNationalityBlur() {
+  const input = document.getElementById('nationality');
+  if (!input) return;
+  const value = (input.value || '').trim();
+  if (!value) return;
+  
+  if (_nationalitiesList.length > 0) {
+    const isValid = _nationalitiesList.some(n => n.toLowerCase() === value.toLowerCase());
+    
+    if (!isValid) {
+      const lowerValue = value.toLowerCase();
+      const suggestion = _nationalitiesList.find(n => n.toLowerCase().startsWith(lowerValue));
+      
+      if (suggestion) {
+        input.value = suggestion;
+      } else {
+        input.value = '';
+        showAlert(`⚠️ "${value}" is not in the nationality list.\nPlease select from the dropdown.`, '⚠️');
+      }
+    } else {
+      // ✅ تطبيع الحالة
+      const exact = _nationalitiesList.find(n => n.toLowerCase() === value.toLowerCase());
+      if (exact && exact !== value) input.value = exact;
+    }
   }
 }
 
@@ -1034,8 +945,6 @@ function acPick(id, i) {
   }
   closeAC('acPhoneDrop');
   closeAC('acNameDrop');
-  closeAC('acNationalityDrop');
-  closeAC('acHotelDrop');
 }
 
 function closeAC(id) {
@@ -1047,8 +956,6 @@ document.addEventListener('click', e => {
   if (!e.target.closest('.ac-wrap')) {
     closeAC('acPhoneDrop');
     closeAC('acNameDrop');
-    closeAC('acNationalityDrop');
-    closeAC('acHotelDrop');
   }
 });
 
@@ -1586,12 +1493,10 @@ function tStart(e) { e.preventDefault(); const t = e.touches[0], p = getPos(sigC
 function tMove(e) { e.preventDefault(); if (!isDrawing) return; const t = e.touches[0], p = getPos(sigCanvas, t); sigCtx.beginPath(); sigCtx.moveTo(lastX, lastY); sigCtx.lineTo(p.x, p.y); sigCtx.stroke(); lastX = p.x; lastY = p.y; }
 
 // ========== Expose Globally ==========
-window.onNationalityInput = onNationalityInput;
-window.acPickNationality = acPickNationality;
 window.setNationalitiesList = setNationalitiesList;
-window.onHotelInput = onHotelInput;
-window.acPickHotel = acPickHotel;
 window.setHotelsList = setHotelsList;
+window.onNationalityBlur = onNationalityBlur;
+window.fillDatalist = fillDatalist;
 window.onGuestNameInput = onGuestNameInput;
 window.onGuestNameKeydown = onGuestNameKeydown;
 window.onGuestNameBlur = onGuestNameBlur;
