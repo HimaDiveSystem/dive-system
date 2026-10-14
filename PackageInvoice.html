@@ -524,7 +524,258 @@ function onPhoneInput() {
     renderAC('acPhoneDrop', filtered);
   }, 100);
 }
+  // ═══════════════════════════════════════════════════════════════════
+// 👤 capitalizeNameInput — Title Case لحقل اسم العميل
+// ═══════════════════════════════════════════════════════════════════
+// 📌 السلوك:
+//   - john doe → John Doe
+//   - ahmed ali hassan → Ahmed Ali Hassan
+//   - ALI HASSAN → Ali Hassan
+//   - أحمد علي → أحمد علي (لا يتأثر - العربي لا يحتوي Capital)
+//   - لا يؤثر على الأرقام أو الرموز
+// ═══════════════════════════════════════════════════════════════════
 
+/**
+ * تطبيق Title Case على نص (كل كلمة تبدأ بحرف كبير)
+ * - يعمل فقط مع الحروف الإنجليزية
+ * - يحافظ على النص العربي كما هو
+ * - يحافظ على موضع المؤشر
+ */
+function applyTitleCase(input) {
+  if (!input) return;
+  
+  const el = document.getElementById(input);
+  if (!el) return;
+  
+  const originalValue = el.value;
+  const cursorPos = el.selectionStart;
+  
+  // ✅ التحويل إلى Title Case
+  const newValue = toTitleCase(originalValue);
+  
+  // ✅ إذا لم يتغير شيء → لا نفعل شيئاً
+  if (newValue === originalValue) return;
+  
+  // ✅ حساب الفرق في الطول لحساب موضع المؤشر الجديد
+  const lengthDiff = newValue.length - originalValue.length;
+  
+  el.value = newValue;
+  
+  // ✅ وضع المؤشر في مكانه المنطقي
+  const newCursorPos = Math.max(0, Math.min(newValue.length, cursorPos + lengthDiff));
+  el.setSelectionRange(newCursorPos, newCursorPos);
+}
+
+/**
+ * تحويل النص إلى Title Case
+ * - يعمل مع الحروف الإنجليزية
+ * - يترك الحروف العربية كما هي
+ * - يحافظ على المسافات المتعددة والرموز
+ */
+function toTitleCase(str) {
+  if (!str) return '';
+  
+  // ✅ نقسم على المسافات ونحتفظ بها
+  return str.replace(/([A-Za-z\u0600-\u06FF]+)/g, function(word) {
+    // إذا كانت الكلمة تبدأ بحرف عربي → اتركها كما هي
+    if (/^[\u0600-\u06FF]/.test(word)) {
+      return word;
+    }
+    
+    // كلمة إنجليزية → Capitalize أول حرف + Small الباقي
+    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+  });
+}
+
+/**
+ * معالج الإدخال في حقل اسم العميل
+ * - عند الضغط على Space → Capitalize الكلمة السابقة
+ */
+function onGuestNameInput(e) {
+  const el = e ? e.target : document.getElementById('guestName');
+  if (!el) return;
+  
+  // ✅ إذا كانت آخر ضغطة Space → Capitalize الكلمة السابقة
+  if (e && e.data === ' ') {
+    const value = el.value;
+    const cursorPos = el.selectionStart;
+    
+    // استخراج الكلمة السابقة (قبل المسافة)
+    const beforeCursor = value.substring(0, cursorPos - 1);
+    const lastSpaceIdx = beforeCursor.lastIndexOf(' ');
+    const previousWord = beforeCursor.substring(lastSpaceIdx + 1);
+    
+    if (previousWord && previousWord.length > 0) {
+      // إذا كانت الكلمة إنجليزية
+      if (/^[A-Za-z]/.test(previousWord)) {
+        const capitalized = previousWord.charAt(0).toUpperCase() + previousWord.slice(1).toLowerCase();
+        
+        // استبدال الكلمة السابقة
+        const newValue = value.substring(0, lastSpaceIdx + 1) + capitalized + value.substring(cursorPos);
+        el.value = newValue;
+        el.setSelectionRange(cursorPos, cursorPos);
+      }
+    }
+  }
+}
+
+/**
+ * معالج Blur لحقل اسم العميل
+ * - عند الخروج من الحقل → Capitalize كل الكلمات
+ */
+function onGuestNameBlur() {
+  applyTitleCase('guestName');
+}
+// ═══════════════════════════════════════════════════════════════════
+// 🌍 Nationality Autocomplete
+// ═══════════════════════════════════════════════════════════════════
+
+// متغير لتخزين قائمة الجنسيات
+let _nationalitiesList = [];
+let nationalitySearchTimeout = null;
+
+/**
+ * معالج الإدخال في حقل الجنسية
+ */
+function onNationalityInput() {
+  const input = document.getElementById('nationality');
+  if (!input) return;
+  
+  const query = (input.value || '').trim();
+  
+  if (nationalitySearchTimeout) clearTimeout(nationalitySearchTimeout);
+  
+  // إذا كان الحقل فارغاً → أغلق القائمة
+  if (!query) {
+    closeAC('acNationalityDrop');
+    return;
+  }
+  
+  // فلترة فورية
+  nationalitySearchTimeout = setTimeout(() => {
+    const lowerQuery = query.toLowerCase();
+    const filtered = _nationalitiesList
+      .filter(nat => nat.toLowerCase().includes(lowerQuery))
+      .slice(0, 50);  // حد أقصى 50 نتيجة
+    
+    renderNationalityAC(filtered, query);
+  }, 80);
+}
+
+/**
+ * عرض قائمة الجنسيات
+ */
+function renderNationalityAC(hits, query) {
+  const drop = document.getElementById('acNationalityDrop');
+  if (!drop) return;
+  
+  if (!hits.length) {
+    drop.classList.remove('open');
+    drop.innerHTML = '';
+    return;
+  }
+  
+  drop._hits = hits;
+  drop._query = query;
+  
+  let html = '';
+  
+  // إضافة خيار "الاستخدام كما هو" إذا كان المستخدم كتب جنسية غير موجودة
+  const exactMatch = hits.some(h => h.toLowerCase() === query.toLowerCase());
+  if (!exactMatch && query.length > 1) {
+    html += `<div class="ac-item" onclick="useNationalityAsIs('${escapeJsString(query)}')" style="background:#fefce8;">
+      <span class="ac-n">➕ استخدام "${escapeHtml(query)}"</span>
+      <span class="ac-s">جنسية غير موجودة في القائمة</span>
+    </div>`;
+  }
+  
+  // عرض النتائج
+  html += hits.map((nat, i) => {
+    // تحديد الحرف المُطابق (highlight)
+    const lowerNat = nat.toLowerCase();
+    const lowerQuery = query.toLowerCase();
+    const matchIdx = lowerNat.indexOf(lowerQuery);
+    
+   let display = esc(nat);
+if (matchIdx >= 0) {
+  const before = esc(nat.substring(0, matchIdx));
+  const match = esc(nat.substring(matchIdx, matchIdx + query.length));
+  const after = esc(nat.substring(matchIdx + query.length));
+  display = `${before}<strong style="background:#fef08a;">${match}</strong>${after}`;
+}
+    
+    return `<div class="ac-item" onclick="acPickNationality(${i})">
+      <span class="ac-n">${display}</span>
+    </div>`;
+  }).join('');
+  
+  // إظهار عدد النتائج إذا كانت كثيرة
+  if (hits.length >= 50) {
+    html += `<div style="padding:8px; text-align:center; font-size:11px; color:#94a3b8; background:#f8fafc; border-top:1px solid #e2e8f0;">
+      يتم عرض أول 50 نتيجة — اكتب المزيد للتصفية
+    </div>`;
+  }
+  
+  drop.innerHTML = html;
+  drop.classList.add('open');
+}
+
+/**
+ * اختيار جنسية من القائمة
+ */
+function acPickNationality(index) {
+  const drop = document.getElementById('acNationalityDrop');
+  if (!drop || !drop._hits) return;
+  
+  const picked = drop._hits[index];
+  if (!picked) return;
+  
+  const input = document.getElementById('nationality');
+  if (input) input.value = picked;
+  
+  closeAC('acNationalityDrop');
+}
+
+/**
+ * استخدام النص كما هو (جنسية غير موجودة في القائمة)
+ */
+function useNationalityAsIs(value) {
+  const input = document.getElementById('nationality');
+  if (input) input.value = value;
+  closeAC('acNationalityDrop');
+}
+
+/**
+ * تهيئة قائمة الجنسيات
+ */
+function setNationalitiesList(list) {
+  if (Array.isArray(list)) {
+    _nationalitiesList = list;
+    console.log('✅ تم تحميل ' + list.length + ' جنسية');
+  }
+}
+
+/**
+ * Helper: escape للنصوص داخل onclick
+ */
+function escapeJsString(str) {
+  if (!str) return '';
+  return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+}
+
+/**
+ * Helper: escape للنصوص في HTML
+ */
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+  
 function onNameInput() {
   const nameVal = (document.getElementById('guestName').value || '').trim().toLowerCase();
   if (nameSearchTimeout) clearTimeout(nameSearchTimeout);
@@ -554,10 +805,12 @@ function acPick(id, i) {
   if (!d || !d._hits) return;
   const c = d._hits[i];
   if (!c) return;
+  
   if (c.name) document.getElementById('guestName').value = c.name;
   if (c.nationality) document.getElementById('nationality').value = c.nationality;
   if (c.hotel) document.getElementById('hotel').value = c.hotel;
   if (c.roomNo) document.getElementById('roomNo').value = c.roomNo;
+  
   const code = document.getElementById('phoneCode');
   const num = document.getElementById('phoneNumber');
   if (c.phone && num) {
@@ -565,8 +818,10 @@ function acPick(id, i) {
     num.value = cleanPhone;
     code.value = '+';
   }
+  
   closeAC('acPhoneDrop');
   closeAC('acNameDrop');
+  closeAC('acNationalityDrop');  // ✅ جديد
 }
 
 function closeAC(id) {
@@ -578,8 +833,10 @@ document.addEventListener('click', e => {
   if (!e.target.closest('.ac-wrap')) {
     closeAC('acPhoneDrop');
     closeAC('acNameDrop');
+    closeAC('acNationalityDrop');  // ✅ جديد
   }
 });
+  
 
 // ============================================
 // 5. دالة التأكد من وجود datalist وإضافة الرحلات
@@ -1713,8 +1970,7 @@ async function loadNationalities() {
   try {
     const d = await gas('getNationalities');
     if (Array.isArray(d)) {
-      const dl = document.getElementById('nationalitiesList');
-      if (dl) dl.innerHTML = d.map(v => `<option value="${v}">`).join('');
+      setNationalitiesList(d);
     }
   } catch(e) { console.error('❌ فشل تحميل الجنسيات:', e); }
 }
@@ -1762,21 +2018,29 @@ function renderForm() {
         </div>
       </div>
       <div class="fgroup">
-        <label class="req">Guest Name</label>
-        <div class="ac-wrap">
-          <input type="text" class="fc" id="guestName" placeholder="Full name" oninput="onNameInput()" autocomplete="off">
-          <div class="ac-drop" id="acNameDrop"></div>
-        </div>
-      </div>
+  <label class="req">Guest Name</label>
+  <div class="ac-wrap">
+    <input type="text" 
+           class="fc" 
+           id="guestName" 
+           placeholder="Full name" 
+           oninput="onNameInput(); onGuestNameInput(event)" 
+           onblur="onGuestNameBlur()" 
+           autocomplete="off">
+    <div class="ac-drop" id="acNameDrop"></div>
+  </div>
+</div>
     </div>
     
     <!-- الصف الثاني: الجنسية + الفندق -->
     <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 12px; margin-bottom: 12px;">
       <div class="fgroup">
-        <label class="req">Nationality</label>
-        <input type="text" class="fc" id="nationality" list="nationalitiesList" placeholder="Select or type">
-        <datalist id="nationalitiesList"></datalist>
-      </div>
+  <label class="req">Nationality</label>
+  <div class="ac-wrap">
+    <input type="text" class="fc" id="nationality" placeholder="Select or type" oninput="onNationalityInput()" onfocus="this.select()" autocomplete="off" style="width:100%">
+    <div class="ac-drop" id="acNationalityDrop"></div>
+  </div>
+</div>
       <div class="fgroup">
         <label class="req">Hotel</label>
         <input type="text" class="fc" id="hotel" list="hotelsList" placeholder="Hotel name">
@@ -2156,6 +2420,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 4. تحميل جميع البيانات
   await loadAllData();
 });
+  window.onNationalityInput = onNationalityInput;
+window.acPickNationality = acPickNationality;
+window.useNationalityAsIs = useNationalityAsIs;
+window.setNationalitiesList = setNationalitiesList;
+window.onGuestNameInput = onGuestNameInput;
+window.onGuestNameBlur = onGuestNameBlur;
+window.applyTitleCase = applyTitleCase;
+window.toTitleCase = toTitleCase;
 </script>
 </body>
 </html>
