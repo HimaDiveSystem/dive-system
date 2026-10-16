@@ -2606,6 +2606,36 @@ async function loadAndPopulateAssignments(dateISO) {
         updateSelectionBadges();
     }
 }
+// ═══════════════════════════════════════════════════════════════
+// 🆕 getVehicleUsedSeatsExcludingInfants
+// ═══════════════════════════════════════════════════════════════
+// 📌 مثل getVehicleUsedSeats لكن **تستبعد الرضع** من العدد
+// 📌 تُستخدم في مودال Assign Vehicles
+// ═══════════════════════════════════════════════════════════════
+function getVehicleUsedSeatsExcludingInfants(date, vehicleId, tripName, excludeVoucher) {
+  let go = 0, ret = 0;
+  
+  for (const inv of allInvoices) {
+    if (inv.voucherNo === excludeVoucher) continue;
+    if ((inv.activeDate || '') !== date) continue;
+    
+    // ✅ إذا tripName = null → تجميع من كل الرحلات
+    if (tripName && (inv.trip || '') !== tripName) continue;
+    
+    let vData = [];
+    try { vData = JSON.parse(inv.VehiclesUsed || '[]'); } catch(e) {}
+    
+    for (const v of vData) {
+      if (v.vehicleId === vehicleId) {
+        // ✅ goCount و returnCount يمثلان Adults + Children فقط (بدون الرضع)
+        go += parseInt(v.goCount) || 0;
+        ret += parseInt(v.returnCount) || 0;
+      }
+    }
+  }
+  
+  return { go, ret };
+}
   
 async function openAssignVehicles(voucherNo) {
     const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
@@ -2652,7 +2682,7 @@ async function openAssignVehicles(voucherNo) {
     document.getElementById('assignVehiclesContent').innerHTML = '<div class="loader"><div class="spinner"></div>Loading...</div>';
     openModal('assignVehiclesModal');
     
-    // بناء الصفوف
+    // ✅ بناء الصفوف — حساب usedGo/usedRet بدون الرضع
     const rows = [];
     for (const vehId of relevantVehicleIds) {
         const vehicle = cachedVehicles.find(v => v.id === vehId);
@@ -2660,7 +2690,8 @@ async function openAssignVehicles(voucherNo) {
         const capacity = parseInt(vehicle.capacity) || 0;
         
         // ✅ حساب المشغول من فواتير أخرى (بدون هذه الفاتورة)
-        const used = getVehicleUsedSeats(currentDate, vehId, null, voucherNo);
+        // ⚠️ نمرر infants=0 لأننا نريد احتساب الأماكن المشغولة الفعلية فقط
+        const used = getVehicleUsedSeatsExcludingInfants(currentDate, vehId, null, voucherNo);
         
         const saved = savedVehicles.find(v => v.vehicleId === vehId) || {};
         rows.push({ vehicle, capacity, usedGo: used.go, usedRet: used.ret, saved });
@@ -2697,9 +2728,9 @@ async function openAssignVehicles(voucherNo) {
         const goPct = capacity > 0 ? Math.min(100, Math.round(usedGo / capacity * 100)) : 0;
         const retPct = capacity > 0 ? Math.min(100, Math.round(usedRet / capacity * 100)) : 0;
         
-        // القيمة الأولية: من المحفوظ، أو الحد الأقصى
-        const initGo = saved.goCount || Math.min(adults + children + infants, availGo);
-        const initRet = saved.returnCount || Math.min(adults + children + infants, availRet);
+        // ✅ القيمة الأولية: من المحفوظ، أو عدد (Adults + Children) فقط
+        const initGo = saved.goCount || Math.min(adults + children, availGo);
+        const initRet = saved.returnCount || Math.min(adults + children, availRet);
         
         html += `
           <tr>
@@ -2745,6 +2776,7 @@ async function openAssignVehicles(voucherNo) {
         <strong style="color:#92400e;">💡 Note:</strong>
         <span style="color:#78350f;">
           Max in "Go" = available seats (Go). Max in "Return" = available seats (Return).
+          Infants are recorded but <strong>do not consume seats</strong>.
           Time conflicts > 1 hour will trigger a warning.
         </span>
       </div>
@@ -2758,10 +2790,13 @@ async function openAssignVehicles(voucherNo) {
     
     setTimeout(() => attachVehicleAssignmentEvents(), 50);
 }
+  
 // ✅ دالة مساعدة لربط الأحداث في Assign Vehicles
 function attachVehicleAssignmentEvents() {
   
+  // ═══════════════════════════════════════════════════════════
   // ✅ دالة حساب لحظي
+  // ═══════════════════════════════════════════════════════════
   function recalcRow(vehicleId) {
     const goInput = document.querySelector(`#assignVehiclesModal .assign-go[data-id="${vehicleId}"]`);
     const returnInput = document.querySelector(`#assignVehiclesModal .assign-return[data-id="${vehicleId}"]`);
@@ -2771,35 +2806,39 @@ function attachVehicleAssignmentEvents() {
     
     if (!goInput || !returnInput) return;
     
-    // القيم المُدخلة
     const goVal = parseInt(goInput.value) || 0;
     const returnVal = parseInt(returnInput.value) || 0;
     const adultVal = parseInt(adultInput?.value) || 0;
     const childVal = parseInt(childInput?.value) || 0;
     const infantVal = parseInt(infantInput?.value) || 0;
     
-    // القيم الأصلية (المحجوزة في فواتير أخرى)
     const baseGo = parseInt(goInput.dataset.baseUsed) || 0;
     const baseRet = parseInt(returnInput.dataset.baseUsed) || 0;
     const capacity = parseInt(goInput.dataset.capacity) || 0;
     
-    // المستخدم الكلي = محجوز في فواتير أخرى + قيمة هذه الفاتورة
+    // ✅ المستخدم الكلي = محجوز في فواتير أخرى + قيمة هذه الفاتورة
     const totalGoUsed = baseGo + goVal;
     const totalRetUsed = baseRet + returnVal;
     
-    // المتاح المتبقي
     const availGo = Math.max(0, capacity - totalGoUsed);
     const availRet = Math.max(0, capacity - totalRetUsed);
     
-    // تحديث العرض
     const row = goInput.closest('tr');
     if (!row) return;
     
     const cells = row.querySelectorAll('td');
-    // cells[2] = ذهاب مشغول
-    // cells[3] = عودة مشغولة
-    // cells[4] = ذهاب شاغر
-    // cells[5] = عودة شاغرة
+    // cells[0] = vehicle name
+    // cells[1] = capacity
+    // cells[2] = go used
+    // cells[3] = return used
+    // cells[4] = go available
+    // cells[5] = return available
+    // cells[6] = go input
+    // cells[7] = return input
+    // cells[8] = adults input
+    // cells[9] = children input
+    // cells[10] = infants input
+    // cells[11] = checkbox
     
     const goPct = capacity > 0 ? Math.min(100, Math.round(totalGoUsed / capacity * 100)) : 0;
     const retPct = capacity > 0 ? Math.min(100, Math.round(totalRetUsed / capacity * 100)) : 0;
@@ -2823,11 +2862,10 @@ function attachVehicleAssignmentEvents() {
       cells[5].innerHTML = `<span style="background:${availRet === 0 ? '#fee2e2' : '#dcfce7'};padding:3px 8px;border-radius:6px;font-weight:700;color:${availRet === 0 ? 'red' : 'green'};">${availRet}</span>`;
     }
     
-    // تحديث max على الحقل
     goInput.dataset.max = availGo;
     returnInput.dataset.max = availRet;
     
-    // ✅ فحص تجاوز السعة (Adults + Children فقط)
+    // ✅ فحص تجاوز السعة (Adults + Children فقط — بدون الرضع)
     const totalAC = adultVal + childVal;
     if (totalAC > capacity + 1) {
       row.style.background = '#fee2e2';
@@ -2846,46 +2884,51 @@ function attachVehicleAssignmentEvents() {
     }
   }
   
-  // ربط الحقول
-  // ربط حقول Go / Return (لها data-max)
-document.querySelectorAll('#assignVehiclesModal .assign-go, #assignVehiclesModal .assign-return').forEach(input => {
-  const newInput = input.cloneNode(true);
-  input.parentNode.replaceChild(newInput, input);
-  
-  const vehId = newInput.dataset.id;
-  
-  newInput.addEventListener('input', () => {
-    const max = parseInt(newInput.dataset.max) || 0;
-    const val = parseInt(newInput.value) || 0;
-    if (val < 0) newInput.value = 0;
-    if (val > max) {
-      newInput.value = max;
-      newInput.style.borderColor = '#dc2626';
-      setTimeout(() => newInput.style.borderColor = 'var(--border)', 1000);
-    }
-    recalcRow(vehId);
+  // ═══════════════════════════════════════════════════════════
+  // ✅ ربط حقول Go / Return (لها data-max)
+  // ═══════════════════════════════════════════════════════════
+  document.querySelectorAll('#assignVehiclesModal .assign-go, #assignVehiclesModal .assign-return').forEach(input => {
+    const newInput = input.cloneNode(true);
+    input.parentNode.replaceChild(newInput, input);
+    
+    const vehId = newInput.dataset.id;
+    
+    newInput.addEventListener('input', () => {
+      const max = parseInt(newInput.dataset.max) || 0;
+      const val = parseInt(newInput.value) || 0;
+      if (val < 0) newInput.value = 0;
+      if (val > max) {
+        newInput.value = max;
+        newInput.style.borderColor = '#dc2626';
+        setTimeout(() => newInput.style.borderColor = 'var(--border)', 1000);
+      }
+      recalcRow(vehId);
+    });
+    
+    newInput.addEventListener('change', () => recalcRow(vehId));
   });
   
-  newInput.addEventListener('change', () => recalcRow(vehId));
-});
-
-// ✅ ربط حقول Adults / Children / Infants (بدون data-max)
-document.querySelectorAll('#assignVehiclesModal .assign-adult, #assignVehiclesModal .assign-child, #assignVehiclesModal .assign-infant').forEach(input => {
-  const newInput = input.cloneNode(true);
-  input.parentNode.replaceChild(newInput, input);
-  
-  const vehId = newInput.dataset.id;
-  
-  newInput.addEventListener('input', () => {
-    const val = parseInt(newInput.value) || 0;
-    if (val < 0) newInput.value = 0;
-    recalcRow(vehId);
+  // ═══════════════════════════════════════════════════════════
+  // ✅ ربط حقول Adults / Children / Infants (بدون data-max)
+  // ═══════════════════════════════════════════════════════════
+  document.querySelectorAll('#assignVehiclesModal .assign-adult, #assignVehiclesModal .assign-child, #assignVehiclesModal .assign-infant').forEach(input => {
+    const newInput = input.cloneNode(true);
+    input.parentNode.replaceChild(newInput, input);
+    
+    const vehId = newInput.dataset.id;
+    
+    newInput.addEventListener('input', () => {
+      const val = parseInt(newInput.value) || 0;
+      if (val < 0) newInput.value = 0;
+      recalcRow(vehId);
+    });
+    
+    newInput.addEventListener('change', () => recalcRow(vehId));
   });
   
-  newInput.addEventListener('change', () => recalcRow(vehId));
-});
-  
-  // Checkboxes
+  // ═══════════════════════════════════════════════════════════
+  // ✅ ربط الـ Checkbox
+  // ═══════════════════════════════════════════════════════════
   document.querySelectorAll('#assignVehiclesModal .assign-select').forEach(cb => {
     const newCb = cb.cloneNode(true);
     cb.parentNode.replaceChild(newCb, cb);
@@ -2941,8 +2984,14 @@ async function saveVehicleAssignment(forceSave = false) {
     if (goCount > maxGo) errors.push(`🚗 ${label}: Go (${goCount}) > Available (${maxGo})`);
     if (returnCount > maxRet) errors.push(`🚗 ${label}: Return (${returnCount}) > Available (${maxRet})`);
     
-    selectedVehiclesData.push({
-      vehicleId: vehId, goCount, returnCount, adults: adult, children: child, infants: infant,
+       selectedVehiclesData.push({
+      vehicleId: vehId, 
+      goCount, 
+      returnCount, 
+      adults: adult, 
+      children: child, 
+      infants: infant,
+      // ✅ totalSeats = A + C فقط (بدون الرضع) — وهو الأماكن المشغولة
       totalSeats: adult + child
     });
   });
@@ -3845,26 +3894,25 @@ function showVehicleDetails(voucherNo, vehicleId) {
     
     const goCount = parseInt(vehicle.goCount) || 0;
     const returnCount = parseInt(vehicle.returnCount) || 0;
-    const totalPassengers = adults + children + infants;
+    
+    // ✅ حساب:
+    // - Total Passengers For Voucher: كل الأفراد في هذه الفاتورة (A+C+I)
+    // - Total Passengers For Vehicle: الأماكن المشغولة فعلياً (A+C فقط)
+    const totalForVoucher = adults + children + infants;
+    const totalForVehicle = adults + children;
     
     const licensePlate = vehicle.licensePlate || cachedVehicle?.licensePlate || '—';
     const driverName = vehicle.driverName || cachedVehicle?.driverName || '—';
     const capacity = cachedVehicle?.capacity || '—';
     
-    // ✅ صورة السيارة (من cachedVehicle.licensePhoto)
     const vehicleImage = cachedVehicle?.licensePhoto || '';
     
-    // ✅ QR Code
     const qrText = `Vehicle: ${licensePlate}\nID: ${vehicleId}\nInvoice: ${voucherNo}\nDate: ${invoice.activeDate}\nTrip: ${invoice.trip}\nGo: ${goCount} | Return: ${returnCount}\nPassengers: A${adults} C${children} I${infants}`;
     const qrUrl = generateQRCode(qrText, 120);
     
-    // ═══════════════════════════════════════════════════════
-    // ✅ HTML
-    // ═══════════════════════════════════════════════════════
     const html = `
         <div style="padding: 4px;">
             
-            <!-- Header (with image) -->
             <div style="background: linear-gradient(135deg, #7c3aed, #5b21b6); color: #f5c842; padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; display: flex; align-items: center; gap: 12px;">
                 <div style="flex-shrink: 0;">
                     ${renderImage(vehicleImage, '🚗', 40)}
@@ -3879,13 +3927,11 @@ function showVehicleDetails(voucherNo, vehicleId) {
                 </div>
             </div>
             
-            <!-- Driver Info -->
             <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
                 <span style="font-size: 11px; font-weight: 700; color: #64748b;">👨‍✈️ Driver</span>
                 <span style="font-size: 12px; color: #1e293b; font-weight: 600;">${escapeHtml(driverName)}</span>
             </div>
             
-            <!-- Accordion: Trips -->
             <div style="border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px; overflow: hidden;">
                 <div onclick="toggleAccordion('acc_trips')" style="background: #f1f5f9; padding: 8px 12px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none;">
                     <span style="font-size: 11px; font-weight: 700; color: #1e293b;">🛣️ Trips Summary</span>
@@ -3905,7 +3951,6 @@ function showVehicleDetails(voucherNo, vehicleId) {
                 </div>
             </div>
             
-            <!-- Accordion: Passengers -->
             <div style="border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px; overflow: hidden;">
                 <div onclick="toggleAccordion('acc_passengers')" style="background: #f1f5f9; padding: 8px 12px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none;">
                     <span style="font-size: 11px; font-weight: 700; color: #1e293b;">👥 Passengers Summary</span>
@@ -3932,7 +3977,6 @@ function showVehicleDetails(voucherNo, vehicleId) {
                 </div>
             </div>
             
-            <!-- Accordion: QR Code -->
             <div style="border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px; overflow: hidden;">
                 <div onclick="toggleAccordion('acc_qr')" style="background: #f1f5f9; padding: 8px 12px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none;">
                     <span style="font-size: 11px; font-weight: 700; color: #1e293b;">📱 QR Code</span>
@@ -3946,15 +3990,22 @@ function showVehicleDetails(voucherNo, vehicleId) {
                 </div>
             </div>
             
-            <!-- Total -->
-            ${totalPassengers > 0 ? `
+            <!-- ✅ Total Passengers for Voucher -->
+            ${totalForVoucher > 0 ? `
                 <div style="background: linear-gradient(135deg, #f5c842, #e6b800); border-radius: 6px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
-                    <span style="font-size: 11px; font-weight: 800; color: #0f1f3d; text-transform: uppercase; letter-spacing: 0.5px;">📊 Total Passengers</span>
-                    <span style="font-size: 18px; font-weight: 900; color: #0f1f3d;">${totalPassengers}</span>
+                    <span style="font-size: 11px; font-weight: 800; color: #0f1f3d; text-transform: uppercase; letter-spacing: 0.5px;">📊 Total Passengers For Voucher</span>
+                    <span style="font-size: 18px; font-weight: 900; color: #0f1f3d;">${totalForVoucher}</span>
                 </div>
             ` : ''}
             
-            <!-- Action Buttons -->
+            <!-- ✅ Total Passengers for Vehicle (بدون الرضع) -->
+            ${totalForVehicle > 0 ? `
+                <div style="background: linear-gradient(135deg, #7c3aed, #5b21b6); border-radius: 6px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; margin-top: 6px; color: white;">
+                    <span style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">📊 Total Passengers For Vehicle</span>
+                    <span style="font-size: 18px; font-weight: 900;">${totalForVehicle}</span>
+                </div>
+            ` : ''}
+            
             <div style="display: flex; gap: 8px; margin-top: 12px;">
                 <button onclick="printModalContent('Vehicle Details - ${escapeHtml(licensePlate)}')" style="flex: 1; padding: 8px; background: #0f1f3d; color: #f5c842; border: none; border-radius: 6px; font-weight: 700; font-size: 11px; cursor: pointer;">
                     🖨️ Print
@@ -3971,7 +4022,6 @@ function showVehicleDetails(voucherNo, vehicleId) {
     document.getElementById('detailsModalTitle').innerHTML = '🚗 Vehicle Details';
     openModal('detailsModal');
     
-    // ✅ فتح الأقسام تلقائياً بعد الفتح
     setTimeout(() => {
         toggleAccordion('acc_trips');
         toggleAccordion('acc_passengers');
