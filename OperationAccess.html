@@ -6032,12 +6032,25 @@ async function saveBeachInstructorsV3() {
 }
 
 // ✅ دالة مساعدة لعرض قسم فرعي داخل المركب
+// ✅ دالة مساعدة لعرض قسم فرعي داخل المركب
 function renderBoatSubSection(boatId, type, title, membersList, selectedIds) {
+  // ✅ قراءة الحالة الفعلية من الـ Map المناسب
+  const mapRef = type === 'instructors' ? boatInstructorsMap :
+                 type === 'helpers'     ? boatHelpersMap : 
+                                          boatPhotographersMap;
+  const actualSelectedIds = mapRef[boatId] || [];
+  const actualCount = actualSelectedIds.length;
+  
+  // ✅ تحديد أيقونة النوع
+  const icon = type === 'instructors' ? '👨‍🏫' : 
+               type === 'helpers'     ? '🆘'   : 
+                                        '📸';
+  
   let html = `
-    <div class="boat-subsection">
+    <div class="boat-subsection" data-boat="${boatId}" data-type="${type}">
       <div class="boat-subsection-header sub-${type}">
         <span>${title}</span>
-        <span style="font-size:10px;">(${selectedIds.length} selected)</span>
+        <span class="boat-subsection-count" style="font-size:10px;">(${actualCount} selected)</span>
       </div>
       <div class="boat-subsection-body">
   `;
@@ -6046,11 +6059,16 @@ function renderBoatSubSection(boatId, type, title, membersList, selectedIds) {
     html += '<div style="font-size: 11px; color: gray; padding: 4px;">No available members</div>';
   } else {
     for (const m of membersList) {
-      const isChecked = selectedIds.includes(m.id);
-      const icon = type === 'instructors' ? '👨‍🏫' : type === 'helpers' ? '🆘' : '📸';
+      // ✅ التحقق من التحديد من الـ Map الفعلي (وليس من selectedIds)
+      const isChecked = actualSelectedIds.includes(m.id);
+      
       html += `
         <label class="team-member-row" style="cursor:pointer;">
-          <input type="checkbox" class="boat-${type}-cb" data-boat="${boatId}" data-member="${m.id}" ${isChecked ? 'checked' : ''}>
+          <input type="checkbox" 
+                 class="boat-${type}-cb" 
+                 data-boat="${boatId}" 
+                 data-member="${m.id}" 
+                 ${isChecked ? 'checked' : ''}>
           <span>${icon} ${escapeHtml(m.name)}</span>
         </label>
       `;
@@ -6062,7 +6080,10 @@ function renderBoatSubSection(boatId, type, title, membersList, selectedIds) {
 }
 
 function attachBoatEventsV3() {
-  // Select All Boats
+  
+  // ═══════════════════════════════════════════════════════════
+  // 1️⃣ Select All Boats
+  // ═══════════════════════════════════════════════════════════
   const selectAll = document.getElementById('selectAllBoats');
   if (selectAll) {
     const newCb = selectAll.cloneNode(true);
@@ -6077,7 +6098,9 @@ function attachBoatEventsV3() {
     });
   }
   
-  // Boat checkboxes
+  // ═══════════════════════════════════════════════════════════
+  // 2️⃣ Boat Checkboxes
+  // ═══════════════════════════════════════════════════════════
   document.querySelectorAll('.boat-checkbox').forEach(cb => {
     const newCb = cb.cloneNode(true);
     cb.parentNode.replaceChild(newCb, cb);
@@ -6088,17 +6111,60 @@ function attachBoatEventsV3() {
     });
   });
   
-  // Member checkboxes — إعادة تحميل القائمة لفلترة المتاحين
+  // ═══════════════════════════════════════════════════════════
+  // 3️⃣ Member Checkboxes — Instructors / Helpers / Photographers
+  // ✅ التحديث المباشر بدون إعادة بناء المودال
+  // ═══════════════════════════════════════════════════════════
   document.querySelectorAll('.boat-instructors-cb, .boat-helpers-cb, .boat-photographers-cb').forEach(cb => {
     const newCb = cb.cloneNode(true);
     cb.parentNode.replaceChild(newCb, cb);
-    newCb.addEventListener('change', () => {
-      // إعادة بناء القوائم لاستبعاد المشغولين
-      openBoatsModal();
+    
+    newCb.addEventListener('change', (e) => {
+      const boatId = e.target.dataset.boat;
+      const memberId = e.target.dataset.member;
+      
+      // ✅ تحديد النوع من الـ class
+      const type = e.target.classList.contains('boat-instructors-cb') ? 'instructors' :
+                   e.target.classList.contains('boat-helpers-cb')     ? 'helpers'     : 
+                                                                        'photographers';
+      
+      // ✅ اختيار الـ Map الصحيح
+      const mapRef = type === 'instructors' ? boatInstructorsMap :
+                     type === 'helpers'     ? boatHelpersMap     : 
+                                              boatPhotographersMap;
+      
+      // ✅ تهيئة الـ array إذا لم تكن موجودة
+      if (!mapRef[boatId]) mapRef[boatId] = [];
+      
+      // ✅ إضافة/إزالة العضو
+      if (e.target.checked) {
+        if (!mapRef[boatId].includes(memberId)) {
+          mapRef[boatId].push(memberId);
+        }
+      } else {
+        const idx = mapRef[boatId].indexOf(memberId);
+        if (idx !== -1) mapRef[boatId].splice(idx, 1);
+      }
+      
+      // ✅ تحديث العدّاد في الرأس مباشرة (بدون إعادة بناء)
+      const subSection = e.target.closest('.boat-subsection');
+      if (subSection) {
+        const countSpan = subSection.querySelector('.boat-subsection-count');
+        if (countSpan) {
+          countSpan.textContent = `(${mapRef[boatId].length} selected)`;
+        }
+      }
+      
+      // ✅ تحديث المنع الفوري (اختياري - قد يفيد لاحقاً)
+      updateMemberAvailability(type, memberId, e.target.checked);
+      
+      console.log(`🔄 ${type} updated for ${boatId}:`, mapRef[boatId]);
     });
   });
   
-  // Trip selects
+  // ═══════════════════════════════════════════════════════════
+  // 4️⃣ Trip Selects
+  // ═══════════════════════════════════════════════════════════
   document.querySelectorAll('.boat-trip-select').forEach(select => {
     const newSelect = select.cloneNode(true);
     select.parentNode.replaceChild(newSelect, select);
@@ -6109,7 +6175,47 @@ function attachBoatEventsV3() {
       currentAssignments.boatTripMap[boatId] = newSelect.value;
     });
   });
-}    
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// 🆕 دالة مساعدة: تحديث توفر الأعضاء (اختياري)
+// ═══════════════════════════════════════════════════════════════
+// 📌 تُستدعى عند اختيار/إلغاء عضو من مركب
+// 📌 تُحدِّث عرض الأعضاء في المراكب الأخرى (تعطيل/تفعيل)
+// ═══════════════════════════════════════════════════════════════
+function updateMemberAvailability(type, memberId, isNowSelected) {
+  try {
+    // البحث عن كل الـ checkboxes لنفس العضو في المراكب الأخرى
+    const selector = `.boat-${type}-cb[data-member="${memberId}"]`;
+    const allCheckboxes = document.querySelectorAll(selector);
+    
+    allCheckboxes.forEach(cb => {
+      const otherBoatId = cb.dataset.boat;
+      const currentBoatId = event?.target?.dataset?.boat;
+      
+      // تجاهل نفس الـ checkbox
+      if (cb === event?.target) return;
+      
+      // تعطيل/تفعيل الأعضاء في المراكب الأخرى
+      if (isNowSelected) {
+        // تم اختيار العضو → عطّل في المراكب الأخرى
+        cb.disabled = true;
+        cb.parentElement.style.opacity = '0.5';
+        cb.parentElement.style.cursor = 'not-allowed';
+      } else {
+        // تم إلغاء الاختيار → فعّل في المراكب الأخرى
+        cb.disabled = false;
+        cb.parentElement.style.opacity = '1';
+        cb.parentElement.style.cursor = 'pointer';
+      }
+    });
+    
+    console.log(`🔒 Member availability updated: ${memberId} (${isNowSelected ? 'selected' : 'deselected'})`);
+  } catch(e) {
+    console.warn('⚠️ updateMemberAvailability error:', e);
+  }
+}
    
   
   // ✅ تحميل قائمة الفروع
