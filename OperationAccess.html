@@ -1820,12 +1820,19 @@ function getVehicleUsedSeats(date, vehicleId, tripName, excludeVoucher) {
 }
 function getBoatUsedSeats(date, boatId, tripName, excludeVoucher) {
   let adults = 0, children = 0, infants = 0;
+  
   for (const inv of allInvoices) {
+    // ✅ استبعاد الفاتورة الحالية (حتى لا نحسبها مرتين)
     if (inv.voucherNo === excludeVoucher) continue;
+    
+    // ✅ فلترة التاريخ
     if ((inv.activeDate || '') !== date) continue;
-    if ((inv.trip || '') !== tripName) continue;
+    
+    // ⚠️ هام: تم إلغاء فلترة الرحلة (tripName) لأننا نريد حساب كل المسافات في المركب مهما كانت رحلتهم
+    
     let bData = [];
     try { bData = JSON.parse(inv.BoatsUsed || '[]'); } catch(e) {}
+    
     for (const b of bData) {
       if (b.boatId === boatId) {
         adults += parseInt(b.adults) || 0;
@@ -1834,7 +1841,13 @@ function getBoatUsedSeats(date, boatId, tripName, excludeVoucher) {
       }
     }
   }
-  return { adults, children, infants, total: adults + children + infants };
+  
+  return { 
+    adults, 
+    children, 
+    infants, 
+    total: adults + children + infants 
+  };
 }
 // ============================================================
 // LOAD INVOICES - LAZY LOADING
@@ -3154,9 +3167,7 @@ async function openAssignBoats(voucherNo) {
     const children = parseInt(invoice.dbl) || 0;
     const infants = parseInt(invoice.trpl) || 0;
 
-    // ✅ عرض جميع المراكب المُعيّنة
     let relevantBoatIds = [...new Set(selectedBoats)];
-
     let savedBoats = [];
     try { savedBoats = JSON.parse(invoice.BoatsUsed || '[]'); } catch(e) {}
 
@@ -3169,15 +3180,14 @@ async function openAssignBoats(voucherNo) {
     document.getElementById('assignBoatsContent').innerHTML = '<div class="loader"><div class="spinner"></div>Loading...</div>';
     openModal('assignBoatsModal');
 
-    // بناء الصفوف
     const rows = [];
     for (const boatId of relevantBoatIds) {
         const boat = cachedBoats.find(b => b.id === boatId);
         if (!boat) continue;
         const capacity = parseInt(boat.capacity) || 0;
         
-        // ✅ هنا نستخدم الدالة التي تحسب (Adults + Children + Infants) لأنهم يشغلون مساحة
-        const used = getBoatUsedSeats(currentDate, boatId, null, voucherNo);
+        // ✅ نحسب المشغول من الفواتير الأخرى فقط (لأن هذه الفاتورة لم تُحفظ بعد أو تُستبعد بواسطة excludeVoucher)
+        const used = getBoatUsedSeats(currentDate, boatId, tripName, voucherNo);
         
         const saved = savedBoats.find(b => b.boatId === boatId) || {};
         rows.push({ boat, capacity, used, saved });
@@ -3189,7 +3199,6 @@ async function openAssignBoats(voucherNo) {
         return;
     }
 
-    // بناء HTML — English labels + Live Calculation
     let html = `
       <div style="background:var(--navy);color:white;padding:12px;border-radius:8px;margin-bottom:14px;">
         <strong>📊 ${escapeHtml(tripName)}</strong><br>
@@ -3207,7 +3216,7 @@ async function openAssignBoats(voucherNo) {
     `;
 
     for (const { boat, capacity, used, saved } of rows) {
-        const totalUsed = used.adults + used.children + used.infants;
+        const totalUsed = used.total;
         const available = Math.max(0, capacity - totalUsed);
         const pct = capacity > 0 ? Math.min(100, Math.round(totalUsed / capacity * 100)) : 0;
         
@@ -3255,7 +3264,6 @@ async function openAssignBoats(voucherNo) {
 
     document.getElementById('assignBoatsContent').innerHTML = html;
     
-    // ✅ استدعاء دالة ربط الأحداث للحساب اللحظي
     setTimeout(() => attachBoatAssignmentEvents(), 50);
 }
   function attachBoatAssignmentEvents() {
@@ -4108,7 +4116,7 @@ function showBoatDetails(voucherNo, boatId) {
     const cachedBoat = cachedBoats.find(b => b.id === boatId);
     const boatName = boat.boatName || cachedBoat?.name || boatId || '—';
     
-    // ✅ Fallback A/C/I
+    // ✅ بيانات الفاتورة الحالية
     let adults   = parseInt(boat.adults)   || 0;
     let children = parseInt(boat.children) || 0;
     let infants  = parseInt(boat.infants)  || 0;
@@ -4118,9 +4126,12 @@ function showBoatDetails(voucherNo, boatId) {
         infants  = parseInt(invoice.trpl) || 0;
     }
     
-    // ✅ للمراكب: كل شيء يُحسب
     const totalForVoucher = adults + children + infants;
-    const totalForBoat = adults + children + infants;
+    
+    // ✅ حساب إجمالي المركب (نستخدم الدالة التي تستبعد الفاتورة الحالية ثم نضيف مسافريها)
+    const currentDate = invoice.activeDate;
+    const otherInvoicesUsed = getBoatUsedSeats(currentDate, boatId, null, voucherNo); // null لعدم الفلترة بالرحلة
+    const totalForBoat = otherInvoicesUsed.total + totalForVoucher;
     
     const capacity = cachedBoat?.capacity || '—';
     const boatImage = cachedBoat?.licensePhoto || '';
