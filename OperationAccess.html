@@ -3132,113 +3132,76 @@ async function openAssignBoats(voucherNo) {
     const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
     if (!invoice) return;
 
-    // ✅ التحقق من وجود cachedBoats
     if (!cachedBoats || cachedBoats.length === 0) {
-        showToast('⚠️ جاري تحميل المراكب...', 'info');
+        showToast('⚠️ Loading boats...', 'info');
         try {
             const boatsResult = await gas('getBoats', { centerName: currentUser?.centerName });
-            let boatsList = [];
-            if (Array.isArray(boatsResult)) {
-                boatsList = boatsResult;
-            } else if (boatsResult?.success && Array.isArray(boatsResult.data)) {
-                boatsList = boatsResult.data;
-            } else if (boatsResult?.data && Array.isArray(boatsResult.data)) {
-                boatsList = boatsResult.data;
-            }
-            if (boatsList.length > 0) {
-                cachedBoats = boatsList;
-                console.log('✅ Boats loaded on demand:', cachedBoats.length);
-            } else {
-                showToast('⚠️ لا توجد مراكب متاحة', 'error');
-                return;
-            }
-        } catch(e) {
-            showToast('❌ فشل تحميل المراكب', 'error');
-            return;
-        }
+            cachedBoats = Array.isArray(boatsResult) ? boatsResult : (boatsResult?.data || []);
+        } catch(e) { showToast('❌ Failed to load boats', 'error'); return; }
     }
 
     if (selectedBoats.length === 0) {
-        showToast('⚠️ اختر المراكب أولاً من زر ⛵ Boats', 'error');
+        showToast('⚠️ Select boats first from ⛵ Boats button', 'error');
         return;
     }
 
     currentAssignVoucher = voucherNo;
+    currentAssignInvoice = invoice;
     const currentDate = getCurrentDateISO();
     const tripName = invoice.trip || '';
 
     const adults = parseInt(invoice.sgl) || 0;
     const children = parseInt(invoice.dbl) || 0;
     const infants = parseInt(invoice.trpl) || 0;
-    const totalPass = adults + children + infants;
 
-    // ✅ تصفية المراكب حسب الرحلة فقط
-    const boatTripMap = currentAssignments?.boatTripMap || {};
-    
-    // ✅ المراكب المرتبطة بالرحلة الحالية
-    let relevantBoatIds = selectedBoats.filter(bId => {
-        const assignedTrip = boatTripMap[bId];
-        return !assignedTrip || assignedTrip === tripName;
-    });
+    // ✅ عرض جميع المراكب المُعيّنة
+    let relevantBoatIds = [...new Set(selectedBoats)];
 
-    // ✅ إذا لم يتم العثور على مراكب مرتبطة، استخدم جميع المراكب المختارة مع تحذير
-    if (relevantBoatIds.length === 0) {
-        console.log(`⚠️ No boats assigned to trip: ${tripName}, showing all selected boats`);
-        relevantBoatIds = selectedBoats;
-        showToast(`⚠️ لا توجد مراكب مرتبطة برحلة: ${tripName}`, 'warning');
-    }
-
-    // ✅ إزالة التكرارات
-    relevantBoatIds = [...new Set(relevantBoatIds)];
-
-    // ✅ جلب المراكب المحفوظة في الفاتورة
     let savedBoats = [];
     try { savedBoats = JSON.parse(invoice.BoatsUsed || '[]'); } catch(e) {}
 
-    // ✅ إضافة المراكب المحفوظة في الفاتورة (إذا لم تكن موجودة)
     for (const sb of savedBoats) {
         if (sb.boatId && !relevantBoatIds.includes(sb.boatId)) {
             relevantBoatIds.push(sb.boatId);
         }
     }
 
-    document.getElementById('assignBoatsContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري التحميل...</div>';
+    document.getElementById('assignBoatsContent').innerHTML = '<div class="loader"><div class="spinner"></div>Loading...</div>';
     openModal('assignBoatsModal');
 
-    // حساب الأماكن
+    // بناء الصفوف
     const rows = [];
     for (const boatId of relevantBoatIds) {
         const boat = cachedBoats.find(b => b.id === boatId);
         if (!boat) continue;
         const capacity = parseInt(boat.capacity) || 0;
-        const used = getBoatUsedSeats(currentDate, boatId, tripName, voucherNo);
+        
+        // ✅ هنا نستخدم الدالة التي تحسب (Adults + Children + Infants) لأنهم يشغلون مساحة
+        const used = getBoatUsedSeats(currentDate, boatId, null, voucherNo);
+        
         const saved = savedBoats.find(b => b.boatId === boatId) || {};
         rows.push({ boat, capacity, used, saved });
     }
 
     if (rows.length === 0) {
-        document.getElementById('assignBoatsContent').innerHTML = `
-          <div style="padding:20px;text-align:center;color:var(--text-lt);">
-            ⚠️ لا توجد مراكب مرتبطة برحلة: ${escapeHtml(tripName)}<br>
-            <span style="font-size:10px;">يرجى تخصيص المراكب أولاً من زر ⛵ Boats</span>
-            <br><br>
-            <button class="btn btn-secondary" onclick="closeModal('assignBoatsModal')">إغلاق</button>
-          </div>`;
+        document.getElementById('assignBoatsContent').innerHTML = 
+            `<div style="padding:20px;text-align:center;">⚠️ No boats available</div>`;
         return;
     }
 
-    // بناء HTML
+    // بناء HTML — English labels + Live Calculation
     let html = `
       <div style="background:var(--navy);color:white;padding:12px;border-radius:8px;margin-bottom:14px;">
         <strong>📊 ${escapeHtml(tripName)}</strong><br>
-        👤 بالغ: ${adults} | 👶 أطفال: ${children} | 🍼 رضع: ${infants}
-        <br>⛵ عدد المراكب: ${rows.length}
+        👤 Adults: ${adults} | 👶 Children: ${children} | 🍼 Infants: ${infants}
+        <br>⛵ Boats: ${rows.length}
       </div>
       <div style="overflow-x:auto;max-height:400px;">
         <table style="width:100%;font-size:12px;border-collapse:collapse;">
           <thead><tr style="background:var(--navy);color:var(--gold);">
-            <th>⛵ المركب</th><th>🎫 طاقة</th><th>📊 مشغول</th><th>🟢 شاغر</th>
-            <th>👤 بالغ</th><th>👶 طفل</th><th>🍼 رضيع</th><th>☑️</th>
+            <th>⛵ Boat</th><th>🎫 Capacity</th>
+            <th>📊 Used</th><th>🟢 Available</th>
+            <th>👤 Adults</th><th>👶 Children</th><th>🍼 Infants</th><th>☑️</th>
           </tr></thead>
           <tbody>
     `;
@@ -3247,24 +3210,29 @@ async function openAssignBoats(voucherNo) {
         const totalUsed = used.adults + used.children + used.infants;
         const available = Math.max(0, capacity - totalUsed);
         const pct = capacity > 0 ? Math.min(100, Math.round(totalUsed / capacity * 100)) : 0;
-        const barCls = pct >= 100 ? 'full' : pct >= 75 ? 'warn' : '';
-        const availCls = available === 0 ? 'seat-full' : available <= 3 ? 'seat-warn' : 'seat-available';
+        
+        // القيمة الأولية: (بالغين + أطفال + رضع) لأنهم يشغلون أماكن في المركب
+        const initTotal = saved.adults || saved.children || saved.infants 
+            ? (parseInt(saved.adults)||0) + (parseInt(saved.children)||0) + (parseInt(saved.infants)||0)
+            : Math.min(adults + children + infants, available);
 
         html += `
           <tr>
             <td style="background:var(--navy);color:var(--gold);font-weight:700;padding:8px;">
-              <strong>⛵ ${escapeHtml(boat.name || boat.id)}</strong>
+              <strong>${escapeHtml(boat.name || boat.id)}</strong>
             </td>
             <td style="text-align:center;font-weight:700">${capacity}</td>
             <td style="text-align:center">
-              <div class="seat-bar-wrap"><div class="seat-bar-fill ${barCls}" style="width:${pct}%"></div></div>
+              <div class="seat-bar-wrap"><div class="seat-bar-fill ${pct >= 100 ? 'full' : pct >= 75 ? 'warn' : ''}" style="width:${pct}%"></div></div>
               <div class="seat-count-text">${totalUsed} / ${capacity}</div>
             </td>
-            <td style="text-align:center"><span class="${availCls}" style="font-weight:700;font-size:14px;">${available}</span></td>
-            <td><input type="number" class="assign-adult" data-id="${boat.id}" value="${saved.adults || ''}" min="0" style="width:50px;text-align:center;padding:4px;border:1px solid var(--border);border-radius:6px;"></td>
-            <td><input type="number" class="assign-child" data-id="${boat.id}" value="${saved.children || ''}" min="0" style="width:50px;text-align:center;padding:4px;border:1px solid var(--border);border-radius:6px;"></td>
-            <td><input type="number" class="assign-infant" data-id="${boat.id}" value="${saved.infants || ''}" min="0" style="width:50px;text-align:center;padding:4px;border:1px solid var(--border);border-radius:6px;"></td>
-            <td><input type="checkbox" class="assign-select" data-id="${boat.id}" ${(saved.adults || saved.children) ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer;"></td>
+            <td style="text-align:center;font-weight:700;color:${available === 0 ? 'red' : 'green'}">
+              <span style="background:${available === 0 ? '#fee2e2' : '#dcfce7'};padding:3px 8px;border-radius:6px;">${available}</span>
+            </td>
+            <td><input type="number" class="assign-boat-adult" data-id="${boat.id}" data-capacity="${capacity}" data-base-used="${totalUsed}" value="${saved.adults || ''}" min="0" style="width:50px;text-align:center;padding:4px;border:1px solid var(--border);border-radius:6px;"></td>
+            <td><input type="number" class="assign-boat-child" data-id="${boat.id}" data-capacity="${capacity}" data-base-used="${totalUsed}" value="${saved.children || ''}" min="0" style="width:50px;text-align:center;padding:4px;border:1px solid var(--border);border-radius:6px;"></td>
+            <td><input type="number" class="assign-boat-infant" data-id="${boat.id}" data-capacity="${capacity}" data-base-used="${totalUsed}" value="${saved.infants || ''}" min="0" style="width:50px;text-align:center;padding:4px;border:1px solid var(--border);border-radius:6px;"></td>
+            <td><input type="checkbox" class="assign-select" data-id="${boat.id}" ${(saved.adults || saved.children || saved.infants) ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer;"></td>
           </tr>
         `;
     }
@@ -3273,47 +3241,140 @@ async function openAssignBoats(voucherNo) {
           </tbody>
         </table>
       </div>
+      <div style="margin-top:12px;padding:10px;background:#fef3c7;border-radius:8px;border-right:4px solid var(--gold);font-size:11px;">
+        <strong style="color:#92400e;">💡 Note:</strong>
+        <span style="color:#78350f;">
+          Infants are counted in boat capacity. Max seats cannot be exceeded.
+        </span>
+      </div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
-        <button class="btn btn-secondary" onclick="closeModal('assignBoatsModal')">إلغاء</button>
-        <button class="btn btn-primary" onclick="saveBoatAssignment()">✅ حفظ</button>
+        <button class="btn btn-secondary" onclick="closeModal('assignBoatsModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="saveBoatAssignment()">✅ Assign</button>
       </div>
     `;
 
     document.getElementById('assignBoatsContent').innerHTML = html;
+    
+    // ✅ استدعاء دالة ربط الأحداث للحساب اللحظي
+    setTimeout(() => attachBoatAssignmentEvents(), 50);
+}
+  function attachBoatAssignmentEvents() {
+  function recalcBoatRow(boatId) {
+    const adultInput = document.querySelector(`#assignBoatsModal .assign-boat-adult[data-id="${boatId}"]`);
+    const childInput = document.querySelector(`#assignBoatsModal .assign-boat-child[data-id="${boatId}"]`);
+    const infantInput = document.querySelector(`#assignBoatsModal .assign-boat-infant[data-id="${boatId}"]`);
+    
+    if (!adultInput) return;
+    
+    const adultVal = parseInt(adultInput.value) || 0;
+    const childVal = parseInt(childInput?.value) || 0;
+    const infantVal = parseInt(infantInput?.value) || 0;
+    
+    const baseUsed = parseInt(adultInput.dataset.baseUsed) || 0;
+    const capacity = parseInt(adultInput.dataset.capacity) || 0;
+    
+    // ✅ في المراكب: الرضع يشغلون مكان
+    const currentTotal = adultVal + childVal + infantVal;
+    const totalUsed = baseUsed + currentTotal;
+    const available = Math.max(0, capacity - totalUsed);
+    const pct = capacity > 0 ? Math.min(100, Math.round(totalUsed / capacity * 100)) : 0;
+    
+    const row = adultInput.closest('tr');
+    const cells = row.querySelectorAll('td');
+    
+    if (cells[2]) {
+      cells[2].innerHTML = `
+        <div class="seat-bar-wrap"><div class="seat-bar-fill ${pct >= 100 ? 'full' : pct >= 75 ? 'warn' : ''}" style="width:${pct}%"></div></div>
+        <div class="seat-count-text">${totalUsed} / ${capacity}</div>
+      `;
+    }
+    if (cells[3]) {
+      cells[3].innerHTML = `<span style="background:${available === 0 ? '#fee2e2' : '#dcfce7'};padding:3px 8px;border-radius:6px;font-weight:700;color:${available === 0 ? 'red' : 'green'};">${available}</span>`;
+    }
+  }
+
+  // ربط الحقول
+  document.querySelectorAll('#assignBoatsModal .assign-boat-adult, #assignBoatsModal .assign-boat-child, #assignBoatsModal .assign-boat-infant').forEach(input => {
+    const newInput = input.cloneNode(true);
+    input.parentNode.replaceChild(newInput, input);
+    const boatId = newInput.dataset.id;
+    
+    newInput.addEventListener('input', () => {
+      const val = parseInt(newInput.value) || 0;
+      if (val < 0) newInput.value = 0;
+      recalcBoatRow(boatId);
+    });
+    newInput.addEventListener('change', () => recalcBoatRow(boatId));
+  });
+
+  // ربط الـ Checkbox
+  document.querySelectorAll('#assignBoatsModal .assign-select').forEach(cb => {
+    const newCb = cb.cloneNode(true);
+    cb.parentNode.replaceChild(newCb, cb);
+    newCb.addEventListener('change', (e) => {
+      const boatId = e.target.dataset.id;
+      const inputs = document.querySelectorAll(
+        `#assignBoatsModal .assign-boat-adult[data-id="${boatId}"],` +
+        `#assignBoatsModal .assign-boat-child[data-id="${boatId}"],` +
+        `#assignBoatsModal .assign-boat-infant[data-id="${boatId}"]`
+      );
+      inputs.forEach(inp => {
+        inp.disabled = !e.target.checked;
+        inp.style.opacity = e.target.checked ? '1' : '0.5';
+      });
+    });
+  });
 }
   
 async function saveBoatAssignment() {
-  // ✅ تعريف saveBtn في البداية
   const saveBtn = document.querySelector('#assignBoatsModal .btn-primary');
-  if (saveBtn && saveBtn.disabled) {
-    console.log('⚠️ Save already in progress, ignoring...');
-    return;
-  }
+  if (saveBtn && saveBtn.disabled) return;
   
   let selectedBoatsData = [];
+  const errors = [];
+  
   document.querySelectorAll('#assignBoatsModal .assign-select:checked').forEach(cb => {
     const boatId = cb.getAttribute('data-id');
-    const adult = parseInt(document.querySelector(`.assign-adult[data-id="${boatId}"]`).value) || 0;
-    const child = parseInt(document.querySelector(`.assign-child[data-id="${boatId}"]`).value) || 0;
-    const infant = parseInt(document.querySelector(`.assign-infant[data-id="${boatId}"]`).value) || 0;
-    if (adult + child + infant === 0) return;
+    const adultInput = document.querySelector(`.assign-boat-adult[data-id="${boatId}"]`);
+    const childInput = document.querySelector(`.assign-boat-child[data-id="${boatId}"]`);
+    const infantInput = document.querySelector(`.assign-boat-infant[data-id="${boatId}"]`);
+    
+    const adult = parseInt(adultInput?.value) || 0;
+    const child = parseInt(childInput?.value) || 0;
+    const infant = parseInt(infantInput?.value) || 0;
+    
+    // ✅ التحقق من السعة (الكل: بالغ + طفل + رضيع)
+    const capacity = parseInt(adultInput?.dataset.capacity) || 0;
+    const baseUsed = parseInt(adultInput?.dataset.baseUsed) || 0;
+    const total = baseUsed + adult + child + infant;
+    
+    if (total > capacity + 1) {
+      const boat = cachedBoats.find(b => b.id === boatId);
+      errors.push(`⛵ ${boat?.name || boatId}: Total (${total}) > Capacity+1 (${capacity + 1})`);
+    }
+    
     selectedBoatsData.push({ 
       boatId, 
       adults: adult, 
       children: child, 
       infants: infant, 
-      totalSeats: adult + child + infant 
+      totalSeats: adult + child + infant // ✅ الرضع محسوبون هنا للمراكب
     });
   });
   
   if (selectedBoatsData.length === 0) { 
-    showToast('⚠️ اختر مركب', 'error'); 
+    showToast('⚠️ Select at least one boat', 'error'); 
     return; 
+  }
+  
+  if (errors.length > 0) {
+    showToast('❌ Over Capacity:\n' + errors.join('\n'), 'error');
+    return;
   }
   
   if (saveBtn) {
     saveBtn.disabled = true;
-    saveBtn.textContent = '⏳ جاري الحفظ...';
+    saveBtn.textContent = '⏳ Saving...';
   }
   
   try {
@@ -3326,22 +3387,22 @@ async function saveBoatAssignment() {
     if (result?.success) { 
       updateLocalInvoice(currentAssignVoucher, 'BoatsUsed', JSON.stringify(selectedBoatsData)); 
       renderTable(); 
-      showToast('✅ تم حفظ المراكب', 'success'); 
+      showToast('✅ Boats assigned', 'success'); 
       closeModal('assignBoatsModal'); 
     } else {
-      showToast('❌ فشل الحفظ: ' + (result?.message || 'Unknown error'), 'error');
+      showToast('❌ Failed: ' + (result?.message || 'Unknown error'), 'error');
     }
   } catch(e) {
     console.error('❌ saveBoatAssignment error:', e);
-    showToast('❌ خطأ: ' + e.message, 'error');
+    showToast('❌ Error: ' + e.message, 'error');
   } finally {
     if (saveBtn) {
       saveBtn.disabled = false;
-      saveBtn.textContent = '✅ حفظ';
+      saveBtn.textContent = '✅ Assign';
     }
   }
 }
-
+  
 // ✅ دالة تصنيف النشاط إلى نوع المدرب المناسب
 function classifyActivity(activityName) {
   const lower = activityName.toLowerCase();
@@ -4057,20 +4118,19 @@ function showBoatDetails(voucherNo, boatId) {
         infants  = parseInt(invoice.trpl) || 0;
     }
     
-    const totalPassengers = adults + children + infants;
-    const capacity = cachedBoat?.capacity || '—';
+    // ✅ للمراكب: كل شيء يُحسب
+    const totalForVoucher = adults + children + infants;
+    const totalForBoat = adults + children + infants;
     
-    // ✅ صورة المركب
+    const capacity = cachedBoat?.capacity || '—';
     const boatImage = cachedBoat?.licensePhoto || '';
     
-    // ✅ QR Code
     const qrText = `Boat: ${boatName}\nID: ${boatId}\nInvoice: ${voucherNo}\nDate: ${invoice.activeDate}\nTrip: ${invoice.trip}\nPassengers: A${adults} C${children} I${infants}`;
     const qrUrl = generateQRCode(qrText, 120);
     
     const html = `
         <div style="padding: 4px;">
             
-            <!-- Header (with image) -->
             <div style="background: linear-gradient(135deg, #0f1f3d, #1a3260); color: #f5c842; padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; display: flex; align-items: center; gap: 12px;">
                 <div style="flex-shrink: 0;">
                     ${renderImage(boatImage, '⛵', 40)}
@@ -4085,7 +4145,6 @@ function showBoatDetails(voucherNo, boatId) {
                 </div>
             </div>
             
-            <!-- Accordion: Passengers -->
             <div style="border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px; overflow: hidden;">
                 <div onclick="toggleAccordion('acc_boat_pax')" style="background: #f1f5f9; padding: 8px 12px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none;">
                     <span style="font-size: 11px; font-weight: 700; color: #1e293b;">👥 Passengers Summary</span>
@@ -4112,7 +4171,6 @@ function showBoatDetails(voucherNo, boatId) {
                 </div>
             </div>
             
-            <!-- Accordion: QR Code -->
             <div style="border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px; overflow: hidden;">
                 <div onclick="toggleAccordion('acc_boat_qr')" style="background: #f1f5f9; padding: 8px 12px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none;">
                     <span style="font-size: 11px; font-weight: 700; color: #1e293b;">📱 QR Code</span>
@@ -4126,15 +4184,22 @@ function showBoatDetails(voucherNo, boatId) {
                 </div>
             </div>
             
-            <!-- Total -->
-            ${totalPassengers > 0 ? `
+            <!-- ✅ Total Passengers for Voucher -->
+            ${totalForVoucher > 0 ? `
                 <div style="background: linear-gradient(135deg, #f5c842, #e6b800); border-radius: 6px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
-                    <span style="font-size: 11px; font-weight: 800; color: #0f1f3d; text-transform: uppercase; letter-spacing: 0.5px;">📊 Total Passengers</span>
-                    <span style="font-size: 18px; font-weight: 900; color: #0f1f3d;">${totalPassengers}</span>
+                    <span style="font-size: 11px; font-weight: 800; color: #0f1f3d; text-transform: uppercase; letter-spacing: 0.5px;">📊 Total Passengers For Voucher</span>
+                    <span style="font-size: 18px; font-weight: 900; color: #0f1f3d;">${totalForVoucher}</span>
                 </div>
             ` : ''}
             
-            <!-- Action Buttons -->
+            <!-- ✅ Total Passengers for Boat -->
+            ${totalForBoat > 0 ? `
+                <div style="background: linear-gradient(135deg, #0f1f3d, #1a3260); border-radius: 6px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; margin-top: 6px; color: white;">
+                    <span style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">📊 Total Passengers For Boat</span>
+                    <span style="font-size: 18px; font-weight: 900; color: #f5c842;">${totalForBoat}</span>
+                </div>
+            ` : ''}
+            
             <div style="display: flex; gap: 8px; margin-top: 12px;">
                 <button onclick="printModalContent('Boat Details - ${escapeHtml(boatName)}')" style="flex: 1; padding: 8px; background: #0f1f3d; color: #f5c842; border: none; border-radius: 6px; font-weight: 700; font-size: 11px; cursor: pointer;">
                     🖨️ Print
@@ -4151,7 +4216,6 @@ function showBoatDetails(voucherNo, boatId) {
     document.getElementById('detailsModalTitle').innerHTML = '⛵ Boat Details';
     openModal('detailsModal');
     
-    // ✅ فتح الأقسام تلقائياً
     setTimeout(() => {
         toggleAccordion('acc_boat_pax');
     }, 100);
