@@ -2653,7 +2653,7 @@ async function buildBeneficiariesFromTrips() {
       e.totalPax += (parseInt(b.adults) || 0) + (parseInt(b.children) || 0) + (parseInt(b.infants) || 0);
     });
 
-    // ✅ Instructors
+    // ✅ Instructors (من الفواتير)
     (trip.instructorsExec || []).forEach(ie => {
       if (!instructorGroups.has(ie.instructorId)) {
         instructorGroups.set(ie.instructorId, {
@@ -2764,6 +2764,42 @@ async function buildBeneficiariesFromTrips() {
   }
 
   // ═══════════════════════════════════════════════
+  // ✅ إضافة المدربين من التعيينات اليومية (إن لم يكونوا موجودين مسبقاً)
+  // ═══════════════════════════════════════════════
+  if (dailyAssignments) {
+    // 1. مدربين المراكب
+    const boatInstructorsMap = dailyAssignments.boatInstructorsMap || {};
+    for (const boatId in boatInstructorsMap) {
+      const instIds = boatInstructorsMap[boatId] || [];
+      for (const instId of instIds) {
+        if (!instructorGroups.has(instId)) {
+          instructorGroups.set(instId, {
+            id: instId,
+            type: 'instructor',
+            invoices: [],
+            activitiesMap: {},
+            totalRest: {}
+          });
+        }
+      }
+    }
+
+    // 2. مدربين الشاطئ
+    const beachInstIds = dailyAssignments.beachInstructors || [];
+    for (const instId of beachInstIds) {
+      if (!instructorGroups.has(instId)) {
+        instructorGroups.set(instId, {
+          id: instId,
+          type: 'instructor',
+          invoices: [],
+          activitiesMap: {},
+          totalRest: {}
+        });
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════
   // 2. ربط البيانات بالـ Maps
   // ═══════════════════════════════════════════════
 
@@ -2862,7 +2898,6 @@ async function buildBeneficiariesFromTrips() {
         phone: i.phone || '',
         isActive: i.isActive,
         inactiveReason: i.inactiveReason || '',
-        // ✅ يرون كل فواتير الرحلات (لأنهم على الشاطئ يخدمون الجميع)
         invoices: tripsData.filter(t => t.tripCategory === 'Diving'),
         totalPax: 0
       });
@@ -4344,33 +4379,52 @@ document.addEventListener('click', function(e) {
 function populateExportList() {
   const container = document.getElementById('exportList');
   
-  // تجميع كل المستفيدين المتاحين
+  // تجميع كل المستفيدين المتاحين بطريقة صحيحة
   const allBeneficiaries = [];
-  if (beneficiaries.vehicles.length) allBeneficiaries.push(...beneficiaries.vehicles);
-  if (beneficiaries.boats.length) allBeneficiaries.push(...beneficiaries.boats);
-  if (beneficiaries.instructors.length) allBeneficiaries.push(...beneficiaries.instructors);
-  if (beneficiaries.helpers.length) allBeneficiaries.push(...beneficiaries.helpers);
-  if (beneficiaries.photographers.length) allBeneficiaries.push(...beneficiaries.photographers);
-  if (beneficiaries.suppliers.length) allBeneficiaries.push(...beneficiaries.suppliers);
-  if (beneficiaries.customers.length) allBeneficiaries.push(...beneficiaries.customers);
-  if (beneficiaries.beachTeam.instructors.length) allBeneficiaries.push(...beneficiaries.beachTeam.instructors);
-  if (beneficiaries.beachTeam.helpers.length) allBeneficiaries.push(...beneficiaries.beachTeam.helpers);
-  if (beneficiaries.beachTeam.photographers.length) allBeneficiaries.push(...beneficiaries.beachTeam.photographers);
+  
+  // 1. القوائم الأساسية
+  if (beneficiaries.vehicles.length) beneficiaries.vehicles.forEach(item => allBeneficiaries.push({ ...item, group: 'vehicles' }));
+  if (beneficiaries.boats.length) beneficiaries.boats.forEach(item => allBeneficiaries.push({ ...item, group: 'boats' }));
+  if (beneficiaries.instructors.length) beneficiaries.instructors.forEach(item => allBeneficiaries.push({ ...item, group: 'instructors' }));
+  if (beneficiaries.helpers.length) beneficiaries.helpers.forEach(item => allBeneficiaries.push({ ...item, group: 'helpers' }));
+  if (beneficiaries.photographers.length) beneficiaries.photographers.forEach(item => allBeneficiaries.push({ ...item, group: 'photographers' }));
+  if (beneficiaries.suppliers.length) beneficiaries.suppliers.forEach(item => allBeneficiaries.push({ ...item, group: 'suppliers' }));
+  if (beneficiaries.customers.length) beneficiaries.customers.forEach(item => allBeneficiaries.push({ ...item, group: 'customers' }));
+
+  // 2. فريق الشاطئ (Beach Team)
+  if (beneficiaries.beachTeam) {
+    if (beneficiaries.beachTeam.instructors.length) beneficiaries.beachTeam.instructors.forEach(item => allBeneficiaries.push({ ...item, group: 'beachTeam_instructors' }));
+    if (beneficiaries.beachTeam.helpers.length) beneficiaries.beachTeam.helpers.forEach(item => allBeneficiaries.push({ ...item, group: 'beachTeam_helpers' }));
+    if (beneficiaries.beachTeam.photographers.length) beneficiaries.beachTeam.photographers.forEach(item => allBeneficiaries.push({ ...item, group: 'beachTeam_photographers' }));
+  }
 
   if (allBeneficiaries.length === 0) {
     container.innerHTML = '<div style="padding:20px;text-align:center;color:#94a3b8;">لا يوجد مستفيدون</div>';
     return;
   }
 
+  // ترتيب القائمة أبجدياً حسب الاسم
+  allBeneficiaries.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'));
+
   let html = '';
   allBeneficiaries.forEach(b => {
-    const key = b.type + '_' + b.id;
+    // مفتاح فريد لكل مستفيد بناءً على مجموعته ومعرّفه
+    const key = b.group + '_' + b.id;
     const isChecked = exportSelectedBeneficiaries.has(key) ? 'checked' : '';
-    const icon = b.type === 'vehicle' ? '🚗' : b.type === 'boat' ? '⛵' : b.type === 'instructor' ? '👨‍🏫' : b.type === 'helper' ? '🆘' : b.type === 'photographer' ? '📸' : b.type === 'supplier' ? '🏢' : '👤';
+    
+    // تحديد الأيقونة
+    let icon = '👤';
+    if (b.type === 'vehicle' || b.group === 'vehicles') icon = '🚗';
+    else if (b.type === 'boat' || b.group === 'boats') icon = '⛵';
+    else if (b.type === 'instructor' || b.group.includes('instructor')) icon = '👨‍🏫';
+    else if (b.type === 'helper' || b.group.includes('helper')) icon = '🆘';
+    else if (b.type === 'photographer' || b.group.includes('photographer')) icon = '📸';
+    else if (b.type === 'supplier') icon = '🏢';
+    
     const count = b.invoices ? b.invoices.length : 0;
     const name = b.name || b.id;
     
-    html += `<label class="trip-checkbox-item">`;
+    html += `<label class="trip-checkbox-item" style="cursor:pointer;">`;
     html += `<input type="checkbox" ${isChecked} data-key="${escHtml(key)}" onchange="onExportCheckboxChange(this)">`;
     html += `<span>${icon} ${escHtml(name)}</span>`;
     html += `<span class="trip-count">${count}</span>`;
@@ -4379,7 +4433,6 @@ function populateExportList() {
 
   container.innerHTML = html;
 }
-
 function onExportCheckboxChange(checkbox) {
   const key = checkbox.dataset.key;
   if (checkbox.checked) {
