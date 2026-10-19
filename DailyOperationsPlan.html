@@ -2653,77 +2653,6 @@ async function buildBeneficiariesFromTrips() {
       e.totalPax += (parseInt(b.adults) || 0) + (parseInt(b.children) || 0) + (parseInt(b.infants) || 0);
     });
 
-    // ✅ Instructors (من الفواتير)
-    (trip.instructorsExec || []).forEach(ie => {
-      if (!instructorGroups.has(ie.instructorId)) {
-        instructorGroups.set(ie.instructorId, {
-          id: ie.instructorId,
-          type: 'instructor',
-          invoices: [],
-          activitiesMap: {},
-          totalRest: {}
-        });
-      }
-      const e = instructorGroups.get(ie.instructorId);
-      if (!e.invoices.find(i => i.voucherNo === trip.voucherNo)) {
-        e.invoices.push(trip);
-        e.totalRest[trip.currency] = (e.totalRest[trip.currency] || 0) + (trip.rest || 0);
-      }
-      (ie.activities || []).forEach(a => {
-        const n = a.displayName || a.activityName || 'Unknown';
-        e.activitiesMap[n] = (e.activitiesMap[n] || 0) + (a.quantity || 0);
-      });
-    });
-
-    // ✅ 🆕 Helpers — عبر المراكب
-    const boatIds = (trip.boatsUsed || []).map(b => b.boatId);
-    for (const boatId of boatIds) {
-      const helpers = (dailyAssignments?.boatHelpersMap?.[boatId]) || [];
-      for (const helperId of helpers) {
-        if (!helperGroups.has(helperId)) {
-          helperGroups.set(helperId, {
-            id: helperId,
-            type: 'helper',
-            invoices: [],
-            boatIds: new Set(),
-            totalPax: 0,
-            totalRest: {}
-          });
-        }
-        const e = helperGroups.get(helperId);
-        if (!e.invoices.find(i => i.voucherNo === trip.voucherNo)) {
-          e.invoices.push(trip);
-          e.totalRest[trip.currency] = (e.totalRest[trip.currency] || 0) + (trip.rest || 0);
-          e.totalPax += trip.pax || 0;
-        }
-        e.boatIds.add(boatId);
-      }
-    }
-
-    // ✅ 🆕 Photographers — عبر المراكب
-    for (const boatId of boatIds) {
-      const photographers = (dailyAssignments?.boatPhotographersMap?.[boatId]) || [];
-      for (const phId of photographers) {
-        if (!photographerGroups.has(phId)) {
-          photographerGroups.set(phId, {
-            id: phId,
-            type: 'photographer',
-            invoices: [],
-            boatIds: new Set(),
-            totalPax: 0,
-            totalRest: {}
-          });
-        }
-        const e = photographerGroups.get(phId);
-        if (!e.invoices.find(i => i.voucherNo === trip.voucherNo)) {
-          e.invoices.push(trip);
-          e.totalRest[trip.currency] = (e.totalRest[trip.currency] || 0) + (trip.rest || 0);
-          e.totalPax += trip.pax || 0;
-        }
-        e.boatIds.add(boatId);
-      }
-    }
-
     // ✅ Suppliers
     if (trip.supplier) {
       if (!supplierGroups.has(trip.supplier)) {
@@ -2764,43 +2693,157 @@ async function buildBeneficiariesFromTrips() {
   }
 
   // ═══════════════════════════════════════════════
-  // ✅ إضافة المدربين من التعيينات اليومية (إن لم يكونوا موجودين مسبقاً)
+  // 2. بناء الفريق (Instructors, Helpers, Photographers)
+  // بناءً على تعيينات DailyAssignments
   // ═══════════════════════════════════════════════
   if (dailyAssignments) {
-    // 1. مدربين المراكب
-    const boatInstructorsMap = dailyAssignments.boatInstructorsMap || {};
-    for (const boatId in boatInstructorsMap) {
-      const instIds = boatInstructorsMap[boatId] || [];
-      for (const instId of instIds) {
-        if (!instructorGroups.has(instId)) {
-          instructorGroups.set(instId, {
-            id: instId,
-            type: 'instructor',
-            invoices: [],
-            activitiesMap: {},
-            totalRest: {}
-          });
-        }
-      }
-    }
-
-    // 2. مدربين الشاطئ
-    const beachInstIds = dailyAssignments.beachInstructors || [];
-    for (const instId of beachInstIds) {
-      if (!instructorGroups.has(instId)) {
-        instructorGroups.set(instId, {
-          id: instId,
-          type: 'instructor',
+    // دالة مساعدة لإضافة عضو فريق
+    const addTeamMemberToGroup = (map, id, type) => {
+      if (!map.has(id)) {
+        map.set(id, {
+          id: id,
+          type: type,
           invoices: [],
           activitiesMap: {},
-          totalRest: {}
+          totalPax: 0,
+          totalRest: {},
+          boatIds: new Set()
         });
       }
+      return map.get(id);
+    };
+
+    // ─────────────────────────────────────────
+    // أ) فريق المراكب (Boat Team)
+    // ─────────────────────────────────────────
+    const boatInstructorsMap = dailyAssignments.boatInstructorsMap || {};
+    const boatHelpersMap = dailyAssignments.boatHelpersMap || {};
+    const boatPhotographersMap = dailyAssignments.boatPhotographersMap || {};
+
+    // جمع كل المراكب التي تم تعيين فريق عليها
+    const allAssignedBoatIds = new Set([
+      ...Object.keys(boatInstructorsMap),
+      ...Object.keys(boatHelpersMap),
+      ...Object.keys(boatPhotographersMap)
+    ]);
+
+    for (const boatId of allAssignedBoatIds) {
+      // جلب فواتير هذا المركب
+      const boatInvoices = tripsData.filter(t => (t.boatsUsed || []).some(b => b.boatId === boatId));
+
+      // دالة لربط الفواتير بعضو الفريق
+      const linkInvoicesToMember = (member, roleKey) => {
+        member.boatIds.add(boatId);
+        for (const trip of boatInvoices) {
+          // التحقق: هل هذه الفاتورة مسندة لمدربين؟
+          const execs = trip.instructorsExec || [];
+          
+          let shouldInclude = false;
+          if (execs.length === 0) {
+            // ✅ الفاتورة لا تحتوي على مدربين -> نضيفها للجميع
+            shouldInclude = true;
+          } else {
+            // ✅ الفاتورة تحتوي على مدربين -> نضيفها فقط إذا كان هذا العضو من ضمنهم
+            shouldInclude = execs.some(ex => ex.instructorId === member.id);
+          }
+
+          if (shouldInclude) {
+            if (!member.invoices.find(i => i.voucherNo === trip.voucherNo)) {
+              member.invoices.push(trip);
+              member.totalRest[trip.currency] = (member.totalRest[trip.currency] || 0) + (trip.rest || 0);
+              
+              // حساب الأفراد
+              const boatUsage = (trip.boatsUsed || []).find(b => b.boatId === boatId) || {};
+              member.totalPax += (parseInt(boatUsage.adults) || 0) + (parseInt(boatUsage.children) || 0) + (parseInt(boatUsage.infants) || 0);
+            }
+
+            // تجميع الأنشطة (للمدربين فقط)
+            if (roleKey === 'Instructor') {
+              const ex = execs.find(e => e.instructorId === member.id);
+              if (ex && ex.activities) {
+                ex.activities.forEach(a => {
+                  const n = a.displayName || a.activityName || 'Unknown';
+                  member.activitiesMap[n] = (member.activitiesMap[n] || 0) + (a.quantity || 0);
+                });
+              }
+            }
+          }
+        }
+      };
+
+      // 1. المدربين
+      (boatInstructorsMap[boatId] || []).forEach(id => {
+        const m = addTeamMemberToGroup(instructorGroups, id, 'instructor');
+        linkInvoicesToMember(m, 'Instructor');
+      });
+
+      // 2. المساعدين
+      (boatHelpersMap[boatId] || []).forEach(id => {
+        const m = addTeamMemberToGroup(helperGroups, id, 'helper');
+        linkInvoicesToMember(m, 'Helper');
+      });
+
+      // 3. المصورين
+      (boatPhotographersMap[boatId] || []).forEach(id => {
+        const m = addTeamMemberToGroup(photographerGroups, id, 'photographer');
+        linkInvoicesToMember(m, 'Photographer');
+      });
     }
+
+    // ─────────────────────────────────────────
+    // ب) فريق الشاطئ (Beach Team)
+    // ─────────────────────────────────────────
+    const beachInstIds = dailyAssignments.beachInstructors || [];
+    const beachHelperIds = dailyAssignments.beachHelpers || [];
+    const beachPhotoIds = dailyAssignments.beachPhotographers || [];
+
+    const divingInvoices = tripsData.filter(t => t.tripCategory === 'Diving');
+
+    // دالة لربط فواتير الغوص لعضو الشاطئ
+    const linkBeachInvoices = (member) => {
+      for (const trip of divingInvoices) {
+        const execs = trip.instructorsExec || [];
+        let shouldInclude = false;
+        if (execs.length === 0) shouldInclude = true;
+        else shouldInclude = execs.some(ex => ex.instructorId === member.id);
+
+        if (shouldInclude) {
+          if (!member.invoices.find(i => i.voucherNo === trip.voucherNo)) {
+            member.invoices.push(trip);
+            member.totalRest[trip.currency] = (member.totalRest[trip.currency] || 0) + (trip.rest || 0);
+            member.totalPax += trip.pax || 0;
+          }
+          if (member.type === 'instructor') {
+            const ex = execs.find(e => e.instructorId === member.id);
+            if (ex && ex.activities) {
+              ex.activities.forEach(a => {
+                const n = a.displayName || a.activityName || 'Unknown';
+                member.activitiesMap[n] = (member.activitiesMap[n] || 0) + (a.quantity || 0);
+              });
+            }
+          }
+        }
+      }
+    };
+
+    beachInstIds.forEach(id => {
+      const m = addTeamMemberToGroup(instructorGroups, id, 'instructor');
+      linkBeachInvoices(m);
+    });
+
+    beachHelperIds.forEach(id => {
+      const m = addTeamMemberToGroup(helperGroups, id, 'helper');
+      linkBeachInvoices(m);
+    });
+
+    beachPhotoIds.forEach(id => {
+      const m = addTeamMemberToGroup(photographerGroups, id, 'photographer');
+      linkBeachInvoices(m);
+    });
   }
 
   // ═══════════════════════════════════════════════
-  // 2. ربط البيانات بالـ Maps
+  // 3. ربط البيانات بالـ Maps (التحويل النهائي)
   // ═══════════════════════════════════════════════
 
   // 🚗 Vehicles
@@ -2836,7 +2879,8 @@ async function buildBeneficiariesFromTrips() {
       phone: i.phone || '',
       role: i.role || 'Instructor',
       isActive: i.isActive,
-      inactiveReason: i.inactiveReason || ''
+      inactiveReason: i.inactiveReason || '',
+      boatIds: Array.from(e.boatIds || [])
     };
   });
 
@@ -2850,7 +2894,7 @@ async function buildBeneficiariesFromTrips() {
       role: 'Helper',
       isActive: h.isActive,
       inactiveReason: h.inactiveReason || '',
-      boatIds: Array.from(e.boatIds)
+      boatIds: Array.from(e.boatIds || [])
     };
   });
 
@@ -2864,7 +2908,7 @@ async function buildBeneficiariesFromTrips() {
       role: 'Photographer',
       isActive: p.isActive,
       inactiveReason: p.inactiveReason || '',
-      boatIds: Array.from(e.boatIds)
+      boatIds: Array.from(e.boatIds || [])
     };
   });
 
@@ -2885,12 +2929,12 @@ async function buildBeneficiariesFromTrips() {
   }));
 
   // ═══════════════════════════════════════════════
-  // 3. 🆕 Beach Team (منفصلون - بدون مركب)
+  // 4. 🆕 Beach Team (للعرض المنفصل)
   // ═══════════════════════════════════════════════
   if (dailyAssignments) {
-    // Beach Instructors
     (dailyAssignments.beachInstructors || []).forEach(id => {
       const i = instructorsMap[id] || {};
+      const m = instructorGroups.get(id);
       beneficiaries.beachTeam.instructors.push({
         id: id,
         type: 'instructor',
@@ -2898,14 +2942,14 @@ async function buildBeneficiariesFromTrips() {
         phone: i.phone || '',
         isActive: i.isActive,
         inactiveReason: i.inactiveReason || '',
-        invoices: tripsData.filter(t => t.tripCategory === 'Diving'),
-        totalPax: 0
+        invoices: m ? m.invoices : [],
+        totalPax: m ? m.totalPax : 0
       });
     });
 
-    // Beach Helpers
     (dailyAssignments.beachHelpers || []).forEach(id => {
       const h = instructorsMap[id] || {};
+      const m = helperGroups.get(id);
       beneficiaries.beachTeam.helpers.push({
         id: id,
         type: 'helper',
@@ -2913,14 +2957,14 @@ async function buildBeneficiariesFromTrips() {
         phone: h.phone || '',
         isActive: h.isActive,
         inactiveReason: h.inactiveReason || '',
-        invoices: tripsData.filter(t => t.tripCategory === 'Diving'),
-        totalPax: 0
+        invoices: m ? m.invoices : [],
+        totalPax: m ? m.totalPax : 0
       });
     });
 
-    // Beach Photographers
     (dailyAssignments.beachPhotographers || []).forEach(id => {
       const p = instructorsMap[id] || {};
+      const m = photographerGroups.get(id);
       beneficiaries.beachTeam.photographers.push({
         id: id,
         type: 'photographer',
@@ -2928,8 +2972,8 @@ async function buildBeneficiariesFromTrips() {
         phone: p.phone || '',
         isActive: p.isActive,
         inactiveReason: p.inactiveReason || '',
-        invoices: tripsData.filter(t => t.tripCategory === 'Diving'),
-        totalPax: 0
+        invoices: m ? m.invoices : [],
+        totalPax: m ? m.totalPax : 0
       });
     });
   }
@@ -2947,7 +2991,6 @@ async function buildBeneficiariesFromTrips() {
     }
   });
 }
-
 function renderSection(sectionKey, icon, label, items) {
   let html = '<div class="section-group">';
   html += '<div class="section-header">';
