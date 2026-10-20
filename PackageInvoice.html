@@ -1624,76 +1624,99 @@ function cancelSession() {
 // ============================================
 // 7. Data Loading Functions
 // ============================================
-// ✅ دالة موحدة لجلب البيانات بنفس آلية SalesInvoice
 function loadBackgroundData() {
+  // 1. جلب البيانات المخزنة مسبقاً في الجلسة (للسرعة)
   const cachedNats = getCachedList(CACHE_KEYS.NATIONALITIES);
   const cachedHotels = getCachedList(CACHE_KEYS.HOTELS);
   
   if (cachedNats) setNationalitiesList(cachedNats);
   if (cachedHotels) setHotelsList(cachedHotels);
-  
-  const promises = [
-    gas('getLatestExchangeRates', { centerName: currentUser?.centerName }),
-    gas('getUniqueTrips', { centerName: currentUser?.centerName }),
-    gas('getInvoiceCustomers', { centerName: currentUser?.centerName })
-  ];
-  
-  promises.push(cachedNats ? Promise.resolve(null) : gas('getNationalitiesForDropdown').catch(() => null));
-  promises.push(cachedHotels ? Promise.resolve(null) : gas('getHotelsForDropdown').catch(() => null));
-  
-  Promise.all(promises).then(([rates, trips, customers, nationalities, hotels]) => {
-    if (rates) {
-      C.rate = rates;
-      const td = fmtDateKey(new Date());
-      if (!C.rateByDate[td]) C.rateByDate[td] = rates;
-      
-      const items = [
-        { lbl: 'USD $', v: rates.bUSD || rates.sUSD },
-        { lbl: 'EUR €', v: rates.bEUR || rates.sEUR },
-        { lbl: 'GBP £', v: rates.bGBP || rates.sGBP }
-      ].filter(x => x.v && +x.v > 0);
-      
-      const tickerItems = items.map(it => {
-        const val = +it.v;
-        const display = Number.isInteger(val) ? val.toString() : val.toFixed(2);
-        return `<span class="ticker-item"><span class="rl">${it.lbl}</span><span class="rv">${display}</span></span>`;
-      });
-      const h = tickerItems.join('<span class="ticker-sep">◆</span>');
-      const tickerInner = document.getElementById('tickerInner');
-      if (tickerInner) tickerInner.innerHTML = h + '<span class="ticker-sep" style="padding:0 20px"></span>' + h;
-      
-      const rawDate = rates.date || '';
-      let displayDate = rawDate;
-      if (rawDate && (rawDate.includes('T') || rawDate.match(/^\d{4}-\d{2}-\d{2}/))) {
-        try {
-          const d = new Date(rawDate);
-          if (!isNaN(d)) {
-            const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-            displayDate = String(d.getDate()).padStart(2,'0') + '/' + MN[d.getMonth()] + '/' + d.getFullYear();
-          }
-        } catch(e) {}
+
+  // 2. طلب جميع البيانات من الخادم في طلب واحد فقط
+  gas('getPackageBootstrap', { centerName: currentUser?.centerName })
+    .then(res => {
+      if (!res || !res.success) {
+        console.error('❌ Failed to load bootstrap data');
+        return;
       }
-      const tickerDate = document.getElementById('tickerDate');
-      if (tickerDate) tickerDate.textContent = '📅 ' + displayDate;
-    }
-    
-    if (nationalities && Array.isArray(nationalities)) { setNationalitiesList(nationalities); setCachedList(CACHE_KEYS.NATIONALITIES, nationalities); }
-    if (hotels && Array.isArray(hotels)) { setHotelsList(hotels); setCachedList(CACHE_KEYS.HOTELS, hotels); }
-    
-    if (trips && Array.isArray(trips)) {
-      C.divingTrips = trips.map(t => t.name || t);
-      ensureTripsDatalist();
-    }
-    
-    if (customers && Array.isArray(customers)) {
-      const map = new Map();
-      customers.forEach(c => {
-        if (c.phone) map.set(c.phone, { phone: c.phone, name: c.name || '', nationality: c.nationality || '', hotel: c.hotel || '', roomNo: c.roomNo || '' });
-      });
-      C.customers = Array.from(map.values());
-      console.log('✅ Customers loaded:', C.customers.length);
-    }
-  }).catch(err => console.warn('⚠️ Data load error:', err));
+
+      // --- Rates ---
+      if (res.rates) {
+        C.rate = res.rates;
+        const td = fmtDateKey(new Date());
+        if (!C.rateByDate[td]) C.rateByDate[td] = res.rates;
+        
+        const items = [
+          { lbl: 'USD $', v: res.rates.bUSD || res.rates.sUSD },
+          { lbl: 'EUR €', v: res.rates.bEUR || res.rates.sEUR },
+          { lbl: 'GBP £', v: res.rates.bGBP || res.rates.sGBP }
+        ].filter(x => x.v && +x.v > 0);
+        
+        const tickerItems = items.map(it => {
+          const val = +it.v;
+          const display = Number.isInteger(val) ? val.toString() : val.toFixed(2);
+          return `<span class="ticker-item"><span class="rl">${it.lbl}</span><span class="rv">${display}</span></span>`;
+        });
+        const h = tickerItems.join('<span class="ticker-sep">◆</span>');
+        const tickerInner = document.getElementById('tickerInner');
+        if (tickerInner) tickerInner.innerHTML = h + '<span class="ticker-sep" style="padding:0 20px"></span>' + h;
+        
+        const rawDate = res.rates.date || '';
+        let displayDate = rawDate;
+        if (rawDate && (rawDate.includes('T') || rawDate.match(/^\d{4}-\d{2}-\d{2}/))) {
+          try {
+            const d = new Date(rawDate);
+            if (!isNaN(d)) {
+              const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+              displayDate = String(d.getDate()).padStart(2,'0') + '/' + MN[d.getMonth()] + '/' + d.getFullYear();
+            }
+          } catch(e) {}
+        }
+        const tickerDate = document.getElementById('tickerDate');
+        if (tickerDate) tickerDate.textContent = '📅 ' + displayDate;
+      }
+
+      // --- Nationalities ---
+      if (res.nationalities && res.nationalities.length > 0) {
+        setNationalitiesList(res.nationalities);
+        setCachedList(CACHE_KEYS.NATIONALITIES, res.nationalities);
+      }
+
+      // --- Hotels ---
+      if (res.hotels && res.hotels.length > 0) {
+        setHotelsList(res.hotels);
+        setCachedList(CACHE_KEYS.HOTELS, res.hotels);
+      }
+
+      // --- Trips ---
+      if (res.trips && Array.isArray(res.trips)) {
+        C.divingTrips = res.trips.map(t => t.name || t);
+        ensureTripsDatalist();
+      }
+
+      // --- Customers ---
+      if (res.customers && Array.isArray(res.customers)) {
+        const map = new Map();
+        res.customers.forEach(c => {
+          if (c.phone) {
+            map.set(c.phone, {
+              phone: c.phone,
+              name: c.name || '',
+              nationality: c.nationality || '',
+              hotel: c.hotel || '',
+              roomNo: c.roomNo || ''
+            });
+          }
+        });
+        C.customers = Array.from(map.values());
+        console.log('✅ Customers loaded:', C.customers.length);
+      }
+      
+      console.log('✅ All data loaded in ONE request');
+    })
+    .catch(err => {
+      console.error('❌ Data load error:', err);
+    });
 }
 // ============================================
 // 8. renderForm
