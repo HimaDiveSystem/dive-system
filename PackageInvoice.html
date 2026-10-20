@@ -270,6 +270,9 @@ let C = { rate: null, rateByDate: {}, trips: {}, customers: [], divingTrips: [] 
 let packageDaysCount = 3;
 let dayData = [];
 let calculationTimer = null;
+let sigCanvas = null, sigCtx = null, isDrawing = false, lastX = 0, lastY = 0;
+let ckHour = null, ckMin = null, ckMode = 'hour';
+const CX = 115, CY = 115;
 
 // ═══════════════════════════════════════════════════════════════════
 // 🌐 Cache keys (sessionStorage)
@@ -498,41 +501,20 @@ function R2(n) {
 async function getRate(dateStr, centerName) {
   if (!dateStr) return C.rate || null;
   if (C.rateByDate[dateStr]) return C.rateByDate[dateStr];
-  
   try {
-    // ✅ 1. جلب كل الأسعار مرة واحدة (إذا لم تكن محملة مسبقاً)
-    if (!C.allRates) {
-      const all = await gas('getAllExchangeRatesNew', { 
-        centerName: centerName || currentUser?.centerName, 
-        limit: 365 
-      });
-      C.allRates = Array.isArray(all) ? all : [];
-    }
-    
-    // ✅ 2. تحويل التاريخ للبحث في المصفوفة (dd/MMM/yyyy)
-    const d = new Date(dateStr);
-    if (!isNaN(d.getTime())) {
-      const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      const targetFormat = String(d.getDate()).padStart(2,'0') + '/' + MN[d.getMonth()] + '/' + d.getFullYear();
-      
-      // ✅ 3. البحث عن التاريخ المطلوب
-      const found = C.allRates.find(r => r.date === targetFormat);
-      
-      if (found) {
-        const formatted = {
-          cash: { USD: found.bUSD, EUR: found.bEUR, GBP: found.bGBP, LE: 1 },
-          visa: { USD: found.bVUSD, EUR: found.bVEUR, GBP: found.bVGBP, LE: found.bVLE }
-        };
-        C.rateByDate[dateStr] = formatted;
-        return formatted; // ✅ تم العثور على السعر
-      }
-    }
-  } catch (e) {
-    console.warn('⚠️ Could not fetch rates list, using latest:', e);
-  }
-  
-  // ✅ 4. إذا لم نجد التاريخ (أو حدث خطأ)، نرجع آخر سعر متاح
+    const r = await gas('getExchangeRate', { dateStr, centerName: centerName || currentUser?.centerName });
+    if (r) { C.rateByDate[dateStr] = r; return r; }
+  } catch (e) { console.warn('rate fetch error:', e); }
   return C.rate || null;
+}
+
+function rateFields(r) {
+  if (!r) return null;
+  if (r.cash) return r;
+  return {
+    cash: { USD: +r.sUSD || 47.5, EUR: +r.sEUR || 50.25, GBP: +r.sGBP || 60 },
+    visa: { USD: +r.sVUSD || 46.3, EUR: +r.sVEUR || 49, GBP: +r.sVGBP || 58.5, LE: +r.sVLE || 0.975 }
+  };
 }
 
 async function validateExchangeRateForDate(dateStr) {
@@ -807,7 +789,7 @@ function buildDaysUI() {
           <div class="day-row">
             <div class="fgroup"><label class="req">Execution Date</label><input type="date" class="fc" id="dayDate_${i}" onchange="onDayDateChange(${i})"></div>
             <div class="fgroup"><label class="req">Departure Time</label><input type="hidden" id="dayTime_${i}"><button type="button" class="time-btn-display" onclick="openClockModalForDay(${i})"><span id="dayTimeDisplay_${i}" class="ph">Select time...</span><span style="font-size:18px">🕐</span></button></div>
-            <div class="fgroup"><label class="req">Trip Name</label><input type="text" class="fc" id="dayTrip_${i}" list="tripsList" placeholder="Select diving trip" onchange="loadTripForDay(${i})"></div>
+            <div class="fgroup"><label class="req">Trip Name</label><input type="text" class="fc" id="dayTrip_${i}" list="tripsList" placeholder="Select trip (Choose Date & Currency first)" disabled onchange="loadTripForDay(${i})"></div>
           </div>
           <div id="dayTripItems_${i}" class="trip-table" style="display:none"></div>
           <div id="dayRateError_${i}" class="rate-error" style="display:none"></div>
@@ -836,23 +818,22 @@ function buildDaysUI() {
   scheduleTotalCalc();
 }
 
+// تفعيل أو تعطيل حقل الرحلة بناءً على التاريخ والعملة
 async function onDayDateChange(dayIndex) {
   const date = document.getElementById(`dayDate_${dayIndex}`).value;
-  if (!date) return;
+  const currency = document.getElementById('invoiceCurrency').value;
+  const tripInput = document.getElementById(`dayTrip_${dayIndex}`);
   
-  const rateCheck = await validateExchangeRateForDate(date);
-  const rateErrorDiv = document.getElementById(`dayRateError_${dayIndex}`);
-  if (!rateCheck.valid) {
-    if (rateErrorDiv) {
-      rateErrorDiv.style.display = 'block';
-      rateErrorDiv.textContent = rateCheck.message;
-    }
-    showAlert(rateCheck.message, '⚠️');
-    document.getElementById(`dayDate_${dayIndex}`).value = '';
-    return;
+  if (date && currency) {
+    tripInput.disabled = false; // ✅ تفعيل الرحلة
+    tripInput.placeholder = "Select diving trip";
+  } else {
+    tripInput.disabled = true;
+    tripInput.value = ''; // مسح القيمة إذا تم تعطيله
+    document.getElementById(`dayTripItems_${dayIndex}`).style.display = 'none';
   }
-  if (rateErrorDiv) rateErrorDiv.style.display = 'none';
   
+  if (!date) return;
   if (!dayData[dayIndex]) dayData[dayIndex] = {};
   dayData[dayIndex].date = date;
   
@@ -860,6 +841,61 @@ async function onDayDateChange(dayIndex) {
   scheduleTotalCalc();
 }
 
+// عند تغيير العملة، نتحقق من كل الأيام لتفعيل/تعطيل الرحلات
+function onCurrencyChange() {
+  for (let i = 0; i < packageDaysCount; i++) {
+    onDayDateChange(i);
+  }
+  scheduleTotalCalc();
+}
+
+// تحديث الحسابات بناءً على آلية SalesInvoice
+async function updateAllCalc() {
+  const currency = document.getElementById('invoiceCurrency')?.value || '';
+  const discount = parseFloat(document.getElementById('discount')?.value) || 0;
+  const total = calculatePackageTotal();
+  const afterDiscount = Math.max(0, total - discount);
+  
+  const cU = parseFloat(document.getElementById('cashUSD')?.value) || 0;
+  const cE = parseFloat(document.getElementById('cashEUR')?.value) || 0;
+  const cG = parseFloat(document.getElementById('cashGBP')?.value) || 0;
+  const cL = parseFloat(document.getElementById('cashLE')?.value) || 0;
+  const vU = parseFloat(document.getElementById('visaUSD')?.value) || 0;
+  const vE = parseFloat(document.getElementById('visaEUR')?.value) || 0;
+  const vG = parseFloat(document.getElementById('visaGBP')?.value) || 0;
+  const vL = parseFloat(document.getElementById('visaLE')?.value) || 0;
+  
+  let ratesByDate = {};
+  for (let i = 0; i < packageDaysCount; i++) {
+    if (dayData[i] && dayData[i].date) {
+      ratesByDate[dayData[i].date] = await getRate(dayData[i].date, currentUser?.centerName);
+    }
+  }
+  
+  let paid = 0;
+  const firstDate = Object.keys(ratesByDate)[0];
+  let rawRates = firstDate ? ratesByDate[firstDate] : C.rate;
+  const r = rateFields(rawRates);
+  
+  if (r) {
+    const LE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL + vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
+    if (currency === '$') paid = R2(LE / r.cash.USD);
+    else if (currency === '€') paid = R2(LE / r.cash.EUR);
+    else if (currency === '£') paid = R2(LE / r.cash.GBP);
+    else paid = R2(LE);
+  } else {
+    paid = (currency === '$') ? cU + vU : (currency === '€') ? cE + vE : (currency === '£') ? cG + vG : cL + vL;
+  }
+  
+  const rest = Math.max(0, afterDiscount - paid);
+  
+  document.getElementById('displayTotalPrice').textContent = total.toFixed(2);
+  document.getElementById('displayAfterDiscount').textContent = afterDiscount.toFixed(2);
+  document.getElementById('displayRest').textContent = rest.toFixed(2);
+  document.getElementById('restCurrency').textContent = currency;
+  document.getElementById('displayDiscount').textContent = discount.toFixed(2);
+  document.getElementById('displayPaid').textContent = paid.toFixed(2);
+}
 let currentClockDayIndex = null;
 
 function openClockModalForDay(dayIndex) {
@@ -877,11 +913,11 @@ async function loadTripForDay(dayIndex) {
     return;
   }
   
-  const rateCheck = await validateExchangeRateForDate(date);
-  if (!rateCheck.valid) {
-    showAlert(rateCheck.message, '⚠️');
-    return;
-  }
+  const rate = await getRate(date, currentUser?.centerName);
+if (!rate) {
+  showAlert(`⚠️ No exchange rate for ${date}. Please add one first.`, '⚠️');
+  return;
+}
   
   const key = tripName + '|' + currency + '|' + currentUser?.centerName;
   
@@ -1025,7 +1061,30 @@ async function updateAllCalc() {
     }
   }
   
-  const paid = await calculateTotalPaidInCurrency(currency, ratesByDate, currentUser?.centerName);
+    // استبدل السطر القديم بهذا:
+  let paid = 0;
+  const firstDate = Object.keys(ratesByDate)[0];
+  let rawRates = firstDate ? ratesByDate[firstDate] : C.rate;
+  const r = rateFields(rawRates);
+  
+  const cU = parseFloat(document.getElementById('cashUSD')?.value) || 0;
+  const cE = parseFloat(document.getElementById('cashEUR')?.value) || 0;
+  const cG = parseFloat(document.getElementById('cashGBP')?.value) || 0;
+  const cL = parseFloat(document.getElementById('cashLE')?.value) || 0;
+  const vU = parseFloat(document.getElementById('visaUSD')?.value) || 0;
+  const vE = parseFloat(document.getElementById('visaEUR')?.value) || 0;
+  const vG = parseFloat(document.getElementById('visaGBP')?.value) || 0;
+  const vL = parseFloat(document.getElementById('visaLE')?.value) || 0;
+
+  if (r) {
+    const LE = cU * r.cash.USD + cE * r.cash.EUR + cG * r.cash.GBP + cL + vU * r.visa.USD + vE * r.visa.EUR + vG * r.visa.GBP + vL * (r.visa.LE || 0.975);
+    if (currency === '$') paid = R2(LE / r.cash.USD);
+    else if (currency === '€') paid = R2(LE / r.cash.EUR);
+    else if (currency === '£') paid = R2(LE / r.cash.GBP);
+    else paid = R2(LE);
+  } else {
+    paid = (currency === '$') ? cU + vU : (currency === '€') ? cE + vE : (currency === '£') ? cG + vG : cL + vL;
+  }
   const rest = Math.max(0, afterDiscount - paid);
   
   const totalEl = document.getElementById('displayTotalPrice');
@@ -1565,17 +1624,28 @@ function cancelSession() {
 // ============================================
 // 7. Data Loading Functions
 // ============================================
-async function loadExchangeRates() {
-  try {
-    console.log('📡 Loading exchange rates...');
-    
-    // ✅ إرسال الطلب مع اسم المركز بشكل صريح
-    const rates = await gas('getLatestExchangeRates', { 
-      centerName: currentUser.centerName 
-    });
-    
-    if (rates && (rates.bUSD || rates.sUSD)) {
+// ✅ دالة موحدة لجلب البيانات بنفس آلية SalesInvoice
+function loadBackgroundData() {
+  const cachedNats = getCachedList(CACHE_KEYS.NATIONALITIES);
+  const cachedHotels = getCachedList(CACHE_KEYS.HOTELS);
+  
+  if (cachedNats) setNationalitiesList(cachedNats);
+  if (cachedHotels) setHotelsList(cachedHotels);
+  
+  const promises = [
+    gas('getLatestExchangeRates', { centerName: currentUser?.centerName }),
+    gas('getUniqueTrips', { centerName: currentUser?.centerName }),
+    gas('getInvoiceCustomers', { centerName: currentUser?.centerName })
+  ];
+  
+  promises.push(cachedNats ? Promise.resolve(null) : gas('getNationalitiesForDropdown').catch(() => null));
+  promises.push(cachedHotels ? Promise.resolve(null) : gas('getHotelsForDropdown').catch(() => null));
+  
+  Promise.all(promises).then(([rates, trips, customers, nationalities, hotels]) => {
+    if (rates) {
       C.rate = rates;
+      const td = fmtDateKey(new Date());
+      if (!C.rateByDate[td]) C.rateByDate[td] = rates;
       
       const items = [
         { lbl: 'USD $', v: rates.bUSD || rates.sUSD },
@@ -1588,7 +1658,6 @@ async function loadExchangeRates() {
         const display = Number.isInteger(val) ? val.toString() : val.toFixed(2);
         return `<span class="ticker-item"><span class="rl">${it.lbl}</span><span class="rv">${display}</span></span>`;
       });
-      
       const h = tickerItems.join('<span class="ticker-sep">◆</span>');
       const tickerInner = document.getElementById('tickerInner');
       if (tickerInner) tickerInner.innerHTML = h + '<span class="ticker-sep" style="padding:0 20px"></span>' + h;
@@ -1606,108 +1675,26 @@ async function loadExchangeRates() {
       }
       const tickerDate = document.getElementById('tickerDate');
       if (tickerDate) tickerDate.textContent = '📅 ' + displayDate;
-      
-      console.log('✅ Exchange rates loaded');
-    } else {
-      console.warn('⚠️ No exchange rates returned');
     }
-  } catch(e) { 
-    console.error('❌ Failed to load exchange rates:', e); 
-    // لا نرمي خطأ هنا حتى تستمر باقي الصفحة في العمل
-  }
-}
-async function loadCustomers() {
-  try {
-    console.log('📡 Loading customers...');
     
-    // جلب العملاء مباشرة من شيت الفواتير
-    const customers = await gas('getInvoiceCustomers', { 
-      centerName: currentUser?.centerName 
-    });
+    if (nationalities && Array.isArray(nationalities)) { setNationalitiesList(nationalities); setCachedList(CACHE_KEYS.NATIONALITIES, nationalities); }
+    if (hotels && Array.isArray(hotels)) { setHotelsList(hotels); setCachedList(CACHE_KEYS.HOTELS, hotels); }
+    
+    if (trips && Array.isArray(trips)) {
+      C.divingTrips = trips.map(t => t.name || t);
+      ensureTripsDatalist();
+    }
     
     if (customers && Array.isArray(customers)) {
       const map = new Map();
       customers.forEach(c => {
-        if (c.phone) {
-          map.set(c.phone, {
-            phone: c.phone,
-            name: c.name || '',
-            nationality: c.nationality || '',
-            hotel: c.hotel || '',
-            roomNo: c.roomNo || ''
-          });
-        }
+        if (c.phone) map.set(c.phone, { phone: c.phone, name: c.name || '', nationality: c.nationality || '', hotel: c.hotel || '', roomNo: c.roomNo || '' });
       });
       C.customers = Array.from(map.values());
       console.log('✅ Customers loaded:', C.customers.length);
-    } else {
-      C.customers = [];
     }
-  } catch(e) {
-    console.error('❌ Failed to load customers:', e);
-    C.customers = [];
-  }
+  }).catch(err => console.warn('⚠️ Data load error:', err));
 }
-  
-async function loadTrips() {
-  try {
-    console.log('📡 Loading trips...');
-    const res = await gas('getTripsByCategory', { 
-      category: 'Diving', 
-      centerName: currentUser?.centerName 
-    });
-    C.divingTrips = res?.data || (Array.isArray(res) ? res : []);
-    console.log('✅ Trips loaded:', C.divingTrips.length);
-    ensureTripsDatalist();
-  } catch(e) { console.error('❌ Failed to load trips:', e); }
-}
-
-async function loadNationalities() {
-  try {
-    const res = await gas('getNationalitiesForDropdown');
-    const d = res?.data || (Array.isArray(res) ? res : []);
-    if (Array.isArray(d) && d.length) {
-      setNationalitiesList(d);
-      setCachedList(CACHE_KEYS.NATIONALITIES, d);
-    }
-  } catch(e) { console.error('❌ Failed to load nationalities:', e); }
-}
-
-async function loadHotels() {
-  try {
-    const res = await gas('getHotelsForDropdown');
-    const d = res?.data || (Array.isArray(res) ? res : []);
-    if (Array.isArray(d) && d.length) {
-      setHotelsList(d);
-      setCachedList(CACHE_KEYS.HOTELS, d);
-    }
-  } catch(e) { console.error('❌ Failed to load hotels:', e); }
-}
-async function loadAllData() {
-  // ✅ 1. Cache أولاً
-  const cachedNats = getCachedList(CACHE_KEYS.NATIONALITIES);
-  const cachedHotels = getCachedList(CACHE_KEYS.HOTELS);
-  
-  if (cachedNats) {
-    setNationalitiesList(cachedNats);
-    console.log('⚡ Nationalities from cache:', cachedNats.length);
-  }
-  if (cachedHotels) {
-    setHotelsList(cachedHotels);
-    console.log('⚡ Hotels from cache:', cachedHotels.length);
-  }
-  
-  // ✅ 2. تحميل متوازي
-  await Promise.all([
-    loadExchangeRates(),
-    loadCustomers(),
-    loadTrips(),
-    cachedNats ? Promise.resolve() : loadNationalities(),
-    cachedHotels ? Promise.resolve() : loadHotels()
-  ]);
-  console.log('🎉 All data loaded successfully');
-}
-
 // ============================================
 // 8. renderForm
 // ============================================
@@ -1774,7 +1761,7 @@ function renderForm() {
 
   <div class="card"><div class="card-head"><span class="ch-icon">🏝️</span><h3>Diving Package</h3></div><div class="card-body">
     <div class="fgrid">
-      <div class="fgroup"><label class="req">Invoice Currency</label><select class="fc" id="invoiceCurrency" onchange="scheduleTotalCalc()"><option value="">Select currency</option><option value="$">USD ($)</option><option value="€">EUR (€)</option><option value="£">GBP (£)</option><option value="LE">EGP (LE)</option></select></div>
+      <div class="fgroup"><label class="req">Invoice Currency</label><select class="fc" id="invoiceCurrency" onchange="onCurrencyChange()"><option value="">Select currency</option><option value="$">USD ($)</option><option value="€">EUR (€)</option><option value="£">GBP (£)</option><option value="LE">EGP (LE)</option></select></div>
       <div class="fgroup"><label class="req">Package Days (2-15)</label><input type="number" class="fc" id="packageDays" min="2" max="15" value="3" onchange="onPackageDaysChange()"></div>
     </div>
     <div id="daysContainer" style="margin-top:15px"></div>
@@ -1826,9 +1813,6 @@ function renderForm() {
 // ============================================
 // 9. Clock Picker
 // ============================================
-let ckHour = null, ckMin = null, ckMode = 'hour';
-const CX = 115, CY = 115;
-
 function buildClockFace() {
   const tg = document.getElementById('ckTicks'), ng = document.getElementById('ckNums');
   if (!tg || !ng || tg.children.length) return;
@@ -2179,7 +2163,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 8️⃣ تحميل البيانات في الخلفية (لا يوقف الصفحة)
   // ═══════════════════════════════════════════════════════════
   try {
-    await loadAllData();
+    loadBackgroundData();
   } catch (e) {
     console.error('❌ Failed to load initial data:', e);
     // الصفحة تعمل بدون بيانات — المستخدم يمكنه المحاولة يدوياً
