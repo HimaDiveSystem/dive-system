@@ -935,7 +935,7 @@ let vehiclesMap = {};
 let dailyAssignments = null;
 // ✅ التحديد
 const selectedBeneficiaries = new Set();
-
+let suppliersCustomersMap = {};
 // ✅ Cache للمودالات
 let currentSelectionVoucher = null;
 let currentSelectionTrip = null;
@@ -1225,7 +1225,13 @@ async function loadAllData() {
     boatsMap = result.boatsMap || {};
     vehiclesMap = result.vehiclesMap || {};
     dailyAssignments = result.dailyAssignments || null;
-
+    suppliersCustomersMap = {};
+    try {
+      const suppRes = await gas('getAllSuppliersCustomers', { centerName: currentUser?.centerName });
+      if (Array.isArray(suppRes)) {
+        suppRes.forEach(s => { suppliersCustomersMap[s.customerName] = s; });
+      }
+    } catch(e) { console.warn('Failed to load suppliers/customers map', e); }
     console.log('✅ Data loaded:', {
       trips: tripsData.length,
       boats: Object.keys(boatsWithTeam).length,
@@ -2842,9 +2848,27 @@ async function buildBeneficiariesFromTrips() {
     return { ...e, name: p.name || e.id, phone: p.phone || '', role: 'Photographer', isActive: p.isActive, inactiveReason: p.inactiveReason || '', boatIds: Array.from(e.boatIds || []) };
   });
 
-  beneficiaries.suppliers = Array.from(supplierGroups.values()).map(e => ({ ...e, name: e.id, phone: '', category: '' }));
-  beneficiaries.customers = Array.from(customerGroups.values()).map(e => ({ ...e, name: e.id, phone: '', category: '' }));
+    // 🏢 Suppliers
+  beneficiaries.suppliers = Array.from(supplierGroups.values()).map(e => {
+    const s = suppliersCustomersMap[e.id] || {};
+    return {
+      ...e,
+      name: e.id,
+      phone: s.phone || '',  // ✅ جلب الرقم من الخريطة
+      category: s.category || ''
+    };
+  });
 
+  // 👤 Customers
+  beneficiaries.customers = Array.from(customerGroups.values()).map(e => {
+    const c = suppliersCustomersMap[e.id] || {};
+    return {
+      ...e,
+      name: e.id,
+      phone: c.phone || '',  // ✅ جلب الرقم من الخريطة
+      category: c.category || ''
+    };
+  });
   // ═══════════════════════════════════════════════
   // 4. 🆕 Beach Team (للعرض المنفصل)
   // ═══════════════════════════════════════════════
