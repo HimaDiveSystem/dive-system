@@ -498,24 +498,41 @@ function R2(n) {
 async function getRate(dateStr, centerName) {
   if (!dateStr) return C.rate || null;
   if (C.rateByDate[dateStr]) return C.rateByDate[dateStr];
+  
   try {
-    const r = await gas('getExchangeRate', { 
-      dateStr, 
-      centerName: centerName || currentUser?.centerName 
-    });
-    if (r && r.cash) {
-      C.rateByDate[dateStr] = r;
-      return r;
+    // ✅ 1. جلب كل الأسعار مرة واحدة (إذا لم تكن محملة مسبقاً)
+    if (!C.allRates) {
+      const all = await gas('getAllExchangeRatesNew', { 
+        centerName: centerName || currentUser?.centerName, 
+        limit: 365 
+      });
+      C.allRates = Array.isArray(all) ? all : [];
     }
-    if (C.rate) {
-      console.log(`⚠️ No exchange rate for ${dateStr}, using current day's rate`);
-      return C.rate;
+    
+    // ✅ 2. تحويل التاريخ للبحث في المصفوفة (dd/MMM/yyyy)
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) {
+      const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const targetFormat = String(d.getDate()).padStart(2,'0') + '/' + MN[d.getMonth()] + '/' + d.getFullYear();
+      
+      // ✅ 3. البحث عن التاريخ المطلوب
+      const found = C.allRates.find(r => r.date === targetFormat);
+      
+      if (found) {
+        const formatted = {
+          cash: { USD: found.bUSD, EUR: found.bEUR, GBP: found.bGBP, LE: 1 },
+          visa: { USD: found.bVUSD, EUR: found.bVEUR, GBP: found.bVGBP, LE: found.bVLE }
+        };
+        C.rateByDate[dateStr] = formatted;
+        return formatted; // ✅ تم العثور على السعر
+      }
     }
-    return null;
-  } catch (e) { 
-    console.warn('❌ rate fetch error:', e); 
-    return C.rate || null;
+  } catch (e) {
+    console.warn('⚠️ Could not fetch rates list, using latest:', e);
   }
+  
+  // ✅ 4. إذا لم نجد التاريخ (أو حدث خطأ)، نرجع آخر سعر متاح
+  return C.rate || null;
 }
 
 async function validateExchangeRateForDate(dateStr) {
