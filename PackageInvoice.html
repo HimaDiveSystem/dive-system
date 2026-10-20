@@ -301,22 +301,42 @@ function setCachedList(key, list) {
 // 1. Core functions (gas, gasWithSig)
 // ============================================
 function gas(action, params = {}) {
-  const u = new URL(GAS);
+  const u = new URL(CONFIG.GAS_URL);
   u.searchParams.set('action', action);
+  
+  // إضافة المعاملات بشكل آمن
   Object.entries(params).forEach(([k, v]) => {
     if (v === undefined || v === null || v === '') return;
     if (k === 'signatureData' || k === 'sigPart1' || k === 'sigPart2') return;
+    
     if (typeof v === 'object') {
       u.searchParams.set(k, JSON.stringify(v));
     } else {
       u.searchParams.set(k, String(v));
     }
   });
-  return fetch(u.toString(), { method: 'GET', redirect: 'follow' })
-    .then(r => r.json())
-    .catch(err => { console.error(`❌ ${action} failed:`, err); throw err; });
-}
 
+  // إضافة طابع زمني لكسر الكاش (مهم جداً لـ Google Apps Script)
+  u.searchParams.set('_t', Date.now());
+
+  return fetch(u.toString(), { 
+    method: 'GET', 
+    redirect: 'follow',
+    cache: 'no-store'
+  })
+  .then(r => {
+    if (!r.ok) {
+      return r.text().then(text => {
+        throw new Error(`Server returned ${r.status}: ${text.substring(0, 100)}`);
+      });
+    }
+    return r.json();
+  })
+  .catch(err => {
+    console.error(`❌ ${action} failed:`, err);
+    throw err;
+  });
+}
 function sanitizeText(text) {
     if (!text) return '';
     return String(text)
@@ -1531,13 +1551,19 @@ function cancelSession() {
 async function loadExchangeRates() {
   try {
     console.log('📡 Loading exchange rates...');
-    const rates = await gas('getLatestExchangeRates', { centerName: currentUser?.centerName });
-    if (rates) {
+    
+    // ✅ إرسال الطلب مع اسم المركز بشكل صريح
+    const rates = await gas('getLatestExchangeRates', { 
+      centerName: currentUser.centerName 
+    });
+    
+    if (rates && (rates.bUSD || rates.sUSD)) {
       C.rate = rates;
+      
       const items = [
-        { lbl: 'USD $', v: rates.bUSD || rates.sUSD || 50 },
-        { lbl: 'EUR €', v: rates.bEUR || rates.sEUR || 55 },
-        { lbl: 'GBP £', v: rates.bGBP || rates.sGBP || 60 }
+        { lbl: 'USD $', v: rates.bUSD || rates.sUSD },
+        { lbl: 'EUR €', v: rates.bEUR || rates.sEUR },
+        { lbl: 'GBP £', v: rates.bGBP || rates.sGBP }
       ].filter(x => x.v && +x.v > 0);
       
       const tickerItems = items.map(it => {
@@ -1545,6 +1571,7 @@ async function loadExchangeRates() {
         const display = Number.isInteger(val) ? val.toString() : val.toFixed(2);
         return `<span class="ticker-item"><span class="rl">${it.lbl}</span><span class="rv">${display}</span></span>`;
       });
+      
       const h = tickerItems.join('<span class="ticker-sep">◆</span>');
       const tickerInner = document.getElementById('tickerInner');
       if (tickerInner) tickerInner.innerHTML = h + '<span class="ticker-sep" style="padding:0 20px"></span>' + h;
@@ -1564,10 +1591,14 @@ async function loadExchangeRates() {
       if (tickerDate) tickerDate.textContent = '📅 ' + displayDate;
       
       console.log('✅ Exchange rates loaded');
+    } else {
+      console.warn('⚠️ No exchange rates returned');
     }
-  } catch(e) { console.error('❌ Failed to load exchange rates:', e); }
+  } catch(e) { 
+    console.error('❌ Failed to load exchange rates:', e); 
+    // لا نرمي خطأ هنا حتى تستمر باقي الصفحة في العمل
+  }
 }
-
 async function loadCustomers() {
   try {
     console.log('📡 Loading customers...');
