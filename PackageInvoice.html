@@ -369,26 +369,47 @@ async function gasWithSig(action, params) {
   const sigData = params.signatureData || '';
   const baseParams = { ...params };
   delete baseParams.signatureData;
+
+  // ✅ إذا لم يوجد توقيع، استخدم GET العادي
   if (!sigData || !sigData.startsWith('data:image')) {
     return gas(action, baseParams);
   }
-  const u = new URL(GAS);
-  u.searchParams.set('action', action);
-  Object.entries(baseParams).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== '') {
-      if (typeof v === 'object') {
-        u.searchParams.set(k, JSON.stringify(v));
-      } else {
-        u.searchParams.set(k, String(v));
-      }
-    }
-  });
-  u.searchParams.set('signatureData', sigData);
-  return fetch(u.toString(), { method: 'GET', redirect: 'follow' })
-    .then(r => r.json())
-    .catch(err => { console.error('❌ savePackageInvoice failed:', err); throw err; });
-}
 
+  // ✅ إذا وجد توقيع، استخدم POST لتجاوز حد طول الرابط
+  try {
+    const formData = new URLSearchParams();
+    formData.append('action', action);
+    
+    Object.entries(baseParams).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') {
+        if (typeof v === 'object') {
+          formData.append(k, JSON.stringify(v));
+        } else {
+          formData.append(k, String(v));
+        }
+      }
+    });
+    
+    // ✅ إضافة التوقيع إلى body (وليس URL)
+    formData.append('signatureData', sigData);
+
+    const response = await fetch(CONFIG.GAS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formData.toString(),
+      redirect: 'follow'
+    });
+
+    if (!response.ok) {
+      throw new Error(`Server returned ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (err) {
+    console.error('❌ gasWithSig POST failed:', err);
+    throw err;
+  }
+}
 // ============================================
 // 2. Utility Functions
 // ============================================
