@@ -1571,23 +1571,54 @@ async function loadExchangeRates() {
 async function loadCustomers() {
   try {
     console.log('📡 Loading customers...');
-    const res = await gas('getAllCustomersForAC');
-    const raw = res?.data || (Array.isArray(res) ? res : []);
+    
+    // جلب العملاء من الفواتير
+    const raw = await gas('getInvoiceCustomers', { 
+      centerName: currentUser?.centerName 
+    });
+    
     if (Array.isArray(raw)) {
       const map = new Map();
+      
+      // ❌ كلمات مفتاحية للشركات/المنفذين لاستبعادها
+      const companyKeywords = ['safari', 'diving', 'aqua', 'center', 'hotel', 'resort', 'company', 'travel', 'tours'];
+      
       raw.forEach(c => {
-        if (c.phone) map.set(c.phone, {
-          phone: c.phone, name: c.name || '',
+        if (!c.phone) return;
+        
+        const name = (c.name || '').trim();
+        const lowerName = name.toLowerCase();
+        
+        // 1. استبعاد الأسماء الفارغة
+        if (!name) return;
+        
+        // 2. استبعاد الشركات (بناءً على الكلمات المفتاحية)
+        if (companyKeywords.some(kw => lowerName.includes(kw))) return;
+        
+        // 3. استبعاد الأسماء التي لا تحتوي على مسافة (غالباً أسماء شركات أو أسماء مستعارة)
+        // إذا كان الاسم لا يحتوي على مسافة (مثل "Bobos")، نستبعده
+        if (!name.includes(' ')) return;
+        
+        // 4. قبول العميل وإضافته
+        map.set(c.phone, {
+          phone: c.phone,
+          name: name,
           nationality: c.nationality || '',
-          hotel: c.hotel || '', roomNo: c.roomNo || ''
+          hotel: c.hotel || '',
+          roomNo: c.roomNo || ''
         });
       });
+      
       C.customers = Array.from(map.values());
-      console.log('✅ Customers loaded:', C.customers.length);
+      console.log('✅ Customers loaded (Filtered):', C.customers.length);
+    } else {
+      C.customers = [];
     }
-  } catch(e) { console.error('❌ Failed to load customers:', e); }
+  } catch(e) {
+    console.error('❌ Failed to load customers:', e);
+    C.customers = [];
+  }
 }
-
 async function loadTrips() {
   try {
     console.log('📡 Loading trips...');
