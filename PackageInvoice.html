@@ -6,6 +6,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes, viewport-fit=cover">
   <title>Package Invoice - Diving Package</title>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
+  <script src="config.js"></script>
+  <script src="session.js"></script>
+  <script src="ui.js"></script>
   <style>
     :root{
       --navy:#0f1f3d;--navy2:#1a3260;--gold:#f5c842;--gold2:#e6b800;
@@ -253,7 +256,7 @@
 </div>
 
 <script>
-const GAS='https://script.google.com/macros/s/AKfycbzjv8iFYX6vm_3hsbKEHWRLRhFoGISm6TSQcDINgkkff14yjpoBY-rYGCqJFlpF5u3g/exec';
+const GAS = CONFIG.GAS_URL;
 const DASH = {
   Admin: 'Dashboard.html',
   Owner: 'OwnerDashboard.html',
@@ -397,27 +400,33 @@ function openPDF(url) {
     }
 }
 
-function goBack() { 
+function goBack() {
+  // ✅ حفظ المستخدم قبل المغادرة
+  if (currentUser && typeof Session !== 'undefined' && Session.save) {
+    Session.save(currentUser);
+  }
+  
   const returnUrl = sessionStorage.getItem('returnUrl');
   if (returnUrl && returnUrl !== 'null' && returnUrl !== 'undefined') {
     sessionStorage.removeItem('returnUrl');
     location.href = returnUrl;
-  } else {
-    const dashboards = {
-      'Admin': 'Dashboard.html', 'Owner': 'OwnerDashboard.html', 'Sales': 'SalesDashboard.html',
-      'Accountant': 'AccountantDashboard.html', 'AccountantManager': 'AccountantDashboard.html',
-      'FinancialManager': 'AccountantDashboard.html', 'Customer': 'CustomerDashboard.html'
-    };
-    const userType = currentUser?.type;
-    const fallbackUrl = dashboards[userType] || 'Dashboard.html';
-    if (document.referrer && document.referrer.includes(window.location.hostname)) {
-      history.back();
-    } else {
-      location.href = fallbackUrl;
-    }
+    return;
   }
+  
+  const DASH = {
+    Admin: 'Dashboard.html',
+    Owner: 'OwnerDashboard.html',
+    Sales: 'SalesDashboard.html',
+    Accountant: 'AccountantDashboard.html',
+    AccountantManager: 'AccountantDashboard.html',
+    FinancialManager: 'AccountantDashboard.html',
+    Customer: 'CustomerDashboard.html',
+    OperationsManager: 'OperationsManager.html',
+    OperationsSupervisor: 'OperationsSupervisor.html'
+  };
+  const fallbackUrl = DASH[currentUser?.type] || 'SalesDashboard.html';
+  location.href = fallbackUrl;
 }
-
 function showPDFOv(m) {
   document.getElementById('pdfMsg').textContent = m;
   document.getElementById('pdfOverlay').classList.add('show');
@@ -1204,6 +1213,10 @@ async function validatePackage() {
 
 async function savePackageInvoice() {
   try {
+    if (!currentUser?.centerName) {
+      showAlert('⚠️ Your account is not linked to a center. Contact admin.', '⚠️');
+      return;
+    }
     setBtns(true);
     showPDFOv('💾 Saving invoices...');
     
@@ -1558,16 +1571,15 @@ async function loadExchangeRates() {
 async function loadCustomers() {
   try {
     console.log('📡 Loading customers...');
-    const raw = await gas('getAllCustomersForAC', { centerName: currentUser?.centerName });
+    const res = await gas('getAllCustomersForAC');
+    const raw = res?.data || (Array.isArray(res) ? res : []);
     if (Array.isArray(raw)) {
       const map = new Map();
       raw.forEach(c => {
         if (c.phone) map.set(c.phone, {
-          phone: c.phone,
-          name: c.name || '',
+          phone: c.phone, name: c.name || '',
           nationality: c.nationality || '',
-          hotel: c.hotel || '',
-          roomNo: c.roomNo || ''
+          hotel: c.hotel || '', roomNo: c.roomNo || ''
         });
       });
       C.customers = Array.from(map.values());
@@ -1579,8 +1591,11 @@ async function loadCustomers() {
 async function loadTrips() {
   try {
     console.log('📡 Loading trips...');
-    const trips = await gas('getTripsByCategory', { category: 'Diving', centerName: currentUser?.centerName });
-    C.divingTrips = trips || [];
+    const res = await gas('getTripsByCategory', { 
+      category: 'Diving', 
+      centerName: currentUser?.centerName 
+    });
+    C.divingTrips = res?.data || (Array.isArray(res) ? res : []);
     console.log('✅ Trips loaded:', C.divingTrips.length);
     ensureTripsDatalist();
   } catch(e) { console.error('❌ Failed to load trips:', e); }
@@ -1588,8 +1603,9 @@ async function loadTrips() {
 
 async function loadNationalities() {
   try {
-    const d = await gas('getNationalitiesForDropdown');
-    if (Array.isArray(d)) {
+    const res = await gas('getNationalitiesForDropdown');
+    const d = res?.data || (Array.isArray(res) ? res : []);
+    if (Array.isArray(d) && d.length) {
       setNationalitiesList(d);
       setCachedList(CACHE_KEYS.NATIONALITIES, d);
     }
@@ -1598,14 +1614,14 @@ async function loadNationalities() {
 
 async function loadHotels() {
   try {
-    const d = await gas('getHotelsForDropdown');
-    if (Array.isArray(d)) {
+    const res = await gas('getHotelsForDropdown');
+    const d = res?.data || (Array.isArray(res) ? res : []);
+    if (Array.isArray(d) && d.length) {
       setHotelsList(d);
       setCachedList(CACHE_KEYS.HOTELS, d);
     }
   } catch(e) { console.error('❌ Failed to load hotels:', e); }
 }
-
 async function loadAllData() {
   // ✅ 1. Cache أولاً
   const cachedNats = getCachedList(CACHE_KEYS.NATIONALITIES);
@@ -2004,41 +2020,109 @@ function tMove(e) {
 // 11. DOMContentLoaded
 // ============================================
 document.addEventListener('DOMContentLoaded', async () => {
-  let ud = sessionStorage.getItem('currentUser');
+  // ═══════════════════════════════════════════════════════════
+  // 1️⃣ تطبيق الثيم والعنوان
+  // ═══════════════════════════════════════════════════════════
+  if (typeof Theme !== 'undefined' && Theme.applyToPage) {
+    Theme.applyToPage();
+    Theme.setPageTitle('Package Invoice');
+  }
+  
+  // ═══════════════════════════════════════════════════════════
+  // 2️⃣ التحقق من صلاحية الجلسة
+  // ═══════════════════════════════════════════════════════════
+  if (typeof Session !== 'undefined' && Session.checkValidity) {
+    if (!Session.checkValidity()) return; // الدالة تُعيد التوجيه عند الفشل
+  }
+  
+  // ═══════════════════════════════════════════════════════════
+  // 3️⃣ جلب المستخدم (Session → sessionStorage → URL)
+  // ═══════════════════════════════════════════════════════════
+  let ud = null;
+  
+  // المحاولة 1: Session
+  if (typeof Session !== 'undefined' && Session.getUser) {
+    ud = Session.getUser();
+  }
+  
+  // المحاولة 2: sessionStorage
+  if (!ud) {
+    const stored = sessionStorage.getItem('currentUser');
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        // دعم البنية الجديدة { user, expiry }
+        ud = parsed.user || parsed;
+      } catch (e) {
+        ud = null;
+      }
+    }
+  }
+  
+  // المحاولة 3: URL param
   if (!ud) {
     const p = new URLSearchParams(location.search).get('user');
     if (p) {
-      ud = decodeURIComponent(p);
-      sessionStorage.setItem('currentUser', ud);
+      try { ud = JSON.parse(decodeURIComponent(p)); } catch (e) {}
     }
   }
-  if (!ud) {
+  
+  // ═══════════════════════════════════════════════════════════
+  // 4️⃣ رفض الدخول إذا لم يوجد مستخدم
+  // ═══════════════════════════════════════════════════════════
+  if (!ud || !ud.id) {
     location.href = 'index.html';
     return;
   }
-  try {
-    currentUser = JSON.parse(ud);
-  } catch {
-    location.href = 'index.html';
-    return;
+  
+  currentUser = ud;
+  
+  // ✅ حفظ في Session إذا لم يكن موجوداً (جاء من URL مثلاً)
+  if (typeof Session !== 'undefined' && Session.save && !Session.getUser()) {
+    try { Session.save(currentUser); } catch (e) {}
   }
-
+  
+  // ═══════════════════════════════════════════════════════════
+  // 5️⃣ عرض بيانات المستخدم في الهيدر
+  // ═══════════════════════════════════════════════════════════
   document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
   document.getElementById('userAvatar').textContent = (currentUser.name || 'U')[0].toUpperCase();
+  
   if (currentUser.centerName) {
     const e = document.getElementById('centerDisplay');
-    e.textContent = '🏢 ' + currentUser.centerName;
-    e.style.display = '';
+    if (e) {
+      e.textContent = '🏢 ' + currentUser.centerName;
+      e.style.display = '';
+    }
   }
+  
   if (currentUser.branchName) {
     const e = document.getElementById('branchDisplay');
-    e.textContent = '📍 ' + currentUser.branchName;
-    e.style.display = '';
+    if (e) {
+      e.textContent = '📍 ' + currentUser.branchName;
+      e.style.display = '';
+    }
   }
+  
+  // ═══════════════════════════════════════════════════════════
+  // 6️⃣ إعادة تعيين حالة الجلسة
+  // ═══════════════════════════════════════════════════════════
   sessionPackages = [];
-
+  
+  // ═══════════════════════════════════════════════════════════
+  // 7️⃣ عرض النموذج (فوري — بدون انتظار)
+  // ═══════════════════════════════════════════════════════════
   renderForm();
-  await loadAllData();
+  
+  // ═══════════════════════════════════════════════════════════
+  // 8️⃣ تحميل البيانات في الخلفية (لا يوقف الصفحة)
+  // ═══════════════════════════════════════════════════════════
+  try {
+    await loadAllData();
+  } catch (e) {
+    console.error('❌ Failed to load initial data:', e);
+    // الصفحة تعمل بدون بيانات — المستخدم يمكنه المحاولة يدوياً
+  }
 });
 
 // ============================================
