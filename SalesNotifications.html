@@ -77,14 +77,18 @@
     .chart-card h3 { color: var(--navy); font-size: 15px; font-weight: 800; margin-bottom: 15px; display: flex; align-items: center; gap: 7px; }
     .chart-wrap { position: relative; height: 350px; width: 100%; }
     
-    .tbl-card { background: var(--card); border-radius: var(--radius); border: 1px solid var(--border); box-shadow: var(--shadow); overflow: hidden; margin-top: 20px; }
+    .tbls-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; margin-bottom: 20px; }
+    .tbl-card { background: var(--card); border-radius: var(--radius); border: 1px solid var(--border); box-shadow: var(--shadow); overflow: hidden; }
     .tbl-card-head { padding: 12px 16px; background: linear-gradient(90deg, var(--navy), var(--navy2)); }
     .tbl-card-head h3 { color: var(--gold); font-size: 14px; font-weight: 800; }
+    
     .dtbl { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .dtbl thead th { background: #f0f4f8; color: var(--text-lt); padding: 10px 12px; font-weight: 700; text-align: right; font-size: 12px; }
-    .dtbl tbody td { padding: 10px 12px; border-bottom: 1px solid #f0f4f8; color: var(--text); }
+    .dtbl thead th { background: #f0f4f8; color: var(--text-lt); padding: 10px 12px; font-weight: 700; text-align: center; font-size: 12px; }
+    .dtbl thead th:first-child { text-align: right; }
+    .dtbl tbody td { padding: 10px 12px; border-bottom: 1px solid #f0f4f8; color: var(--text); text-align: center; }
+    .dtbl tbody td:first-child { text-align: right; font-weight: 600; }
     .dtbl tbody tr:hover td { background: #f8faff; }
-    .amt { text-align: left; font-family: monospace; font-weight: 700; color: var(--navy); }
+    .amt { font-family: monospace; font-weight: 700; color: var(--navy); text-align: center !important; }
 
     .loader { border: 4px solid #f3f3f3; border-top: 4px solid var(--navy); border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 40px auto; }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -103,13 +107,13 @@
   <div class="content">
     <div class="tabs">
       <button class="tab-btn active" onclick="switchTab('notifications', this)">🔔 الحجوزات الجديدة</button>
-      <button class="tab-btn" onclick="switchTab('stats', this)">📊 إحصائيات المبيعات</button>
+      <button class="tab-btn" onclick="switchTab('stats', this)">📊 تحليل المبيعات</button>
     </div>
 
     <!-- تبويب التنبيهات -->
     <div id="tab-notifications" class="tab-content active">
       <div class="filter-bar">
-        <label>📅 عرض حجوزات تاريخ الحجز:</label>
+        <label>📅 حجوزات اليوم (تاريخ الإصدار):</label>
         <input type="date" id="notifDate" onchange="loadNotifications()">
         <button class="btn-filter" onclick="loadNotifications()">تحديث</button>
       </div>
@@ -125,7 +129,7 @@
     <!-- تبويب الإحصائيات -->
     <div id="tab-stats" class="tab-content">
       <div class="filter-bar">
-        <label>📅 إحصائيات الفترة:</label>
+        <label>📊 تحليل المبيعات للفترة المحددة:</label>
         <input type="date" id="statsDateFrom" onchange="loadStats()">
         <span style="color:#64748b; font-weight:bold;">إلى</span>
         <input type="date" id="statsDateTo" onchange="loadStats()">
@@ -328,23 +332,17 @@ async function loadNotifications() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// 2. جلب وعرض الإحصائيات (تاريخ الحجز)
+// 2. جلب وعرض الإحصائيات والتحليلات (تاريخ الحجز)
 // ═══════════════════════════════════════════════════════════════════
 async function loadStats() {
   const fromVal = document.getElementById('statsDateFrom').value;
   const toVal = document.getElementById('statsDateTo').value;
   if (!fromVal || !toVal) return;
 
-  const dateFromStr = formatDateToStr(new Date(fromVal));
-  const dateToStr = formatDateToStr(new Date(toVal));
-
   const tableContainer = document.getElementById('statsTableContainer');
   tableContainer.innerHTML = '<div class="loader"></div>';
 
   try {
-    // جلب الفواتير للفترة المحددة بناءً على IssueDate
-    // نستخدم getInvoicesByDateRangeOnly أو getAllInvoices ونفلتر محلياً
-    // هنا سنستخدم getAllInvoices لضمان الدقة
     const result = await jsonpRequest('getAllInvoices', { includeCollection: true });
     let allInvoices = [];
     if (Array.isArray(result)) allInvoices = result;
@@ -357,17 +355,13 @@ async function loadStats() {
     toDate.setHours(23,59,59,999);
 
     const filtered = allInvoices.filter(inv => {
-        // استبعاد التحصيل
         const rt = (inv.receiptType || '').toLowerCase();
         if (rt === 'collection' || rt === 'تحصيل') return false;
 
-        // استبعاد الملغي
         const state = (inv.state || '').toLowerCase();
         if (state === 'cancel' || state === 'refund') return false;
 
-        // التحقق من IssueDate
         const issueDateStr = inv.issueDate || '';
-        // تحويل إلى Date للمقارنة
         let d = null;
         if (issueDateStr.includes('-')) {
             d = new Date(issueDateStr);
@@ -383,27 +377,43 @@ async function loadStats() {
         return d >= fromDate && d <= toDate;
     });
 
-    // تجميع المبيعات لكل مندوب (بالجنيه المصري كعملة موحدة للرسم البياني)
-    // ملاحظة: لحساب دقيق، يجب تحويل كل عملة إلى LE
-    // لكن للتبسيط، سنقوم بجمع المبالغ كما هي (أو تحويل تقريبي إذا لزم)
-    // الأفضل هنا استخدام المبالغ بالعملة الأصلية أو تحويلها.
-    // سنقوم بجمع (PaymentPrice) كما هو.
-    
+    // 1. تجميع المبيعات لكل مندوب
     const salesMap = {};
+    // 2. تجميع المبيعات لكل رحلة
+    const tripMap = {};
+    // 3. تجميع المبيعات لكل فرع
+    const branchMap = {};
+    // 4. تجميع المبيعات لكل جنسية
+    const natMap = {};
+
     filtered.forEach(inv => {
-        const name = inv.salesName || 'غير معروف';
         const paid = parseFloat(inv.paymentPrice) || 0;
         const currency = inv.invoiceCurrency || 'LE';
         
-        if (!salesMap[name]) {
-            salesMap[name] = { paid: 0, count: 0, currencies: {USD:0, EUR:0, GBP:0, LE:0} };
-        }
+        // المندوب
+        const name = inv.salesName || 'غير معروف';
+        if (!salesMap[name]) salesMap[name] = { paid: 0, count: 0, currencies: {USD:0, EUR:0, GBP:0, LE:0} };
         salesMap[name].paid += paid;
         salesMap[name].count += 1;
         if (currency === '$') salesMap[name].currencies.USD += paid;
         else if (currency === '€') salesMap[name].currencies.EUR += paid;
         else if (currency === '£') salesMap[name].currencies.GBP += paid;
         else salesMap[name].currencies.LE += paid;
+
+        // الرحلة
+        const trip = inv.trip || 'أخرى';
+        if (!tripMap[trip]) tripMap[trip] = 0;
+        tripMap[trip] += paid;
+
+        // الفرع
+        const branch = inv.branchName || 'المركز الرئيسي';
+        if (!branchMap[branch]) branchMap[branch] = 0;
+        branchMap[branch] += paid;
+
+        // الجنسية
+        const nat = inv.nationality || 'أخرى';
+        if (!natMap[nat]) natMap[nat] = 0;
+        natMap[nat] += paid;
     });
 
     const salesData = Object.keys(salesMap).map(name => ({
@@ -413,7 +423,11 @@ async function loadStats() {
         currencies: salesMap[name].currencies
     })).sort((a, b) => b.paid - a.paid);
 
-    // رسم المخطط البياني (بدون تحويل عملات - جمع رقمي فقط)
+    const topTrips = Object.entries(tripMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
+    const topBranches = Object.entries(branchMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
+    const topNats = Object.entries(natMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
+
+    // رسم المخطط البياني
     const labels = salesData.map(item => item.name);
     const dataValues = salesData.map(item => item.paid);
 
@@ -436,9 +450,7 @@ async function loadStats() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: {
-          legend: { position: 'top', labels: { font: { family: 'Cairo' } } }
-        },
+        plugins: { legend: { position: 'top', labels: { font: { family: 'Cairo' } } } },
         scales: {
           y: { beginAtZero: true, ticks: { font: { family: 'Cairo' } } },
           x: { ticks: { font: { family: 'Cairo' } } }
@@ -446,8 +458,26 @@ async function loadStats() {
       }
     });
 
-    // بناء جدول التفاصيل
-    let tableHtml = `
+    // بناء دالة مساعدة لبناء الجداول
+    function buildTable(title, data, label) {
+        if (!data.length) return `<div class="tbl-card"><div class="tbl-card-head"><h3>${title}</h3></div><div class="no-data" style="padding:20px; text-align:center;">لا توجد بيانات</div></div>`;
+        let rows = '';
+        data.forEach(([name, val]) => {
+            rows += `<tr><td>${name || 'غير معروف'}</td><td class="amt">${val.toFixed(2)}</td></tr>`;
+        });
+        return `
+            <div class="tbl-card">
+                <div class="tbl-card-head"><h3>${title}</h3></div>
+                <table class="dtbl">
+                    <thead><tr><th>${label}</th><th>المبلغ</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    // بناء جدول التفاصيل للمندوبين
+    let salesTableHtml = `
       <div class="tbl-card">
         <div class="tbl-card-head"><h3>📋 تفاصيل المبيعات لكل مندوب</h3></div>
         <table class="dtbl">
@@ -463,14 +493,13 @@ async function loadStats() {
           </thead>
           <tbody>
     `;
-
     if (salesData.length === 0) {
-        tableHtml += `<tr><td colspan="6" style="text-align:center; padding:20px;">لا توجد بيانات في هذه الفترة</td></tr>`;
+        salesTableHtml += `<tr><td colspan="6" style="text-align:center; padding:20px;">لا توجد بيانات في هذه الفترة</td></tr>`;
     } else {
         salesData.forEach(item => {
-            tableHtml += `
+            salesTableHtml += `
               <tr>
-                <td><strong>${item.name}</strong></td>
+                <td>${item.name}</td>
                 <td>${item.count}</td>
                 <td class="amt">${item.currencies.USD.toFixed(2)}</td>
                 <td class="amt">${item.currencies.EUR.toFixed(2)}</td>
@@ -480,8 +509,17 @@ async function loadStats() {
             `;
         });
     }
-    tableHtml += `</tbody></table></div>`;
-    tableContainer.innerHTML = tableHtml;
+    salesTableHtml += `</tbody></table></div>`;
+
+    // تجميع كل الجداول
+    tableContainer.innerHTML = `
+      ${salesTableHtml}
+      <div class="tbls-grid" style="margin-top: 20px;">
+        ${buildTable('🏝️ المبيعات حسب الرحلة', topTrips, 'الرحلة')}
+        ${buildTable('🏛️ المبيعات حسب الفرع', topBranches, 'الفرع')}
+        ${buildTable('🌍 المبيعات حسب الجنسية', topNats, 'الجنسية')}
+      </div>
+    `;
 
   } catch(e) {
     console.error(e);
