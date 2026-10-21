@@ -149,13 +149,12 @@ const GAS = CONFIG.GAS_URL;
 let currentUser = null;
 let salesChartInstance = null;
 
-// ✅ دالة طلب موثوقة باستخدام fetch (بدلاً من JSONP)
+// ✅ دالة طلب موثوقة باستخدام fetch
 async function apiRequest(action, params = {}) {
   try {
     const url = new URL(GAS);
     url.searchParams.set('action', action);
     
-    // إضافة اسم المركز تلقائياً
     if (currentUser && currentUser.centerName && !params.centerName) {
       params.centerName = currentUser.centerName;
     }
@@ -326,37 +325,27 @@ async function loadStats() {
   tableContainer.innerHTML = '<div class="loader"></div>';
 
   try {
-    const result = await apiRequest('getAllInvoices', { includeCollection: true });
-    let allInvoices = [];
-    if (Array.isArray(result)) allInvoices = result;
-    else if (result?.success && Array.isArray(result.data)) allInvoices = result.data;
+    const dateFromStr = formatDateToStr(new Date(fromVal));
+    const dateToStr = formatDateToStr(new Date(toVal));
 
-    const fromDate = new Date(fromVal);
-    fromDate.setHours(0,0,0,0);
-    const toDate = new Date(toVal);
-    toDate.setHours(23,59,59,999);
+    // ✅ جلب الفواتير للفترة المحددة فقط (لتجنب خطأ 404)
+    const result = await apiRequest('getInvoicesByDateRangeOnly', {
+        fromDate: dateFromStr,
+        toDate: dateToStr,
+        centerName: currentUser.centerName
+    });
+    
+    let filtered = [];
+    if (Array.isArray(result)) {
+        filtered = result;
+    } else if (result && result.success && result.data) {
+        filtered = result.data;
+    }
 
-    const filtered = allInvoices.filter(inv => {
-        const rt = (inv.receiptType || '').toLowerCase();
-        if (rt === 'collection' || rt === 'تحصيل') return false;
-
+    // تصفية الفواتير الملغية والمستردة
+    filtered = filtered.filter(inv => {
         const state = (inv.state || '').toLowerCase();
-        if (state === 'cancel' || state === 'refund') return false;
-
-        const issueDateStr = inv.issueDate || '';
-        let d = null;
-        if (issueDateStr.includes('-')) {
-            d = new Date(issueDateStr);
-        } else {
-            const parts = issueDateStr.split('/');
-            if (parts.length === 3) {
-                const months = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
-                d = new Date(parseInt(parts[2]), months[parts[1]], parseInt(parts[0]));
-            }
-        }
-        if (!d || isNaN(d)) return false;
-        
-        return d >= fromDate && d <= toDate;
+        return state !== 'cancel' && state !== 'refund';
     });
 
     const salesMap = {}, tripMap = {}, branchMap = {}, natMap = {};
