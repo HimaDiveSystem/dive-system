@@ -28,7 +28,6 @@
       --color-text: #1a2540;
       --color-text-light: #5a6a8a;
       --gradient-primary: linear-gradient(135deg, #1e2b4f 0%, #152238 100%);
-      --gradient-danger: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
       --radius: 16px;
       --shadow-lg: 0 8px 24px rgba(15,31,61,0.15);
       --border: #dde4f0;
@@ -207,7 +206,26 @@
     }
     .notification-time { color: #6c757d; font-size: 12px; }
 
-    .notification-body { margin: 10px 0 15px 50px; }
+    /* ✅ صندوق التغييرات (جديد) */
+    .changes-box {
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      border-radius: 12px;
+      padding: 12px 15px;
+      margin: 10px 0 15px 50px;
+    }
+    .change-item {
+      color: #166534;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .change-item:last-child { margin-bottom: 0; }
+    .change-item.negative { color: #991b1b; }
+    .change-item.neutral { color: #0369a1; }
     
     .invoice-details {
       background: #f8fafc; border-radius: 12px;
@@ -270,6 +288,7 @@
       .btn-mark-read { margin-right: 0; margin-top: 10px; }
       .notification-header { flex-direction: column; align-items: flex-start; }
       .invoice-details { grid-template-columns: repeat(2, 1fr); }
+      .changes-box { margin-left: 0; }
     }
   </style>
 </head>
@@ -338,9 +357,6 @@
 </div>
 
 <script>
-// ══════════════════════════════════════════════════════════
-// ✅ استخدام CONFIG.GAS_URL الموحد
-// ══════════════════════════════════════════════════════════
 const GAS = CONFIG.GAS_URL;
 
 let currentUser = null;
@@ -348,9 +364,6 @@ let notifications = [];
 let filteredNotifications = [];
 let deleteMode = false;
 
-// ══════════════════════════════════════════════════════════
-// ✅ دالة طلب JSONP الموحدة (نفس الملفات الأخرى)
-// ══════════════════════════════════════════════════════════
 function jsonpRequest(action, params = {}) {
   return new Promise((resolve, reject) => {
     const cbName = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 99999);
@@ -374,7 +387,6 @@ function jsonpRequest(action, params = {}) {
   });
 }
 
-// دالة لتنظيف الوقت
 function cleanTime(timeStr) {
   if (!timeStr) return '';
   const match = String(timeStr).match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
@@ -382,9 +394,6 @@ function cleanTime(timeStr) {
   return timeStr.toString().substring(0,5);
 }
 
-// ══════════════════════════════════════════════════════════
-// ✅ التحقق من الجلسة الموحدة
-// ══════════════════════════════════════════════════════════
 function checkSessionValidity() {
   if (typeof Session !== 'undefined' && Session.checkValidity) {
     return Session.checkValidity();
@@ -400,9 +409,7 @@ function checkSessionValidity() {
   } catch(e) { window.location.href = 'index.html'; return false; }
 }
 
-// ============ التهيئة ============
 document.addEventListener('DOMContentLoaded', () => {
-  // ✅ التحقق من صحة الجلسة
   if (!checkSessionValidity()) return;
 
   let userData = null;
@@ -412,9 +419,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const parsed = JSON.parse(storedUser);
       if (parsed && parsed.id) userData = parsed;
     }
-  } catch(e) {
-    console.warn('⚠️ فشل parsing user data:', e);
-  }
+  } catch(e) {}
 
   if (!userData && typeof Session !== 'undefined' && Session.getUser) {
     userData = Session.getUser();
@@ -428,7 +433,6 @@ document.addEventListener('DOMContentLoaded', () => {
   currentUser = userData;
   document.getElementById('userNameDisplay').textContent = currentUser.name || 'صاحب مركز';
   
-  // التحقق من الصلاحيات
   if (currentUser.type !== 'Owner' && currentUser.type !== 'Admin') {
     window.location.href = 'index.html';
     return;
@@ -437,13 +441,80 @@ document.addEventListener('DOMContentLoaded', () => {
   loadNotifications();
 });
 
-// ============ جلب التنبيهات ============
+// ✅ دالة توليد ملخص التغييرات (Smart Diff)
+function generateChangeSummary(original, edited) {
+  let changes = [];
+  const currency = edited.invoiceCurrency || original.invoiceCurrency || '$';
+  
+  // 1. الخصم
+  const oldDiscount = Number(original.discount) || 0;
+  const newDiscount = Number(edited.discount) || 0;
+  if (oldDiscount !== newDiscount) {
+    const diff = newDiscount - oldDiscount;
+    if (diff > 0) changes.push(`<span style="color:#dc2626">تم زيادة الخصم بقيمة ${Math.abs(diff).toFixed(2)} ${currency}</span>`);
+    else changes.push(`<span style="color:#16a34a">تم تقليل الخصم بقيمة ${Math.abs(diff).toFixed(2)} ${currency}</span>`);
+  }
+
+  // 2. الإجمالي (Actual Price)
+  const oldTotal = Number(original.actualPrice) || 0;
+  const newTotal = Number(edited.actualPrice) || 0;
+  if (oldTotal !== newTotal) {
+    const diff = newTotal - oldTotal;
+    if (diff > 0) changes.push(`<span style="color:#dc2626">تم زيادة إجمالي الفاتورة بقيمة ${Math.abs(diff).toFixed(2)} ${currency}</span>`);
+    else changes.push(`<span style="color:#16a34a">تم تقليل إجمالي الفاتورة بقيمة ${Math.abs(diff).toFixed(2)} ${currency}</span>`);
+  }
+
+  // 3. المدفوع (Payment Price)
+  const oldPaid = Number(original.paymentPrice) || 0;
+  const newPaid = Number(edited.paymentPrice) || 0;
+  if (oldPaid !== newPaid) {
+    const diff = newPaid - oldPaid;
+    if (diff > 0) changes.push(`<span style="color:#16a34a">تم زيادة المبلغ المدفوع بقيمة ${Math.abs(diff).toFixed(2)} ${currency}</span>`);
+    else changes.push(`<span style="color:#dc2626">تم تقليل المبلغ المدفوع بقيمة ${Math.abs(diff).toFixed(2)} ${currency}</span>`);
+  }
+
+  // 4. الوقت
+  const oldTime = cleanTime(original.time || '');
+  const newTime = cleanTime(edited.time || '');
+  if (oldTime !== newTime) {
+    changes.push(`<span style="color:#ca8a04">تم تغيير وقت الرحلة من ${oldTime || '—'} إلى ${newTime || '—'}</span>`);
+  }
+
+  // 5. بيانات العميل
+  if (original.guestName !== edited.guestName) {
+    changes.push(`<span style="color:#2563eb">تم تغيير اسم العميل من "${original.guestName || '—'}" إلى "${edited.guestName || '—'}"</span>`);
+  }
+  if (original.hotel !== edited.hotel) {
+    changes.push(`<span style="color:#2563eb">تم تغيير الفندق من "${original.hotel || '—'}" إلى "${edited.hotel || '—'}"</span>`);
+  }
+  if (original.roomNo !== edited.roomNo) {
+    changes.push(`<span style="color:#2563eb">تم تغيير رقم الغرفة من "${original.roomNo || '—'}" إلى "${edited.roomNo || '—'}"</span>`);
+  }
+
+  // 6. الملاحظات
+  if ((original.notes || '') !== (edited.notes || '')) {
+     changes.push(`<span style="color:#4b5563">تم تعديل الملاحظات</span>`);
+  }
+
+  // 7. الرحلات والبنود (مقارنة بسيطة للأنشطة)
+  if ((original.activitiesText || '') !== (edited.activitiesText || '')) {
+     // يمكن إضافة منطق أكثر تعقيداً لمقارنة البنود واحدة تلو الأخرى هنا
+     changes.push(`<span style="color:#4b5563">تم تعديل بنود الرحلة</span>`);
+  }
+
+  // إذا لم تظهر تغييرات
+  if (changes.length === 0) {
+    return `<div class="change-item neutral">لا توجد تغييرات جوهرية في القيم المالية أو الأساسية.</div>`;
+  }
+
+  return changes.map(c => `<div class="change-item">🔸 ${c}</div>`).join('');
+}
+
 async function loadNotifications() {
   const container = document.getElementById('notificationsContainer');
   container.innerHTML = '<div class="loader"></div>';
   
   try {
-    // ✅ استخدام jsonpRequest الموحد
     const data = await jsonpRequest('getAllInvoicesEdit');
     
     if (data && Array.isArray(data)) {
@@ -468,7 +539,6 @@ async function loadNotifications() {
   }
 }
 
-// ============ تطبيق الفلاتر ============
 function applyFilters() {
   const period = document.getElementById('periodFilter').value;
   const readFilter = document.getElementById('readFilter').value;
@@ -494,13 +564,11 @@ function applyFilters() {
   renderNotifications();
 }
 
-// ============ تحديث عداد غير المقروء ============
 function updateUnreadCount() {
   const unread = notifications.filter(n => !n.isRead).length;
   document.getElementById('unreadCount').textContent = unread;
 }
 
-// ============ عرض التنبيهات ============
 function renderNotifications() {
   const container = document.getElementById('notificationsContainer');
   
@@ -526,8 +594,8 @@ function renderNotifications() {
     const edited = notif.editedData || {};
     const currency = edited.invoiceCurrency || original.invoiceCurrency || '$';
     
-    const oldTime = cleanTime(original.time || '');
-    const newTime = cleanTime(edited.time || '');
+    // ✅ استدعاء دالة المقارنة الذكية
+    const changeSummaryHtml = generateChangeSummary(original, edited);
     
     let icon = '✏️';
     let iconClass = 'icon-edit';
@@ -560,9 +628,9 @@ function renderNotifications() {
           <div class="notification-time">${timeStr}</div>
         </div>
         
-        <div class="notification-body">
-          <p>${notif.editSummary || 'تم تعديل بيانات الفاتورة'}</p>
-          ${oldTime || newTime ? `<div style="font-size:12px; color:#666; margin-top:5px;">⏰ الوقت: ${oldTime || '—'} → ${newTime || '—'}</div>` : ''}
+        <!-- ✅ صندوق التغييرات الذكي -->
+        <div class="changes-box">
+          ${changeSummaryHtml}
         </div>
         
         <div class="invoice-details">
@@ -622,7 +690,6 @@ function renderNotifications() {
   });
 }
 
-// ============ إظهار خيارات الحذف ============
 function showDeleteOptions() {
   deleteMode = true;
   document.getElementById('deleteOptions').style.display = 'flex';
@@ -640,7 +707,6 @@ function hideDeleteOptions() {
   });
 }
 
-// ============ حذف التنبيهات ============
 async function deleteSelected() {
   const selected = [];
   document.querySelectorAll('.notification-checkbox:checked').forEach(cb => {
@@ -695,7 +761,6 @@ async function deleteAll() {
   }
 }
 
-// ============ تحديد كمقروء ============
 async function markAsRead(editId) {
   try {
     await jsonpRequest('markNotificationAsRead', { editId: editId });
@@ -721,7 +786,6 @@ async function markAllAsRead() {
   }
 }
 
-// ============ عرض التفاصيل ============
 async function viewFullDetails(editId) {
   try {
     const details = await jsonpRequest('getInvoiceEditDetails', { editId: editId });
@@ -789,7 +853,6 @@ function goBack() {
   window.location.href = pages[currentUser?.type] || 'OwnerDashboard.html';
 }
 
-// ربط الدوال بالـ window
 window.loadNotifications = loadNotifications;
 window.markAsRead = markAsRead;
 window.markAllAsRead = markAllAsRead;
