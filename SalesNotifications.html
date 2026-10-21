@@ -149,24 +149,29 @@ const GAS = CONFIG.GAS_URL;
 let currentUser = null;
 let salesChartInstance = null;
 
-function jsonpRequest(action, params = {}) {
-  return new Promise((resolve, reject) => {
-    const cbName = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 99999);
+// ✅ دالة طلب موثوقة باستخدام fetch (بدلاً من JSONP)
+async function apiRequest(action, params = {}) {
+  try {
+    const url = new URL(GAS);
+    url.searchParams.set('action', action);
+    
+    // إضافة اسم المركز تلقائياً
     if (currentUser && currentUser.centerName && !params.centerName) {
       params.centerName = currentUser.centerName;
     }
-    params.action = action;
-    params.callback = cbName;
-
-    const qs = Object.entries(params).map(([k,v]) => k + '=' + encodeURIComponent(String(v ?? ''))).join('&');
-    const script = document.createElement('script');
-    const timeout = setTimeout(() => { cleanup(); reject(new Error('timeout')); }, 60000);
-    const cleanup = () => { clearTimeout(timeout); delete window[cbName]; script.remove(); };
-    window[cbName] = data => { cleanup(); resolve(data); };
-    script.onerror = () => { cleanup(); reject(new Error('network error')); };
-    script.src = GAS + '?' + qs;
-    document.head.appendChild(script);
-  });
+    
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v ?? '')));
+    
+    const response = await fetch(url.toString());
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    
+    const result = await response.json();
+    console.log(`📡 apiRequest("${action}") ->`, result);
+    return result;
+  } catch (e) {
+    console.error(`❌ apiRequest("${action}") error:`, e);
+    throw e;
+  }
 }
 
 function formatDateToStr(dateObj) {
@@ -199,7 +204,7 @@ function switchTab(tabName, btn) {
   }
 }
 
-// 1. جلب وعرض التنبيهات (تاريخ الإصدار IssueDate)
+// 1. جلب وعرض التنبيهات
 async function loadNotifications() {
   const container = document.getElementById('notificationsContainer');
   const totalsContainer = document.getElementById('dailyTotalsStrip');
@@ -212,7 +217,7 @@ async function loadNotifications() {
   const dateStr = formatDateToStr(new Date(dateVal));
 
   try {
-    const result = await jsonpRequest('getInvoicesByIssueDate', { dateStr: dateStr });
+    const result = await apiRequest('getInvoicesByIssueDate', { dateStr: dateStr });
     
     let invoices = [];
     if (result && result.success && result.data) {
@@ -311,7 +316,7 @@ async function loadNotifications() {
   }
 }
 
-// 2. جلب وعرض الإحصائيات (تاريخ الإصدار IssueDate)
+// 2. جلب وعرض الإحصائيات
 async function loadStats() {
   const fromVal = document.getElementById('statsDateFrom').value;
   const toVal = document.getElementById('statsDateTo').value;
@@ -321,8 +326,7 @@ async function loadStats() {
   tableContainer.innerHTML = '<div class="loader"></div>';
 
   try {
-    // ✅ جلب كل الفواتير ثم الفلترة محلياً
-    const result = await jsonpRequest('getAllInvoices', { includeCollection: true });
+    const result = await apiRequest('getAllInvoices', { includeCollection: true });
     let allInvoices = [];
     if (Array.isArray(result)) allInvoices = result;
     else if (result?.success && Array.isArray(result.data)) allInvoices = result.data;
