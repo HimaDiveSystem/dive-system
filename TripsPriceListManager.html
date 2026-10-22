@@ -1266,7 +1266,10 @@ function renderAddEditForm() {
   const savedItems = [...(currentTrip.items || [])];
   const savedPrices = JSON.parse(JSON.stringify(currentTrip.prices || {}));
   const savedBankPercent = currentTrip.bankPercent || 2.5;
-  
+  // في بداية الدالة:
+if (currentTrip.tripImage) {
+    uploadedTripImageUrl = currentTrip.tripImage;
+}
   const tripNameField = isEditMode ? `
   <div class="trip-input-group">
     <input type="text" id="tripName" class="form-control" list="tripsList" 
@@ -1686,30 +1689,16 @@ async function uploadTripImageFile(file) {
     const mimeType = file.type;
     
     try {
-      // ✅ استخدام POST بدلاً من JSONP
-      const formData = new URLSearchParams();
-      formData.append('action', 'uploadTripImage');
-      formData.append('b64', b64);
-      formData.append('mimeType', mimeType);
-      formData.append('tripName', tripName);
+      // ✅ استخدام jsonp بدلاً من fetch
+      const res = await jsonp('uploadTripImage', { b64, mimeType, tripName });
       
-      const response = await fetch(CONFIG.GAS_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: formData.toString()
-      });
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      
-      const res = await response.json();
-      
-      if (res.success) {
+      if (res && res.success) {
         uploadedTripImageUrl = res.url;
+        // تحديث الصورة في الكائن المؤقت
+        if (currentTrip) currentTrip.tripImage = res.url; 
         showTemporaryAlert('✅ تم رفع الصورة بنجاح', 1500);
       } else {
-        showAlert('❌ فشل رفع الصورة: ' + (res.message || 'خطأ غير معروف'));
+        showAlert('❌ فشل رفع الصورة: ' + (res?.message || 'خطأ غير معروف'));
       }
     } catch(err) {
       console.error('Upload error:', err);
@@ -1719,6 +1708,7 @@ async function uploadTripImageFile(file) {
   
   reader.readAsDataURL(file);
 }
+  
 function removeTripImage() {
   document.getElementById('tripImagePreview').style.display = 'none';
   document.getElementById('previewImg').src = '';
@@ -1770,7 +1760,7 @@ async function loadTrip() {
                 fixedCosts: def.fixedCosts || {},
                 tripDescription: def.tripDescription || '',
                 whatToBring: def.whatToBring || '',
-                tripImage: def.tripImage || '' // ✅ تحميل رابط الصورة
+                tripImage: def.tripImage || '' // ✅ تخزين الرابط
             };
           
             console.log('✅ تم تحميل الرحلة:', def.name);
@@ -1784,11 +1774,13 @@ async function loadTrip() {
             if (descEl) { descEl.value = def.tripDescription || ''; autoResizeTextarea(descEl); }
             if (bringEl) { bringEl.value = def.whatToBring || ''; autoResizeTextarea(bringEl); }
             
-            // ✅ عرض الصورة إذا كانت موجودة
-            if (def.tripImage) {
-                uploadedTripImageUrl = def.tripImage;
-                document.getElementById('previewImg').src = def.tripImage;
+            // ✅ تحديث المتغير العام وعرض الصورة
+            uploadedTripImageUrl = def.tripImage || '';
+            if (uploadedTripImageUrl) {
+                document.getElementById('previewImg').src = uploadedTripImageUrl;
                 document.getElementById('tripImagePreview').style.display = 'block';
+            } else {
+                document.getElementById('tripImagePreview').style.display = 'none';
             }
             
             const costCheckbox = document.getElementById('hasCost');
@@ -1982,21 +1974,21 @@ async function saveTrip() {
         const tripDescription = getTripTextareaValue('tripDescription');
         const whatToBring = getTripTextareaValue('whatToBring');
         
-        pendingTripData = {
-            tripName: tripName,
-            category: category,
-            items: items,
-            basePrices: basePrices,
-            hasCost: hasCost,
-            bankPercent: bankPercent,
-            centerName: centerName,
-            oldLEPrices: existingLEPrices,
-            mandatoryFees: finalMandatoryFees,
-            fixedCosts: finalFixedCosts,
-            tripDescription: tripDescription,
-            whatToBring: whatToBring,
-            tripImage: uploadedTripImageUrl // ✅ إرسال رابط الصورة
-        };
+       pendingTripData = {
+    tripName: tripName,
+    category: category,
+    items: items,
+    basePrices: basePrices,
+    hasCost: hasCost,
+    bankPercent: bankPercent,
+    centerName: centerName,
+    oldLEPrices: existingLEPrices,
+    mandatoryFees: finalMandatoryFees,
+    fixedCosts: finalFixedCosts,
+    tripDescription: tripDescription,
+    whatToBring: whatToBring,
+    tripImage: uploadedTripImageUrl 
+    };
         
         showCurrencyModal(items, async (lePrices) => {
             pendingTripData.lePrices = lePrices;
