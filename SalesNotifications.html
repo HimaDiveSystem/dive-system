@@ -43,6 +43,7 @@
     .filter-bar input { padding: 8px 15px; border: 2px solid var(--border); border-radius: 40px; font-family: inherit; }
     .btn-filter { background: var(--navy); color: var(--gold); border: none; padding: 8px 20px; border-radius: 40px; cursor: pointer; font-weight: 700; font-size: 13px; transition: 0.3s; }
     .btn-filter:hover { background: var(--navy2); }
+    .btn-filter:disabled { opacity: 0.6; cursor: not-allowed; }
 
     .totals-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
     .total-card { background: white; border-radius: 12px; padding: 15px; text-align: center; border: 1px solid var(--border); box-shadow: var(--shadow); }
@@ -108,7 +109,7 @@
       <div class="filter-bar">
         <label>📅 حجوزات اليوم (تاريخ الإصدار):</label>
         <input type="date" id="notifDate" onchange="loadNotifications()">
-        <button class="btn-filter" onclick="loadNotifications()">تحديث</button>
+        <button class="btn-filter" id="btnUpdateNotif" onclick="loadNotifications()">تحديث</button>
       </div>
       
       <div id="dailyTotalsStrip" class="totals-strip"></div>
@@ -125,7 +126,7 @@
         <input type="date" id="statsDateFrom" onchange="loadStats()">
         <span style="color:#64748b; font-weight:bold;">إلى</span>
         <input type="date" id="statsDateTo" onchange="loadStats()">
-        <button class="btn-filter" onclick="loadStats()">عرض الإحصائيات</button>
+        <button class="btn-filter" id="btnShowStats" onclick="loadStats()">عرض الإحصائيات</button>
       </div>
       <div id="statsContainer">
         <div class="chart-card">
@@ -203,15 +204,24 @@ function switchTab(tabName, btn) {
   }
 }
 
-// 1. جلب وعرض التنبيهات
+// 1. جلب وعرض التنبيهات (تاريخ الإصدار)
 async function loadNotifications() {
   const container = document.getElementById('notificationsContainer');
   const totalsContainer = document.getElementById('dailyTotalsStrip');
+  const btn = document.getElementById('btnUpdateNotif');
+  
+  btn.disabled = true;
+  btn.innerHTML = '⏳ جاري التحميل...';
+  
   container.innerHTML = '<div class="loader"></div>';
   totalsContainer.innerHTML = '';
   
   const dateVal = document.getElementById('notifDate').value;
-  if (!dateVal) return;
+  if (!dateVal) {
+    btn.disabled = false;
+    btn.innerHTML = 'تحديث';
+    return;
+  }
 
   const dateStr = formatDateToStr(new Date(dateVal));
 
@@ -312,6 +322,9 @@ async function loadNotifications() {
   } catch(e) {
     console.error(e);
     container.innerHTML = '<div style="text-align:center; padding:40px; color:red;">حدث خطأ أثناء جلب البيانات</div>';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = 'تحديث';
   }
 }
 
@@ -319,90 +332,34 @@ async function loadNotifications() {
 async function loadStats() {
   const fromVal = document.getElementById('statsDateFrom').value;
   const toVal = document.getElementById('statsDateTo').value;
+  const btn = document.getElementById('btnShowStats');
+  const tableContainer = document.getElementById('statsTableContainer');
+  
   if (!fromVal || !toVal) return;
 
-  const tableContainer = document.getElementById('statsTableContainer');
+  btn.disabled = true;
+  btn.innerHTML = '⏳ جاري التحميل...';
   tableContainer.innerHTML = '<div class="loader"></div>';
 
   try {
-    // ✅ استخدام getAllInvoices (تعمل دائماً) ثم الفلترة محلياً
-    const result = await apiRequest('getAllInvoices', { includeCollection: true });
+    const dateFromStr = formatDateToStr(new Date(fromVal));
+    const dateToStr = formatDateToStr(new Date(toVal));
+
+    // ✅ استخدام الدالة الخفيفة لتجنب خطأ 404
+    const result = await apiRequest('getSalesStatsForPeriod', {
+        fromDate: dateFromStr,
+        toDate: dateToStr,
+        centerName: currentUser.centerName
+    });
     
-    let allInvoices = [];
-    if (Array.isArray(result)) {
-      allInvoices = result;
-    } else if (result && result.success && result.data) {
-      allInvoices = result.data;
-    } else if (result && result.data) {
-      allInvoices = result.data;
+    if (!result || !result.success) {
+        throw new Error(result.message || 'فشل جلب الإحصائيات');
     }
 
-    const fromDate = new Date(fromVal);
-    fromDate.setHours(0,0,0,0);
-    const toDate = new Date(toVal);
-    toDate.setHours(23,59,59,999);
-
-    const filtered = allInvoices.filter(inv => {
-        const rt = (inv.receiptType || '').toLowerCase();
-        if (rt === 'collection' || rt === 'تحصيل') return false;
-
-        const state = (inv.state || '').toLowerCase();
-        if (state === 'cancel' || state === 'refund') return false;
-
-        const issueDateStr = inv.issueDate || '';
-        let d = null;
-        if (issueDateStr.includes('-')) {
-            d = new Date(issueDateStr);
-        } else {
-            const parts = issueDateStr.split('/');
-            if (parts.length === 3) {
-                const months = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
-                d = new Date(parseInt(parts[2]), months[parts[1]], parseInt(parts[0]));
-            }
-        }
-        if (!d || isNaN(d)) return false;
-        
-        return d >= fromDate && d <= toDate;
-    });
-
-    const salesMap = {}, tripMap = {}, branchMap = {}, natMap = {};
-
-    filtered.forEach(inv => {
-        const paid = parseFloat(inv.paymentPrice) || 0;
-        const currency = inv.invoiceCurrency || 'LE';
-        
-        const name = inv.salesName || 'غير معروف';
-        if (!salesMap[name]) salesMap[name] = { paid: 0, count: 0, currencies: {USD:0, EUR:0, GBP:0, LE:0} };
-        salesMap[name].paid += paid;
-        salesMap[name].count += 1;
-        if (currency === '$') salesMap[name].currencies.USD += paid;
-        else if (currency === '€') salesMap[name].currencies.EUR += paid;
-        else if (currency === '£') salesMap[name].currencies.GBP += paid;
-        else salesMap[name].currencies.LE += paid;
-
-        const trip = inv.trip || 'أخرى';
-        if (!tripMap[trip]) tripMap[trip] = 0;
-        tripMap[trip] += paid;
-
-        const branch = inv.branchName || 'المركز الرئيسي';
-        if (!branchMap[branch]) branchMap[branch] = 0;
-        branchMap[branch] += paid;
-
-        const nat = inv.nationality || 'أخرى';
-        if (!natMap[nat]) natMap[nat] = 0;
-        natMap[nat] += paid;
-    });
-
-    const salesData = Object.keys(salesMap).map(name => ({
-        name: name,
-        paid: salesMap[name].paid,
-        count: salesMap[name].count,
-        currencies: salesMap[name].currencies
-    })).sort((a, b) => b.paid - a.paid);
-
-    const topTrips = Object.entries(tripMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
-    const topBranches = Object.entries(branchMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
-    const topNats = Object.entries(natMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
+    const salesData = result.salesData || [];
+    const topTrips = result.topTrips || [];
+    const topBranches = result.topBranches || [];
+    const topNats = result.topNats || [];
 
     const labels = salesData.map(item => item.name);
     const dataValues = salesData.map(item => item.paid);
@@ -497,6 +454,9 @@ async function loadStats() {
   } catch(e) {
     console.error(e);
     tableContainer.innerHTML = '<div style="text-align:center; padding:40px; color:red;">حدث خطأ في جلب الإحصائيات</div>';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = 'عرض الإحصائيات';
   }
 }
 
