@@ -21,7 +21,6 @@
     }
 
     * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Cairo', sans-serif; }
-    
     body { background: var(--navy); color: var(--text); min-height: 100vh; padding: 0; }
 
     .main-content {
@@ -49,13 +48,25 @@
     .tab-content { display: none; }
     .tab-content.active { display: block; }
 
-    .filter-bar { background: #f8f9fa; padding: 15px; border-radius: 16px; margin-bottom: 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap; border: 2px solid var(--border); }
+    .filter-bar { background: #f8f9fa; padding: 15px; border-radius: 16px; margin-bottom: 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap; border: 2px solid var(--border); position: relative; }
     .filter-bar label { font-weight: 700; color: var(--navy); font-size: 14px; }
-    .filter-bar input { padding: 8px 15px; border: 2px solid var(--border); border-radius: 40px; font-family: inherit; }
+    .filter-bar input[type="date"] { padding: 8px 15px; border: 2px solid var(--border); border-radius: 40px; font-family: inherit; }
     .btn-filter { background: var(--navy); color: var(--gold); border: none; padding: 8px 20px; border-radius: 40px; cursor: pointer; font-weight: 700; font-size: 13px; transition: 0.3s; }
     .btn-filter:hover { background: var(--navy2); }
     .btn-filter:disabled { opacity: 0.6; cursor: not-allowed; }
 
+    .invoice-count-badge { background: #e0f2fe; color: #0369a1; padding: 6px 15px; border-radius: 40px; font-weight: 800; font-size: 14px; border: 1px solid #bae6fd; }
+
+    /* ✅ تنسيقات فلتر المبيعات المتعدد */
+    .multi-select-container { position: relative; }
+    .multi-select-btn { padding: 8px 15px; border: 2px solid var(--border); border-radius: 40px; background: white; font-family: inherit; font-size: 13px; font-weight: 600; color: var(--text); cursor: pointer; min-width: 150px; text-align: right; display: flex; justify-content: space-between; align-items: center; }
+    .multi-select-btn:hover { border-color: var(--blue); }
+    .multi-select-dropdown { position: absolute; top: 110%; right: 0; width: 220px; background: white; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100; display: none; max-height: 250px; overflow-y: auto; padding: 8px; }
+    .multi-select-dropdown.open { display: block; }
+    .multi-select-option { display: flex; align-items: center; gap: 8px; padding: 8px; cursor: pointer; border-radius: 6px; font-size: 13px; transition: 0.2s; }
+    .multi-select-option:hover { background: #f1f5f9; }
+    .multi-select-option input { width: 16px; height: 16px; cursor: pointer; accent-color: var(--navy); }
+    
     .totals-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
     .total-card { background: white; border-radius: 12px; padding: 15px; text-align: center; border: 1px solid var(--border); box-shadow: var(--shadow); }
     .total-card .lbl { font-size: 11px; color: var(--text-lt); font-weight: 700; margin-bottom: 5px; }
@@ -119,7 +130,28 @@
     <div class="filter-bar">
       <label>📅 حجوزات اليوم (تاريخ الإصدار):</label>
       <input type="date" id="notifDate" onchange="loadNotifications()">
+      
+      <!-- ✅ فلتر المبيعات المتعدد -->
+      <div class="multi-select-container">
+        <button class="multi-select-btn" onclick="toggleSalesDropdown(event)">
+          <span id="salesFilterLabel">كل المبيعات</span>
+          <span>▼</span>
+        </button>
+        <div class="multi-select-dropdown" id="salesDropdown">
+          <label class="multi-select-option">
+            <input type="checkbox" id="salesSelectAll" value="ALL" checked onchange="handleSelectAll(this)">
+            <strong>الكل</strong>
+          </label>
+          <div id="salesCheckboxesContainer"></div>
+        </div>
+      </div>
+      
       <button class="btn-filter" id="btnUpdateNotif" onclick="loadNotifications()">تحديث</button>
+      
+      <!-- ✅ إجمالي عدد الفواتير -->
+      <div class="invoice-count-badge">
+        إجمالي الفواتير: <span id="totalInvoicesCount">0</span>
+      </div>
     </div>
     
     <div id="dailyTotalsStrip" class="totals-strip"></div>
@@ -158,6 +190,7 @@
 const GAS = CONFIG.GAS_URL;
 let currentUser = null;
 let salesChartInstance = null;
+let allDailyInvoices = []; // لحفظ الفواتير الأصلية لليوم لفلترتها محلياً
 
 async function apiRequest(action, params = {}) {
   try {
@@ -174,7 +207,6 @@ async function apiRequest(action, params = {}) {
     if (!response.ok) throw new Error('HTTP ' + response.status);
     
     const result = await response.json();
-    console.log(`📡 apiRequest("${action}") ->`, result);
     return result;
   } catch (e) {
     console.error(`❌ apiRequest("${action}") error:`, e);
@@ -197,6 +229,14 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('statsDateFrom').value = today;
   document.getElementById('statsDateTo').value = today;
 
+  // إغلاق القائمة المنسدلة عند النقر خارجها
+  document.addEventListener('click', function(e) {
+    const container = document.querySelector('.multi-select-container');
+    if (container && !container.contains(e.target)) {
+      document.getElementById('salesDropdown').classList.remove('open');
+    }
+  });
+
   loadNotifications();
 });
 
@@ -210,6 +250,53 @@ function switchTab(tabName, btn) {
   if (tabName === 'stats') {
     loadStats();
   }
+}
+
+// ✅ دوال فلتر المبيعات المتعدد
+function toggleSalesDropdown(e) {
+  e.stopPropagation();
+  document.getElementById('salesDropdown').classList.toggle('open');
+}
+
+function handleSelectAll(cb) {
+  const checkboxes = document.querySelectorAll('#salesCheckboxesContainer input[type="checkbox"]');
+  checkboxes.forEach(c => c.checked = cb.checked);
+  updateSalesLabel();
+  applySalesFilter();
+}
+
+function updateSalesLabel() {
+  const checkboxes = document.querySelectorAll('#salesCheckboxesContainer input[type="checkbox"]:checked');
+  const total = document.querySelectorAll('#salesCheckboxesContainer input[type="checkbox"]').length;
+  const label = document.getElementById('salesFilterLabel');
+  const selectAllCb = document.getElementById('salesSelectAll');
+  
+  if (checkboxes.length === 0 || checkboxes.length === total) {
+    label.textContent = 'كل المبيعات';
+    if (selectAllCb) selectAllCb.checked = true;
+  } else {
+    if (checkboxes.length === 1) {
+      label.textContent = checkboxes[0].parentElement.textContent.trim();
+    } else {
+      label.textContent = `تم تحديد ${checkboxes.length} مندوبين`;
+    }
+    if (selectAllCb) selectAllCb.checked = false;
+  }
+}
+
+function applySalesFilter() {
+  const checkedBoxes = document.querySelectorAll('#salesCheckboxesContainer input[type="checkbox"]:checked');
+  const selectedSales = Array.from(checkedBoxes).map(cb => cb.value);
+  const isAll = document.getElementById('salesSelectAll').checked;
+
+  let filtered = allDailyInvoices;
+  if (!isAll && selectedSales.length > 0) {
+    filtered = allDailyInvoices.filter(inv => selectedSales.includes(inv.salesName || 'غير معروف'));
+  } else if (!isAll && selectedSales.length === 0) {
+    filtered = []; // لم يتم اختيار أي مندوب
+  }
+
+  renderInvoicesList(filtered);
 }
 
 // 1. جلب وعرض التنبيهات
@@ -234,45 +321,38 @@ async function loadNotifications() {
   const dateStr = formatDateToStr(new Date(dateVal));
 
   try {
-    // ✅ استخدمنا getInvoicesByDateRangeOnly لجلب كل الفواتير ثم الفلترة
-    const fromDateStr = dateStr;
-    const toDateStr = dateStr; // نفس اليوم
-    const result = await apiRequest('getInvoicesByIssueDate', { 
-    dateStr: dateStr, 
-    centerName: currentUser.centerName 
-    });
+    const result = await apiRequest('getInvoicesByIssueDate', { dateStr: dateStr });
     
-    let invoices = [];
-    if (Array.isArray(result)) {
-      invoices = result;
-    } else if (result && result.success && result.data) {
-      invoices = result.data;
+    if (result && result.success && result.data) {
+      allDailyInvoices = result.data;
+    } else if (Array.isArray(result)) {
+      allDailyInvoices = result;
+    } else {
+      allDailyInvoices = [];
     }
 
-    if (invoices.length === 0) {
+    if (allDailyInvoices.length === 0) {
       container.innerHTML = '<div style="text-align:center; padding:40px; color:#64748b;">لا توجد حجوزات في هذا التاريخ</div>';
+      document.getElementById('totalInvoicesCount').textContent = '0';
+      populateSalesFilter([]);
       return;
     }
 
-    // ترتيب تنازلي حسب الوقت
-    invoices.sort((a, b) => {
+    // ترتيب الفواتير
+    allDailyInvoices.sort((a, b) => {
         const timeA = a.time || '00:00';
         const timeB = b.time || '00:00';
         return timeB.localeCompare(timeA);
     });
 
+    // حساب الإجماليات (لكل الفواتير بغض النظر عن الفلتر)
     let totalSales = { USD: 0, EUR: 0, GBP: 0, LE: 0 };
     let totalPaid  = { USD: 0, EUR: 0, GBP: 0, LE: 0 };
 
-    let html = '<div class="notifications-list">';
-    
-    invoices.forEach(inv => {
-      const salesName = inv.salesName || 'غير معروف';
+    allDailyInvoices.forEach(inv => {
       const totalAmount = parseFloat(inv.actualPrice) || 0;
       const paidAmount = parseFloat(inv.paymentPrice) || 0;
       const currency = inv.invoiceCurrency || 'LE';
-      const tripName = inv.trip || 'رحلة غير محددة';
-      const activitiesText = inv.activitiesText || '';
       
       const state = (inv.state || '').toLowerCase();
       if (state !== 'cancel' && state !== 'refund') {
@@ -281,36 +361,9 @@ async function loadNotifications() {
         else if (currency === '£') { totalSales.GBP += totalAmount; totalPaid.GBP += paidAmount; }
         else { totalSales.LE += totalAmount; totalPaid.LE += paidAmount; }
       }
-
-      html += `
-        <div class="notification-card">
-          <div class="notif-header">
-            <div class="notif-title">📝 أضاف <span>${salesName}</span> فاتورة جديدة</div>
-            <div class="notif-time">🕒 ${inv.time || '—'} | رقم: ${inv.voucherNo}</div>
-          </div>
-          
-          <div class="notif-body">
-            <div class="detail-item">
-              <div class="detail-label">إجمالي الفاتورة</div>
-              <div class="detail-value" style="color:#27ae60;">${totalAmount.toFixed(2)} ${currency}</div>
-            </div>
-            <div class="detail-item">
-              <div class="detail-label">المدفوع منها</div>
-              <div class="detail-value" style="color:#3498db;">${paidAmount.toFixed(2)} ${currency}</div>
-            </div>
-            <div class="detail-item">
-              <div class="detail-label">الرحلة</div>
-              <div class="detail-value">${tripName}</div>
-            </div>
-          </div>
-          
-          ${activitiesText ? `<div class="activities-text">📋 الأنشطة: ${activitiesText}</div>` : ''}
-        </div>
-      `;
     });
-    html += '</div>';
-    container.innerHTML = html;
 
+    // عرض شريط الإجماليات
     totalsContainer.innerHTML = `
       <div class="total-card">
         <div class="lbl">إجمالي مبيعات الدولار</div>
@@ -334,6 +387,13 @@ async function loadNotifications() {
       </div>
     `;
 
+    // تعبئة فلتر المبيعات
+    const uniqueSales = [...new Set(allDailyInvoices.map(i => i.salesName || 'غير معروف'))].sort();
+    populateSalesFilter(uniqueSales);
+
+    // عرض الفواتير
+    renderInvoicesList(allDailyInvoices);
+
   } catch(e) {
     console.error(e);
     container.innerHTML = '<div style="text-align:center; padding:40px; color:red;">حدث خطأ أثناء جلب البيانات</div>';
@@ -341,6 +401,70 @@ async function loadNotifications() {
     btn.disabled = false;
     btn.innerHTML = 'تحديث';
   }
+}
+
+function populateSalesFilter(salesNames) {
+  const container = document.getElementById('salesCheckboxesContainer');
+  container.innerHTML = '';
+  
+  salesNames.forEach(name => {
+    const lbl = document.createElement('label');
+    lbl.className = 'multi-select-option';
+    lbl.innerHTML = `<input type="checkbox" value="${name}" checked onchange="updateSalesLabel(); applySalesFilter();"> ${name}`;
+    container.appendChild(lbl);
+  });
+  
+  document.getElementById('salesSelectAll').checked = true;
+  updateSalesLabel();
+}
+
+function renderInvoicesList(invoices) {
+  const container = document.getElementById('notificationsContainer');
+  document.getElementById('totalInvoicesCount').textContent = invoices.length;
+
+  if (invoices.length === 0) {
+    container.innerHTML = '<div style="text-align:center; padding:40px; color:#64748b;">لا توجد فواتير مطابقة للفلتر المحدد</div>';
+    return;
+  }
+
+  let html = '<div class="notifications-list">';
+  
+  invoices.forEach(inv => {
+    const salesName = inv.salesName || 'غير معروف';
+    const totalAmount = parseFloat(inv.actualPrice) || 0;
+    const paidAmount = parseFloat(inv.paymentPrice) || 0;
+    const currency = inv.invoiceCurrency || 'LE';
+    const tripName = inv.trip || 'رحلة غير محددة';
+    const activitiesText = inv.activitiesText || '';
+    
+    html += `
+      <div class="notification-card">
+        <div class="notif-header">
+          <div class="notif-title">📝 أضاف <span>${salesName}</span> فاتورة جديدة</div>
+          <div class="notif-time">🕒 ${inv.time || '—'} | رقم: ${inv.voucherNo}</div>
+        </div>
+        
+        <div class="notif-body">
+          <div class="detail-item">
+            <div class="detail-label">إجمالي الفاتورة</div>
+            <div class="detail-value" style="color:#27ae60;">${totalAmount.toFixed(2)} ${currency}</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">المدفوع منها</div>
+            <div class="detail-value" style="color:#3498db;">${paidAmount.toFixed(2)} ${currency}</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">الرحلة</div>
+            <div class="detail-value">${tripName}</div>
+          </div>
+        </div>
+        
+        ${activitiesText ? `<div class="activities-text">📋 الأنشطة: ${activitiesText}</div>` : ''}
+      </div>
+    `;
+  });
+  html += '</div>';
+  container.innerHTML = html;
 }
 
 // 2. جلب وعرض الإحصائيات
@@ -493,6 +617,10 @@ window.switchTab = switchTab;
 window.loadNotifications = loadNotifications;
 window.loadStats = loadStats;
 window.goBack = goBack;
+window.toggleSalesDropdown = toggleSalesDropdown;
+window.handleSelectAll = handleSelectAll;
+window.updateSalesLabel = updateSalesLabel;
+window.applySalesFilter = applySalesFilter;
 </script>
 </body>
 </html>
