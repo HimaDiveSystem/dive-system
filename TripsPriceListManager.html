@@ -1683,7 +1683,6 @@ function previewTripImage(input) {
 async function uploadTripImageFile(file) {
   const tripName = document.getElementById('tripName').value.trim() || 'temp_trip';
   
-  // التحقق من الحجم
   if (file.size > 3 * 1024 * 1024) {
     showAlert('⚠️ الصورة أكبر من 3MB، يرجى اختيار صورة أصغر.');
     return;
@@ -1691,58 +1690,52 @@ async function uploadTripImageFile(file) {
 
   const reader = new FileReader();
   
-  reader.onload = async function(e) {
-    // استخراج Base64
-    const b64 = e.target.result.split(',')[1];
-    const mimeType = file.type;
-    
-    // ✅ استخدام XMLHttpRequest (POST) مثل الملفات الناجحة
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', CONFIG.GAS_URL, true);
-    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-    xhr.timeout = 60000; // 60 ثانية مهلة
-    
-    xhr.onload = function() {
-      if (xhr.status === 200) {
-        try {
-          const response = JSON.parse(xhr.responseText);
-          if (response && response.success) {
-            uploadedTripImageUrl = response.url; // ✅ حفظ الرابط في المتغير العام
-            if (currentTrip) currentTrip.tripImage = response.url;
-            showTemporaryAlert('✅ تم رفع الصورة بنجاح', 1500);
-          } else {
-            showAlert('❌ فشل رفع الصورة: ' + (response?.message || 'خطأ غير معروف'));
-          }
-        } catch(err) {
-          console.error('Parse error:', err);
-          showAlert('❌ خطأ في تحليل استجابة الخادم');
+  reader.onload = function(e) {
+    const img = new Image();
+    img.onload = async function() {
+      // ✅ ضغط الصورة (لتقليل الحجم ومنع مشاكل طول الرابط)
+      const canvas = document.createElement('canvas');
+      let width = img.width;
+      let height = img.height;
+      const maxDim = 400; // تصغير إلى 400 بكسل
+
+      if (width > height && width > maxDim) {
+        height *= maxDim / width;
+        width = maxDim;
+      } else if (height > maxDim) {
+        width *= maxDim / height;
+        height = maxDim;
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+
+      // ضغط بجودة 0.6
+      const compressedBase64 = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
+      
+      try {
+        // ✅ الإرسال عبر jsonp (GET) لتجنب مشاكل POST
+        const res = await jsonp('uploadTripImage', { 
+          b64: compressedBase64, 
+          mimeType: 'image/jpeg', 
+          tripName: tripName 
+        });
+
+        if (res && res.success) {
+          uploadedTripImageUrl = res.url;
+          if (currentTrip) currentTrip.tripImage = res.url;
+          showTemporaryAlert('✅ تم رفع الصورة بنجاح', 1500);
+        } else {
+          showAlert('❌ فشل رفع الصورة: ' + (res?.message || 'خطأ غير معروف'));
         }
-      } else {
-        showAlert('❌ خطأ في الاتصال بالخادم: ' + xhr.status);
+      } catch(err) {
+        console.error('Upload error:', err);
+        showAlert('❌ خطأ في رفع الصورة: ' + err.message);
       }
     };
-    
-    xhr.onerror = function() {
-      showAlert('❌ فشل الاتصال بالخادم (Network Error)');
-    };
-    
-    xhr.ontimeout = function() {
-      showAlert('❌ انتهت مهلة الاتصال، حاول مرة أخرى');
-    };
-    
-    // تجهيز البيانات للإرسال
-    const params = new URLSearchParams();
-    params.append('action', 'uploadTripImage');
-    params.append('b64', b64);
-    params.append('mimeType', mimeType);
-    params.append('tripName', tripName);
-    
-    // إرسال الطلب
-    xhr.send(params.toString());
-  };
-  
-  reader.onerror = function() {
-    showAlert('❌ فشل قراءة ملف الصورة');
+    img.src = e.target.result;
   };
   
   reader.readAsDataURL(file);
