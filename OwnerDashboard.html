@@ -1417,10 +1417,11 @@ async function loadStats() {
     const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const dateStr = String(today.getDate()).padStart(2,'0') + '/' + months[today.getMonth()] + '/' + today.getFullYear();
     
+    // ✅ استخدام getInvoicesByIssueDate لجلب الفواتير بناءً على تاريخ الحجز
     const [staffData, branchesData, invoicesData, notifData] = await Promise.all([
       callGAS('getEmployeesByCenter', { centerId: currentUser.centerId, centerName: currentUser.centerName }).catch(() => []),
       callGAS('getActiveBranches').catch(() => []),
-      callGAS('getInvoicesByDate', { dateStr: dateStr }).catch(() => []),
+      callGAS('getInvoicesByIssueDate', { dateStr: dateStr, centerName: currentUser.centerName }).catch(() => []), // ✅ التعديل هنا
       callGAS('getAllInvoicesEdit').catch(() => [])
     ]);
     
@@ -1432,12 +1433,22 @@ async function loadStats() {
       branchesCount = branchesData.filter(b => b.centerId === currentUser.centerId).length;
     }
     
-    // ✅ تصحيح عدد الفواتير: استبعاد الملغاة والمسترجعة
+    // ✅ استخراج البيانات ومعالجتها
     let validInvoicesCount = 0;
-    if (Array.isArray(invoicesData)) {
-      validInvoicesCount = invoicesData.filter(inv => {
+    
+    // دالة getInvoicesByIssueDate قد ترجع { success, data } أو مصفوفة مباشرة
+    const invoicesArray = Array.isArray(invoicesData) ? invoicesData : (invoicesData?.data || []);
+    
+    if (Array.isArray(invoicesArray)) {
+      validInvoicesCount = invoicesArray.filter(inv => {
         const state = (inv.state || inv.State || '').toString().toLowerCase();
-        return state !== 'cancel' && state !== 'refund';
+        const receiptType = (inv.receiptType || '').toString().trim();
+        
+        // استبعاد الملغاة والمسترجعة والتحصيل
+        if (state === 'cancel' || state === 'refund') return false;
+        if (receiptType === 'Collection' || receiptType === 'تحصيل') return false;
+        
+        return true;
       }).length;
     }
     
@@ -1448,11 +1459,11 @@ async function loadStats() {
     
     document.getElementById('cnt-staff').textContent = staffCount;
     document.getElementById('cnt-branches').textContent = branchesCount;
-    document.getElementById('cnt-invoices').textContent = validInvoicesCount; // ✅ العدد الصحيح
-    document.getElementById('cnt-sales-today').textContent = validInvoicesCount; // ✅ نفس العدد في تنبيهات المبيعات
+    document.getElementById('cnt-invoices').textContent = validInvoicesCount; // ✅ العدد الصحيح (تاريخ الحجز)
+    document.getElementById('cnt-sales-today').textContent = validInvoicesCount; // ✅ نفس العدد
     document.getElementById('cnt-notif').textContent = notifCount;
     
-    console.log(`✅ [loadStats] موظفين=${staffCount}, فروع=${branchesCount}, فواتير صالحة=${validInvoicesCount}, تنبيهات=${notifCount}`);
+    console.log(`✅ [loadStats] موظفين=${staffCount}, فروع=${branchesCount}, فواتير حجز صالحة=${validInvoicesCount}, تنبيهات=${notifCount}`);
   } catch(e) {
     console.warn('⚠️ [loadStats] خطأ:', e);
   }
