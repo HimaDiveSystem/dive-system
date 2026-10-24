@@ -446,6 +446,29 @@ function generateChangeSummary(original, edited) {
   let changes = [];
   const currency = edited.invoiceCurrency || original.invoiceCurrency || '$';
   
+  // ✅ ✅ ✅ جديد: كشف تنبيهات الحذف
+  const wasDeleted = (original.paymentPrice > 0 || original.actualPrice > 0) 
+                  && edited.paymentPrice === 0 
+                  && edited.actualPrice === 0
+                  && original.activitiesText === edited.activitiesText;
+  
+  if (wasDeleted) {
+    return `
+      <div class="change-item negative" style="background:#fee2e2; padding:10px; border-radius:8px; margin-bottom:6px;">
+        🗑️ تم حذف الفاتورة بالكامل من النظام
+      </div>
+      <div class="change-item negative">
+        💰 إجمالي المدفوع المحذوف: ${(original.paymentPrice || 0).toFixed(2)} ${currency}
+      </div>
+      <div class="change-item negative">
+        📊 إجمالي الفاتورة المحذوف: ${(original.actualPrice || 0).toFixed(2)} ${currency}
+      </div>
+      <div class="change-item neutral">
+        ⚠️ تنبيه: تم إعادة بناء الخزينة التراكمية بناءً على هذا الحذف
+      </div>
+    `;
+  }
+  
   // 1. الخصم
   const oldDiscount = Number(original.discount) || 0;
   const newDiscount = Number(edited.discount) || 0;
@@ -597,19 +620,24 @@ function renderNotifications() {
     // ✅ استدعاء دالة المقارنة الذكية
     const changeSummaryHtml = generateChangeSummary(original, edited);
     
+    // ✅ ✅ ✅ كشف الحذف أولاً (أولوية قصوى)
+    const wasDeleted = (original.paymentPrice > 0 || original.actualPrice > 0) 
+                    && edited.paymentPrice === 0 
+                    && edited.actualPrice === 0
+                    && (original.activitiesText || '') === (edited.activitiesText || '');
+    
     let icon = '✏️';
     let iconClass = 'icon-edit';
     let title = 'تعديل فاتورة';
     
-    if (notif.editSummary && notif.editSummary.includes('خصم')) {
-      icon = '💰';
-      iconClass = 'icon-price';
-    }
-    
-    if (notif.editSummary && notif.editSummary.includes('تم حذف الفاتورة')) {
+    if (wasDeleted || (notif.editSummary && notif.editSummary.includes('حذف'))) {
       icon = '🗑️';
       iconClass = 'icon-cancel';
-      title = 'حذف فاتورة';
+      title = '🗑️ حذف فاتورة';
+    } else if (notif.editSummary && notif.editSummary.includes('خصم')) {
+      icon = '💰';
+      iconClass = 'icon-price';
+      title = '💰 تعديل خصم';
     }
     
     html += `
@@ -792,27 +820,93 @@ async function viewFullDetails(editId) {
     
     let content = '<div style="text-align:right;">';
     
-    // 1. حالة الحذف
-    if (details.editSummary && details.editSummary.includes('تم حذف الفاتورة')) {
-      content += '<div style="background:#fee2e2; padding:15px; border-radius:12px; margin-bottom:15px; text-align:center;">';
-      content += '<div style="font-size:48px; margin-bottom:10px;">🗑️</div>';
-      content += '<h3 style="color:#991b1b;">تم حذف الفاتورة بالكامل</h3>';
-      content += `<p style="margin-top:10px;">رقم الفاتورة: <strong>${details.voucherNo}</strong></p>`;
-      content += `<p>تم الحذف بواسطة: <strong>${details.userName || 'غير معروف'}</strong></p>`;
-      content += `<p>التاريخ: <strong>${new Date(details.editDate).toLocaleString('ar-EG')}</strong></p>`;
+    const original = details.originalParsed || {};
+    const edited = details.editedParsed || {};
+    const currency = edited.invoiceCurrency || original.invoiceCurrency || '$';
+    
+    // ✅ ✅ ✅ كشف الحذف بطريقتين: من editSummary أو من البيانات
+    const wasDeletedBySummary = details.editSummary && 
+                                (details.editSummary.includes('حذف') || details.editSummary.includes('تم حذف'));
+    
+    const wasDeletedByData = (original.paymentPrice > 0 || original.actualPrice > 0)
+                          && (edited.paymentPrice === 0 || edited.paymentPrice === '')
+                          && (edited.actualPrice === 0 || edited.actualPrice === '')
+                          && (original.activitiesText || '') === (edited.activitiesText || '');
+    
+    const isDeletion = wasDeletedBySummary || wasDeletedByData;
+    
+    // ═══════════════════════════════════════════════════════════
+    // 1️⃣ حالة الحذف
+    // ═══════════════════════════════════════════════════════════
+    if (isDeletion) {
+      content += '<div style="background:#fee2e2; padding:20px; border-radius:12px; margin-bottom:15px; text-align:center;">';
+      content += '<div style="font-size:64px; margin-bottom:15px;">🗑️</div>';
+      content += '<h3 style="color:#991b1b; margin-bottom:15px;">تم حذف الفاتورة بالكامل</h3>';
+      content += `<p style="margin-bottom:8px;">رقم الفاتورة: <strong>${details.voucherNo || '—'}</strong></p>`;
+      content += `<p style="margin-bottom:8px;">تم الحذف بواسطة: <strong>${details.userName || 'غير معروف'}</strong></p>`;
+      content += `<p style="margin-bottom:15px;">التاريخ: <strong>${details.editDate ? new Date(details.editDate).toLocaleString('ar-EG') : '—'}</strong></p>`;
+      content += '</div>';
+      
+      // ✅ البيانات المالية المحذوفة
+      content += '<div style="background:#fff; padding:15px; border-radius:10px; margin-bottom:15px; border:1px solid #e2e8f0; text-align:right;">';
+      content += '<h4 style="color:#1e2b4f; margin-bottom:12px;">📊 البيانات المالية المحذوفة</h4>';
+      content += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">';
+      content += `<div style="padding:8px; background:#f8fafc; border-radius:8px;">
+        <div style="font-size:11px; color:#64748b;">إجمالي الفاتورة</div>
+        <div style="font-size:15px; font-weight:700; color:#1e2b4f;">${(original.actualPrice || 0).toFixed(2)} ${currency}</div>
+      </div>`;
+      content += `<div style="padding:8px; background:#f8fafc; border-radius:8px;">
+        <div style="font-size:11px; color:#64748b;">المدفوع</div>
+        <div style="font-size:15px; font-weight:700; color:#16a34a;">${(original.paymentPrice || 0).toFixed(2)} ${currency}</div>
+      </div>`;
+      content += `<div style="padding:8px; background:#f8fafc; border-radius:8px;">
+        <div style="font-size:11px; color:#64748b;">الخصم</div>
+        <div style="font-size:15px; font-weight:700; color:#dc2626;">${(original.discount || 0).toFixed(2)} ${currency}</div>
+      </div>`;
+      content += `<div style="padding:8px; background:#f8fafc; border-radius:8px;">
+        <div style="font-size:11px; color:#64748b;">المتبقي</div>
+        <div style="font-size:15px; font-weight:700; color:#ea580c;">${(original.rest || 0).toFixed(2)} ${currency}</div>
+      </div>`;
+      content += '</div>';
+      content += '</div>';
+      
+      // ✅ بيانات الفاتورة المحذوفة
+      content += '<div style="background:#fff; padding:15px; border-radius:10px; margin-bottom:15px; border:1px solid #e2e8f0; text-align:right;">';
+      content += '<h4 style="color:#1e2b4f; margin-bottom:12px;">📄 بيانات الفاتورة</h4>';
+      content += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:13px;">';
+      
+      if (original.guestName) content += `<div><strong>العميل:</strong> ${original.guestName}</div>`;
+      if (original.nationality) content += `<div><strong>الجنسية:</strong> ${original.nationality}</div>`;
+      if (original.trip) content += `<div><strong>الرحلة:</strong> ${original.trip}</div>`;
+      if (original.hotel) content += `<div><strong>الفندق:</strong> ${original.hotel}</div>`;
+      if (original.roomNo) content += `<div><strong>الغرفة:</strong> ${original.roomNo}</div>`;
+      if (original.contactNo) content += `<div><strong>الهاتف:</strong> ${original.contactNo}</div>`;
+      if (original.time) content += `<div><strong>الوقت:</strong> ${cleanTime(original.time)}</div>`;
+      
+      content += '</div>';
+      content += '</div>';
+      
+      // ✅ ملخص الحذف
+      if (details.editSummary) {
+        content += `<div style="background:#fef3c7; padding:12px 15px; border-radius:10px; border:1px solid #fde68a; color:#92400e; font-size:13px; margin-bottom:15px;">`;
+        content += `<strong>📌 التفاصيل:</strong> ${details.editSummary}`;
+        content += `</div>`;
+      }
+      
+      // ✅ تنبيه إضافي
+      content += '<div style="background:#fef2f2; padding:12px 15px; border-radius:10px; border:1px solid #fecaca; color:#991b1b; font-size:12px; text-align:center;">';
+      content += '⚠️ تم إعادة بناء الخزينة التراكمية بناءً على هذا الحذف';
       content += '</div>';
     } 
-    // 2. حالة التعديل العادي
+    // ═══════════════════════════════════════════════════════════
+    // 2️⃣ حالة التعديل العادي
+    // ═══════════════════════════════════════════════════════════
     else {
       if (details.editSummary) {
         content += '<div style="background:#fef3c7; padding:12px 15px; border-radius:12px; margin-bottom:20px; border:1px solid #fde68a; color:#92400e;">';
         content += `<strong>📌 ملخص الإجراء:</strong> ${details.editSummary}`;
         content += '</div>';
       }
-
-      const original = details.originalParsed || {};
-      const edited = details.editedParsed || {};
-      const currency = edited.invoiceCurrency || original.invoiceCurrency || '$';
 
       // قائمة الحقول الهامة للمقارنة
       const fieldsToCompare = [
@@ -899,8 +993,9 @@ async function viewFullDetails(editId) {
     
     content += '</div>';
     
-    document.getElementById('modalIcon').textContent = details.editSummary && details.editSummary.includes('تم حذف الفاتورة') ? '🗑️' : '📋';
-    document.getElementById('modalTitle').textContent = details.editSummary && details.editSummary.includes('تم حذف الفاتورة') ? 'تفاصيل الحذف' : 'تفاصيل التعديل';
+    // ✅ تحديث العنوان والأيقونة
+    document.getElementById('modalIcon').textContent = isDeletion ? '🗑️' : '📋';
+    document.getElementById('modalTitle').textContent = isDeletion ? 'تفاصيل الحذف' : 'تفاصيل التعديل';
     document.getElementById('modalContent').innerHTML = content;
     document.getElementById('detailsModal').classList.add('open');
     
@@ -908,7 +1003,6 @@ async function viewFullDetails(editId) {
     console.error('خطأ:', error);
   }
 }
-
 async function viewNotification(editId) {
   if (deleteMode) return;
   await markAsRead(editId);
