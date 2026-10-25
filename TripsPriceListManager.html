@@ -892,7 +892,6 @@ function jsonp(action, params = {}, retryCount = 0) {
   const TIMEOUT = 45000;
   
   return new Promise((resolve, reject) => {
-    // ✅ استخدام Session.getUser()
     const user = Session.getUser();
     if (user && user.centerName && !params.centerName) {
       params.centerName = user.centerName;
@@ -906,9 +905,25 @@ function jsonp(action, params = {}, retryCount = 0) {
     params.callback = callbackName;
     params._t = Date.now();
     
+    // ✅ الإصلاح 1: عدم ترميز Base64 مرتين
     const queryString = Object.entries(params)
       .filter(([k, v]) => v !== undefined && v !== null && v !== '')
-      .map(([k, v]) => k + '=' + encodeURIComponent(String(v)))
+      .map(([k, v]) => {
+        const str = String(v);
+        // ✅ إذا كانت قيمة Base64 (b64, imageData, sigPart, etc.)
+        // لا تعيد ترميزها لأنها آمنة أصلاً
+        if (k === 'b64' || k === 'imageData' || k === 'sigPart1' || k === 'sigPart2' 
+            || k === 'sig' || k === 'signatureData' || k === 'signatureUrl'
+            || k === 'prices' || k === 'items' || k === 'mandatoryFees' 
+            || k === 'fixedCosts' || k === 'lePrices' || k === 'instructorsData'
+            || k === 'vehiclesData' || k === 'boatsData') {
+          // ✅ Base64 آمن في URL بدون ترميز إضافي
+          // فقط استبدل الأحرف التي تكسر URL
+          const safe = str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+          return k + '=' + safe;
+        }
+        return k + '=' + encodeURIComponent(str);
+      })
       .join('&');
     
     const url = CONFIG.GAS_URL + '?' + queryString;
