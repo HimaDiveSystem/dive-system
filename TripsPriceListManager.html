@@ -989,7 +989,25 @@ function jsonp(action, params = {}, retryCount = 0) {
 function gas(action, params = {}) {
   return jsonp(action, params);
 }
+async function postToGAS(action, data = {}) {
+  const user = Session.getUser();
+  const payload = {
+    ...data,
+    action: action,
+    centerName: data.centerName || user?.centerName || '',
+    centerId: data.centerId || user?.centerId || ''
+  };
 
+  const response = await fetch(CONFIG.GAS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(payload),
+    redirect: 'follow'
+  });
+
+  if (!response.ok) throw new Error('HTTP ' + response.status);
+  return await response.json();
+}
 // ============================================================
 // UTILITIES
 // ============================================================
@@ -1712,7 +1730,6 @@ function previewTripImage(input) {
 async function uploadTripImageFile(file) {
   const tripName = document.getElementById('tripName').value.trim() || 'temp_trip';
   
-  // التحقق من الحجم الأقصى
   if (file.size > 3 * 1024 * 1024) {
     showAlert('⚠️ الصورة أكبر من 3MB، يرجى اختيار صورة أصغر.');
     return;
@@ -1723,11 +1740,11 @@ async function uploadTripImageFile(file) {
   reader.onload = function(e) {
     const img = new Image();
     img.onload = async function() {
-      // ✅ ضغط الصورة (نفس آلية الاختبار الناجح)
+      // ✅ ضغط معتدل (POST لا يحتاج ضغطاً عنيفاً)
       const canvas = document.createElement('canvas');
       let width = img.width;
       let height = img.height;
-      const maxDim = 400; // تصغير إلى 400 بكسل
+      const maxDim = 600;  // ✅ 600px كافية (POST يتحمل)
 
       if (width > height && width > maxDim) {
         height *= maxDim / width;
@@ -1741,26 +1758,29 @@ async function uploadTripImageFile(file) {
       canvas.height = height;
       canvas.getContext('2d').drawImage(img, 0, 0, width, height);
 
-      // ضغط بجودة 0.7
-      const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+      const compressedBase64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+      
+      console.log('📊 [UPLOAD] Base64 size:', compressedBase64.length, 'chars');
       
       try {
-        // ✅ الإرسال عبر jsonp (وهو ما أثبت نجاحه في الاختبار)
-        const res = await jsonp('uploadTripImage', { 
+        // ✅ استخدام POST بدلاً من jsonp
+        const res = await postToGAS('uploadTripImage', { 
           b64: compressedBase64, 
           mimeType: 'image/jpeg', 
           tripName: tripName 
         });
 
+        console.log('✅ [UPLOAD] استجابة السيرفر:', res);
+
         if (res && res.success) {
-          uploadedTripImageUrl = res.url; // حفظ الرابط في المتغير العام
-          if (currentTrip) currentTrip.tripImage = res.url; // تحديث الكائن المؤقت
+          uploadedTripImageUrl = res.url;
+          if (currentTrip) currentTrip.tripImage = res.url;
           showTemporaryAlert('✅ تم رفع الصورة بنجاح', 1500);
         } else {
           showAlert('❌ فشل رفع الصورة: ' + (res?.message || 'خطأ غير معروف'));
         }
       } catch(err) {
-        console.error('Upload error:', err);
+        console.error('❌ [UPLOAD] خطأ:', err);
         showAlert('❌ خطأ في رفع الصورة: ' + err.message);
       }
     };
