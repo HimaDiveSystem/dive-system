@@ -1054,7 +1054,28 @@
     <div class="mbts"><button id="alertOk" class="btn-primary">موافق</button></div>
   </div>
 </div>
-
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- ✅ مودال QR للمراكز -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div id="qrCenterModal" class="modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); align-items:center; justify-content:center; z-index:99999; backdrop-filter:blur(4px);">
+  <div style="background:white; border-radius:24px; max-width:450px; width:90%; padding:25px; text-align:center; position:relative;">
+    <button onclick="closeQRModal()" style="position:absolute; top:10px; left:10px; background:#fee2e2; color:#dc2626; border:none; width:36px; height:36px; border-radius:50%; font-size:20px; cursor:pointer;">×</button>
+    
+    <h3 style="color:#1e2b4f; font-size:20px; margin-bottom:5px;">📱 QR Code</h3>
+    <p id="qrCenterNameDisplay" style="font-size:14px; color:#5a6a8a; margin-bottom:15px; font-weight:700;"></p>
+    
+    <div style="background:#f8f9fa; border:2px dashed #dde4f0; border-radius:16px; padding:15px; margin-bottom:15px;">
+      <img id="qrCenterImage" src="" style="width:100%; max-width:250px; display:block; margin:0 auto;">
+    </div>
+    
+    <div style="background:#f8f9fa; border:1px solid #e9ecef; border-radius:10px; padding:10px; font-size:11px; color:#5a6a8a; word-break:break-all; direction:ltr; text-align:left; margin-bottom:15px;" id="qrCenterUrl">—</div>
+    
+    <div style="display:flex; gap:10px; justify-content:center;">
+      <button class="btn-primary" onclick="downloadCenterQR()" style="flex:1; padding:10px; border-radius:20px;">⬇️ تحميل</button>
+      <button class="btn-secondary" onclick="printCenterQR()" style="flex:1; padding:10px; border-radius:20px;">🖨️ طباعة</button>
+    </div>
+  </div>
+</div>
 <!-- شريط التقدم -->
 <div id="progressOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); align-items:center; justify-content:center; z-index:10000; flex-direction:column;">
   <div style="background:white; border-radius:16px; padding:24px; width:300px; text-align:center;">
@@ -1887,10 +1908,14 @@ function renderCentersTable() {
     const rc=d.status==='expired'?'expired':d.status==='critical'?'expiring-soon':d.status==='warning'?'expiring-week':'';
     const active=c.status==='TRUE'||c.status===true;
     
-   let actions = '';
+       let actions = '';
 if (canEdit) {
   actions += `<button class="action-btn view" onclick="viewCenter('${c.id}')">👁</button>`;
   actions += `<button class="action-btn edit" onclick="openCenterModal('${c.id}')">✏️</button>`;
+  
+  // ✅ إضافة زر QR Code هنا
+  actions += `<button class="action-btn" onclick="showCenterQR('${c.name}')" style="background:#7c3aed;color:white;border:none;border-radius:16px;padding:3px 8px;cursor:pointer;font-size:10px;font-weight:700;">📱</button>`;
+  
   actions += `<button class="action-btn toggle" onclick="doToggleCenter('${c.id}')">🔄</button>`;
 }
 if (canDelete) {
@@ -2025,6 +2050,12 @@ function viewCenter(id) {
   document.getElementById('viewTitle').textContent = '🏢 تفاصيل المركز';
   document.getElementById('viewBody').innerHTML = `
     ${logoHtml}
+    
+    <!-- ✅ زر QR للمركز -->
+    <div style="text-align:center; margin-bottom:15px;">
+      <button class="btn-primary" onclick="showCenterQR('${c.name}')" style="padding:8px 20px; border-radius:20px;">📱 عرض QR Code</button>
+    </div>
+    
     <p><strong>المعرف:</strong> ${safeEscape(c.id)}</p>
     <p><strong>المركز:</strong> ${safeEscape(c.name)}</p>
     <p><strong>المالك:</strong> ${safeEscape(c.owner)}</p>
@@ -3942,7 +3973,88 @@ document.addEventListener('DOMContentLoaded', function () {
   fetchActivities();         // تحميل مسبق
   fetchDashboard();          // تحديث من الخادم
 });
+// ═══════════════════════════════════════════════════════════════
+// ✅ دوال QR للمراكز (لوحة الأدمن)
+// ═══════════════════════════════════════════════════════════════
+let _currentCenterQR = null;
 
+async function showCenterQR(centerName) {
+  try {
+    // توليد الرابط عبر الـ Backend
+    const result = await callGAS('generatePortalUrl', { centerName: centerName });
+    
+    if (!result || !result.success) {
+      showAlert('❌ فشل توليد QR: ' + (result?.message || 'خطأ'));
+      return;
+    }
+    
+    _currentCenterQR = {
+      centerName: centerName,
+      portalUrl: result.data.portalUrl,
+      qrImageUrl: result.data.qrImageUrl
+    };
+    
+    document.getElementById('qrCenterNameDisplay').textContent = centerName;
+    document.getElementById('qrCenterImage').src = result.data.qrImageUrl;
+    document.getElementById('qrCenterUrl').textContent = result.data.portalUrl;
+    
+    document.getElementById('qrCenterModal').style.display = 'flex';
+  } catch(e) {
+    showAlert('❌ خطأ: ' + e.message);
+  }
+}
+
+function closeQRModal() {
+  document.getElementById('qrCenterModal').style.display = 'none';
+  _currentCenterQR = null;
+}
+
+async function downloadCenterQR() {
+  if (!_currentCenterQR) return;
+  try {
+    const response = await fetch(_currentCenterQR.qrImageUrl);
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `QR_${_currentCenterQR.centerName}.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  } catch(e) {
+    showAlert('❌ فشل التحميل: ' + e.message);
+  }
+}
+
+function printCenterQR() {
+  if (!_currentCenterQR) return;
+  const html = `
+    <!DOCTYPE html>
+    <html dir="rtl">
+    <head><meta charset="UTF-8"><title>QR - ${_currentCenterQR.centerName}</title>
+    <style>body{text-align:center;padding:40px;font-family:sans-serif;}h1{color:#1e2b4f;}img{max-width:350px;margin:20px auto;display:block;}</style>
+    </head>
+    <body>
+      <h1>🌊 ${_currentCenterQR.centerName}</h1>
+      <p>امسح الرمز لفتح البوابة</p>
+      <img src="${_currentCenterQR.qrImageUrl}">
+      <p style="font-size:10px;color:#777;">${_currentCenterQR.portalUrl}</p>
+      <script>window.onload=function(){setTimeout(function(){window.print();},800);}<\/script>
+    </body>
+    </html>
+  `;
+  const win = window.open('', '_blank');
+  win.document.write(html);
+  win.document.close();
+}
+
+// تصدير الدوال
+window.showCenterQR = showCenterQR;
+window.closeQRModal = closeQRModal;
+window.downloadCenterQR = downloadCenterQR;
+window.printCenterQR = printCenterQR;
+  
 // ═══════════════════════════════════════════════════════════════════
 // ✅ تعريف الدوال في النطاق العام
 // ═══════════════════════════════════════════════════════════════════
