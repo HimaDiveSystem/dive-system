@@ -386,27 +386,24 @@ function getUserWithExpiry() {
 // DOMContentLoaded
 // ═══════════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', function() {
-  // ✅ 1. كشف وضع البوابة (Portal Mode)
+  // ✅ 1. كشف وضع البوابة (Portal Mode) وجلب البيانات
   const urlParams = new URLSearchParams(window.location.search);
   const isFromPortal = urlParams.get('fromPortal') === 'true';
   
   if (isFromPortal) {
-         // إخفاء زر العودة الأصلي وإظهار زر العودة للبوابة
+    // إخفاء زر العودة الأصلي وإظهار زر العودة للبوابة
     const backBtn = document.querySelector('.back-btn');
     if (backBtn) {
       backBtn.innerHTML = '← Back to Portal';
-      
-      // ✅ نأخذ الـ parameters من الرابط الحالي ونعيد تمريرها للبوابة
       backBtn.onclick = () => {
         const currentParams = window.location.search;
         window.location.href = 'CenterPortal.html' + currentParams;
       };
     }
-  const langFromPortal = urlParams.get('lang') || 'en';
-  if (isFromPortal) {
+    
+    const langFromPortal = urlParams.get('lang') || 'en';
     sessionStorage.setItem('portalLang', langFromPortal);
-  }
-  const currentInvoiceLang = sessionStorage.getItem('portalLang') || 'en';
+    
     // تعطيل حقل الخصم
     setTimeout(() => {
       const discountInput = document.getElementById('discount');
@@ -418,15 +415,22 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     }, 500);
   }
+  
+  const currentInvoiceLang = sessionStorage.getItem('portalLang') || 'en';
 
   if (typeof Theme !== 'undefined' && Theme.applyToPage) {
     Theme.applyToPage();
     Theme.setPageTitle('Sales Invoice');
   }
-  if (typeof Session !== 'undefined' && Session.checkValidity) {
-    if (!Session.checkValidity()) return;
+
+  // ✅ 2. التحقق من الجلسة (فقط إذا لم يكن قادماً من البوابة)
+  if (!isFromPortal) {
+    if (typeof Session !== 'undefined' && Session.checkValidity) {
+      if (!Session.checkValidity()) return;
+    }
   }
   
+  // ✅ 3. جلب المستخدم الحالي
   let ud = null;
   if (typeof Session !== 'undefined' && Session.getUser) ud = Session.getUser();
   if (!ud) ud = getUserWithExpiry();
@@ -434,9 +438,64 @@ document.addEventListener('DOMContentLoaded', function() {
     const p = new URLSearchParams(location.search).get('user');
     if (p) { try { ud = JSON.parse(decodeURIComponent(p)); saveUserWithExpiry(ud); } catch (e) {} }
   }
-  if (!ud) { location.href = 'index.html'; return; }
-  try { currentUser = ud; } catch { location.href = 'index.html'; return; }
   
+  // ✅ إذا لم يوجد مستخدم وكان قادماً من البوابة، ننشئ مستخدم وهمي
+  if (!ud && isFromPortal) {
+    ud = { id: 'QR', name: 'QR Code User', type: 'Sales' };
+  }
+
+  // ✅ إذا لم يوجد مستخدم ولم يكن من البوابة، نطرده
+  if (!ud) { 
+    location.href = 'index.html'; 
+    return; 
+  }
+  
+  try { 
+    currentUser = ud; 
+  } catch { 
+    location.href = 'index.html'; 
+    return; 
+  }
+  
+  // ✅ 4. تعبئة البيانات من البوابة (قبل فحص الصلاحية)
+  if (isFromPortal) {
+    try {
+      const guestDataStr = sessionStorage.getItem('portalGuestData');
+      const salesDataStr = sessionStorage.getItem('portalSalesData');
+
+      if (guestDataStr) {
+        const guest = JSON.parse(guestDataStr);
+        setTimeout(() => {
+          const el = id => document.getElementById(id);
+          if (el('guestName')) el('guestName').value = guest.name || '';
+          if (el('phoneNumber')) el('phoneNumber').value = guest.phone || '';
+          if (el('nationality')) el('nationality').value = guest.nat || '';
+          if (el('hotel')) el('hotel').value = guest.hotel || '';
+          if (el('roomNo')) el('roomNo').value = guest.room || '';
+        }, 300); // تأخير بسيط لضمان رسم النموذج (renderForm)
+        
+        sessionStorage.removeItem('portalGuestData');
+      }
+
+      if (salesDataStr) {
+        const salesData = JSON.parse(salesDataStr);
+        
+        currentUser.id = 'QR';
+        currentUser.name = salesData.salesName || 'QR Code User';
+        currentUser.type = 'Sales'; // ✅ تعيين النوع لكي يمر من فحص الصلاحية
+        currentUser.centerName = salesData.centerName;
+        currentUser.centerId = ''; 
+        currentUser.branchName = salesData.branchName || '';
+        currentUser.branchId = salesData.branchId || '';
+        
+        sessionStorage.removeItem('portalSalesData');
+      }
+    } catch(e) {
+      console.warn('Portal data load error:', e);
+    }
+  }
+
+  // ✅ 5. فحص الصلاحية (سيمر الآن لأن النوع Sales)
   if (currentUser.type !== 'Sales' && currentUser.type !== 'Admin') {
     showAlert('⚠️ You do not have permission to create sales invoices', '⚠️');
     const dp = DASH[currentUser.type] || 'Dashboard.html';
@@ -444,6 +503,7 @@ document.addEventListener('DOMContentLoaded', function() {
     return;
   }
   
+  // ✅ 6. تحديث الهيدر (اسم المستخدم، المركز، الفرع)
   document.getElementById('userNameDisplay').textContent = currentUser.name || 'User';
   document.getElementById('userAvatar').textContent = (currentUser.name || 'U')[0].toUpperCase();
   if (currentUser.centerName) {
@@ -457,64 +517,8 @@ document.addEventListener('DOMContentLoaded', function() {
     e.style.display = '';
   }
   
-  // ✅ عرض النموذج فوراً
+  // ✅ 7. عرض النموذج وتحميل البيانات
   renderForm();
-    // ✅ 2. تعبئة البيانات من البوابة (إن وجدت)
-  if (isFromPortal) {
-    try {
-      const guestDataStr = sessionStorage.getItem('portalGuestData');
-      const salesDataStr = sessionStorage.getItem('portalSalesData');
-
-      if (guestDataStr) {
-        const guest = JSON.parse(guestDataStr);
-        const el = id => document.getElementById(id);
-        
-        // تعبئة بيانات العميل
-        if (el('guestName')) el('guestName').value = guest.name || '';
-        if (el('phoneNumber')) el('phoneNumber').value = guest.phone || '';
-        if (el('nationality')) el('nationality').value = guest.nat || '';
-        if (el('hotel')) el('hotel').value = guest.hotel || '';
-        if (el('roomNo')) el('roomNo').value = guest.room || '';
-        
-        // مسح البيانات من الذاكرة لتجنب التكرار في الحجوزات القادمة
-        sessionStorage.removeItem('portalGuestData');
-      }
-
-      // تعديل بيانات المستخدم (السيلز والفرع) في الذاكرة
-      if (salesDataStr) {
-        const salesData = JSON.parse(salesDataStr);
-        
-        // إذا لم يكن المستخدم مسجل دخول، نصنع مستخدماً وهمياً باسم "QR Code User"
-        if (!currentUser) {
-          currentUser = {
-            id: 'QR',
-            name: salesData.salesName || 'QR Code User',
-            centerName: salesData.centerName,
-            centerId: '', 
-            branchName: salesData.branchName || '',
-            branchId: salesData.branchId || '',
-            type: 'Customer' // نوع مستخدم عميل
-          };
-        } else {
-          // إذا كان السيلز هو من فتح الرابط (مسجل دخول) نمرر بياناته
-          currentUser.centerName = salesData.centerName;
-          if (!currentUser.branchId && salesData.branchId) {
-            currentUser.branchId = salesData.branchId;
-            currentUser.branchName = salesData.branchName;
-          }
-        }
-
-        // تحديث اسم المستخدم في الهيدر
-        const userNameDisplay = document.getElementById('userNameDisplay');
-        if (userNameDisplay) userNameDisplay.textContent = currentUser.name;
-
-        sessionStorage.removeItem('portalSalesData');
-      }
-    } catch(e) {
-      console.warn('Portal data load error:', e);
-    }
-  }
-  // ✅ تحميل البيانات بالتوازي
   loadBackgroundData();
 });
 
