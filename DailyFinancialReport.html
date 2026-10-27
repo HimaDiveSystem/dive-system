@@ -78,6 +78,8 @@
     .summary-row.bold { font-weight: 800; color: var(--navy); font-size: 15px; }
     .summary-row:last-child { border-bottom: none; }
 
+    .empty-state { text-align: center; padding: 20px; color: var(--text-lt); font-size: 13px; background: #f8fafc; border-radius: 8px; }
+
     @media (max-width: 900px) { .chart-grid { grid-template-columns: 1fr; } }
     @media print { .header, .filter-card, .user-chip, .back-btn { display: none !important; } body { background: #fff; } .card, .section { box-shadow: none; border: 1px solid #ccc; } .details-table { display: block !important; } }
   </style>
@@ -117,6 +119,15 @@
     function fmt(n) {
       if (n === undefined || n === null) return '0.00';
       return Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function formatCur(amount, currency) {
+      let symbol = currency;
+      if (currency === '$') symbol = '$';
+      else if (currency === '€') symbol = '€';
+      else if (currency === '£') symbol = '£';
+      else if (currency === 'LE') symbol = 'LE';
+      return `${fmt(amount)} ${symbol}`;
     }
 
     document.addEventListener('DOMContentLoaded', async () => {
@@ -211,14 +222,26 @@
         <div class="summary-row"><span>إجمالي المتبقي (Rest)</span> <span style="color:#f59e0b; font-weight:700;">${fmt(rv.confirmed.restLE)} LE</span></div>
         <div class="summary-row"><span>عدد الفواتير</span> <span>${rv.confirmed.count} فاتورة</span></div>
         
-        <div id="secRevenue" class="details-table">
-          <table>
-            <thead><tr><th>الفاتورة</th><th>التاريخ</th><th>الرحلة</th><th>العميل</th><th>العملة</th><th>Actual LE</th><th>Paid LE</th></tr></thead>
+        <div id="secRevenue" class="details-table">`;
+      
+      if (rv.confirmed.list && rv.confirmed.list.length > 0) {
+        html += `<table>
+            <thead><tr><th>الفاتورة</th><th>التاريخ</th><th>الرحلة</th><th>العميل</th><th>العملة</th><th>Actual (بالعملة)</th><th>Actual LE</th><th>Paid (بالعملة)</th><th>Paid LE</th></tr></thead>
             <tbody>`;
-      rv.confirmed.list.forEach(inv => {
-        html += `<tr><td>${inv.voucherNo}</td><td>${inv.activeDate}</td><td>${inv.trip}</td><td>${inv.guestName}</td><td>${inv.currency}</td><td>${fmt(inv.actualLE)}</td><td class="positive">${fmt(inv.paymentPriceLE)}</td></tr>`;
-      });
-      html += `</tbody></table></div></div>`;
+        rv.confirmed.list.forEach(inv => {
+          html += `<tr>
+            <td>${inv.voucherNo}</td><td>${inv.activeDate}</td><td>${inv.trip}</td><td>${inv.guestName}</td><td>${inv.currency}</td>
+            <td>${formatCur(inv.actualPrice, inv.currency)}</td>
+            <td>${fmt(inv.actualLE)}</td>
+            <td>${formatCur(inv.paymentPrice, inv.currency)}</td>
+            <td class="positive">${fmt(inv.paymentPriceLE)}</td>
+          </tr>`;
+        });
+        html += `</tbody></table>`;
+      } else {
+        html += `<div class="empty-state">لا توجد فواتير مؤكدة في هذه الفترة.</div>`;
+      }
+      html += `</div></div>`;
 
       // 2. تحت التنفيذ
       if (rv.pending.count > 0) {
@@ -227,14 +250,24 @@
           <div class="summary-row bold"><span>إجمالي المبيعات (Actual)</span> <span class="positive">${fmt(rv.pending.actualLE)} LE</span></div>
           <div class="summary-row"><span>عدد الفواتير</span> <span>${rv.pending.count} فاتورة</span></div>
           
-          <div id="secPending" class="details-table">
-            <table>
-              <thead><tr><th>الفاتورة</th><th>التاريخ</th><th>الرحلة</th><th>العميل</th><th>العملة</th><th>Actual LE</th></tr></thead>
+          <div id="secPending" class="details-table">`;
+          
+        if (rv.pending.list && rv.pending.list.length > 0) {
+          html += `<table>
+              <thead><tr><th>الفاتورة</th><th>التاريخ</th><th>الرحلة</th><th>العميل</th><th>العملة</th><th>Actual (بالعملة)</th><th>Actual LE</th></tr></thead>
               <tbody>`;
-        rv.pending.list.forEach(inv => {
-          html += `<tr><td>${inv.voucherNo}</td><td>${inv.activeDate}</td><td>${inv.trip}</td><td>${inv.guestName}</td><td>${inv.currency}</td><td>${fmt(inv.actualLE)}</td></tr>`;
-        });
-        html += `</tbody></table></div></div>`;
+          rv.pending.list.forEach(inv => {
+            html += `<tr>
+              <td>${inv.voucherNo}</td><td>${inv.activeDate}</td><td>${inv.trip}</td><td>${inv.guestName}</td><td>${inv.currency}</td>
+              <td>${formatCur(inv.actualPrice, inv.currency)}</td>
+              <td>${fmt(inv.actualLE)}</td>
+            </tr>`;
+          });
+          html += `</tbody></table>`;
+        } else {
+          html += `<div class="empty-state">لا توجد فواتير معلقة في هذه الفترة.</div>`;
+        }
+        html += `</div></div>`;
       }
 
       // 3. إيرادات أخرى
@@ -255,35 +288,47 @@
       // ══════════════════════════════
       
       // 4. تكاليف السيارات
-      if (cs.vehiclesLE > 0) {
+      if (cs.vehiclesLE > 0 || (cs.vehiclesList && cs.vehiclesList.length > 0)) {
         html += `<div class="section" style="background:#fef2f2; border-color:#fecaca;">
           <div class="section-title" style="color:#991b1b; border-color:#fecaca;" onclick="toggleSection('secVehicles')">4. تكاليف السيارات (Vehicles) ▼</div>
           <div class="summary-row bold"><span>إجمالي تكلفة السيارات للفترة</span> <span class="negative">${fmt(cs.vehiclesLE)} LE</span></div>
           
-          <div id="secVehicles" class="details-table">
-            <table>
+          <div id="secVehicles" class="details-table">`;
+          
+        if (cs.vehiclesList && cs.vehiclesList.length > 0) {
+          html += `<table>
               <thead><tr><th>التاريخ</th><th>السيارة</th><th>Go</th><th>Return</th><th>التكلفة LE</th></tr></thead>
               <tbody>`;
-        (cs.vehiclesList || []).forEach(v => {
-          html += `<tr><td>${v.date}</td><td>${v.vehicleId}</td><td>${v.goCount}</td><td>${v.returnCount}</td><td class="negative">${fmt(v.cost)}</td></tr>`;
-        });
-        html += `</tbody></table></div></div>`;
+          cs.vehiclesList.forEach(v => {
+            html += `<tr><td>${v.date}</td><td>${v.vehicleId}</td><td>${v.goCount}</td><td>${v.returnCount}</td><td class="negative">${fmt(v.cost)}</td></tr>`;
+          });
+          html += `</tbody></table>`;
+        } else {
+          html += `<div class="empty-state">لا توجد سجلات سيارات مسجلة في هذه الفترة.</div>`;
+        }
+        html += `</div></div>`;
       }
 
       // 6. تكاليف المدربين
-      if (cs.instructorsLE > 0) {
+      if (cs.instructorsLE > 0 || (cs.instructorsList && cs.instructorsList.length > 0)) {
         html += `<div class="section" style="background:#fef2f2; border-color:#fecaca;">
           <div class="section-title" style="color:#991b1b; border-color:#fecaca;" onclick="toggleSection('secInstructors')">6. تكاليف المدربين (Instructors) ▼</div>
           <div class="summary-row bold"><span>إجمالي تكلفة المدربين للفترة</span> <span class="negative">${fmt(cs.instructorsLE)} LE</span></div>
           
-          <div id="secInstructors" class="details-table">
-            <table>
+          <div id="secInstructors" class="details-table">`;
+          
+        if (cs.instructorsList && cs.instructorsList.length > 0) {
+          html += `<table>
               <thead><tr><th>التاريخ</th><th>المدرب</th><th>الرحلة</th><th>التكلفة LE</th></tr></thead>
               <tbody>`;
-        (cs.instructorsList || []).forEach(i => {
-          html += `<tr><td>${i.date}</td><td>${i.instructorId}</td><td>${i.tripName}</td><td class="negative">${fmt(i.total)}</td></tr>`;
-        });
-        html += `</tbody></table></div></div>`;
+          cs.instructorsList.forEach(i => {
+            html += `<tr><td>${i.date}</td><td>${i.instructorId}</td><td>${i.tripName}</td><td class="negative">${fmt(i.total)}</td></tr>`;
+          });
+          html += `</tbody></table>`;
+        } else {
+          html += `<div class="empty-state">لا توجد سجلات مدربين مسجلة في هذه الفترة.</div>`;
+        }
+        html += `</div></div>`;
       }
 
       // 7. تكاليف الموظفين
