@@ -49,21 +49,37 @@
     .card.margin .value { color: #a78bfa; }
 
     .section { background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 1px solid var(--border); box-shadow: var(--shadow); }
-    .section-title { font-size: 16px; font-weight: 700; color: var(--navy); margin-bottom: 15px; padding-bottom: 10px; border-bottom: 2px solid var(--border); }
+    .section-title { 
+      font-size: 16px; font-weight: 700; color: var(--navy); margin-bottom: 15px; padding-bottom: 10px; border-bottom: 2px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center; cursor: pointer;
+    }
+    .section-title:hover { color: var(--blue); }
+    .section-title::after { content: '▼'; font-size: 12px; transition: transform .3s; }
+    .section-title.open::after { transform: rotate(180deg); }
+    
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th { background: #f1f5f9; padding: 10px; text-align: right; color: var(--text-lt); font-weight: 600; }
     td { padding: 10px; border-bottom: 1px solid var(--border); }
     tr:hover td { background: #f8fafc; }
     .positive { color: var(--green); font-weight: 700; }
     .negative { color: var(--red); font-weight: 700; }
+    
     .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
     .chart-box { background: #fff; border-radius: 12px; padding: 20px; border: 1px solid var(--border); box-shadow: var(--shadow); height: 350px; }
+    
     .loading { text-align: center; padding: 50px; color: var(--text-lt); }
     .spinner { width: 32px; height: 32px; border: 3px solid var(--border); border-top-color: var(--blue); border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 12px; }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    .details-table { display: none; margin-top: 15px; border-top: 1px dashed var(--border); padding-top: 15px; }
+    .details-table.open { display: block; }
     
+    .summary-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+    .summary-row.bold { font-weight: 800; color: var(--navy); font-size: 15px; }
+    .summary-row:last-child { border-bottom: none; }
+
     @media (max-width: 900px) { .chart-grid { grid-template-columns: 1fr; } }
-    @media print { .header, .filter-card, .user-chip, .back-btn { display: none !important; } body { background: #fff; } .card, .section { box-shadow: none; border: 1px solid #ccc; } }
+    @media print { .header, .filter-card, .user-chip, .back-btn { display: none !important; } body { background: #fff; } .card, .section { box-shadow: none; border: 1px solid #ccc; } .details-table { display: block !important; } }
   </style>
 </head>
 <body>
@@ -83,6 +99,7 @@
         <div class="fg"><label>إلى تاريخ</label><input type="date" class="fc" id="toDate"></div>
         <div style="display:flex; align-items:flex-end; gap:10px;">
           <button class="fbtn fbtn-run" onclick="loadReport()">🔍 عرض التقرير</button>
+          <button class="fbtn" style="background:#16a34a; color:white;" onclick="exportExcel()">📥 تصدير Excel</button>
           <button class="fbtn" style="background:#e2e8f0; color:#0f1f3d;" onclick="window.print()">🖨️ طباعة</button>
         </div>
       </div>
@@ -95,6 +112,7 @@
 
   <script>
     let currentUser = null;
+    let lastReport = null;
 
     function fmt(n) {
       if (n === undefined || n === null) return '0.00';
@@ -147,10 +165,19 @@
           return;
         }
 
+        lastReport = res;
         renderReport(res);
       } catch (e) {
         document.getElementById('content').innerHTML = `<div class="loading" style="color:var(--red);">❌ خطأ في الاتصال: ${e.message}</div>`;
       }
+    }
+
+    function toggleSection(id) {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle('open');
+      
+      const title = el.previousElementSibling;
+      if (title) title.classList.toggle('open');
     }
 
     function renderReport(r) {
@@ -177,40 +204,49 @@
       </div>`;
 
       // 1. الإيرادات
-      html += `<div class="section"><div class="section-title">1. الإيرادات المحققة (فواتير مؤكدة)</div>
-        <table><thead><tr><th>الفاتورة</th><th>التاريخ</th><th>الرحلة</th><th>العميل</th><th>السيلز</th><th>العملة</th><th>Actual Price</th><th>Actual LE</th><th>Payment LE</th></tr></thead><tbody>`;
+      html += `<div class="section">
+        <div class="section-title" onclick="toggleSection('secRevenue')">1. الإيرادات المحققة (فواتير مؤكدة) ▼</div>
+        <div class="summary-row bold"><span>إجمالي المبيعات (Actual)</span> <span class="positive">${fmt(rv.confirmed.actualLE)} LE</span></div>
+        <div class="summary-row"><span>إجمالي المحصل الفعلي (Paid)</span> <span class="positive">${fmt(rv.confirmed.paidLE)} LE</span></div>
+        <div class="summary-row"><span>إجمالي المتبقي (Rest)</span> <span style="color:#f59e0b; font-weight:700;">${fmt(rv.confirmed.restLE)} LE</span></div>
+        <div class="summary-row"><span>عدد الفواتير</span> <span>${rv.confirmed.count} فاتورة</span></div>
+        
+        <div id="secRevenue" class="details-table">
+          <table>
+            <thead><tr><th>الفاتورة</th><th>التاريخ</th><th>الرحلة</th><th>العميل</th><th>العملة</th><th>Actual LE</th><th>Paid LE</th></tr></thead>
+            <tbody>`;
       rv.confirmed.list.forEach(inv => {
-        html += `<tr><td>${inv.voucherNo}</td><td>${inv.activeDate}</td><td>${inv.trip}</td><td>${inv.guestName}</td><td>${inv.salesName}</td><td>${inv.currency}</td>
-          <td>${fmt(inv.actualPrice)}</td><td>${fmt(inv.actualLE)}</td><td class="positive">${fmt(inv.paymentPriceLE)}</td></tr>`;
+        html += `<tr><td>${inv.voucherNo}</td><td>${inv.activeDate}</td><td>${inv.trip}</td><td>${inv.guestName}</td><td>${inv.currency}</td><td>${fmt(inv.actualLE)}</td><td class="positive">${fmt(inv.paymentPriceLE)}</td></tr>`;
       });
-      html += `<tr style="background:#f8fafc; font-weight:700"><td colspan="7">الإجمالي (${rv.confirmed.count} فاتورة)</td><td>${fmt(rv.confirmed.actualLE)}</td><td class="positive">${fmt(rv.confirmed.paidLE)}</td></tr>`;
-      html += `</tbody></table></div>`;
+      html += `</tbody></table></div></div>`;
 
       // 2. تحت التنفيذ
       if (rv.pending.count > 0) {
-        html += `<div class="section"><div class="section-title" style="color:#d97706;">2. إيرادات غير محققة (تحت التنفيذ - Pending)</div>
-          <div style="color:#92400e; margin-bottom:10px; font-size:13px; font-weight:700;">⚠️ هذه أرباح متوقعة لم تُحقق بعد</div>
-          <table><thead><tr><th>الفاتورة</th><th>التاريخ</th><th>الرحلة</th><th>العميل</th><th>Actual LE</th><th>Paid LE</th><th>Rest</th></tr></thead><tbody>`;
+        html += `<div class="section">
+          <div class="section-title" onclick="toggleSection('secPending')">2. إيرادات غير محققة (تحت التنفيذ - Pending) ▼</div>
+          <div class="summary-row bold"><span>إجمالي المبيعات (Actual)</span> <span class="positive">${fmt(rv.pending.actualLE)} LE</span></div>
+          <div class="summary-row"><span>عدد الفواتير</span> <span>${rv.pending.count} فاتورة</span></div>
+          
+          <div id="secPending" class="details-table">
+            <table>
+              <thead><tr><th>الفاتورة</th><th>التاريخ</th><th>الرحلة</th><th>العميل</th><th>العملة</th><th>Actual LE</th></tr></thead>
+              <tbody>`;
         rv.pending.list.forEach(inv => {
-          html += `<tr><td>${inv.voucherNo}</td><td>${inv.activeDate}</td><td>${inv.trip}</td><td>${inv.guestName}</td>
-            <td>${fmt(inv.actualLE)}</td><td>${fmt(inv.paymentPriceLE)}</td><td>${fmt(inv.rest)}</td></tr>`;
+          html += `<tr><td>${inv.voucherNo}</td><td>${inv.activeDate}</td><td>${inv.trip}</td><td>${inv.guestName}</td><td>${inv.currency}</td><td>${fmt(inv.actualLE)}</td></tr>`;
         });
-        html += `<tr style="background:#f8fafc; font-weight:700"><td colspan="4">الإجمالي (${rv.pending.count})</td><td>${fmt(rv.pending.actualLE)}</td><td>-</td><td>-</td></tr>`;
-        html += `</tbody></table></div>`;
+        html += `</tbody></table></div></div>`;
       }
 
       // 3. إيرادات أخرى
       if (rv.other.totalLE > 0 || rv.exchangeGain.totalLE > 0) {
         html += `<div class="section"><div class="section-title">3. إيرادات أخرى وتحويل العملة</div>
           <table><thead><tr><th>النوع / الحساب</th><th>العدد</th><th>الإجمالي LE</th></tr></thead><tbody>`;
-        
         rv.other.byAccount.forEach(a => {
           html += `<tr><td>${a.name}</td><td>${a.count}</td><td class="positive">${fmt(a.totalLE)}</td></tr>`;
         });
         if (rv.exchangeGain.totalLE > 0) {
           html += `<tr><td>أرباح تحويل العملة</td><td>-</td><td class="positive">${fmt(rv.exchangeGain.totalLE)}</td></tr>`;
         }
-        
         html += `<tr style="background:#f8fafc; font-weight:700"><td colspan="2">الإجمالي</td><td class="positive">${fmt(rv.other.totalLE + rv.exchangeGain.totalLE)}</td></tr></tbody></table></div>`;
       }
 
@@ -220,37 +256,41 @@
       
       // 4. تكاليف السيارات
       if (cs.vehiclesLE > 0) {
-        html += `<div class="section" style="background:#fef2f2; border-color:#fecaca;"><div class="section-title" style="color:#991b1b; border-color:#fecaca;">4. تكاليف السيارات (Vehicles)</div>
-          <table><tbody>
-            <tr><td>إجمالي تكلفة السيارات للفترة</td><td class="negative" style="text-align:left; font-size:16px;"><b>${fmt(cs.vehiclesLE)} LE</b></td></tr>
-          </tbody></table>
-        </div>`;
-      }
-
-      // 5. تكاليف المراكب
-      if (cs.boatsLE > 0) {
-        html += `<div class="section" style="background:#fef2f2; border-color:#fecaca;"><div class="section-title" style="color:#991b1b; border-color:#fecaca;">5. تكاليف المراكب (Boats)</div>
-          <table><tbody>
-            <tr><td>إجمالي تكلفة المراكب للفترة</td><td class="negative" style="text-align:left; font-size:16px;"><b>${fmt(cs.boatsLE)} LE</b></td></tr>
-          </tbody></table>
-        </div>`;
+        html += `<div class="section" style="background:#fef2f2; border-color:#fecaca;">
+          <div class="section-title" style="color:#991b1b; border-color:#fecaca;" onclick="toggleSection('secVehicles')">4. تكاليف السيارات (Vehicles) ▼</div>
+          <div class="summary-row bold"><span>إجمالي تكلفة السيارات للفترة</span> <span class="negative">${fmt(cs.vehiclesLE)} LE</span></div>
+          
+          <div id="secVehicles" class="details-table">
+            <table>
+              <thead><tr><th>التاريخ</th><th>السيارة</th><th>Go</th><th>Return</th><th>التكلفة LE</th></tr></thead>
+              <tbody>`;
+        (cs.vehiclesList || []).forEach(v => {
+          html += `<tr><td>${v.date}</td><td>${v.vehicleId}</td><td>${v.goCount}</td><td>${v.returnCount}</td><td class="negative">${fmt(v.cost)}</td></tr>`;
+        });
+        html += `</tbody></table></div></div>`;
       }
 
       // 6. تكاليف المدربين
       if (cs.instructorsLE > 0) {
-        html += `<div class="section" style="background:#fef2f2; border-color:#fecaca;"><div class="section-title" style="color:#991b1b; border-color:#fecaca;">6. تكاليف المدربين (Instructors)</div>
-          <table><tbody>
-            <tr><td>إجمالي تكلفة المدربين للفترة</td><td class="negative" style="text-align:left; font-size:16px;"><b>${fmt(cs.instructorsLE)} LE</b></td></tr>
-          </tbody></table>
-        </div>`;
+        html += `<div class="section" style="background:#fef2f2; border-color:#fecaca;">
+          <div class="section-title" style="color:#991b1b; border-color:#fecaca;" onclick="toggleSection('secInstructors')">6. تكاليف المدربين (Instructors) ▼</div>
+          <div class="summary-row bold"><span>إجمالي تكلفة المدربين للفترة</span> <span class="negative">${fmt(cs.instructorsLE)} LE</span></div>
+          
+          <div id="secInstructors" class="details-table">
+            <table>
+              <thead><tr><th>التاريخ</th><th>المدرب</th><th>الرحلة</th><th>التكلفة LE</th></tr></thead>
+              <tbody>`;
+        (cs.instructorsList || []).forEach(i => {
+          html += `<tr><td>${i.date}</td><td>${i.instructorId}</td><td>${i.tripName}</td><td class="negative">${fmt(i.total)}</td></tr>`;
+        });
+        html += `</tbody></table></div></div>`;
       }
 
-      // 7. تكاليف الموظفين (مرتبات + عمولات)
+      // 7. تكاليف الموظفين
       if (cs.staffCostsLE > 0) {
-        html += `<div class="section"><div class="section-title">7. تكاليف الموظفين (مرتبات + عمولات)</div>
-          <table><tbody>
-            <tr><td>إجمالي تكلفة الموظفين للفترة</td><td class="negative" style="text-align:left; font-size:16px;"><b>${fmt(cs.staffCostsLE)} LE</b></td></tr>
-          </tbody></table>
+        html += `<div class="section">
+          <div class="section-title">7. تكاليف الموظفين (مرتبات + عمولات)</div>
+          <div class="summary-row bold"><span>إجمالي تكلفة الموظفين للفترة</span> <span class="negative">${fmt(cs.staffCostsLE)} LE</span></div>
         </div>`;
       }
 
@@ -318,6 +358,37 @@
         },
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
       });
+    }
+
+    function exportExcel() {
+      if (!lastReport) return alert('اعرض التقرير أولاً');
+      const r = lastReport;
+      
+      let csv = '\uFEFF'; // BOM for Arabic
+      csv += 'التقرير المالي اليومي\n';
+      csv += `الفترة,${r.period.from} - ${r.period.to}\n\n`;
+      
+      csv += 'الملخص\n';
+      csv += 'البيان,المبلغ LE\n';
+      csv += `إجمالي الإيرادات,${r.summary.totalRevenueLE}\n`;
+      csv += `إجمالي التكاليف,${r.summary.totalCostsLE}\n`;
+      csv += `صافي الربح,${r.summary.netProfitLE}\n`;
+      csv += `هامش الربح,${r.summary.profitMargin}%\n\n`;
+
+      csv += 'تفاصيل التكاليف\n';
+      csv += 'النوع,المبلغ\n';
+      csv += `سيارات,${r.costs.vehiclesLE}\n`;
+      csv += `مراكب,${r.costs.boatsLE}\n`;
+      csv += `مدربين,${r.costs.instructorsLE}\n`;
+      csv += `موظفين,${r.costs.staffCostsLE}\n`;
+      csv += `تشغيلية,${r.costs.operational.totalLE}\n`;
+      csv += `استردادات,${r.costs.refunds.totalLE}\n`;
+      
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `FinancialReport_${r.period.from}_${r.period.to}.csv`;
+      link.click();
     }
 
     function goBack() {
