@@ -870,16 +870,20 @@ function confirmCancel(idx) {
   const r = filteredRows[idx]; 
   if(!r) return;
 
-  // ✅ 1. التحقق من منع الإلغاء المتعدد (طريقة أقوى)
+  // ✅ 1. التحقق الذكي من منع الإلغاء المتعدد
   const targetVoucher = r.expenseNo || ''; 
   
-  // نبحث في كل السجلات عن أي سجل يحتوي على "إلغاء عكسي" ورقم الفاتورة
   const isAlreadyCanceled = allRows.some(row => {
     const rowDetails = (row.details || '').toString();
-    // إذا كان النص يحتوي على "إلغاء عكسي" وكان يحتوي على رقم الفاتورة
-    return rowDetails.includes('إلغاء عكسي') && 
-           targetVoucher !== '' && 
-           rowDetails.includes(targetVoucher);
+    
+    // نبحث عن "إلغاء عكسي" في السطر
+    const hasCancelKeyword = rowDetails.includes('إلغاء عكسي');
+    
+    // نبحث عن رقم الفاتورة (EXP-0049) في السطر
+    const hasVoucherNumber = targetVoucher !== '' && rowDetails.includes(targetVoucher);
+    
+    // إذا وجدنا الاثنين معاً، فهذا يعني أنه ملغى مسبقاً
+    return hasCancelKeyword && hasVoucherNumber;
   });
 
   if (isAlreadyCanceled) {
@@ -890,10 +894,10 @@ function confirmCancel(idx) {
   // ✅ 2. تنظيف التفاصيل (إذا كانت تحتوي على JSON)
   let cleanDetails = r.details || '';
   if (cleanDetails.includes('{"cashUSD"') || cleanDetails.includes('{"cashEUR"')) {
-    cleanDetails = cleanDetails.split('{')[0].trim(); // نأخذ الجزء النصي فقط قبل الـ JSON
+    cleanDetails = cleanDetails.split('{')[0].trim(); 
   }
 
-  // ✅ 3. تجميع المبالغ لعرضها بشكل واضح
+  // ✅ 3. تجميع المبالغ
   let amountsStr = [];
   if (Number(r.usd) > 0) amountsStr.push(`${r.usd} $`);
   if (Number(r.eur) > 0) amountsStr.push(`${r.eur} €`);
@@ -906,7 +910,7 @@ function confirmCancel(idx) {
 
   const amountDisplay = amountsStr.length > 0 ? amountsStr.join(' + ') : '0';
 
-  // ✅ 4. عرض النافذة الاحترافية
+  // ✅ 4. عرض النافذة
   document.getElementById('cancelConfirmMsg').innerHTML = `
     أنت على وشك إلغاء هذا السجل بعمل قيد عكسي في الشيت الآخر.<br><br>
     التفاصيل: <strong>${escapeHtml(cleanDetails)}</strong><br>
@@ -914,12 +918,12 @@ function confirmCancel(idx) {
     <span style="color:#16a34a; font-size:12px;">✅ سيتم تسجيل القيد العكسي بتاريخ اليوم (${new Date().toLocaleDateString('ar-EG')}) للحفاظ على رصيد الخزينة.</span>
   `;
   
-  // حفظ البيانات مؤقتاً لاستخدامها في التنفيذ
   pendingCancelRowNum = r._rowNum;
   pendingCancelRowData = r;
 
   document.getElementById('cancelConfirmModal').classList.add('open');
 }
+  
 function closeCancelConfirmModal() { pendingCancelRowNum = null; pendingCancelRowData = null; document.getElementById('cancelConfirmModal').classList.remove('open'); }
 
 async function executeCancel() {
