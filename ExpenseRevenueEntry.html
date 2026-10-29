@@ -867,9 +867,51 @@ async function executeDelete() {
 }
 
 function confirmCancel(idx) {
-  const r = filteredRows[idx]; if(!r) return;
-  pendingCancelRowNum = r._rowNum; pendingCancelRowData = r;
-  document.getElementById('cancelConfirmMsg').innerHTML = `أنت على وشك إلغاء هذا السجل بعمل قيد عكسي في الشيت الآخر.<br><br>التفاصيل: <strong>${escapeHtml(r.details)}</strong><br>المبلغ: <strong>${fmtNum(r.le || r.usd || r.eur || r.gbp)}</strong><br><br><span style="color:#ea580c; font-size:11px;">سيتم إنشاء سجل جديد بالمبلغ العكسي للحفاظ على رصيد الخزينة.</span>`;
+  const r = filteredRows[idx]; 
+  if(!r) return;
+
+  // ✅ 1. التحقق من منع الإلغاء المتعدد
+  const targetVoucher = r.expenseNo || `صف-${r._rowNum}`;
+  const isAlreadyCanceled = allRows.some(row => 
+    (row.details || '').includes(`إلغاء عكسي للسجل رقم ${targetVoucher}`)
+  );
+
+  if (isAlreadyCanceled) {
+    showAlert('⚠️ هذا السجل تم إلغاؤه بعمل قيد عكسي مسبقاً. لا يمكنك إلغاؤه مرتين.', '🚫');
+    return;
+  }
+
+  // ✅ 2. تنظيف التفاصيل (إذا كانت تحتوي على JSON)
+  let cleanDetails = r.details || '';
+  if (cleanDetails.includes('{"cashUSD"') || cleanDetails.includes('{"cashEUR"')) {
+    cleanDetails = cleanDetails.split('{')[0].trim(); // نأخذ الجزء النصي فقط قبل الـ JSON
+  }
+
+  // ✅ 3. تجميع المبالغ لعرضها بشكل واضح
+  let amountsStr = [];
+  if (Number(r.usd) > 0) amountsStr.push(`${r.usd} $`);
+  if (Number(r.eur) > 0) amountsStr.push(`${r.eur} €`);
+  if (Number(r.gbp) > 0) amountsStr.push(`${r.gbp} £`);
+  if (Number(r.le) > 0) amountsStr.push(`${r.le} LE`);
+  if (Number(r.vUSD) > 0) amountsStr.push(`${r.vUSD} Visa$`);
+  if (Number(r.vEUR) > 0) amountsStr.push(`${r.vEUR} Visa€`);
+  if (Number(r.vGBP) > 0) amountsStr.push(`${r.vGBP} Visa£`);
+  if (Number(r.vLE) > 0) amountsStr.push(`${r.vLE} VisaLE`);
+
+  const amountDisplay = amountsStr.length > 0 ? amountsStr.join(' + ') : '0';
+
+  // ✅ 4. عرض النافذة الاحترافية
+  document.getElementById('cancelConfirmMsg').innerHTML = `
+    أنت على وشك إلغاء هذا السجل بعمل قيد عكسي في الشيت الآخر.<br><br>
+    التفاصيل: <strong>${escapeHtml(cleanDetails)}</strong><br>
+    المبلغ: <strong style="color:#ea580c; font-size:16px;">${escapeHtml(amountDisplay)}</strong><br><br>
+    <span style="color:#16a34a; font-size:12px;">✅ سيتم تسجيل القيد العكسي بتاريخ اليوم (${new Date().toLocaleDateString('ar-EG')}) للحفاظ على رصيد الخزينة.</span>
+  `;
+  
+  // حفظ البيانات مؤقتاً لاستخدامها في التنفيذ
+  pendingCancelRowNum = r._rowNum;
+  pendingCancelRowData = r;
+
   document.getElementById('cancelConfirmModal').classList.add('open');
 }
 function closeCancelConfirmModal() { pendingCancelRowNum = null; pendingCancelRowData = null; document.getElementById('cancelConfirmModal').classList.remove('open'); }
