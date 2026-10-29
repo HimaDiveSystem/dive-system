@@ -876,30 +876,51 @@ function closeCancelConfirmModal() { pendingCancelRowNum = null; pendingCancelRo
 
 async function executeCancel() {
   if(!pendingCancelRowNum || !pendingCancelRowData) return;
-  const r = pendingCancelRowData; closeCancelConfirmModal();
-  showToast('جاري الإلغاء العكسي...', 'info');
+  const r = pendingCancelRowData; 
+  closeCancelConfirmModal();
   
+  showToast('جاري الإلغاء العكسي...', 'info');
   const isExpense = currentType === 'expense';
   const targetSheet = isExpense ? 'Other_Revenues' : 'Expenses'; // الشيت العكسي
   
+  // ✅ 1. تاريخ اليوم (وليس تاريخ العملية الأصلية)
+  const todayIso = todayISO();
+  const todayDD = isoToDD(todayIso);
+  
+  // ✅ 2. تغيير الحساب والنوع لتجنب التأثير على تقارير المستفيدين الحقيقيين
+  const cancelAccount = 'Refund / Adjustment';
+  const cancelAccountType = 'Cancel';
+
   try {
     const res = await gasGet({
       action: 'saveExpRev', 
       sheet: targetSheet, 
       isEdit: '0', 
       rowNum: 0,
-      date: r.date,
-      details: `إلغاء عكسي للسجل رقم ${r.expenseNo || r._rowNum} (${r.details})`,
+      
+      // ✅ استخدام تاريخ اليوم
+      date: todayDD, 
+      
+      details: `إلغاء عكسي للسجل رقم ${r.expenseNo || r._rowNum} الأصلي (${r.date})`,
+      
+      // نفس المبالغ
       usd: r.usd, eur: r.eur, gbp: r.gbp, le: r.le,
       vUSD: r.vUSD, vEUR: r.vEUR, vGBP: r.vGBP, vLE: r.vLE,
-      account: r.account, accountType: r.accountType,
-      month: r.month, year: r.year,
-      branchName: r.branchName, userID: currentUser.id
+      
+      // ✅ الحساب والنوع الجديد
+      account: cancelAccount, 
+      accountType: cancelAccountType,
+      
+      month: MN[new Date().getMonth()], // شهر اليوم
+      year: new Date().getFullYear().toString(), // سنة اليوم
+      branchName: currentUser?.branchName || '', 
+      userID: currentUser.id,
+      userName: currentUser.name || ''
     });
 
     if(res.success) {
-      showToast('✅ تم الإلغاء العكسي بنجاح', 'success');
-      loadListForDate(document.getElementById('fDateInput').value || todayISO());
+      showToast('✅ تم الإلغاء العكسي بنجاح (بتاريخ اليوم)', 'success');
+      loadListForDate(document.getElementById('fDateInput').value || todayIso);
     } else {
       showAlert('فشل الإلغاء: ' + res.message, '❌');
     }
@@ -907,7 +928,6 @@ async function executeCancel() {
     showAlert('خطأ: ' + err.message, '❌');
   }
 }
-
 // ====== INIT ======
 document.addEventListener('DOMContentLoaded', async () => {
   currentUser = Session.getUser(); if (!currentUser) { window.location.href = 'index.html'; return; }
