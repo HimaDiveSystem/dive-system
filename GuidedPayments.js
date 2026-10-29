@@ -4,7 +4,6 @@
  */
 
 (function() {
-  // ننتظر حتى يتم تحميل الصفحة بالكامل لضمان وجود document.body
   document.addEventListener('DOMContentLoaded', function() {
     
     // ─── 1. حقن الـ CSS ───
@@ -108,15 +107,13 @@
     let _config = {};
 
     window.GuidedPayments = {
-          open: function(type, prefillAccount = '', centerName = '') {
+      open: function(type, prefillAccount = '', centerName = '') {
         _currentType = type;
         
-        // ✅ محاولة استخراج اسم المركز إذا لم يتم تمريره
         if (!centerName) {
           if (window.currentUser && window.currentUser.centerName) {
             centerName = window.currentUser.centerName;
           } else {
-            // محاولة القراءة من localStorage كخطة بديلة
             try {
               const stored = localStorage.getItem('currentUser');
               if (stored) {
@@ -132,7 +129,7 @@
           return;
         }
 
-        window._gpCenterName = centerName; // حفظه للاستخدام في fetchOptions
+        window._gpCenterName = centerName;
 
         const overlay = document.getElementById('gpModalOverlay');
         const title = document.getElementById('gpModalTitle');
@@ -161,12 +158,16 @@
                   ${res.detailsOptions.map(opt => `<option value="${opt}">${opt}</option>`).join('')}
                 </select>
               </div>
-              <div class="gp-field">
+              
+              <div class="gp-field" style="position: relative;">
                 <label>🏦 الحساب (${type === 'supplier' ? 'المنفذ' : type === 'employee' ? 'الموظف' : 'الرحلة'}) *</label>
-                <select id="gpAccount">
-                  <option value="">-- اختر --</option>
-                  ${res.accounts.map(acc => `<option value="${acc}" ${acc === prefillAccount ? 'selected' : ''}>${acc}</option>`).join('')}
-                </select>
+                <input type="text" id="gpAccountInput" placeholder="اكتب للبحث أو اختر..." autocomplete="off" style="padding-left: 30px;">
+                <span style="position: absolute; left: 12px; top: 36px; color: #a8b4c8; pointer-events: none; font-size: 12px;">▾</span>
+                
+                <div id="gpAccountDropdown" style="display: none; position: absolute; top: 65px; left: 0; right: 0; background: #fff; border: 1.5px solid #2563eb; border-radius: 8px; max-height: 180px; overflow-y: auto; z-index: 10000; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+                  ${res.accounts.map(acc => `<div class="gp-acc-option" style="padding: 9px 12px; cursor: pointer; border-bottom: 1px solid #f0f4f8; font-size: 13px;" onmouseover="this.style.background='#f0f4ff'" onmouseout="this.style.background='#fff'" onclick="document.getElementById('gpAccountInput').value='${acc.replace(/'/g, "\\'")}'; document.getElementById('gpAccountDropdown').style.display='none';">${acc}</div>`).join('')}
+                  ${res.accounts.length === 0 ? '<div style="padding: 10px; text-align: center; color: #94a3b8; font-size: 12px;">لا توجد خيارات</div>' : ''}
+                </div>
               </div>
             </div>
 
@@ -217,10 +218,37 @@
 
           const today = new Date().toISOString().split('T')[0];
           document.getElementById('gpDate').value = today;
-        });
-      },
 
-         fetchOptions: function(type) {
+          const accInput = document.getElementById('gpAccountInput');
+          const accDrop = document.getElementById('gpAccountDropdown');
+          const allOptions = Array.from(accDrop.querySelectorAll('.gp-acc-option'));
+
+          accInput.addEventListener('input', function() {
+            const val = this.value.toLowerCase();
+            accDrop.style.display = 'block';
+            allOptions.forEach(opt => {
+              if (opt.innerText.toLowerCase().includes(val)) {
+                opt.style.display = 'block';
+              } else {
+                opt.style.display = 'none';
+              }
+            });
+          });
+
+          accInput.addEventListener('focus', function() {
+            accDrop.style.display = 'block';
+            allOptions.forEach(opt => opt.style.display = 'block');
+          });
+
+          document.addEventListener('click', function(e) {
+            if (!e.target.closest('.gp-field')) {
+              accDrop.style.display = 'none';
+            }
+          });
+        });
+      }, // ✅ إغلاق دالة open هنا
+
+      fetchOptions: function(type) {
         return new Promise((resolve, reject) => {
           const centerName = window._gpCenterName || '';
           if (!centerName) {
@@ -252,7 +280,7 @@
 
       save: function() {
         const btn = document.getElementById('gpSaveBtn');
-        const account = document.getElementById('gpAccount').value;
+        const account = document.getElementById('gpAccountInput').value.trim();
         
         if (!account) {
           alert('⚠️ يرجى اختيار الحساب أولاً');
@@ -286,7 +314,7 @@
           return `${parts[2].padStart(2,'0')}/${MN[monthIndex]}/${year}`;
         };
 
-               const payload = {
+        const payload = {
           action: 'saveExpRev',
           sheet: 'Expenses',
           isEdit: '0',
@@ -298,7 +326,6 @@
           month: document.getElementById('gpMonth').value,
           year: document.getElementById('gpYear').value,
           
-          // ✅ التعديل هنا: استخدام window._gpCenterName
           centerName: window._gpCenterName || '',
           branchName: (window.currentUser && window.currentUser.branchName) || '',
           userID: (window.currentUser && window.currentUser.id) || '',
