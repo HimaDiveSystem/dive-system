@@ -806,7 +806,137 @@ async function submitEntry() {
     btn.disabled = false; btn.textContent = currentType==='expense' ? '💾 حفظ Expense' : '💾 حفظ Revenue';
   }
 }
+function exportToExcel() {
+  if (!filteredRows || filteredRows.length === 0) {
+    showAlert('لا توجد بيانات لتصديرها', '📊');
+    return;
+  }
 
+  // 1. تجهيز البيانات
+  const exportData = filteredRows.map(r => {
+    return {
+      expenseNo: r.expenseNo || '',
+      date: r.date || '',
+      details: r.details || '',
+      usd: parseFloat(r.usd) || 0,
+      eur: parseFloat(r.eur) || 0,
+      gbp: parseFloat(r.gbp) || 0,
+      le: parseFloat(r.le) || 0,
+      vUSD: parseFloat(r.vUSD) || 0,
+      vEUR: parseFloat(r.vEUR) || 0,
+      vGBP: parseFloat(r.vGBP) || 0,
+      vLE: parseFloat(r.vLE) || 0,
+      account: r.account || '',
+      accountType: r.accountType || '',
+      month: r.month || '',
+      year: r.year || '',
+      centerName: r.centerName || '',
+      branchName: r.branchName || ''
+    };
+  });
+
+  // 2. حساب الإجماليات
+  const totals = { usd: 0, eur: 0, gbp: 0, le: 0, vUSD: 0, vEUR: 0, vGBP: 0, vLE: 0 };
+  exportData.forEach(r => {
+    for (let k in totals) totals[k] += r[k];
+  });
+
+  // 3. بناء HTML بتنسيق Excel الاحترافي (مطابق لـ BookingsByActiveDate)
+  const typeLabel = currentType === 'expense' ? 'المصروفات' : 'الإيرادات';
+  const dateStr = new Date().toLocaleDateString('ar-EG');
+  
+  let html = '';
+  html += '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">';
+  html += '<head>';
+  html += '<meta charset="UTF-8">';
+  html += '<style>';
+  html += 'table{border-collapse:collapse;font-family:Arial,sans-serif;font-size:10px;width:100%;}';
+  html += 'th{background:#1a3260;color:#f5c842;padding:6px 4px;border:1px solid #94a3b8;font-weight:bold;text-align:center;}';
+  html += 'td{padding:4px 3px;border:1px solid #cbd5e1;vertical-align:middle;text-align:center;font-size:10px;}';
+  html += '.title{background:#0f1f3d;color:#f5c842;font-size:16px;font-weight:bold;padding:14px;text-align:center;}';
+  html += '.subtitle{background:#f1f5f9;padding:10px;text-align:center;font-weight:bold;font-size:12px;color:#0f1f3d;}';
+  html += '.totals{background:#dbeafe;font-weight:bold;color:#0f1f3d;}';
+  html += '.totals td{padding:6px 4px;}';
+  html += '.details-cell{text-align:right; white-space:normal; word-break:break-word; max-width:200px;}';
+  html += '</style>';
+  html += '</head>';
+  html += '<body>';
+
+  // 4. عنوان التقرير
+  html += '<table border="1">';
+  html += `<tr><td colspan="17" class="title">📊 تقرير ${typeLabel} - ${dateStr}</td></tr>`;
+  html += `<tr><td colspan="17" class="subtitle">`;
+  html += `🏢 المركز: ${escapeHtml(currentUser?.centerName || '')} &nbsp;|&nbsp; `;
+  html += `👤 المستخدم: ${escapeHtml(currentUser?.name || '')} &nbsp;|&nbsp; `;
+  html += `📊 عدد السجلات: ${exportData.length}`;
+  html += `</td></tr>`;
+  html += '</table><br>';
+
+  // 5. جدول البيانات
+  html += '<table border="1">';
+  html += '<thead><tr>';
+  
+  // الرؤوس بالكحلي والذهبي
+  const headers = ['رقم المعاملة', 'التاريخ', 'التفاصيل', '$', '€', '£', 'LE', 'V$', 'V€', 'V£', 'VLE', 'الحساب', 'النوع', 'الشهر', 'السنة', 'المركز', 'الفرع'];
+  headers.forEach(h => {
+    html += `<th>${h}</th>`;
+  });
+  html += '</tr></thead>';
+  html += '<tbody>';
+
+  // 6. صفوف البيانات
+  exportData.forEach(r => {
+    html += '<tr>';
+    html += `<td>${escapeHtml(r.expenseNo)}</td>`;
+    html += `<td>${escapeHtml(r.date)}</td>`;
+    html += `<td class="details-cell">${escapeHtml(r.details)}</td>`;
+    html += `<td>${r.usd || ''}</td>`;
+    html += `<td>${r.eur || ''}</td>`;
+    html += `<td>${r.gbp || ''}</td>`;
+    html += `<td>${r.le || ''}</td>`;
+    html += `<td>${r.vUSD || ''}</td>`;
+    html += `<td>${r.vEUR || ''}</td>`;
+    html += `<td>${r.vGBP || ''}</td>`;
+    html += `<td>${r.vLE || ''}</td>`;
+    html += `<td>${escapeHtml(r.account)}</td>`;
+    html += `<td>${escapeHtml(r.accountType)}</td>`;
+    html += `<td>${escapeHtml(r.month)}</td>`;
+    html += `<td>${escapeHtml(r.year)}</td>`;
+    html += `<td>${escapeHtml(r.centerName)}</td>`;
+    html += `<td>${escapeHtml(r.branchName)}</td>`;
+    html += '</tr>';
+  });
+
+  // 7. صف الإجماليات
+  html += '<tr class="totals">';
+  html += `<td colspan="3" style="text-align:center;">📊 الإجمالي (${exportData.length} حركة)</td>`;
+  html += `<td>${totals.usd > 0 ? totals.usd.toFixed(2) : ''}</td>`;
+  html += `<td>${totals.eur > 0 ? totals.eur.toFixed(2) : ''}</td>`;
+  html += `<td>${totals.gbp > 0 ? totals.gbp.toFixed(2) : ''}</td>`;
+  html += `<td>${totals.le > 0 ? totals.le.toFixed(2) : ''}</td>`;
+  html += `<td>${totals.vUSD > 0 ? totals.vUSD.toFixed(2) : ''}</td>`;
+  html += `<td>${totals.vEUR > 0 ? totals.vEUR.toFixed(2) : ''}</td>`;
+  html += `<td>${totals.vGBP > 0 ? totals.vGBP.toFixed(2) : ''}</td>`;
+  html += `<td>${totals.vLE > 0 ? totals.vLE.toFixed(2) : ''}</td>`;
+  html += `<td colspan="6"></td>`;
+  html += '</tr>';
+
+  html += '</tbody></table>';
+  html += '</body></html>';
+
+  // 8. تنزيل الملف
+  const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${typeLabel}_${dateStr.replace(/\//g, '-')}.xls`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  showToast(`✅ تم تصدير ${exportData.length} سجل بنجاح`, 'success');
+}
 function loadRow(idx) {
   const r = filteredRows[idx]; if (!r) return;
   const todayFlag = isToday(r);
@@ -999,6 +1129,7 @@ window.cbf = cbf; window.cbo = cbo; window.pickCB = pickCB; window.setSort = set
 window.loadRow = loadRow; window.cancelEdit = cancelEdit; window.submitEntry = submitEntry;
 window.confirmDelete = confirmDelete; window.executeDelete = executeDelete; window.closeDeleteConfirmModal = closeDeleteConfirmModal;
 window.confirmCancel = confirmCancel; window.executeCancel = executeCancel; window.closeCancelConfirmModal = closeCancelConfirmModal;
+window.exportToExcel = exportToExcel;
 window.resetForm = resetForm; window.goBack = () => { if(currentUser) Session.save(currentUser); window.location.href = 'AccountantDashboard.html'; };
 window.goToCashRegister = () => { location.href = `CashRegister.html?user=${encodeURIComponent(JSON.stringify(currentUser))}`; };
 window.closeAlert = closeAlert; window.retryLoad = () => loadListForDate(todayISO());
