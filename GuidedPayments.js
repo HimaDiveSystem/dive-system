@@ -286,7 +286,7 @@
           return `${parts[2].padStart(2,'0')}/${MN[monthIndex]}/${year}`;
         };
 
-        const payload = {
+               const payload = {
           action: 'saveExpRev',
           sheet: 'Expenses',
           isEdit: '0',
@@ -297,14 +297,16 @@
           accountType: document.getElementById('gpAccountType').value,
           month: document.getElementById('gpMonth').value,
           year: document.getElementById('gpYear').value,
-          centerName: (window.currentUser && window.currentUser.centerName) || '',
+          
+          // ✅ التعديل هنا: استخدام window._gpCenterName
+          centerName: window._gpCenterName || '',
           branchName: (window.currentUser && window.currentUser.branchName) || '',
           userID: (window.currentUser && window.currentUser.id) || '',
+          
           dueDate: isoToDD(dueDateVal),
           cashUSD: cU, cashEUR: cE, cashGBP: cG, cashLE: cL,
           visaUSD: vU, visaEUR: vE, visaGBP: vG, visaLE: vL
         };
-
         btn.disabled = true;
         btn.textContent = '⏳ جاري الحفظ...';
 
