@@ -108,8 +108,32 @@
     let _config = {};
 
     window.GuidedPayments = {
-      open: function(type, prefillAccount = '') {
+          open: function(type, prefillAccount = '', centerName = '') {
         _currentType = type;
+        
+        // ✅ محاولة استخراج اسم المركز إذا لم يتم تمريره
+        if (!centerName) {
+          if (window.currentUser && window.currentUser.centerName) {
+            centerName = window.currentUser.centerName;
+          } else {
+            // محاولة القراءة من localStorage كخطة بديلة
+            try {
+              const stored = localStorage.getItem('currentUser');
+              if (stored) {
+                const parsed = JSON.parse(stored);
+                centerName = parsed.user ? parsed.user.centerName : parsed.centerName;
+              }
+            } catch(e) {}
+          }
+        }
+
+        if (!centerName) {
+          alert('⚠️ لم يتم العثور على اسم المركز. تأكد من تسجيل الدخول.');
+          return;
+        }
+
+        window._gpCenterName = centerName; // حفظه للاستخدام في fetchOptions
+
         const overlay = document.getElementById('gpModalOverlay');
         const title = document.getElementById('gpModalTitle');
         const content = document.getElementById('gpModalContent');
@@ -196,14 +220,14 @@
         });
       },
 
-      fetchOptions: function(type) {
+         fetchOptions: function(type) {
         return new Promise((resolve, reject) => {
-          const centerName = (window.currentUser && window.currentUser.centerName) || '';
+          const centerName = window._gpCenterName || '';
           if (!centerName) {
-            resolve({ success: false, message: 'لم يتم العثور على اسم المركز. تأكد من تسجيل الدخول.' });
+            resolve({ success: false, message: 'لم يتم العثور على اسم المركز.' });
             return;
           }
-
+       
           const cb = 'gp_cb_' + Date.now();
           const url = new URL(window.CONFIG.GAS_URL);
           url.searchParams.set('action', 'getGuidedPaymentOptions');
