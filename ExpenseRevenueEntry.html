@@ -355,6 +355,12 @@
       <span class="filter-divider"></span>
       <div class="filter-group"><label>📅 من</label><input type="date" id="fFromDate" dir="ltr"></div>
       <div class="filter-group"><label>📅 إلى</label><input type="date" id="fToDate" dir="ltr"></div>
+      <div class="filter-group" id="branchFieldGroup" style="display:none;">
+      <label>🏪 الفرع <span style="color:var(--color-danger);">*</span></label>
+      <select id="fBranch" class="fc" style="width:160px;" required>
+        <option value="">— اختر الفرع —</option>
+      </select>
+    </div>
       <button class="btn-sm btn-primary-sm" onclick="applyDateFilter()">🔍 تطبيق</button>
       
       <button class="btn-sm btn-guided btn-guided-supplier" onclick="GuidedPayments.open('supplier', '', currentUser?.centerName)">💸 دفعة لمنفذ</button>
@@ -582,6 +588,15 @@ function onDateChange() {
   const p = iso.split('-'); if(p.length!==3) return;
   document.getElementById('fMonth').value = MN[parseInt(p[1])-1] || '';
   document.getElementById('fYear').value = p[0];
+  
+  // ✅ جديد: تحديث DueDate إذا كان فارغاً أو مساوياً للتاريخ السابق
+  const currentDue = document.getElementById('fDueDate').value;
+  const prevDate = document.getElementById('fDateInput').dataset.prevDate;
+  if (!currentDue || currentDue === prevDate) {
+    document.getElementById('fDueDate').value = iso;
+  }
+  document.getElementById('fDateInput').dataset.prevDate = iso;
+  
   loadListForDate(iso);
 }
 
@@ -758,28 +773,76 @@ function renderTotals() {
 
 function collectForm() {
   const dueDateISO = document.getElementById('fDueDate').value;
+  const iso = document.getElementById('fDateInput').value;
+  
+  // ✅ جديد: الفرع من الحقل (للمستخدم غير المحدود) أو من Session (للمحدود)
+  const branchValue = document.getElementById('fBranch').value 
+                   || currentUser?.branchName 
+                   || '';
+  
   return {
-    date: isoToDD(document.getElementById('fDateInput').value),
+    date: isoToDD(iso),
     details: document.getElementById('fDetails').value.trim(),
-    usd: parseFloat(document.getElementById('fUSD').value)||0, eur: parseFloat(document.getElementById('fEUR').value)||0,
-    gbp: parseFloat(document.getElementById('fGBP').value)||0, le: parseFloat(document.getElementById('fLE').value)||0,
-    vUSD: parseFloat(document.getElementById('fVUSD').value)||0, vEUR: parseFloat(document.getElementById('fVEUR').value)||0,
-    vGBP: parseFloat(document.getElementById('fVGBP').value)||0, vLE: parseFloat(document.getElementById('fVLE').value)||0,
-    account: document.getElementById('fAcc').value.trim(), accountType: document.getElementById('fAccT').value.trim(),
-    month: document.getElementById('fMonth').value.trim(), year: document.getElementById('fYear').value.trim(),
-    centerName: currentUser?.centerName || '', branchName: currentUser?.branchName || '',
-    userID: currentUser?.id || currentUser?.name || '',
-    dueDate: dueDateISO ? isoToDD(dueDateISO) : isoToDD(document.getElementById('fDateInput').value)
+    usd: parseFloat(document.getElementById('fUSD').value)||0, 
+    eur: parseFloat(document.getElementById('fEUR').value)||0,
+    gbp: parseFloat(document.getElementById('fGBP').value)||0, 
+    le: parseFloat(document.getElementById('fLE').value)||0,
+    vUSD: parseFloat(document.getElementById('fVUSD').value)||0, 
+    vEUR: parseFloat(document.getElementById('fVEUR').value)||0,
+    vGBP: parseFloat(document.getElementById('fVGBP').value)||0, 
+    vLE: parseFloat(document.getElementById('fVLE').value)||0,
+    account: document.getElementById('fAcc').value.trim(), 
+    accountType: document.getElementById('fAccT').value.trim(),
+    month: document.getElementById('fMonth').value.trim(), 
+    year: document.getElementById('fYear').value.trim(),
+    centerName: currentUser?.centerName || '',
+    
+    // ✅ جديد: الفرع المختار
+    branchName: branchValue,
+    
+    // ✅ جديد: userName (الاسم الفعلي)
+    userID: currentUser?.id || '',
+    userName: currentUser?.name || '',
+    
+    // ✅ DueDate مع fallback صحيح
+    dueDate: dueDateISO ? isoToDD(dueDateISO) : isoToDD(iso)
   };
 }
 
 function validate(row) {
   let ok = true;
-  if(!row.date){ document.getElementById('fDateInput').classList.add('err'); ok=false; }
-  else document.getElementById('fDateInput').classList.remove('err');
-  if(!row.details){ document.getElementById('fDetails').classList.add('err'); ok=false; }
-  else document.getElementById('fDetails').classList.remove('err');
-  if(![row.usd,row.eur,row.gbp,row.le,row.vUSD,row.vEUR,row.vGBP,row.vLE].some(v=>v>0)){ showToast('أدخل مبلغاً واحداً على الأقل','error'); ok=false; }
+  
+  if(!row.date){ 
+    document.getElementById('fDateInput').classList.add('err'); 
+    ok=false; 
+  } else {
+    document.getElementById('fDateInput').classList.remove('err'); 
+  }
+  
+  if(!row.details){ 
+    document.getElementById('fDetails').classList.add('err'); 
+    ok=false; 
+  } else {
+    document.getElementById('fDetails').classList.remove('err'); 
+  }
+  
+  if(![row.usd,row.eur,row.gbp,row.le,row.vUSD,row.vEUR,row.vGBP,row.vLE].some(v=>v>0)){ 
+    showToast('أدخل مبلغاً واحداً على الأقل','error'); 
+    ok=false; 
+  }
+  
+  // ✅ جديد: التحقق من الفرع للمستخدم غير المحدود
+  
+  const isRestricted = restrictedTypes.includes(currentUser.type);
+  
+  if (!isRestricted && !row.branchName) {
+    document.getElementById('fBranch').classList.add('err');
+    showToast('يجب اختيار الفرع أولاً', 'error');
+    ok = false;
+  } else {
+    document.getElementById('fBranch').classList.remove('err');
+  }
+  
   return ok;
 }
 
@@ -800,12 +863,15 @@ async function submitEntry() {
   const btn = document.getElementById('saveBtn'); btn.disabled = true; btn.textContent = '⏳ جاري الحفظ...';
   
   try {
-    const res = await gasGet({
-      action:'saveExpRev', sheet, isEdit, rowNum: editRowNum>0 ? editRowNum : 0,
-      date:row.date, details:row.details, usd:row.usd, eur:row.eur, gbp:row.gbp, le:row.le,
-      vUSD:row.vUSD, vEUR:row.vEUR, vGBP:row.vGBP, vLE:row.vLE, account:row.account, accountType:row.accountType,
-      month:row.month, year:row.year, branchName:row.branchName, userID:row.userID, dueDate: row.dueDate
-    });
+   const res = await gasGet({
+  action:'saveExpRev', sheet, isEdit, rowNum: editRowNum>0 ? editRowNum : 0,
+  date:row.date, details:row.details, usd:row.usd, eur:row.eur, gbp:row.gbp, le:row.le,
+  vUSD:row.vUSD, vEUR:row.vEUR, vGBP:row.vGBP, vLE:row.vLE, account:row.account, accountType:row.accountType,
+  month:row.month, year:row.year, branchName:row.branchName, 
+  userID:row.userID, 
+  userName:row.userName,   // ✅ جديد — أضف هذا السطر
+  dueDate: row.dueDate
+});
     
     if(res.success){
       showToast(isEdit==='1' ? '✅ تم التحديث بنجاح' : '✅ تم الحفظ بنجاح', 'success');
@@ -971,33 +1037,107 @@ function exportToExcel() {
 }
   
 function loadRow(idx) {
-  const r = filteredRows[idx]; if (!r) return;
+  const r = filteredRows[idx]; 
+  if (!r) return;
+  
   const todayFlag = isToday(r);
-  selectedIdx = idx; editRowNum = r._rowNum;
-  const setVal = (id, val) => { const el = document.getElementById(id); if(el){ el.value = val || ''; el.classList.remove('err'); } };
+  selectedIdx = idx; 
+  editRowNum = r._rowNum;
+  
+  const setVal = (id, val) => { 
+    const el = document.getElementById(id); 
+    if(el){ el.value = val || ''; el.classList.remove('err'); } 
+  };
 
-  setVal('fDateInput', ddToISO(r.date)); setVal('fMonth', r.month); setVal('fYear', r.year);
-  setVal('fDetails', r.details); setVal('fAcc', r.account); setVal('fAccT', r.accountType);
+  // الحقول الأساسية
+  setVal('fDateInput', ddToISO(r.date)); 
+  setVal('fMonth', r.month); 
+  setVal('fYear', r.year);
+  setVal('fDetails', r.details); 
+  setVal('fAcc', r.account); 
+  setVal('fAccT', r.accountType);
+  
+  // DueDate: من السجل أو fallback للتاريخ
   setVal('fDueDate', ddToISO(r.dueDate || r.date));
+  
+  // تحميل الفرع (للمستخدم غير المحدود)
+  const branchSelect = document.getElementById('fBranch');
+  if (branchSelect && r.branchName) {
+    let optionExists = false;
+    for (let i = 0; i < branchSelect.options.length; i++) {
+      if (branchSelect.options[i].value === r.branchName) {
+        optionExists = true;
+        break;
+      }
+    }
+    if (!optionExists) {
+      const opt = document.createElement('option');
+      opt.value = r.branchName;
+      opt.textContent = r.branchName;
+      branchSelect.appendChild(opt);
+    }
+    branchSelect.value = r.branchName;
+  }
 
+  // المدفوعات — تُقفل للسجلات القديمة
   const paymentFields = ['fUSD','fEUR','fGBP','fLE','fVUSD','fVEUR','fVGBP','fVLE'];
+  
   if (todayFlag) {
-    setVal('fUSD', fmtNum(r.usd)); setVal('fEUR', fmtNum(r.eur)); setVal('fGBP', fmtNum(r.gbp)); setVal('fLE', fmtNum(r.le));
-    setVal('fVUSD', fmtNum(r.vUSD)); setVal('fVEUR', fmtNum(r.vEUR)); setVal('fVGBP', fmtNum(r.vGBP)); setVal('fVLE', fmtNum(r.vLE));
-    paymentFields.forEach(id => { const el = document.getElementById(id); if(el) { el.disabled = false; el.style.opacity = '1'; el.style.background = 'white'; }});
-    document.getElementById('editRowLabel').textContent = r.expenseNo || 'صف ' + editRowNum + ' (قابل للتعديل الكامل)';
+    // سجل اليوم: تعديل كامل
+    setVal('fUSD', fmtNum(r.usd)); 
+    setVal('fEUR', fmtNum(r.eur)); 
+    setVal('fGBP', fmtNum(r.gbp)); 
+    setVal('fLE', fmtNum(r.le));
+    setVal('fVUSD', fmtNum(r.vUSD)); 
+    setVal('fVEUR', fmtNum(r.vEUR)); 
+    setVal('fVGBP', fmtNum(r.vGBP)); 
+    setVal('fVLE', fmtNum(r.vLE));
+    
+    paymentFields.forEach(id => { 
+      const el = document.getElementById(id); 
+      if(el) { 
+        el.disabled = false; 
+        el.style.opacity = '1'; 
+        el.style.background = 'white'; 
+      }
+    });
+    
+    document.getElementById('editRowLabel').textContent = 
+      r.expenseNo || 'صف ' + editRowNum + ' (قابل للتعديل الكامل)';
   } else {
-    paymentFields.forEach(id => { const el = document.getElementById(id); if(el) { el.disabled = true; el.style.opacity = '0.6'; el.style.background = '#f0f0f0'; }});
-    setVal('fUSD', ''); setVal('fEUR', ''); setVal('fGBP', ''); setVal('fLE', ''); setVal('fVUSD', ''); setVal('fVEUR', ''); setVal('fVGBP', ''); setVal('fVLE', '');
-    document.getElementById('editRowLabel').textContent = r.expenseNo || 'صف ' + editRowNum + ' (🔒 تعديل التفاصيل فقط - المبالغ مقفلة)';
+    // سجل قديم: التفاصيل فقط
+    paymentFields.forEach(id => { 
+      const el = document.getElementById(id); 
+      if(el) { 
+        el.disabled = true; 
+        el.style.opacity = '0.6'; 
+        el.style.background = '#f0f0f0'; 
+      }
+    });
+    
+    setVal('fUSD', ''); 
+    setVal('fEUR', ''); 
+    setVal('fGBP', ''); 
+    setVal('fLE', ''); 
+    setVal('fVUSD', ''); 
+    setVal('fVEUR', ''); 
+    setVal('fVGBP', ''); 
+    setVal('fVLE', '');
+    
+    document.getElementById('editRowLabel').textContent = 
+      r.expenseNo || 'صف ' + editRowNum + ' (🔒 تعديل التفاصيل فقط - المبالغ مقفلة)';
   }
 
   document.getElementById('ebanner').classList.add('show');
-  document.getElementById('saveBtn').textContent = currentType === 'expense' ? '✏️ تحديث Expense' : '✏️ تحديث Revenue';
-  renderTable(); showToast(todayFlag ? '✅ تم تحميل السطر للتعديل الكامل' : '🔒 تم تحميل السطر (المبالغ مقفلة)', todayFlag ? 'success' : 'info');
+  document.getElementById('saveBtn').textContent = 
+    currentType === 'expense' ? '✏️ تحديث Expense' : '✏️ تحديث Revenue';
+  renderTable(); 
+  showToast(
+    todayFlag ? '✅ تم تحميل السطر للتعديل الكامل' : '🔒 تم تحميل السطر (المبالغ مقفلة)', 
+    todayFlag ? 'success' : 'info'
+  );
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
-
 function cancelEdit() {
   selectedIdx = -1; editRowNum = -1; document.getElementById('ebanner').classList.remove('show');
   document.getElementById('saveBtn').textContent = currentType==='expense' ? '💾 حفظ Expense' : '💾 حفظ Revenue';
@@ -1087,22 +1227,36 @@ function confirmCancel(idx) {
   
 function closeCancelConfirmModal() { pendingCancelRowNum = null; pendingCancelRowData = null; document.getElementById('cancelConfirmModal').classList.remove('open'); }
 
+// ═══════════════════════════════════════════════════════════════════
+// ⚠️ executeCancel — الإلغاء العكسي (Client-Side)
+// ═══════════════════════════════════════════════════════════════════
 async function executeCancel() {
-  if(!pendingCancelRowNum || !pendingCancelRowData) return;
+  if (!pendingCancelRowNum || !pendingCancelRowData) return;
+  
   const r = pendingCancelRowData; 
   closeCancelConfirmModal();
   
   showToast('جاري الإلغاء العكسي...', 'info');
   const isExpense = currentType === 'expense';
-  const targetSheet = isExpense ? 'Other_Revenues' : 'Expenses'; // الشيت العكسي
+  const targetSheet = isExpense ? 'Other_Revenues' : 'Expenses';
   
-  // ✅ 1. تاريخ اليوم (وليس تاريخ العملية الأصلية)
+  // تاريخ اليوم (وليس تاريخ العملية الأصلية)
   const todayIso = todayISO();
   const todayDD = isoToDD(todayIso);
   
-  // ✅ 2. تغيير الحساب والنوع لتجنب التأثير على تقارير المستفيدين الحقيقيين
+  // حساب ونوع جديدان
   const cancelAccount = 'Refund / Adjustment';
   const cancelAccountType = 'Cancel';
+  
+  // الفرع — الأولوية:
+  //   1. الفرع المختار في الحقل
+  //   2. فرع السجل الأصلي
+  //   3. فرع المستخدم
+  const branchField = document.getElementById('fBranch');
+  const branchValue = (branchField && branchField.value) 
+                   || r.branchName 
+                   || currentUser?.branchName 
+                   || '';
 
   try {
     const res = await gasGet({
@@ -1111,7 +1265,7 @@ async function executeCancel() {
       isEdit: '0', 
       rowNum: 0,
       
-      // ✅ استخدام تاريخ اليوم
+      // تاريخ اليوم
       date: todayDD, 
       
       details: `إلغاء عكسي للسجل رقم ${r.expenseNo || r._rowNum} الأصلي (${r.date})`,
@@ -1120,22 +1274,30 @@ async function executeCancel() {
       usd: r.usd, eur: r.eur, gbp: r.gbp, le: r.le,
       vUSD: r.vUSD, vEUR: r.vEUR, vGBP: r.vGBP, vLE: r.vLE,
       
-      // ✅ الحساب والنوع الجديد
+      // الحساب والنوع الجديد
       account: cancelAccount, 
       accountType: cancelAccountType,
       
-      month: MN[new Date().getMonth()], // شهر اليوم
-      year: new Date().getFullYear().toString(), // سنة اليوم
-      branchName: currentUser?.branchName || '', 
-      userID: currentUser.id,
-      userName: currentUser.name || ''
+      // شهر وسنة اليوم
+      month: MN[new Date().getMonth()], 
+      year: new Date().getFullYear().toString(),
+      
+      // الفرع الصحيح
+      branchName: branchValue,
+      
+      // userID و userName
+      userID: currentUser?.id || '',
+      userName: currentUser?.name || '',
+      
+      // dueDate = تاريخ اليوم
+      dueDate: todayDD
     });
 
-    if(res.success) {
+    if (res.success) {
       showToast('✅ تم الإلغاء العكسي بنجاح (بتاريخ اليوم)', 'success');
       loadListForDate(document.getElementById('fDateInput').value || todayIso);
     } else {
-      showAlert('فشل الإلغاء: ' + res.message, '❌');
+      showAlert('فشل الإلغاء: ' + (res.message || 'خطأ غير معروف'), '❌');
     }
   } catch(err) {
     showAlert('خطأ: ' + err.message, '❌');
@@ -1143,19 +1305,70 @@ async function executeCancel() {
 }
 // ====== INIT ======
 document.addEventListener('DOMContentLoaded', async () => {
-  currentUser = Session.getUser(); if (!currentUser) { window.location.href = 'index.html'; return; }
-  if (typeof Theme !== 'undefined' && Theme.applyToPage) Theme.applyToPage(); Session.refresh();
+  currentUser = Session.getUser(); 
+  if (!currentUser) { window.location.href = 'index.html'; return; }
+  if (typeof Theme !== 'undefined' && Theme.applyToPage) Theme.applyToPage(); 
+  Session.refresh();
+  
   document.getElementById('userChip').textContent = currentUser.name || 'User';
   document.getElementById('infoCenter').textContent = currentUser.centerName || '—';
   document.getElementById('infoBranch').textContent = currentUser.branchName || '—';
   
-  const iso = todayISO(); document.getElementById('fDateInput').value = iso;
+  const iso = todayISO(); 
+  document.getElementById('fDateInput').value = iso;
   const parts = iso.split('-');
-  if (parts.length === 3) { document.getElementById('fMonth').value = MN[parseInt(parts[1])-1] || ''; document.getElementById('fYear').value = parts[0]; }
+  if (parts.length === 3) { 
+    document.getElementById('fMonth').value = MN[parseInt(parts[1])-1] || ''; 
+    document.getElementById('fYear').value = parts[0]; 
+  }
   
-  buildDropdown('monthDD', MN, 'fMonth'); buildDropdown('yearDD', YEARS, 'fYear');
-  await loadOptions(); loadListForDate(iso);
+  // ✅ جديد 1: ملء DueDate تلقائياً
+  document.getElementById('fDueDate').value = iso;
+  
+  // ✅ جديد 2: إعداد حقل الفرع حسب صلاحية المستخدم
+  await setupBranchField();
+  
+  buildDropdown('monthDD', MN, 'fMonth'); 
+  buildDropdown('yearDD', YEARS, 'fYear');
+  await loadOptions(); 
+  loadListForDate(iso);
 });
+
+// ✅ دالة جديدة: إعداد حقل الفرع
+async function setupBranchField() {
+  
+  const isRestricted = restrictedTypes.includes(currentUser.type);
+  const branchGroup = document.getElementById('branchFieldGroup');
+  const branchSelect = document.getElementById('fBranch');
+  
+  if (isRestricted) {
+    // مستخدم محدود: إخفاء + تعيين تلقائي
+    branchGroup.style.display = 'none';
+    branchSelect.innerHTML = `<option value="${currentUser.branchName || ''}">${currentUser.branchName || '—'}</option>`;
+    branchSelect.value = currentUser.branchName || '';
+  } else {
+    // مستخدم غير محدود: إظهار + جلب كل الفروع
+    branchGroup.style.display = 'flex';
+    try {
+      const branches = await gasGet({ action: 'getActiveBranches' });
+      const centerBranches = (branches || []).filter(b => 
+        b.centerId === currentUser.centerId || b.centerName === currentUser.centerName
+      );
+      
+      branchSelect.innerHTML = '<option value="">— اختر الفرع —</option>' + 
+        centerBranches.map(b => 
+          `<option value="${escapeHtml(b.name)}">${escapeHtml(b.name)}</option>`
+        ).join('');
+      
+      // ✅ افتراضي: فرع المستخدم نفسه إن وُجد
+      if (currentUser.branchName) {
+        branchSelect.value = currentUser.branchName;
+      }
+    } catch(e) {
+      console.warn('⚠️ فشل جلب الفروع:', e);
+    }
+  }
+}
 
 window.switchType = switchType; window.onDateChange = onDateChange; window.applyDateFilter = applyDateFilter;
 window.cbf = cbf; window.cbo = cbo; window.pickCB = pickCB; window.setSort = setSort;
