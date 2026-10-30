@@ -253,13 +253,12 @@
         });
       },
 
-      save: function() {
+            save: function() {
         const btn = document.getElementById('gpSaveBtn');
         const account = document.getElementById('gpAccountInput').value.trim();
         
         if (!account) { alert('⚠️ يرجى اختيار الحساب أولاً'); return; }
 
-        // ✅ التصحيح: قراءة المتغيرات بأسماء صحيحة
         const cU = parseFloat(document.getElementById('gpCashUSD').value) || 0;
         const cE = parseFloat(document.getElementById('gpCashEUR').value) || 0;
         const cG = parseFloat(document.getElementById('gpCashGBP').value) || 0;
@@ -279,7 +278,29 @@
           return `${parts[2].padStart(2,'0')}/${MN[parseInt(parts[1]) - 1]}/${parts[0]}`;
         };
 
-        // ✅ التصحيح: إرسال الأسماء التي تتوقعها دالة saveExpRev في Code.gs
+        // ✅ التعديل الجديد: جلب بيانات المستخدم من الجلسة
+        let userID = '';
+        let userName = '';
+        let userBranch = '';
+        
+        if (window.currentUser) {
+          userID = window.currentUser.id || '';
+          userName = window.currentUser.name || '';
+          userBranch = window.currentUser.branchName || '';
+        } else {
+          try {
+            const stored = localStorage.getItem('currentUser');
+            if (stored) {
+              const parsed = JSON.parse(stored);
+              const u = parsed.user || parsed;
+              userID = u.id || '';
+              userName = u.name || '';
+              userBranch = u.branchName || '';
+            }
+          } catch(e) {}
+        }
+
+        // ✅ التصحيح: إرسال branchName و userName بدلاً من القيم الفارغة
         const payload = {
           action: 'saveExpRev',
           sheet: 'Expenses',
@@ -292,10 +313,10 @@
           month: document.getElementById('gpMonth').value,
           year: document.getElementById('gpYear').value,
           centerName: window._gpCenterName || '',
-          branchName: '',
-          userID: '',
+          branchName: userBranch,        // ✅ تم التعديل
+          userID: userID,                // ✅ تم التعديل
+          userName: userName,            // ✅ تم التعديل
           dueDate: isoToDD(document.getElementById('gpDueDate').value),
-          // ✅ الأسماء هنا تطابق ما يقرأه Code.gs
           usd: cU, eur: cE, gbp: cG, le: cL,
           vUSD: vU, vEUR: vE, vGBP: vG, vLE: vL
         };
@@ -332,7 +353,6 @@
         };
         document.body.appendChild(script);
       },
-
       close: function() {
         document.getElementById('gpModalOverlay').classList.remove('open');
       }
