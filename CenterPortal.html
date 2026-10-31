@@ -143,7 +143,82 @@
       border-radius: 12px;
       box-shadow: 0 10px 30px rgba(0,0,0,0.5);
     }
-
+    /* ✅ ستايل معرض الصور الجديد */
+    .media-carousel {
+      position: relative;
+      width: 100%;
+      background: #000;
+      overflow: hidden;
+      border-radius: var(--radius) var(--radius) 0 0;
+    }
+    .carousel-track {
+      display: flex;
+      transition: transform 0.3s ease-in-out;
+      height: 240px;
+    }
+    .carousel-slide {
+      min-width: 100%;
+      height: 100%;
+      scroll-snap-align: start;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .carousel-slide img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      cursor: pointer;
+    }
+    .carousel-slide iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+    .carousel-btn {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      background: rgba(15, 31, 61, 0.6);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.2);
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      z-index: 10;
+      font-size: 18px;
+      transition: 0.2s;
+      backdrop-filter: blur(4px);
+    }
+    .carousel-btn:hover { background: rgba(15, 31, 61, 0.9); }
+    .carousel-btn.prev { left: 10px; }
+    .carousel-btn.next { right: 10px; }
+    .carousel-dots {
+      position: absolute;
+      bottom: 10px;
+      left: 0;
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      gap: 6px;
+      z-index: 10;
+    }
+    .carousel-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.4);
+      cursor: pointer;
+      transition: 0.2s;
+    }
+    .carousel-dot.active {
+      background: var(--gold);
+      transform: scale(1.2);
+    }
     @media (max-width: 600px) {
       body { padding: 0; }
       #app { border-radius: 0; min-height: 100vh; }
@@ -642,15 +717,43 @@
                let html = '';
         tripsData.forEach(trip => {
           // ✅ استبدال الصورة الواحدة بمعرض الوسائط
-          const media = trip.tripMedia?.length ? trip.tripMedia : (trip.tripImage ? [{type:'image',url:trip.tripImage}] : []);
-          const mediaHtml = media.length ? `
-            <div style="display:flex; overflow-x:auto; scroll-snap-type:x mandatory; gap:8px; background:#000;">
-              ${media.map(m => m.type === 'video' 
-                ? `<iframe src="${m.url}" style="min-width:100%; height:240px; border:0; scroll-snap-align:start;" allowfullscreen></iframe>`
-                : `<img src="${getDriveDirectUrl(m.url)}" class="trip-img" style="min-width:100%; height:240px; object-fit:contain; scroll-snap-align:start; cursor:pointer;" onclick="openImageViewer('${getDriveDirectUrl(m.url)}')">`
-              ).join('')}
-            </div>
-          ` : '';
+                    const media = trip.tripMedia?.length ? trip.tripMedia : (trip.tripImage ? [{type:'image',url:trip.tripImage}] : []);
+          
+          let mediaHtml = '';
+          if (media.length > 0) {
+            const uniqueId = 'carousel_' + Math.random().toString(36).substr(2, 9);
+            
+            // بناء الشرائح
+            const slides = media.map(m => {
+              if (m.type === 'video') {
+                return `<div class="carousel-slide"><iframe src="${m.url}" allowfullscreen></iframe></div>`;
+              } else {
+                const directUrl = getDriveDirectUrl(m.url);
+                return `<div class="carousel-slide"><img src="${directUrl}" onclick="openImageViewer('${directUrl}')"></div>`;
+              }
+            }).join('');
+
+            // بناء النقاط
+            const dots = media.map((_, i) => 
+              `<div class="carousel-dot ${i === 0 ? 'active' : ''}" onclick="goToSlide('${uniqueId}', ${i})"></div>`
+            ).join('');
+
+            // بناء الأزرار (تظهر فقط إذا كان هناك أكثر من صورة/فيديو)
+            const buttons = media.length > 1 ? `
+              <button class="carousel-btn prev" onclick="moveSlide('${uniqueId}', -1)">❮</button>
+              <button class="carousel-btn next" onclick="moveSlide('${uniqueId}', 1)">❯</button>
+            ` : '';
+
+            mediaHtml = `
+              <div class="media-carousel" id="${uniqueId}" data-current="0" data-total="${media.length}">
+                <div class="carousel-track">
+                  ${slides}
+                </div>
+                ${buttons}
+                <div class="carousel-dots">${dots}</div>
+              </div>
+            `;
+          }
           
                
           let itemsHtml = '';
@@ -979,7 +1082,45 @@
         modal.style.display = 'flex';
       }
     }
-    
+    // ═══════════════════════════════════════════════════════════════
+    // ✅ دوال التنقل في معرض الصور (Carousel)
+    // ═══════════════════════════════════════════════════════════════
+    function updateCarousel(carouselId, newIndex) {
+      const carousel = document.getElementById(carouselId);
+      if (!carousel) return;
+      
+      const total = parseInt(carousel.getAttribute('data-total'));
+      if (total <= 1) return;
+
+      // التعامل مع الحدود (لوب لا نهائي)
+      if (newIndex < 0) newIndex = total - 1;
+      if (newIndex >= total) newIndex = 0;
+
+      carousel.setAttribute('data-current', newIndex);
+
+      // تحريك المسار
+      const track = carousel.querySelector('.carousel-track');
+      if (track) {
+        track.style.transform = `translateX(-${newIndex * 100}%)`;
+      }
+
+      // تحديث النقاط
+      const dots = carousel.querySelectorAll('.carousel-dot');
+      dots.forEach((dot, i) => {
+        dot.classList.toggle('active', i === newIndex);
+      });
+    }
+
+    function moveSlide(carouselId, direction) {
+      const carousel = document.getElementById(carouselId);
+      if (!carousel) return;
+      const current = parseInt(carousel.getAttribute('data-current') || 0);
+      updateCarousel(carouselId, current + direction);
+    }
+
+    function goToSlide(carouselId, index) {
+      updateCarousel(carouselId, index);
+    }    
 function setStars(n) {
   document.getElementById('overallRatingVal').value = n;
   document.querySelectorAll('#starRating span').forEach(s => {
