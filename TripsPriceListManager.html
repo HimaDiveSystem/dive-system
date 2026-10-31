@@ -2003,88 +2003,89 @@ async function saveTrip() {
     if (!centerName) { showAlert('❌ خطأ: centerName غير موجود'); return; }
     if (!tripName) { showAlert('الرجاء إدخال اسم الرحلة'); return; }
     if (!category) { showAlert('الرجاء اختيار الفئة'); return; }
-    if (!validateBankPercentage(document.getElementById('bankPercentage').value)) return;
     
     const saveBtn = document.querySelector('.btn-primary');
     const originalBtnText = saveBtn ? saveBtn.innerHTML : '';
     if (saveBtn) { saveBtn.innerHTML = '<span class="loading"></span> جاري الحفظ...'; saveBtn.disabled = true; }
     
     try {
-        const existingTrip = allTrips.find(t => t.name.toLowerCase() === tripName.toLowerCase());
-        if (existingTrip && !isEditMode) {
-            showAlert('⚠️ هذه الرحلة موجودة بالفعل. استخدم تعديل الرحلة بدلاً من الإضافة.');
+        const items = currentTrip.items.filter(i => i && i.trim() !== '');
+        if (items.length === 0) {
+            showAlert('يجب إضافة بند واحد على الأقل');
             if (saveBtn) { saveBtn.innerHTML = originalBtnText; saveBtn.disabled = false; }
             return;
         }
-        
-        const items = [];
-        for (let i = 0; i < currentTrip.items.length; i++) {
-            const itemName = currentTrip.items[i] || '';
-            if (!itemName.trim()) { showAlert(`الرجاء إدخال اسم البند رقم ${i + 1}`); if (saveBtn) { saveBtn.innerHTML = originalBtnText; saveBtn.disabled = false; } return; }
-            items.push(itemName);
-        }
-        
-        if (items.length === 0) { showAlert('يجب إضافة بند واحد على الأقل'); if (saveBtn) { saveBtn.innerHTML = originalBtnText; saveBtn.disabled = false; } return; }
-        
-        const mandatoryFeesFromDOM = {};
-        const fixedCostsFromDOM = {};
-        
-        if (hasCost) {
-            for (let i = 0; i < items.length; i++) {
-                const itemName = items[i].trim();
-                if (!itemName) continue;
-                const mfInput = document.getElementById(`mf_${i}`);
-                const mfcSelect = document.getElementById(`mfc_${i}`);
-                if (mfInput && mfcSelect) mandatoryFeesFromDOM[itemName] = { value: parseFloat(mfInput.value) || 0, currency: mfcSelect.value || 'USD' };
-                const fcInput = document.getElementById(`fc_${i}`);
-                const fccSelect = document.getElementById(`fcc_${i}`);
-                if (fcInput && fccSelect) fixedCostsFromDOM[itemName] = { value: parseFloat(fcInput.value) || 0, currency: fccSelect.value || 'LE' };
-            }
-        }
-        
-        currentTrip.mandatoryFees = hasCost ? mandatoryFeesFromDOM : {};
-        currentTrip.fixedCosts = hasCost ? fixedCostsFromDOM : {};
-        
-        const basePrices = [];
-        for (let i = 0; i < items.length; i++) basePrices.push(currentTrip.prices.USD ? (currentTrip.prices.USD[i] || 0) : 0);
-        
-        const existingLEPrices = currentTrip.prices.LE ? [...currentTrip.prices.LE] : [];
-        
+
         const tripDescription = document.getElementById('tripDescription').value.trim();
         const whatToBring = document.getElementById('whatToBring').value.trim();
         const criteria = document.getElementById('tripCriteria').value.trim();
 
-        // ✅ التعديل الحاسم: التأكد من أن tripMedia كائن صالح قبل الإرسال
-        const finalTripMedia = (typeof tripMedia !== 'undefined' && Array.isArray(tripMedia)) 
+        // ✅ سحر الحفظ: قراءة الصور مباشرة من الذاكرة وتجهيزها
+        const finalTripMedia = (typeof tripMedia !== 'undefined' && Array.isArray(tripMedia) && tripMedia.length > 0) 
             ? JSON.stringify(tripMedia) 
             : '[]';
+            
+        const firstImage = (typeof tripMedia !== 'undefined' && tripMedia.find(m => m.type === 'image')) 
+            ? tripMedia.find(m => m.type === 'image').url 
+            : '';
 
-        pendingTripData = {
+        // تجهيز البيانات وإرسالها مباشرة (تخطي الدوال المعقدة)
+        const defPayload = {
+            action: 'saveTripDefinition',
             tripName: tripName,
             category: category,
-            items: items,
-            basePrices: basePrices,
+            items: JSON.stringify(items),
             hasCost: hasCost,
-            bankPercent: bankPercent,
-            centerName: centerName,
-            oldLEPrices: existingLEPrices,
-            mandatoryFees: currentTrip.mandatoryFees,
-            fixedCosts: currentTrip.fixedCosts,
+            mandatoryFees: JSON.stringify(currentTrip.mandatoryFees || {}),
+            fixedCosts: JSON.stringify(currentTrip.fixedCosts || {}),
             tripDescription: tripDescription,
             whatToBring: whatToBring,
-            criteria: criteria,
-            
-            // ✅ تمرير الصور بشكل صريح
+            criteria: criteria, 
             tripMedia: finalTripMedia,
-            tripImage: (typeof tripMedia !== 'undefined' && tripMedia.find(m=>m.type==='image')) 
-                       ? tripMedia.find(m=>m.type==='image').url 
-                       : ''
+            tripImage: firstImage,
+            centerName: centerName
+        };
+
+        // إرسال البيانات
+        const defRes = await jsonp('saveTripDefinition', defPayload);
+        
+        if (!defRes.success) { 
+            showAlert('❌ خطأ في حفظ التعريف: ' + defRes.message); 
+            return; 
+        }
+         
+        // حفظ الأسعار
+        const lePrices = currentTrip.prices.LE || items.map(() => 0);
+        const basePrices = currentTrip.prices.USD || items.map(() => 0);
+        
+        const updatePayload = {
+            action: 'updateTrip',
+            tripName: tripName,
+            category: category,
+            currency: 'ALL',
+            prices: JSON.stringify(basePrices),
+            lePrices: JSON.stringify(lePrices),
+            hasCost: hasCost,
+            bankPercentage: bankPercent,
+            items: JSON.stringify(items),
+            centerName: centerName,
+            tripDescription: tripDescription,
+            whatToBring: whatToBring,
+            criteria: criteria, 
+            tripMedia: finalTripMedia,
+            tripImage: firstImage
         };
         
-        showCurrencyModal(items, async (lePrices) => {
-            pendingTripData.lePrices = lePrices;
-            await executeSaveTrip(pendingTripData);
-        }, existingLEPrices);
+        const updateRes = await jsonp('updateTrip', updatePayload);
+        
+        if (!updateRes.success) { 
+            showAlert('❌ خطأ في حفظ الأسعار: ' + updateRes.message); 
+            return; 
+        }
+        
+        showAlert('✅ تم حفظ الرحلة والمعايير بنجاح');
+        await loadAllTrips(true);
+        newTrip(); 
         
     } catch(err) {
         console.error('saveTrip error:', err);
