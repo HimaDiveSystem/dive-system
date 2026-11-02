@@ -1763,7 +1763,8 @@ function initMultiSelect(type, containerId, defaults) {
                    value="${escapeHtml(opt)}" 
                    ${selectedValues.includes(opt) ? 'checked' : ''}
                    onchange="toggleMultiSelectValue('${type}', '${escapeHtml(opt).replace(/'/g, "\\'")}', this.checked)">
-            <span>${escapeHtml(opt)}</span>
+           <span>${(type === 'languages') ? getLanguageLabel(opt) : escapeHtml(opt)}</span>
+
           </label>
         `).join('')}
         
@@ -1941,18 +1942,13 @@ function getLanguageKeys() {
 // ═══ الحصول على عرض اللغة ═══
 function getLanguageLabel(code) {
   const labels = {
-    'ar': 'Arabic',
-    'en': 'English',
-    'ru': 'Russian',
-    'it': 'Italian',
-    'de': 'German',
-    'fr': 'French',
-    'es': 'Spanish'
+    'ar': 'Arabic', 'en': 'English', 'ru': 'Russian',
+    'it': 'Italian', 'de': 'German', 'fr': 'French', 'es': 'Spanish'
   };
-  // إذا كان الكود موجوداً في القاموس، نرجع الاسم الكامل، وإلا نرجع الكود كما هو
-  return labels[code.toLowerCase().trim()] || code;
+  // تحويل الكود إلى حروف صغيرة وإزالة أي مسافات زائدة
+  const cleanCode = String(code).toLowerCase().trim();
+  return labels[cleanCode] || code;
 }
-
 // ═══ تهيئة كل الـ Multi-Selects ═══
 function initAllMultiSelects() {
   loadCustomItems();
@@ -2960,8 +2956,30 @@ function viewInstructorRecord(id) {
   
   const role = ins.role || 'Instructor';
   
+  // ✅ دالة مساعدة لحساب الصلاحية (حتى لو كان التاريخ نصاً)
+  function checkLicenseStatus(expiryStr) {
+    if (!expiryStr || expiryStr === '—') return { valid: false, dateStr: '—' };
+    let d = expiryStr instanceof Date ? expiryStr : new Date(expiryStr);
+    if (isNaN(d.getTime())) {
+      const match = String(expiryStr).match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
+      if (match) {
+        const MN = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+        d = new Date(+match[3], MN[match[2]], +match[1]);
+      } else return { valid: false, dateStr: expiryStr };
+    }
+    d.setHours(0,0,0,0);
+    const today = new Date(); today.setHours(0,0,0,0);
+    return { valid: d >= today, dateStr: formatDateDMY(d) };
+  }
+
+  const lic = checkLicenseStatus(ins.licenseExpiry);
+  const cdws = checkLicenseStatus(ins.cdwsExpiry);
+  const orgLic = checkLicenseStatus(ins.orgLicenseExpiry || ins.licenseExpiry);
+  const efr = checkLicenseStatus(ins.efrExpiry);
+
   let roleSection = '';
-  if (role === 'Instructor') {
+
+  if (['Instructor', 'TechnicalManager', 'DiveGuide', 'SnorkelGuide'].includes(role)) {
     roleSection = `
       <div class="info-section">
         <h4>📜 الرخص</h4>
@@ -2969,17 +2987,17 @@ function viewInstructorRecord(id) {
           <div><strong>المنظمة:</strong> ${escHtml(ins.organization || '—')}</div>
           <div><strong>المستوى:</strong> ${escHtml(ins.level || '—')}</div>
           <div><strong>رقم الرخصة:</strong> ${escHtml(ins.licenseNumber || '—')}</div>
-          <div><strong>انتهاء الرخصة:</strong> ${formatDateDMY(ins.licenseExpiry)} ${ins.licenseValid ? '✅' : '❌'}</div>
+          <div><strong>انتهاء الرخصة:</strong> ${lic.dateStr} ${lic.valid ? '✅' : '❌'}</div>
           <div><strong>رقم CDWS:</strong> ${escHtml(ins.cdwsCard || '—')}</div>
-          <div><strong>انتهاء CDWS:</strong> ${formatDateDMY(ins.cdwsExpiry)} ${ins.cdwsValid ? '✅' : '❌'}</div>
+          <div><strong>انتهاء CDWS:</strong> ${cdws.dateStr} ${cdws.valid ? '✅' : '❌'}</div>
         </div>
       </div>
       <div class="info-section">
         <h4>💰 المالية</h4>
         <div class="info-grid">
-          <div><strong>اليومية:</strong> ${(ins.dailyGuarantee || 0).toLocaleString()} LE</div>
-          <div><strong>عمولة التنفيذ:</strong> ${escHtml(ins.commissionExecution || '—')}</div>
-          <div><strong>عمولة UpSell:</strong> ${escHtml(ins.commissionUpSell || '—')}</div>
+          <div><strong>الراتب/اليومية:</strong> ${(ins.baseSalary || ins.dailyGuarantee || 0).toLocaleString()} ${ins.baseSalaryCurrency || 'LE'}</div>
+          <div><strong>راتب الإدارة:</strong> ${(ins.managementSalary || 0).toLocaleString()} ${ins.managementSalaryCurrency || 'LE'}</div>
+          <div><strong>عمولة UpSell:</strong> ${escHtml(ins.commissionUpSell || '0%')}</div>
         </div>
       </div>
     `;
@@ -2989,9 +3007,9 @@ function viewInstructorRecord(id) {
         <h4>📜 الرخص المطلوبة</h4>
         <div class="info-grid">
           <div><strong>رقم CDWS:</strong> ${escHtml(ins.cdwsCard || '—')}</div>
-          <div><strong>انتهاء CDWS:</strong> ${formatDateDMY(ins.cdwsExpiry)} ${ins.cdwsValid ? '✅' : '❌'}</div>
+          <div><strong>انتهاء CDWS:</strong> ${cdws.dateStr} ${cdws.valid ? '✅' : '❌'}</div>
           <div><strong>رقم EFR:</strong> ${escHtml(ins.efrNumber || '—')}</div>
-          <div><strong>انتهاء EFR:</strong> ${formatDateDMY(ins.efrExpiry)} ${ins.efrValid ? '✅' : '❌'}</div>
+          <div><strong>انتهاء EFR:</strong> ${efr.dateStr} ${efr.valid ? '✅' : '❌'}</div>
         </div>
       </div>
     `;
@@ -3003,14 +3021,47 @@ function viewInstructorRecord(id) {
           <div><strong>المنظمة:</strong> ${escHtml(ins.organization || '—')}</div>
           <div><strong>درجة الرخصة:</strong> ${escHtml(ins.level || '—')}</div>
           <div><strong>رقم الرخصة:</strong> ${escHtml(ins.licenseNumber || '—')}</div>
-          <div><strong>انتهاء الرخصة:</strong> ${formatDateDMY(ins.orgLicenseExpiry || ins.licenseExpiry)} ${ins.orgLicenseValid ? '✅' : '❌'}</div>
+          <div><strong>انتهاء الرخصة:</strong> ${orgLic.dateStr} ${orgLic.valid ? '✅' : '❌'}</div>
           <div><strong>رقم CDWS:</strong> ${escHtml(ins.cdwsCard || '—')}</div>
-          <div><strong>انتهاء CDWS:</strong> ${formatDateDMY(ins.cdwsExpiry)} ${ins.cdwsValid ? '✅' : '❌'}</div>
+          <div><strong>انتهاء CDWS:</strong> ${cdws.dateStr} ${cdws.valid ? '✅' : '❌'}</div>
         </div>
       </div>
     `;
   }
   
+  function imgHtml(url) {
+    if (!url) return '<div style="width:100px;height:100px;background:#f0f2f5;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:32px;">📷</div>';
+    return '<img src="' + getDriveDirectUrl(url) + '" style="width:100px;height:100px;object-fit:cover;border-radius:12px;border:2px solid #1e2b4f;">';
+  }
+  
+  const html = `
+    <div style="direction:rtl;text-align:right;">
+      <div class="record-container">
+        <div class="record-header">
+          <div class="record-info">
+            <h3>${role === 'Instructor' ? '👨‍🏫' : role === 'Helper' ? '🆘' : role === 'Photographer' ? '📸' : '👔'} ${escHtml(ins.name || '')}</h3>
+            <div class="record-detail"><strong>الدور:</strong> ${role}</div>
+            <div class="record-detail"><strong>🆔 الرقم:</strong> ${escHtml(ins.id || '—')}</div>
+            <div class="record-detail"><strong>📞 الهاتف:</strong> <span dir="ltr" style="font-family:monospace;">${escHtml(ins.phone || '—')}</span></div>
+            <div class="record-detail"><strong>🌐 اللغات:</strong> ${ins.language ? ins.language.split('/').map(l => getLanguageLabel(l.trim())).join(' / ') : '—'}</div>
+            <div class="record-detail"><strong>📝 ملاحظات:</strong> ${escHtml(ins.notes || '—')}</div>
+          </div>
+        </div>
+        <div class="images-section">
+          <div class="image-card">${imgHtml(ins.licensePhoto)}<p>📸 صورة الرخصة</p></div>
+          <div class="image-card">${imgHtml(ins.cdwsPhoto)}<p>🪪 صورة CDWS</p></div>
+        </div>
+        ${roleSection}
+        <div class="info-section">
+          <h4>⚙️ الحالة</h4>
+          <div><strong>الحالة:</strong> ${(ins.isActive === true || ins.manualIsActive === true) ? '<span style="background:#27ae60;color:white;padding:4px 8px;border-radius:12px;">🟢 نشط</span>' : '<span style="background:#f39c12;color:white;padding:4px 8px;border-radius:12px;">🟡 غير نشط</span>'}</div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  showInfo(html);
+}
   function imgHtml(url) {
     if (!url) return '<div style="width:100px;height:100px;background:#f0f2f5;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:32px;">📷</div>';
     return '<img src="' + getDriveDirectUrl(url) + '" style="width:100px;height:100px;object-fit:cover;border-radius:12px;border:2px solid #1e2b4f;">';
