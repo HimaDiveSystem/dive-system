@@ -54,6 +54,13 @@
     .cell-salary{background:#e8f4f8;color:#1a5276;font-weight:700;}
     .cell-commission{background:#e8f5e9;color:#1b5e20;font-weight:700;}
     .cell-net{background:#fff3e0;color:#e65100;font-weight:900;font-size:14px;}
+    .cell-role { background:#f3e8ff; color:#6b21a8; font-weight:700; font-size:11px; }
+    .cell-base-salary { background:#e0f2fe; color:#0369a1; font-weight:700; }
+    .cell-mgmt-salary { background:#fef3c7; color:#92400e; font-weight:700; }
+    .cell-daily { background:#f0fdf4; color:#166534; font-weight:700; }
+    .cell-exec-comm { background:#ecfdf5; color:#047857; font-weight:700; }
+    .cell-upsell-comm { background:#f5f3ff; color:#7c3aed; font-weight:700; }
+    .cell-sales-comm { background:#e0e7ff; color:#3730a3; font-weight:700; }
     .cell-name{text-align:right;font-weight:700;color:#2c3e50;}
     .cell-days{font-weight:700;color:#1e2b4f;}
     .badge-zero{color:#aaa;}
@@ -483,36 +490,43 @@ function processReportData(result, month, year) {
   
   const employees = salResult.employees;
   
-  tableData = employees.map(emp => {
-    const workingDays   = parseFloat(emp.workingDays)   || 0;
-    const monthlySalary = parseFloat(emp.monthlySalary) || 0;
-    const absentDays    = Math.max(0, 30 - workingDays);
+    tableData = employees.map(emp => {
+    // ✅ القراءة من الحقول الجديدة
+    const workingDays = parseFloat(emp.workingDays) || 0;
+    const baseSalary = parseFloat(emp.baseSalary) || 0;
+    const managementSalary = parseFloat(emp.managementSalary) || 0;
+    const dailyRate = parseFloat(emp.dailyRate) || 0;
+    const execComm = parseFloat(emp.execComm) || 0;
+    const upSellComm = parseFloat(emp.upSellComm) || 0;
+    const salesComm = parseFloat(emp.salesCommission) || 0;
     
-    const salaryAmount = monthlySalary > 0
-      ? Math.round((monthlySalary / 30) * workingDays)
-      : (parseFloat(emp.salaryAmount) || 0);
+    const total = parseFloat(emp.total) || 0;
+    const cuts = parseFloat(emp.cuts) || 0;
+    const downPaymentLE = parseFloat(emp.downPaymentLE) || 0;
+    const net = parseFloat(emp.net) || 0;
+    const role = emp.role || 'Employee';
     
-    const commission     = parseFloat(emp.commission) || 0;
-    const bonus          = parseFloat(emp.bonus) || 0;
-    const total          = parseFloat(emp.total) || (salaryAmount + commission + bonus);
-    const cuts           = parseFloat(emp.cuts) || 0;
-    const insurance      = parseFloat(emp.insurance) || 0;
-    const totalAfterCuts = total - cuts - insurance;
-    const downPaymentLE  = parseFloat(emp.downPaymentLE) || 0;
-    const net            = parseFloat(emp.net) || (totalAfterCuts - downPaymentLE);
-    
+    // نحسب الراتب المستحق للعرض (Permanent Freelancer أو Permanent)
+    // إذا كان baseSalary موجوداً، نعرضه
     return {
       userId: emp.userId || '',
       name: emp.name || '',
-      position: emp.position || '',
-      workingDays, absentDays, monthlySalary, salaryAmount,
-      commission, bonus, total, cuts, insurance,
-      totalAfterCuts, downPaymentLE, net,
+      role: role,
+      workingDays: workingDays,
+      baseSalary: baseSalary,
+      managementSalary: managementSalary,
+      dailyRate: dailyRate,
+      execComm: execComm,
+      upSellComm: upSellComm,
+      salesComm: salesComm,
+      total: total,
+      cuts: cuts,
+      downPaymentLE: downPaymentLE,
+      net: net,
       deductionsDetails: emp.deductionsDetails || []
     };
-  });
-  
-  const totalCommissions = employees.reduce((sum, emp) => sum + (parseFloat(emp.commission) || 0), 0);
+  });  
+  const totalCommissions = employees.reduce((sum, emp) =>    sum + (parseFloat(emp.execComm) || 0) + (parseFloat(emp.upSellComm) || 0) + (parseFloat(emp.salesCommission) || 0), 0);
   const totalAdvances    = employees.reduce((sum, emp) => sum + (parseFloat(emp.downPaymentLE) || 0), 0);
   
   document.getElementById('infoBar').style.display = 'flex';
@@ -531,73 +545,61 @@ function renderTable(rows, month, year) {
     return;
   }
 
-  let totals = {
-    workingDays: 0, absentDays: 0,
-    monthlySalary: 0, salaryAmount: 0,
-    commission: 0, bonus: 0, total: 0,
-    downPaymentLE: 0, net: 0
-  };
-  rows.forEach(r => {
-    totals.workingDays   += r.workingDays || 0;
-    totals.absentDays    += r.absentDays || 0;
-    totals.monthlySalary += r.monthlySalary || 0;
-    totals.salaryAmount  += r.salaryAmount || 0;
-    totals.commission    += r.commission || 0;
-    totals.bonus         += r.bonus || 0;
-    totals.total         += r.total || 0;
-    totals.downPaymentLE += r.downPaymentLE || 0;
-    totals.net           += r.net || 0;
-  });
-
   function fmtDays(n) { return (Math.round(n*100)/100).toLocaleString(); }
 
-      let html = `<div class="table-wrap"><table>
+  let html = `<div class="table-wrap"><table>
     <thead>
       <tr>
         <th>#</th>
-        <th>الرقم الوظيفي</th>
+        <th>الرقم</th>
         <th style="text-align:right;">الاسم</th>
-        <th>الوظيفة</th>
-        <th>أيام الحضور</th>
-        <th>أيام الغياب</th>
-        <th>الراتب الأساسي</th>
-        <th>الراتب المستحق</th>
-        <th>العمولة</th>
-        <th>الحافز</th>
+        <th>الدور</th>
+        <th>أيام العمل</th>
+        <th>الراتب/اليومية</th>
+        <th>راتب الإدارة</th>
+        <th>إجمالي اليوميات</th>
+        <th>عمولة تنفيذ</th>
+        <th>عمولة UpSell</th>
+        <th>عمولة سيلز</th>
         <th>الإجمالي</th>
         <th>الخصم</th>
-        <th>التأمينات</th>
-        <th>صافي بعد الخصم</th>
-        <th>الدفعة المقدمة</th>
-        <th>الصافي المستحق</th>
+        <th>السلف</th>
+        <th>الصافي</th>
         <th>تفاصيل</th>
       </tr>
     </thead>
     <tbody>`;
 
-    rows.forEach((r, i) => {
-    // ✅ زر 👁️ يظهر فقط إذا كان للموظف عمولة > 0
-    const showDetailsBtn = r.commission > 0;
-    
+  rows.forEach((r, i) => {
+    const showDetailsBtn = true;
+
+    let roleBadge = '';
+    if (r.role === 'Instructor') roleBadge = '<span class="cell-role">👨‍🏫 Instructor</span>';
+    else if (r.role === 'Helper') roleBadge = '<span class="cell-role" style="background:#fef3c7;color:#b45309;">🆘 Helper</span>';
+    else if (r.role === 'Photographer') roleBadge = '<span class="cell-role" style="background:#e0f2fe;color:#0369a1;">📸 Photographer</span>';
+    else if (r.role === 'Driver') roleBadge = '<span class="cell-role" style="background:#f1f5f9;color:#475569;">🚗 Driver</span>';
+    else if (r.role === 'Captain') roleBadge = '<span class="cell-role" style="background:#f1f5f9;color:#475569;">⛵ Captain</span>';
+    else if (r.role === 'TechnicalManager') roleBadge = '<span class="cell-role" style="background:#fef3c7;color:#92400e;">👔 Manager</span>';
+    else roleBadge = `<span class="cell-role" style="background:#e2e8f0;color:#475569;">${escHtml(r.role)}</span>`;
+
     html += `<tr>
       <td>${i+1}</td>
-      <td>${r.userId}</td>
-      <td style="text-align:right;">${r.name}</td>
-      <td style="color:#6c757d;">${r.position || '—'}</td>
-      <td class="cell-days">${r.workingDays > 0 ? fmtDays(r.workingDays) : '—'}</td>
-      <td style="color:${r.absentDays>0?'#e74c3c':'#aaa'};">${r.absentDays > 0 ? r.absentDays : '—'}</td>
-      <td class="cell-salary">${r.monthlySalary > 0 ? fmt(r.monthlySalary) : '—'}</td>
-      <td style="background:#e8f4f8;">${r.salaryAmount > 0 ? fmt(r.salaryAmount) : '—'}</td>
-      <td style="background:#e8f5e9;">${r.commission > 0 ? fmt(r.commission) : '—'}</td>
-      <td>${r.bonus > 0 ? fmt(r.bonus) : '—'}</td>
+      <td style="font-family:monospace;">${r.userId}</td>
+      <td style="text-align:right; font-weight:bold;">${escHtml(r.name)}</td>
+      <td>${roleBadge}</td>
+      <td class="cell-days">${r.workingDays > 0 ? fmt(r.workingDays) : '—'}</td>
+      <td class="cell-base-salary">${r.baseSalary > 0 ? fmt(r.baseSalary) : '—'}</td>
+      <td class="cell-mgmt-salary">${r.managementSalary > 0 ? fmt(r.managementSalary) : '—'}</td>
+      <td class="cell-daily">${r.dailyRate > 0 ? fmt(r.dailyRate) : '—'}</td>
+      <td class="cell-exec-comm">${r.execComm > 0 ? fmt(r.execComm) : '—'}</td>
+      <td class="cell-upsell-comm">${r.upSellComm > 0 ? fmt(r.upSellComm) : '—'}</td>
+      <td class="cell-sales-comm">${r.salesComm > 0 ? fmt(r.salesComm) : '—'}</td>
       <td style="font-weight:700;">${r.total > 0 ? fmt(r.total) : '—'}</td>
-      <td>${r.cuts > 0 ? fmt(r.cuts) : '—'}</td>
-      <td>${r.insurance > 0 ? fmt(r.insurance) : '—'}</td>
-      <td>${r.totalAfterCuts > 0 ? fmt(r.totalAfterCuts) : '—'}</td>
-      <td style="color:${r.downPaymentLE>0?'#c0392b':'#aaa'};">${r.downPaymentLE > 0 ? fmt(r.downPaymentLE) : '—'}</td>
-      <td class="cell-net" style="font-weight:700;color:${r.net>=0?'#1e8449':'#e74c3c'};">${r.net !== 0 ? fmt(r.net) : '—'}</td>
+      <td style="color:#dc2626;">${r.cuts > 0 ? fmt(r.cuts) : '—'}</td>
+      <td style="color:#c0392b;">${r.downPaymentLE > 0 ? fmt(r.downPaymentLE) : '—'}</td>
+      <td class="cell-net" style="font-weight:900;color:${r.net>=0?'#1e8449':'#e74c3c'};">${r.net !== 0 ? fmt(r.net) : '—'}</td>
       <td>
-       ${showDetailsBtn 
+        ${showDetailsBtn 
           ? `<button class="btn-details" 
                      data-user-id="${escHtml(r.userId)}" 
                      data-user-name="${escHtml(r.name || '')}"
@@ -610,69 +612,83 @@ function renderTable(rows, month, year) {
       </td>
     </tr>`;
   });
- 
 
-   html += `<tr class="total-row" style="background:#1e2b4f;color:#ffd966;">
+  // ✅ حساب الإجماليات (الحقول الجديدة)
+  let totals = {
+    workingDays: 0, baseSalary: 0, mgmtSalary: 0, dailyRate: 0,
+    execComm: 0, upSellComm: 0, salesComm: 0, total: 0, cuts: 0, downPayment: 0, net: 0
+  };
+  rows.forEach(r => {
+    totals.workingDays += r.workingDays || 0;
+    totals.baseSalary += r.baseSalary || 0;
+    totals.mgmtSalary += r.managementSalary || 0;
+    totals.dailyRate += r.dailyRate || 0;
+    totals.execComm += r.execComm || 0;
+    totals.upSellComm += r.upSellComm || 0;
+    totals.salesComm += r.salesComm || 0;
+    totals.total += r.total || 0;
+    totals.cuts += r.cuts || 0;
+    totals.downPayment += r.downPaymentLE || 0;
+    totals.net += r.net || 0;
+  });
+
+  html += `<tr class="total-row" style="background:#1e2b4f;color:#ffd966;">
     <td colspan="4"><strong>الإجمالي الكلي</strong></td>
-    <td><strong>${totals.workingDays > 0 ? fmtDays(totals.workingDays) : '—'}</strong></td>
-    <td><strong>${totals.absentDays > 0 ? fmt(totals.absentDays) : '—'}</strong></td>
-    <td><strong>${totals.monthlySalary > 0 ? fmt(totals.monthlySalary) : '—'}</strong></td>
-    <td><strong>${totals.salaryAmount > 0 ? fmt(totals.salaryAmount) : '—'}</strong></td>
-    <td><strong>${totals.commission > 0 ? fmt(totals.commission) : '—'}</strong></td>
-    <td><strong>${totals.bonus > 0 ? fmt(totals.bonus) : '—'}</strong></td>
+    <td><strong>${totals.workingDays > 0 ? fmt(totals.workingDays) : '—'}</strong></td>
+    <td><strong>${totals.baseSalary > 0 ? fmt(totals.baseSalary) : '—'}</strong></td>
+    <td><strong>${totals.mgmtSalary > 0 ? fmt(totals.mgmtSalary) : '—'}</strong></td>
+    <td><strong>${totals.dailyRate > 0 ? fmt(totals.dailyRate) : '—'}</strong></td>
+    <td><strong>${totals.execComm > 0 ? fmt(totals.execComm) : '—'}</strong></td>
+    <td><strong>${totals.upSellComm > 0 ? fmt(totals.upSellComm) : '—'}</strong></td>
+    <td><strong>${totals.salesComm > 0 ? fmt(totals.salesComm) : '—'}</strong></td>
     <td><strong>${totals.total > 0 ? fmt(totals.total) : '—'}</strong></td>
-    <td><strong>0</strong></td>
-    <td><strong>0</strong></td>
-    <td><strong>${totals.total > 0 ? fmt(totals.total) : '—'}</strong></td>
-    <td><strong>${totals.downPaymentLE > 0 ? fmt(totals.downPaymentLE) : '—'}</strong></td>
+    <td><strong>${totals.cuts > 0 ? fmt(totals.cuts) : '—'}</strong></td>
+    <td><strong>${totals.downPayment > 0 ? fmt(totals.downPayment) : '—'}</strong></td>
     <td><strong>${totals.net !== 0 ? fmt(totals.net) : '—'}</strong></td>
     <td>—</td>
   </tr>`;
-  
- html += `</tbody></table></div>`;
-document.getElementById('reportArea').innerHTML = html;
 
-// ✅ ✅ ✅ ربط أزرار التفاصيل يدوياً (يعمل على جميع المتصفحات)
-setTimeout(function() {
-  const detailsBtns = document.querySelectorAll('.btn-details');
-  console.log('🔘 عدد أزرار التفاصيل:', detailsBtns.length);
-  
-  detailsBtns.forEach(function(btn) {
-    function handler(e) {
-      if (e) {
-        e.preventDefault();
-        e.stopPropagation();
+  html += `</tbody></table></div>`;
+  document.getElementById('reportArea').innerHTML = html;
+
+  // ✅ ربط أزرار التفاصيل يدوياً
+  setTimeout(function() {
+    const detailsBtns = document.querySelectorAll('.btn-details');
+    console.log('🔘 عدد أزرار التفاصيل:', detailsBtns.length);
+    detailsBtns.forEach(function(btn) {
+      function handler(e) {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        const userId = btn.getAttribute('data-user-id');
+        const userName = btn.getAttribute('data-user-name');
+        console.log('👁️ ضغط على التفاصيل:', userId, userName);
+        openCommissionDetails(userId, userName);
       }
-      const userId = btn.getAttribute('data-user-id');
-      const userName = btn.getAttribute('data-user-name');
-      console.log('👁️ ضغط على التفاصيل:', userId, userName);
-      openCommissionDetails(userId, userName);
-    }
-    btn.onclick = handler;
-    btn.addEventListener('touchend', handler, { passive: false });
-  });
-}, 50);
+      btn.onclick = handler;
+      btn.addEventListener('touchend', handler, { passive: false });
+    });
+  }, 50);
 }
-// ═══════════════════════════════════════════════════════════════════
-// openCommissionDetails — نسخة تستخدم getDeductionsForMonth
-// ═══════════════════════════════════════════════════════════════════
+
 // ═══════════════════════════════════════════════════════════════════
 // openCommissionDetails — عرض تفاصيل الموظف (فواتير + دفعات + خصومات)
 // ═══════════════════════════════════════════════════════════════════
 async function openCommissionDetails(userId, employeeName) {
   console.log('🎯 openCommissionDetails:', userId, employeeName);
-  
+
   const month = document.getElementById('selMonth').value;
   const year  = document.getElementById('selYear').value;
-  
+
   if (!month || !year) {
     showToast('اختر الشهر والسنة أولاً', 'error');
     return;
   }
-  
+
   if (window._commDetailsLoading) return;
   window._commDetailsLoading = true;
-  
+
   // ─────────────────────────────────────────
   // Loader
   // ─────────────────────────────────────────
@@ -681,7 +697,7 @@ async function openCommissionDetails(userId, employeeName) {
   loadingModal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:2147483647;display:flex;align-items:center;justify-content:center;';
   loadingModal.innerHTML = '<div style="background:white;border-radius:16px;padding:30px 40px;text-align:center;"><div style="border:4px solid #f3f3f3;border-top:4px solid #0d9488;border-radius:50%;width:40px;height:40px;animation:spin 0.9s linear infinite;margin:0 auto 15px;"></div><div style="font-weight:700;color:#1e2b4f;">جاري التحميل...</div></div>';
   document.body.appendChild(loadingModal);
-  
+
   try {
     // ═══════════════════════════════════════════
     // 1. جلب تفاصيل العمولات
@@ -695,7 +711,7 @@ async function openCommissionDetails(userId, employeeName) {
       fromDate: '01/' + month + '/' + year,
       toDate: '31/' + month + '/' + year
     });
-    
+
     if (!result || !result.success) {
       const lm = document.getElementById('commDetailsLoading');
       if (lm) lm.remove();
@@ -703,21 +719,20 @@ async function openCommissionDetails(userId, employeeName) {
       showToast(result?.message || 'فشل تحميل التفاصيل', 'error');
       return;
     }
-    
+
     const invoices = result.invoices || [];
     const totalComm = result.summary?.totalCommission || 0;
-    
-    // ✅ حفظ الفواتير في متغير عام للتصدير/الطباعة
+
     window._currentInvoices = invoices;
-    
+
     // ═══════════════════════════════════════════
     // 2. جلب الدفعات المقدمة من Expenses
     // ═══════════════════════════════════════════
     console.log('📡 جلب الدفعات المقدمة...');
-    
+
     let advances = [];
     let advancesTotals = null;
-    
+
     try {
       const advResult = await jsonp('getAdvancesForEmployee', {
         centerName: Session.getUser()?.centerName || '',
@@ -725,9 +740,9 @@ async function openCommissionDetails(userId, employeeName) {
         month: month,
         year: year
       });
-      
+
       console.log('📥 getAdvancesForEmployee result:', advResult);
-      
+
       if (advResult && advResult.success) {
         advances = advResult.advances || [];
         advancesTotals = advResult.totals || null;
@@ -735,18 +750,17 @@ async function openCommissionDetails(userId, employeeName) {
     } catch(e) {
       console.warn('⚠️ فشل جلب الدفعات:', e);
     }
-    
-    // ✅ حفظ الدفعات في متغير عام
+
     window._currentAdvances = advances;
     window._advancesTotals = advancesTotals;
-    
+
     // ═══════════════════════════════════════════
     // 3. جلب بيانات الموظف من tableData
     // ═══════════════════════════════════════════
     const empData = (window.tableData || tableData || []).find(e => 
       String(e.userId) === String(userId)
     );
-    
+
     // ═══════════════════════════════════════════
     // 4. بناء جدول الفواتير
     // ═══════════════════════════════════════════
@@ -766,15 +780,15 @@ async function openCommissionDetails(userId, employeeName) {
         '</tr>';
       });
     }
-    
+
     // ═══════════════════════════════════════════
     // 5. بناء جدول الدفعات المقدمة
     // ═══════════════════════════════════════════
     let advancesHtml = '';
-    
+
     if (advances.length > 0) {
       let advRows = '';
-      
+
       for (const adv of advances) {
         advRows += '<tr>' +
           '<td style="text-align:center;padding:6px 4px;border-bottom:1px solid #fed7aa;">' + escHtml(adv.date || '—') + '</td>' +
@@ -789,7 +803,7 @@ async function openCommissionDetails(userId, employeeName) {
           '<td style="text-align:center;padding:6px 4px;border-bottom:1px solid #fed7aa;">' + (adv.vLE > 0 ? adv.vLE : '—') + '</td>' +
         '</tr>';
       }
-      
+
       // صف الإجماليات
       let totalRow = '';
       if (advancesTotals) {
@@ -806,17 +820,17 @@ async function openCommissionDetails(userId, employeeName) {
           '<td style="text-align:center;padding:8px 6px;">' + (t.VLE > 0 ? t.VLE : '—') + '</td>' +
         '</tr>';
       }
-      
+
       advancesHtml = `
         <div style="margin-top:20px;">
-                      <div style="background:linear-gradient(135deg,#7c2d12,#ea580c);color:#fff;padding:10px 16px;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center;">
-                 <strong style="font-size:14px;">💵 الدفعات المقدمة (${advances.length})</strong>
-                  <span 
-                    style="background:rgba(255,255,255,0.2);padding:4px 12px;border-radius:20px;font-weight:700;font-size:13px;cursor:help;"
-                    title="${advancesTotals ? `$${advancesTotals.USD} + €${advancesTotals.EUR} + £${advancesTotals.GBP} + ${advancesTotals.LE}LE = ${fmt(empData?.downPaymentLE || 0)} LE` : ''}">
-                    ${empData && empData.downPaymentLE > 0 ? fmt(empData.downPaymentLE) + ' LE' : '—'}
-                  </span>
-                </div>
+          <div style="background:linear-gradient(135deg,#7c2d12,#ea580c);color:#fff;padding:10px 16px;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center;">
+            <strong style="font-size:14px;">💵 الدفعات المقدمة (${advances.length})</strong>
+            <span 
+              style="background:rgba(255,255,255,0.2);padding:4px 12px;border-radius:20px;font-weight:700;font-size:13px;cursor:help;"
+              title="${advancesTotals ? `$${advancesTotals.USD} + €${advancesTotals.EUR} + £${advancesTotals.GBP} + ${advancesTotals.LE}LE = ${fmt(empData?.downPaymentLE || 0)} LE` : ''}">
+              ${empData && empData.downPaymentLE > 0 ? fmt(empData.downPaymentLE) + ' LE' : '—'}
+            </span>
+          </div>
           <div style="background:#fff7ed;border:1px solid #fed7aa;border-top:none;border-radius:0 0 10px 10px;padding:12px;">
             <div style="overflow-x:auto;border-radius:8px;">
               <table style="width:100%;border-collapse:collapse;font-size:11px;background:white;min-width:800px;">
@@ -847,16 +861,16 @@ async function openCommissionDetails(userId, employeeName) {
         </div>
       `;
     }
-    
+
     // ═══════════════════════════════════════════
     // 6. بناء جدول الخصومات مع أزرار التعديل والحذف
     // ═══════════════════════════════════════════
     let deductionsHtml = '';
     let totalDeductionsLE = 0;
-    
+
     if (empData && empData.deductionsDetails && empData.deductionsDetails.length > 0) {
       let dedRows = '';
-      
+
       for (const ded of empData.deductionsDetails) {
         let amountText = '—';
         if (ded.computedType === 'cash') {
@@ -877,8 +891,7 @@ async function openCommissionDetails(userId, employeeName) {
           amountText += `<div style="font-size:9px;color:#999;margin-top:2px;">≈ ${fmt(daysInLE)} LE</div>`;
           totalDeductionsLE += daysInLE;
         }
-        
-        // ✅ أزرار الإجراءات
+
         const actionsHtml = `
           <div style="display:flex;gap:4px;justify-content:center;">
             <button 
@@ -895,7 +908,7 @@ async function openCommissionDetails(userId, employeeName) {
             </button>
           </div>
         `;
-        
+
         dedRows += `<tr>
           <td style="text-align:center;padding:8px 6px;border-bottom:1px solid #fecaca;">${escHtml(ded.date || '—')}</td>
           <td style="text-align:center;padding:8px 6px;border-bottom:1px solid #fecaca;">
@@ -907,7 +920,7 @@ async function openCommissionDetails(userId, employeeName) {
           <td style="text-align:center;padding:8px 6px;border-bottom:1px solid #fecaca;">${actionsHtml}</td>
         </tr>`;
       }
-      
+
       deductionsHtml = `
         <div style="margin-top:20px;">
           <div style="background:linear-gradient(135deg,#7f1d1d,#dc2626);color:#fff;padding:10px 16px;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center;">
@@ -942,7 +955,7 @@ async function openCommissionDetails(userId, employeeName) {
         </div>
       `;
     }
-    
+
     // ═══════════════════════════════════════════
     // 7. بناء جدول ملخص الموظف (صف واحد)
     // ═══════════════════════════════════════════
@@ -1000,14 +1013,14 @@ async function openCommissionDetails(userId, employeeName) {
         </div>
       `;
     }
-    
+
     // ═══════════════════════════════════════════
     // 8. بناء المودال
     // ═══════════════════════════════════════════
     const modalHtml =
       '<div id="commDetailsModal" style="position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:2147483647;display:flex;align-items:flex-start;justify-content:center;padding:8px;box-sizing:border-box;overflow-y:auto;-webkit-overflow-scrolling:touch;">' +
         '<div style="background:#fff;border-radius:12px;width:100%;max-width:1200px;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.4);overflow:hidden;margin:8px auto;">' +
-          
+
           // Header
           '<div style="padding:14px 16px;background:linear-gradient(135deg,#0d9488,#14b8a6);color:#fff;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;flex-wrap:wrap;gap:10px;">' +
             '<div style="flex:1;min-width:200px;">' +
@@ -1020,13 +1033,13 @@ async function openCommissionDetails(userId, employeeName) {
               '<button id="commDetailsCloseBtn" type="button" style="background:rgba(255,255,255,0.25);color:#fff;border:none;width:36px;height:36px;border-radius:50%;font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;padding:0;">×</button>' +
             '</div>' +
           '</div>' +
-          
+
           // Body
           '<div style="padding:12px;overflow-y:auto;flex:1;-webkit-overflow-scrolling:touch;max-height:calc(100vh - 140px);">' +
-            
+
             // جدول ملخص الموظف
             summaryRowHtml +
-            
+
             // جدول الفواتير
             '<div style="margin-bottom:16px;">' +
               '<div style="background:#1a3260;color:#f5c842;padding:10px 16px;border-radius:10px 10px 0 0;font-size:13px;font-weight:800;">' +
@@ -1049,30 +1062,30 @@ async function openCommissionDetails(userId, employeeName) {
                 '</div>' +
               '</div>' +
             '</div>' +
-            
+
             // جدول الدفعات المقدمة
             advancesHtml +
-            
+
             // جدول الخصومات
             deductionsHtml +
-            
+
           '</div>' +
-          
+
           // Footer
           '<div style="padding:10px 12px;background:#f8f9fa;text-align:center;border-top:1px solid #e0e0e0;flex-shrink:0;">' +
             '<button id="commDetailsCloseBtn2" type="button" style="background:#1e2b4f;color:#ffd966;border:none;padding:12px 30px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;width:100%;max-width:300px;">إغلاق</button>' +
           '</div>' +
         '</div>' +
       '</div>';
-    
+
     const lm = document.getElementById('commDetailsLoading');
     if (lm) lm.remove();
     window._commDetailsLoading = false;
-    
+
     const existing = document.getElementById('commDetailsModal');
     if (existing) existing.remove();
     document.body.insertAdjacentHTML('beforeend', modalHtml);
-    
+
     // ═══════════════════════════════════════════
     // 9. ربط الأزرار
     // ═══════════════════════════════════════════
@@ -1082,12 +1095,12 @@ async function openCommissionDetails(userId, employeeName) {
       const excelBtn = document.getElementById('commDetailsExcelBtn');
       const printBtn = document.getElementById('commDetailsPrintBtn');
       const modal = document.getElementById('commDetailsModal');
-      
+
       function closeHandler(e) {
         if (e) { e.preventDefault(); e.stopPropagation(); }
         closeCommissionDetails();
       }
-      
+
       if (btn1) {
         btn1.onclick = closeHandler;
         btn1.addEventListener('touchend', closeHandler, { passive: false });
@@ -1096,8 +1109,7 @@ async function openCommissionDetails(userId, employeeName) {
         btn2.onclick = closeHandler;
         btn2.addEventListener('touchend', closeHandler, { passive: false });
       }
-      
-      // ✅ زر التصدير
+
       if (excelBtn) {
         excelBtn.onclick = function(e) {
           e.preventDefault();
@@ -1105,8 +1117,7 @@ async function openCommissionDetails(userId, employeeName) {
           exportModalToExcel(userId, employeeName, month, year);
         };
       }
-      
-      // ✅ زر الطباعة
+
       if (printBtn) {
         printBtn.onclick = function(e) {
           e.preventDefault();
@@ -1114,19 +1125,19 @@ async function openCommissionDetails(userId, employeeName) {
           printModal(userId, employeeName, month, year);
         };
       }
-      
+
       if (modal) {
         modal.onclick = function(e) {
           if (e.target === modal) closeCommissionDetails();
         };
       }
-      
+
       document.body.style.overflow = 'hidden';
       document.documentElement.style.overflow = 'hidden';
     }, 50);
-    
+
     console.log('✅ المودال تم عرضه — ' + invoices.length + ' فاتورة، ' + advances.length + ' دفعة، ' + (empData?.deductionsDetails?.length || 0) + ' خصم');
-    
+
   } catch(e) {
     const lm = document.getElementById('commDetailsLoading');
     if (lm) lm.remove();
@@ -1163,7 +1174,6 @@ function exportToExcel() {
   const month = document.getElementById('selMonth').value;
   const year  = document.getElementById('selYear').value;
   
-  // ✅ أسماء الشهور للعرض
   const monthNames = {
     'Jan': 'يناير', 'Feb': 'فبراير', 'Mar': 'مارس', 'Apr': 'أبريل',
     'May': 'مايو', 'Jun': 'يونيو', 'Jul': 'يوليو', 'Aug': 'أغسطس',
@@ -1172,29 +1182,27 @@ function exportToExcel() {
   const monthAr = monthNames[month] || month;
   
   // ═══════════════════════════════════════════════
-  // 1. حساب الإجماليات
+  // 1. حساب الإجماليات (مطابقة للأعمدة الجديدة)
   // ═══════════════════════════════════════════════
   const totals = tableData.reduce((acc, r) => {
-    acc.workingDays    += r.workingDays    || 0;
-    acc.absentDays     += r.absentDays     || 0;
-    acc.monthlySalary  += r.monthlySalary  || 0;
-    acc.salaryAmount   += r.salaryAmount   || 0;
-    acc.commission     += r.commission     || 0;
-    acc.bonus          += r.bonus          || 0;
-    acc.total          += r.total          || 0;
-    acc.cuts           += r.cuts           || 0;
-    acc.insurance      += r.insurance      || 0;
-    acc.totalAfterCuts += r.totalAfterCuts || 0;
-    acc.downPaymentLE  += r.downPaymentLE  || 0;
-    acc.net            += r.net            || 0;
+    acc.workingDays   += r.workingDays   || 0;
+    acc.baseSalary    += r.baseSalary    || 0;
+    acc.mgmtSalary    += r.managementSalary || 0;
+    acc.dailyRate     += r.dailyRate     || 0;
+    acc.execComm      += r.execComm      || 0;
+    acc.upSellComm    += r.upSellComm    || 0;
+    acc.salesComm     += r.salesComm     || 0;
+    acc.total         += r.total         || 0;
+    acc.cuts          += r.cuts          || 0;
+    acc.downPayment   += r.downPaymentLE || 0;
+    acc.net           += r.net           || 0;
     return acc;
   }, {
-    workingDays: 0, absentDays: 0, monthlySalary: 0, salaryAmount: 0,
-    commission: 0, bonus: 0, total: 0, cuts: 0, insurance: 0,
-    totalAfterCuts: 0, downPaymentLE: 0, net: 0
+    workingDays: 0, baseSalary: 0, mgmtSalary: 0, dailyRate: 0,
+    execComm: 0, upSellComm: 0, salesComm: 0, total: 0,
+    cuts: 0, downPayment: 0, net: 0
   });
   
-  // ✅ عدد الأعمدة الكلي
   const TOTAL_COLS = 16;
   
   // ═══════════════════════════════════════════════
@@ -1202,9 +1210,7 @@ function exportToExcel() {
   // ═══════════════════════════════════════════════
   let html = '';
   html += '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">';
-  html += '<head>';
-  html += '<meta charset="UTF-8">';
-  html += '<style>';
+  html += '<head><meta charset="UTF-8"><style>';
   html += 'table{border-collapse:collapse;font-family:Arial,sans-serif;font-size:10px;}';
   html += 'th{background:#1a3260;color:#f5c842;padding:8px 5px;border:1px solid #94a3b8;font-weight:bold;text-align:center;font-size:11px;}';
   html += 'td{padding:5px 4px;border:1px solid #cbd5e1;vertical-align:middle;text-align:center;font-size:10px;}';
@@ -1217,140 +1223,81 @@ function exportToExcel() {
   html += '.commission-cell{background:#e8f5e9;color:#1b5e20;font-weight:bold;}';
   html += '.net-cell{background:#fff3e0;color:#e65100;font-weight:900;}';
   html += '.deduction-cell{color:#dc2626;font-weight:bold;}';
-  html += '</style>';
-  html += '</head>';
-  html += '<body>';
+  html += '</style></head><body>';
   
   // ═══════════════════════════════════════════════
-  // 3. الصفوف العلوية الثلاثة (Title + Subtitle + Info)
+  // 3. العنوان والمعلومات
   // ═══════════════════════════════════════════════
   html += '<table border="1">';
-  
-  // ✅ صف 1: العنوان الرئيسي
   html += `<tr><td colspan="${TOTAL_COLS}" class="title">💰 Salary Report - ${monthAr} / ${year}</td></tr>`;
-  
-  // ✅ صف 2: معلومات المركز والمستخدم
-  html += `<tr><td colspan="${TOTAL_COLS}" class="subtitle">`;
-  html += `🏢 Center: ${escHtml(currentUser?.centerName || '')} &nbsp;|&nbsp; `;
-  html += `👤 User: ${escHtml(currentUser?.name || '')} &nbsp;|&nbsp; `;
-  html += `📊 Total Employees: ${tableData.length}`;
-  html += `</td></tr>`;
-  
-  // ✅ صف 3: معلومات إضافية (Total Salary / Commissions)
-  html += `<tr><td colspan="${TOTAL_COLS}" class="info-summary">`;
-  html += `💵 Total Net Salary: ${Math.round(totals.net).toLocaleString()} EGP &nbsp;|&nbsp; `;
-  html += `💰 Total Commissions: ${Math.round(totals.commission).toLocaleString()} EGP &nbsp;|&nbsp; `;
-  html += `📅 Period: ${monthAr} / ${year}`;
-  html += `</td></tr>`;
-  
+  html += `<tr><td colspan="${TOTAL_COLS}" class="subtitle">🏢 Center: ${escHtml(currentUser?.centerName || '')} &nbsp;|&nbsp; 👤 User: ${escHtml(currentUser?.name || '')} &nbsp;|&nbsp; 📊 Total Employees: ${tableData.length}</td></tr>`;
+  html += `<tr><td colspan="${TOTAL_COLS}" class="info-summary">💵 Total Net Salary: ${Math.round(totals.net).toLocaleString()} EGP &nbsp;|&nbsp; 💰 Total Commissions: ${Math.round(totals.execComm + totals.upSellComm + totals.salesComm).toLocaleString()} EGP &nbsp;|&nbsp; 📅 Period: ${monthAr} / ${year}</td></tr>`;
   html += '</table>';
   html += '<br>';
   
   // ═══════════════════════════════════════════════
   // 4. الجدول الرئيسي
   // ═══════════════════════════════════════════════
-  html += '<table border="1">';
-  html += '<thead><tr>';
-  
-  // ✅ الرؤوس (كحلي + ذهبي)
+  html += '<table border="1"><thead><tr>';
   const headers = [
-    '#', 'الرقم الوظيفي', 'الاسم', 'الوظيفة',
-    'أيام الحضور', 'أيام الغياب',
-    'الراتب الأساسي', 'الراتب المستحق',
-    'العمولة', 'الحافز',
-    'الإجمالي', 'الخصم', 'التأمينات',
-    'صافي بعد الخصم', 'الدفعة المقدمة', 'الصافي المستحق'
+    '#', 'الرقم', 'الاسم', 'الدور',
+    'أيام العمل', 'الراتب/اليومية', 'راتب الإدارة', 'إجمالي اليوميات',
+    'عمولة تنفيذ', 'عمولة UpSell', 'عمولة سيلز',
+    'الإجمالي', 'الخصم', 'السلف', 'الصافي', 'تفاصيل'
   ];
-  
   headers.forEach(h => {
     html += `<th style="background:#1a3260;color:#f5c842;">${h}</th>`;
   });
-  
-  html += '</tr></thead>';
-  html += '<tbody>';
+  html += '</tr></thead><tbody>';
   
   // ═══════════════════════════════════════════════
   // 5. صفوف البيانات
   // ═══════════════════════════════════════════════
   tableData.forEach((emp, index) => {
     html += '<tr>';
-    
-    // #
     html += `<td>${index + 1}</td>`;
-    
-    // الرقم الوظيفي
     html += `<td>${escHtml(emp.userId || '')}</td>`;
-    
-    // الاسم
     html += `<td style="text-align:right;font-weight:bold;">${escHtml(emp.name || '')}</td>`;
-    
-    // الوظيفة
-    html += `<td>${escHtml(emp.position || '—')}</td>`;
-    
-    // أيام الحضور
+    html += `<td>${escHtml(emp.role || '—')}</td>`;
     html += `<td>${emp.workingDays > 0 ? emp.workingDays.toFixed(1) : '—'}</td>`;
-    
-    // أيام الغياب
-    html += `<td style="color:${emp.absentDays > 0 ? '#dc2626' : '#aaa'};font-weight:${emp.absentDays > 0 ? 'bold' : 'normal'};">${emp.absentDays > 0 ? emp.absentDays : '—'}</td>`;
-    
-    // الراتب الأساسي
-    html += `<td class="salary-cell">${emp.monthlySalary > 0 ? Math.round(emp.monthlySalary).toLocaleString() : '—'}</td>`;
-    
-    // الراتب المستحق
-    html += `<td class="salary-cell">${emp.salaryAmount > 0 ? Math.round(emp.salaryAmount).toLocaleString() : '—'}</td>`;
-    
-    // العمولة
-    html += `<td class="commission-cell">${emp.commission > 0 ? Math.round(emp.commission).toLocaleString() : '—'}</td>`;
-    
-    // الحافز
-    html += `<td>${emp.bonus > 0 ? Math.round(emp.bonus).toLocaleString() : '—'}</td>`;
-    
-    // الإجمالي
+    html += `<td class="salary-cell">${emp.baseSalary > 0 ? Math.round(emp.baseSalary).toLocaleString() : '—'}</td>`;
+    html += `<td class="salary-cell">${emp.managementSalary > 0 ? Math.round(emp.managementSalary).toLocaleString() : '—'}</td>`;
+    html += `<td class="salary-cell">${emp.dailyRate > 0 ? Math.round(emp.dailyRate).toLocaleString() : '—'}</td>`;
+    html += `<td class="commission-cell">${emp.execComm > 0 ? Math.round(emp.execComm).toLocaleString() : '—'}</td>`;
+    html += `<td class="commission-cell">${emp.upSellComm > 0 ? Math.round(emp.upSellComm).toLocaleString() : '—'}</td>`;
+    html += `<td class="commission-cell">${emp.salesComm > 0 ? Math.round(emp.salesComm).toLocaleString() : '—'}</td>`;
     html += `<td style="font-weight:bold;">${emp.total > 0 ? Math.round(emp.total).toLocaleString() : '—'}</td>`;
-    
-    // الخصم
     html += `<td class="deduction-cell">${emp.cuts > 0 ? Math.round(emp.cuts).toLocaleString() : '—'}</td>`;
-    
-    // التأمينات
-    html += `<td class="deduction-cell">${emp.insurance > 0 ? Math.round(emp.insurance).toLocaleString() : '—'}</td>`;
-    
-    // صافي بعد الخصم
-    html += `<td>${emp.totalAfterCuts > 0 ? Math.round(emp.totalAfterCuts).toLocaleString() : '—'}</td>`;
-    
-    // الدفعة المقدمة
     html += `<td class="deduction-cell">${emp.downPaymentLE > 0 ? Math.round(emp.downPaymentLE).toLocaleString() : '—'}</td>`;
-    
-    // الصافي المستحق
     const netColor = emp.net >= 0 ? '#1e8449' : '#e74c3c';
     html += `<td class="net-cell" style="color:${netColor};">${emp.net !== 0 ? Math.round(emp.net).toLocaleString() : '—'}</td>`;
-    
+    html += `<td>—</td>`;
     html += '</tr>';
   });
   
   // ═══════════════════════════════════════════════
-  // 6. صف الإجماليات
+  // 6. صف الإجماليات (متوافق مع 16 عموداً)
   // ═══════════════════════════════════════════════
   html += '<tr class="totals">';
   html += `<td colspan="4" style="text-align:center;padding:8px;">📊 TOTAL (${tableData.length} Employees)</td>`;
   html += `<td>${totals.workingDays > 0 ? totals.workingDays.toFixed(1) : '—'}</td>`;
-  html += `<td>${totals.absentDays > 0 ? totals.absentDays : '—'}</td>`;
-  html += `<td>${totals.monthlySalary > 0 ? Math.round(totals.monthlySalary).toLocaleString() : '—'}</td>`;
-  html += `<td>${totals.salaryAmount > 0 ? Math.round(totals.salaryAmount).toLocaleString() : '—'}</td>`;
-  html += `<td>${totals.commission > 0 ? Math.round(totals.commission).toLocaleString() : '—'}</td>`;
-  html += `<td>${totals.bonus > 0 ? Math.round(totals.bonus).toLocaleString() : '—'}</td>`;
+  html += `<td>${totals.baseSalary > 0 ? Math.round(totals.baseSalary).toLocaleString() : '—'}</td>`;
+  html += `<td>${totals.mgmtSalary > 0 ? Math.round(totals.mgmtSalary).toLocaleString() : '—'}</td>`;
+  html += `<td>${totals.dailyRate > 0 ? Math.round(totals.dailyRate).toLocaleString() : '—'}</td>`;
+  html += `<td>${totals.execComm > 0 ? Math.round(totals.execComm).toLocaleString() : '—'}</td>`;
+  html += `<td>${totals.upSellComm > 0 ? Math.round(totals.upSellComm).toLocaleString() : '—'}</td>`;
+  html += `<td>${totals.salesComm > 0 ? Math.round(totals.salesComm).toLocaleString() : '—'}</td>`;
   html += `<td>${totals.total > 0 ? Math.round(totals.total).toLocaleString() : '—'}</td>`;
   html += `<td>${totals.cuts > 0 ? Math.round(totals.cuts).toLocaleString() : '—'}</td>`;
-  html += `<td>${totals.insurance > 0 ? Math.round(totals.insurance).toLocaleString() : '—'}</td>`;
-  html += `<td>${totals.totalAfterCuts > 0 ? Math.round(totals.totalAfterCuts).toLocaleString() : '—'}</td>`;
-  html += `<td>${totals.downPaymentLE > 0 ? Math.round(totals.downPaymentLE).toLocaleString() : '—'}</td>`;
+  html += `<td>${totals.downPayment > 0 ? Math.round(totals.downPayment).toLocaleString() : '—'}</td>`;
   html += `<td>${totals.net !== 0 ? Math.round(totals.net).toLocaleString() : '—'}</td>`;
+  html += `<td>—</td>`;
   html += '</tr>';
   
-  html += '</tbody></table>';
-  html += '</body></html>';
+  html += '</tbody></table></body></html>';
   
   // ═══════════════════════════════════════════════
-  // 7. تنزيل الملف
+  // 7. التنزيل
   // ═══════════════════════════════════════════════
   const fileName = `Salary_Report_${month}_${year}.xls`;
   const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8' });
