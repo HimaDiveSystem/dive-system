@@ -1491,33 +1491,50 @@ async function loadInstructors() {
 }
 
 function displayInstructorsTable() {
-  // ✅ فلترة حسب الدور
   let filtered = instructors;
   if (currentTeamFilter !== 'all') {
     filtered = instructors.filter(i => (i.role || 'Instructor') === currentTeamFilter);
   }
   
   if (!filtered.length) {
-    const msg = currentTeamFilter === 'all' ? 'لا يوجد أعضاء' : 
-                currentTeamFilter === 'Instructor' ? 'لا يوجد مدربون' :
-                currentTeamFilter === 'Helper' ? 'لا يوجد مساعدون' : 'لا يوجد مصورون';
-    document.getElementById('instructorsTable').innerHTML = `<p style="text-align:center;padding:40px;">${msg}</p>`;
+    document.getElementById('instructorsTable').innerHTML = `<p style="text-align:center;padding:40px;">لا يوجد أعضاء</p>`;
     return;
   }
   
+  // ✅ دالة مساعدة لحساب صلاحية الرخصة بناءً على التاريخ
+  function checkLicenseStatus(expiryStr) {
+    if (!expiryStr || expiryStr === '—') return { valid: false, daysLeft: 0, warning: false };
+    let d = expiryStr instanceof Date ? expiryStr : new Date(expiryStr);
+    if (isNaN(d.getTime())) {
+      // محاولة قراءة dd/MMM/yyyy
+      const match = String(expiryStr).match(/^(\d{1,2})\/([A-Za-z]{3})\/(\d{4})$/);
+      if (match) {
+        const MN = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+        d = new Date(+match[3], MN[match[2]], +match[1]);
+      } else return { valid: false, daysLeft: 0, warning: false };
+    }
+    d.setHours(0,0,0,0);
+    const today = new Date(); today.setHours(0,0,0,0);
+    const diff = Math.ceil((d - today) / 86400000);
+    return { valid: diff >= 0, daysLeft: diff, warning: diff >= 0 && diff <= 7 };
+  }
+
+  // ✅ دالة مساعدة لعرض اللغات كاملة
+  function renderLanguages(langStr) {
+    if (!langStr) return '';
+    const map = { 'ar':'Arabic', 'en':'English', 'ru':'Russian', 'it':'Italian', 'de':'German', 'fr':'French', 'es':'Spanish' };
+    return langStr.split('/').map(l => {
+      const code = l.trim().toLowerCase();
+      return `<span style="background:#e0e7ff;color:#3730a3;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;margin:2px;">${map[code] || l.trim()}</span>`;
+    }).join('');
+  }
+
   let html = `
     <div class="table-wrapper">
       <table style="width:100%; border-collapse:collapse;">
         <thead>
           <tr>
-            <th>#</th>
-            <th>Role</th>
-            <th>الاسم</th>
-            <th>الحالة</th>
-            <th>الاتصال</th>
-            <th>الرخص</th>
-            <th>سجل</th>
-            <th>الإجراءات</th>
+            <th>#</th><th>الدور (Role)</th><th>الاسم</th><th>الحالة</th><th>الاتصال</th><th>الرخص</th><th>سجل</th><th>الإجراءات</th>
           </tr>
         </thead>
         <tbody>
@@ -1526,68 +1543,61 @@ function displayInstructorsTable() {
   filtered.forEach((ins, idx) => {
     const role = ins.role || 'Instructor';
     
-    // ✅ شارة الدور
+    // ✅ 1. شارة الدور
     let roleBadge = '';
     if (role === 'Instructor') roleBadge = '<span class="role-badge role-instructor">👨‍🏫 Instructor</span>';
     else if (role === 'Helper') roleBadge = '<span class="role-badge role-helper">🆘 Helper</span>';
     else if (role === 'Photographer') roleBadge = '<span class="role-badge role-photographer">📸 Photographer</span>';
+    else if (role === 'TechnicalManager') roleBadge = '<span class="role-badge" style="background:#f59e0b;">👔 Manager</span>';
+    else if (role === 'DiveGuide') roleBadge = '<span class="role-badge" style="background:#06b6d4;">🧭 Dive Guide</span>';
+    else if (role === 'SnorkelGuide') roleBadge = '<span class="role-badge" style="background:#06b6d4;">🤿 Snorkel Guide</span>';
     else roleBadge = `<span class="role-badge">${escHtml(role)}</span>`;
     
-    // ✅ الحالة
+    // ✅ 2. الحالة
     let statusBadge = '';
-    if (ins.isActive) {
-      statusBadge = '<span style="background:#27ae60;color:white;padding:4px 10px;border-radius:12px;font-size:10px;font-weight:700;">🟢 Active</span>';
-    } else if (ins.manualIsActive && !ins.autoIsActive) {
-      statusBadge = `<span style="background:#e74c3c;color:white;padding:4px 10px;border-radius:12px;font-size:10px;font-weight:700;" title="${escHtml(ins.inactiveReason || '')}">🔴 ${escHtml(ins.inactiveReason || 'License expired')}</span>`;
-    } else {
-      statusBadge = '<span style="background:#f39c12;color:white;padding:4px 10px;border-radius:12px;font-size:10px;font-weight:700;">🟡 Inactive</span>';
-    }
+    if (ins.isActive) statusBadge = '<span style="background:#27ae60;color:white;padding:4px 10px;border-radius:12px;font-size:10px;font-weight:700;">🟢 Active</span>';
+    else statusBadge = '<span style="background:#f39c12;color:white;padding:4px 10px;border-radius:12px;font-size:10px;font-weight:700;">🟡 Inactive</span>';
     
-    // ✅ الاتصال
+    // ✅ 3. الاتصال
     const phone = ins.phone ? `<span dir="ltr" style="font-family:monospace; font-size:11px;">${escHtml(ins.phone)}</span>` : '—';
-       // ✅ 🆕 عرض اللغات بأيقونات
-    const langText = ins.language ? ins.language : '';
-    const langTags = langText 
-      ? langText.split('/').map(l => l.trim()).filter(Boolean).map(l => 
-          `<span style="background:#e0e7ff;color:#3730a3;padding:1px 5px;border-radius:8px;font-size:9px;font-weight:700;">${getLanguageLabel(l) || l}</span>`
-        ).join(' ')
-      : '';
     
-    // ✅ الرخص حسب الدور
+    // ✅ 4. الرخص (نحسب الصلاحية بالتاريخ)
     let licensesHtml = '';
-    
-       if (['Instructor', 'TechnicalManager', 'DiveGuide', 'SnorkelGuide'].includes(role)) {
-      // License + CDWS (لجميع الأدوار التي تملك رخص غوص)
+    if (['Instructor', 'TechnicalManager', 'DiveGuide', 'SnorkelGuide'].includes(role)) {
+      const lic = checkLicenseStatus(ins.licenseExpiry);
+      const cdws = checkLicenseStatus(ins.cdwsExpiry);
+      
       licensesHtml = `
         <div style="text-align:right; font-size:11px; line-height:1.6;">
-            <div style="margin-bottom:4px;"><strong>🏢 ${escHtml(ins.organization || '—')}</strong> · <span style="color:#7c3aed;font-weight:700;">${escHtml(ins.level || '—')}</span></div>
-          <div><strong>📜 License:</strong> ${escHtml(ins.licenseNumber || '—')} ${renderLicenseStatus(ins.licenseValid, ins.licenseWarning, ins.licenseDaysLeft)}</div>
-          <div style="color:#64748b;">${ins.licenseExpiry ? formatDateDMY(ins.licenseExpiry) : '—'}</div>
-          <div style="margin-top:4px;"><strong>🪪 CDWS:</strong> ${escHtml(ins.cdwsCard || '—')} ${renderLicenseStatus(ins.cdwsValid, ins.cdwsWarning, ins.cdwsDaysLeft)}</div>
-          <div style="color:#64748b;">${ins.cdwsExpiry ? formatDateDMY(ins.cdwsExpiry) : '—'}</div>
+          <div style="margin-bottom:2px;"><strong>🏢 ${escHtml(ins.organization || '—')}</strong> · <span style="color:#7c3aed;font-weight:700;">${escHtml(ins.level || '—')}</span></div>
+          <div><strong>📜 License:</strong> ${escHtml(ins.licenseNumber || '—')} ${lic.valid ? (lic.warning ? '⚠️' : '✅') : '❌'}</div>
+          <div style="color:#64748b;font-size:10px;">${lic.dateStr || '—'}</div>
+          <div style="margin-top:2px;"><strong>🪪 CDWS:</strong> ${escHtml(ins.cdwsCard || '—')} ${cdws.valid ? (cdws.warning ? '⚠️' : '✅') : '❌'}</div>
+          <div style="color:#64748b;font-size:10px;">${cdws.dateStr || '—'}</div>
         </div>
       `;
     } 
     else if (role === 'Helper') {
-      // CDWS + EFR
+      const cdws = checkLicenseStatus(ins.cdwsExpiry);
+      const efr = checkLicenseStatus(ins.efrExpiry);
       licensesHtml = `
         <div style="text-align:right; font-size:11px; line-height:1.6;">
-          <div><strong>🪪 CDWS:</strong> ${escHtml(ins.cdwsCard || '—')} ${renderLicenseStatus(ins.cdwsValid, ins.cdwsWarning, ins.cdwsDaysLeft)}</div>
-          <div style="color:#64748b;">${ins.cdwsExpiry ? formatDateDMY(ins.cdwsExpiry) : '—'}</div>
-          <div style="margin-top:4px;"><strong>🩺 EFR:</strong> ${escHtml(ins.efrNumber || '—')} ${renderLicenseStatus(ins.efrValid, ins.efrWarning, ins.efrDaysLeft)}</div>
-          <div style="color:#64748b;">${ins.efrExpiry ? formatDateDMY(ins.efrExpiry) : '—'}</div>
+          <div><strong>🪪 CDWS:</strong> ${escHtml(ins.cdwsCard || '—')} ${cdws.valid ? '✅' : '❌'}</div>
+          <div style="color:#64748b;font-size:10px;">${ins.cdwsExpiry || '—'}</div>
+          <div style="margin-top:2px;"><strong>🩺 EFR:</strong> ${escHtml(ins.efrNumber || '—')} ${efr.valid ? '✅' : '❌'}</div>
+          <div style="color:#64748b;font-size:10px;">${ins.efrExpiry || '—'}</div>
         </div>
       `;
     }
     else if (role === 'Photographer') {
-      // Org License + CDWS
+      const org = checkLicenseStatus(ins.orgLicenseExpiry || ins.licenseExpiry);
+      const cdws = checkLicenseStatus(ins.cdwsExpiry);
       licensesHtml = `
         <div style="text-align:right; font-size:11px; line-height:1.6;">
-          <div><strong>🏢 ${escHtml(ins.organization || '—')}</strong> - ${escHtml(ins.level || '—')}</div>
-          <div style="margin-top:4px;"><strong>📜 License:</strong> ${escHtml(ins.licenseNumber || '—')} ${renderLicenseStatus(ins.orgLicenseValid, ins.orgLicenseWarning, ins.orgLicenseDaysLeft)}</div>
-          <div style="color:#64748b;">${ins.orgLicenseExpiry ? formatDateDMY(ins.orgLicenseExpiry) : '—'}</div>
-          <div style="margin-top:4px;"><strong>🪪 CDWS:</strong> ${escHtml(ins.cdwsCard || '—')} ${renderLicenseStatus(ins.cdwsValid, ins.cdwsWarning, ins.cdwsDaysLeft)}</div>
-          <div style="color:#64748b;">${ins.cdwsExpiry ? formatDateDMY(ins.cdwsExpiry) : '—'}</div>
+          <div><strong>📜 License:</strong> ${escHtml(ins.licenseNumber || '—')} ${org.valid ? '✅' : '❌'}</div>
+          <div style="color:#64748b;font-size:10px;">${ins.orgLicenseExpiry || ins.licenseExpiry || '—'}</div>
+          <div style="margin-top:2px;"><strong>🪪 CDWS:</strong> ${escHtml(ins.cdwsCard || '—')} ${cdws.valid ? '✅' : '❌'}</div>
+          <div style="color:#64748b;font-size:10px;">${ins.cdwsExpiry || '—'}</div>
         </div>
       `;
     }
@@ -1598,23 +1608,17 @@ function displayInstructorsTable() {
         <td>${roleBadge}</td>
         <td style="font-weight:bold;">${escHtml(ins.name || '—')}</td>
         <td>${statusBadge}</td>
+        <td>${phone}<div style="font-size:10px;color:#64748b;margin-top:4px;">${renderLanguages(ins.language)}</div></td>
+        <td style="min-width:180px;">${licensesHtml}</td>
+        <td><button class="btn-info btn-sm" onclick="viewInstructorRecord('${escHtml(ins.id)}')">📋</button></td>
         <td>
-          ${phone}
-          ${langTags ? `<div style="font-size:10px;color:#64748b;margin-top:4px;line-height:1.6;">${langTags}</div>` : ''}
+          ${canEdit ? `
+            <button class="btn-warning btn-sm" onclick="openEditInstructorModal('${escHtml(ins.id)}')">✏️</button>
+            <button class="btn-danger btn-sm" onclick="deleteInstructor('${escHtml(ins.id)}')">🗑️</button>
+          ` : ''}
         </td>
-        <td style="min-width:200px;">${licensesHtml}</td>
-        <td>
-          <button class="btn-info btn-sm" onclick="viewInstructorRecord('${escHtml(ins.id)}')">📋</button>
-        </td>
-        <td>
+      </tr>
     `;
-    
-    if (canEdit) {
-      html += `<button class="btn-warning btn-sm" onclick="openEditInstructorModal('${escHtml(ins.id)}')">✏️</button> `;
-      html += `<button class="btn-danger btn-sm" onclick="deleteInstructor('${escHtml(ins.id)}')">🗑️</button>`;
-    }
-    
-    html += `</td></tr>`;
   });
   
   html += '</tbody></table></div>';
