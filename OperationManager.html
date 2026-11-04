@@ -643,7 +643,7 @@ tr:hover { background:#f8f9fa; }
               </select>
             </div>
           </div>
-          
+          <!-- بعد قسم "المعلومات الأساسية" -->
           <!-- Free Intro / Free Dives -->
           <div class="form-group" style="background:#fef2f2; padding:10px; border-radius:8px; border:1px solid #fecaca;">
             <label style="font-weight:700; color:#991b1b;">🎁 عدد Intro المجانية في اليوم</label>
@@ -755,6 +755,34 @@ tr:hover { background:#f8f9fa; }
         </div>
       </div>
 
+            </div> <!-- نهاية section-salary -->
+
+      <!-- ═══ System Access (بيانات النظام) ═══ -->
+      <div class="form-section" id="section-system-access">
+        <div class="form-section-title">💻 بيانات النظام (اختياري)</div>
+        <div class="form-group checkbox">
+          <input type="checkbox" id="instructorHasAccess" onchange="toggleInstructorSystemFields()">
+          <label for="instructorHasAccess">لديه / أضِف له حساب في النظام</label>
+        </div>
+        <div id="instructorSystemFields" style="display:none;">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>اسم المستخدم *</label>
+              <input type="text" id="instructorUsername" oninput="generateInstructorEmail()">
+            </div>
+            <div class="form-group">
+              <label>كلمة المرور *</label>
+              <input type="password" id="instructorPassword">
+            </div>
+            <div class="form-group">
+              <label>البريد الإلكتروني (تلقائي)</label>
+              <input type="email" id="instructorEmail" readonly>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ Instructor Fields (Licenses) ═══ -->
       <!-- ═══ Instructor Fields (Licenses) ═══ -->
       <div class="form-section conditional-field" id="section-instructor">
         <div class="form-section-title">📜 الرخص والبيانات المهنية</div>
@@ -1144,11 +1172,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     // ✅ تحميل متوازٍ
     await Promise.allSettled([loadInstructors(), loadVehicles(), loadBoats()]);
     
-    // URL params
+        // URL params
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const editType = urlParams.get('edit');
       const editId = urlParams.get('id');
+      const openModal = urlParams.get('openModal');
+      const hasPrefill = urlParams.get('prefill') === '1';
       
       if (editType && editId) {
         setTimeout(() => {
@@ -1158,7 +1188,33 @@ document.addEventListener('DOMContentLoaded', async () => {
             else if (editType === 'instructor') { switchTab('instructors', 0); setTimeout(() => openEditInstructorModal(editId), 300); }
           } catch(e) { console.error('❌ فشل فتح التعديل:', e); }
         }, 500);
-      } else {
+      } 
+      // ✅ 🆕 استقبال البيانات من صفحة إدارة الموظفين
+      else if (openModal === 'instructor' && hasPrefill) {
+        switchTab('instructors', 0);
+        const prefillStr = sessionStorage.getItem('prefillInstructor');
+        
+        if (prefillStr) {
+          try {
+            const prefillData = JSON.parse(prefillStr);
+            sessionStorage.removeItem('prefillInstructor'); // مسح البيانات بعد الاستخدام
+            
+            // فتح المودال بعد تحميل الصفحة بقليل
+            setTimeout(() => {
+              openAddInstructorModal();
+              
+              // ملء الحقول بعد فتح المودال
+              setTimeout(() => {
+                applyPrefillToInstructorModal(prefillData);
+                showToast('✅ تم نقل البيانات الأساسية — أكمل إدخال الرخص والعمولات', 'success');
+              }, 300);
+            }, 500);
+          } catch(e) {
+            console.error('❌ فشل تحليل البيانات المسبقة:', e);
+          }
+        }
+      }
+      else {
         const savedTab = sessionStorage.getItem('activeOperationTab') || 'instructors';
         switchTab(savedTab, 0);
       }
@@ -1253,7 +1309,20 @@ function goBackSmart() {
     Session.save(currentUser);
     sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
   }
-  
+
+  // ✅ 🆕 التحقق من وجود رابط عودة محفوظ من صفحة الموظفين
+  const prefillStr = sessionStorage.getItem('prefillInstructor');
+  if (prefillStr) {
+    try {
+      const prefill = JSON.parse(prefillStr);
+      if (prefill._returnUrl) {
+        sessionStorage.removeItem('prefillInstructor'); // مسحه بعد الاستخدام
+        window.location.href = prefill._returnUrl;
+        return;
+      }
+    } catch(e) {}
+  }
+
   const previousPage = sessionStorage.getItem('previousPage');
   if (previousPage && previousPage !== window.location.href) {
     sessionStorage.removeItem('previousPage');
@@ -2464,6 +2533,21 @@ async function saveInstructor() {
     isActive: true,
     requesterType: currentUser?.type || ''
   };
+
+  // ✅ 🆕 بيانات النظام (إنشاء حساب)
+  const hasSysAccess = document.getElementById('instructorHasAccess')?.checked || false;
+  data.hasSystemAccess = hasSysAccess ? 'true' : 'false';
+  
+  if (hasSysAccess) {
+    data.username = document.getElementById('instructorUsername').value.trim();
+    data.password = document.getElementById('instructorPassword').value.trim();
+    data.email = document.getElementById('instructorEmail').value.trim();
+    
+    if (!data.username || !data.password) {
+      showToast('⚠️ اسم المستخدم وكلمة المرور مطلوبان لإنشاء الحساب', 'error');
+      return; // إيقاف الحفظ
+    }
+  }
   
   // ✅ إضافة البيانات حسب النوع
   if (['Instructor', 'TechnicalManager', 'DiveGuide', 'SnorkelGuide'].includes(role)) {
@@ -3203,6 +3287,67 @@ function toggleCaptainFields() {
   const isChecked = document.getElementById('centerPaysCaptain').checked;
   document.getElementById('captainFields').style.display = isChecked ? 'block' : 'none';
 }
+  // ═══════════════════════════════════════════════════════════════════
+// 🆕 applyPrefillToInstructorModal — ملء بيانات المدرب القادمة من EmployeesManagement
+// ═══════════════════════════════════════════════════════════════════
+function applyPrefillToInstructorModal(prefill) {
+  try {
+    if (!prefill) return;
+
+    // 1. اختيار الدور
+    const roleSelect = document.getElementById('instructorRole');
+    if (roleSelect && prefill.role) {
+      roleSelect.value = prefill.role;
+      onRoleChange(); // تحديث الأقسام المرئية
+    }
+
+    // 2. المعلومات الأساسية
+    if (prefill.name) document.getElementById('instructorName').value = prefill.name;
+    if (prefill.phone) document.getElementById('instructorPhone').value = prefill.phone;
+
+    // 3. نوع التوظيف
+    const empTypeSelect = document.getElementById('instructorEmploymentType');
+    if (empTypeSelect && prefill.employmentType) {
+      empTypeSelect.value = prefill.employmentType;
+      onEmploymentTypeChange();
+    }
+
+    // 4. الراتب
+    if (prefill.salary) {
+      const salaryField = document.getElementById('instructorBaseSalary');
+      if (salaryField) salaryField.value = prefill.salary;
+    }
+
+    // 5. تاريخ البدء
+    if (prefill.startDate) {
+      const startDateField = document.getElementById('instructorStartDate');
+      if (startDateField) startDateField.value = prefill.startDate;
+    }
+
+    // 6. الفرع (إذا كان موجوداً)
+    if (prefill.branchId) {
+      const branchField = document.getElementById('instructorBranch');
+      if (branchField) {
+        branchField.value = prefill.branchId;
+      }
+    }
+
+    console.log('✅ تم ملء الحقول بنجاح:', prefill);
+  } catch (e) {
+    console.error('❌ خطأ في applyPrefillToInstructorModal:', e);
+  }
+}
+ function generateInstructorEmail() {
+  const username = document.getElementById('instructorUsername').value.trim();
+  if (!username) return;
+  
+  const centerName = currentUser?.centerName || 'center';
+  const cleanUser = username.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  const cleanCenter = centerName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  
+  const email = `${cleanUser}@${cleanCenter}.com`;
+  document.getElementById('instructorEmail').value = email;
+} 
 // ═══════════════════════════════════════════════════════════════════
 // ✅ إزالة الأصفار من جميع الحقول الرقمية في كل الشاشات
 // ═══════════════════════════════════════════════════════════════════
