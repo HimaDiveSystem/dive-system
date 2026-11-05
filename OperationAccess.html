@@ -3645,7 +3645,7 @@ async function saveInstructorAssignmentV3(activityItems, activityMapping) {
   
   document.querySelectorAll('#assignInstructorsModal .assign-select:checked').forEach(cb => {
     const instructorId = cb.getAttribute('data-id');
-    const instructorActivities = [];  // ✅ غير الاسم من 'activities' إلى 'instructorActivities'
+    const instructorActivities = [];
 
     for (let i = 0; i < activityItems.length; i++) {
       const qty = parseInt(document.querySelector(`.assign-activity[data-instructor="${instructorId}"][data-activity-index="${i}"]`).value) || 0;
@@ -3675,6 +3675,76 @@ async function saveInstructorAssignmentV3(activityItems, activityMapping) {
     showToast('⚠️ Please select at least one instructor', 'error');
     return;
   }
+
+  // ═══════════════════════════════════════════════════════════════
+  // ✅ التحقق من عدم تجاوز الكميات الأصلية
+  // ═══════════════════════════════════════════════════════════════
+  
+  // ✅ جلب الفاتورة الحالية من المتغير العام
+  const invoice = currentAssignInvoice; 
+  if (!invoice) {
+    showToast('⚠️ Invoice data not found', 'error');
+    return;
+  }
+
+  const invoiceQty = {
+    intro:   parseFloat(invoice.extra) || 0,
+    dblIntro: parseFloat(invoice.camel) || 0,
+    diver:   parseFloat(invoice.dinner) || 0,
+    cd:      parseFloat(invoice.vipDinner) || 0,
+    sr:      parseFloat(invoice.starGazing) || 0,
+    dsd:     0,
+    course:  0
+  };
+
+  const totalInputQty = {
+    intro: 0, dblIntro: 0, diver: 0, cd: 0, sr: 0, dsd: 0, course: 0
+  };
+
+  // جمع من جميع الصفوف المختارة
+  selectedRows.forEach(row => {
+    row.activities.forEach(act => {
+      const name = (act.displayName || act.activityName || '').toLowerCase();
+      const qty = act.quantity || 0;
+      
+      if (name.includes('2 intro') || name.includes('dbl intro')) {
+        totalInputQty.dblIntro += qty;
+      } else if (name.includes('intro')) {
+        totalInputQty.intro += qty;
+      } else if (name.includes('diver')) {
+        totalInputQty.diver += qty;
+      } else if (name.includes('check') || name.includes('c.d')) {
+        totalInputQty.cd += qty;
+      } else if (name.includes('scuba') || name.includes('s.r')) {
+        totalInputQty.sr += qty;
+      } else if (name.includes('dsd')) {
+        totalInputQty.dsd += qty;
+      } else if (name.includes('course')) {
+        totalInputQty.course += qty;
+      }
+    });
+  });
+
+  // مقارنة وتنبيه المستخدم
+  const errors = [];
+  const NAMES = {
+    intro: 'Intro (1×)', dblIntro: 'Intro (2×)', diver: 'Diver',
+    cd: 'C.D.', sr: 'S.R.', dsd: 'DSD', course: 'Course'
+  };
+
+  for (const type in invoiceQty) {
+    // ✅ نتجاهل الأعمدة التي قيمتها 0 في الفاتورة (لأنها قد تكون غير مستخدمة)
+    if (invoiceQty[type] > 0 && totalInputQty[type] > invoiceQty[type]) {
+      errors.push(`❌ ${NAMES[type]}: المدخل (${totalInputQty[type]}) > المتاح (${invoiceQty[type]})`);
+    }
+  }
+
+  if (errors.length > 0) {
+    showToast('⚠️ تجاوز في الكميات:\n' + errors.join('\n'), 'error');
+    return;  // ⛔ منع الإرسال
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   
   if (saveBtn) {
     saveBtn.disabled = true;
@@ -3705,7 +3775,6 @@ async function saveInstructorAssignmentV3(activityItems, activityMapping) {
     }
   }
 }
- 
   
 
 
