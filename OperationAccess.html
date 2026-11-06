@@ -4992,6 +4992,8 @@ let currentUpsellVoucher = null;
 let currentUpsellInvoice = null;
 let currentUpsellItems = [];
 let currentUpsellCurrency = 'LE';
+let cachedUpsellRates = null; // ✅ متغير عام لتخزين الأسعار
+
 async function openUpsell(voucherNo) {
   try {
     const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
@@ -5002,7 +5004,24 @@ async function openUpsell(voucherNo) {
     
     const leadName = invoice.guestName || 'Customer';
     
-    // ✅ 1. استخدام الكاش بدلاً من جلب البيانات في كل مرة
+    // ✅ جلب أسعار الصرف مرة واحدة فقط (إذا لم تكن مخزنة)
+    if (!cachedUpsellRates) {
+        showToast('⏳ جاري تحميل أسعار الصرف...', 'info');
+        const ratesResult = await gas('getLatestExchangeRates', { centerName: currentUser?.centerName });
+        if (ratesResult && ratesResult.bUSD) {
+            cachedUpsellRates = {
+                USD: ratesResult.bUSD,
+                EUR: ratesResult.bEUR,
+                GBP: ratesResult.bGBP,
+                LE: ratesResult.bLE || 1
+            };
+        } else {
+            showToast('❌ فشل تحميل أسعار الصرف', 'error');
+            return;
+        }
+    }
+    
+    // ... (باقي كود جلب المدربين كما هو) ...
     let allInstructors = cachedInstructors;
     if (!allInstructors || allInstructors.length === 0) {
         allInstructors = await gas('getInstructors', { centerName: currentUser?.centerName });
@@ -5012,7 +5031,6 @@ async function openUpsell(voucherNo) {
     const currentDate = getCurrentDateISO();
     let beachInstructors = [];
     let boatInstructorsMap = {};
-    
     if (currentAssignments) {
         beachInstructors = currentAssignments.beachInstructors || [];
         boatInstructorsMap = currentAssignments.boatInstructorsMap || {};
@@ -5043,7 +5061,7 @@ async function openUpsell(voucherNo) {
       relevantInstructors = allInstructors.filter(i => beachInstructors.includes(i.id));
     }
     
-    // ✅ 2. بناء HTML المودال (مع إزالة الأصفار وإضافة العملات)
+    // ✅ بناء الـ HTML بالشكل الجديد
     const modalHtml = `
       <div id="upsellModal" class="modal-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 10000;" onclick="if(event.target===this) closeUpsellModal()">
         <div style="background: white; border-radius: 16px; max-width: 750px; width: 95%; max-height: 85vh; overflow-y: auto;">
@@ -5171,6 +5189,7 @@ async function openUpsell(voucherNo) {
     showToast('Failed to load upsell data: ' + error.message, 'error');
   }
 }
+  
 // دالة إنشاء UpSell
 async function createUpsell() {
   const saveBtn = document.getElementById('createUpsellBtn');
@@ -5358,147 +5377,73 @@ function updateUpsellRowTotal(element) {
   updateRemainingWithRates();
 }
   
-async function updateUpsellCurrencyWithRates() {
+function updateUpsellCurrencyWithRates() {
   const newCurrency = document.getElementById('upsellCurrency')?.value;
   if (!newCurrency) return;
   currentUpsellCurrency = newCurrency;
   
-  const rates = await getExchangeRates();
-  const rate = rates[newCurrency] || 1;
+  const rates = cachedUpsellRates || { USD: 56, EUR: 62, GBP: 70, LE: 1 };
   const symbol = getCurrencySymbol(newCurrency);
   
-  // تحديث رؤوس الأعمدة
-  const priceHeader = document.querySelector('#upsellModal table thead tr th:nth-child(2)');
-  const totalHeader = document.querySelector('#upsellModal table thead tr th:nth-child(4)');
+  const priceHeader = document.querySelector('#upsellModal table thead tr th:nth-child(3)');
   if (priceHeader) priceHeader.innerHTML = `Price (${symbol})`;
-  if (totalHeader) totalHeader.innerHTML = `Total (${symbol})`;
   
-  // تحديث الأسعار
-  const rows = document.querySelectorAll('#upsellModal tbody tr');
-  for (const row of rows) {
-    const priceInput = row.querySelector('.upsell-price');
-    const totalCell = row.querySelector('.upsell-row-total');
-    const qtyCell = row.cells[2];
-    
-    const originalPriceUSD = parseFloat(priceInput?.getAttribute('data-usd')) || 0;
-    const qty = parseFloat(qtyCell?.textContent) || 0;
-    
-    const newPrice = originalPriceUSD * rate;
-    if (priceInput) {
-      priceInput.value = newPrice > 0 ? newPrice.toFixed(2) : '';
-      if (!priceInput.hasAttribute('data-usd')) {
-        priceInput.setAttribute('data-usd', originalPriceUSD);
-      }
-    }
-    if (totalCell) {
-     const rowTotal = newPrice * qty;
-totalCell.textContent = rowTotal > 0 ? rowTotal.toFixed(2) : '';
-    }
-  }
-  
-  await updateRemainingWithRates();
+  updateRemainingWithRates();
 }
-async function updateRemainingWithRates() {
-  // 1️⃣ حساب إجمالي الأنشطة بالعملة المختارة
+  
+function updateRemainingWithRates() {
+  if (!cachedUpsellRates) return; // ✅ لا تفعل شيئاً حتى تُحمل الأسعار
+
   let totalInSaleCurrency = 0;
   const rows = document.querySelectorAll('#upsellModal tbody tr');
- 
- for (const row of rows) {
-  const priceInput = row.querySelector('.upsell-price');
-  const qtyInput = row.querySelector('.upsell-quantity');
   
-  // ✅ إذا كان الحقل فارغاً، اعتبر القيمة 0
-  const price = priceInput?.value === '' ? 0 : parseFloat(priceInput?.value) || 0;
-  const qty = qtyInput?.value === '' ? 0 : parseFloat(qtyInput?.value) || 0;
-  totalInSaleCurrency += price * qty;
-}
-        
+  for (const row of rows) {
+    const priceInput = row.querySelector('.upsell-price');
+    const qtyInput = row.querySelector('.upsell-quantity');
+    const currencySelect = row.querySelector('.upsell-item-currency');
     
-  // 2️⃣ جلب أسعار الصرف من الخادم (بدون قيم افتراضية)
-  let rates = null;
-  try {
-   const result = await gas('getLatestExchangeRates', { centerName: currentUser?.centerName });
-    console.log('💰 Exchange rates from server:', result);
+    const price = priceInput?.value === '' ? 0 : parseFloat(priceInput?.value) || 0;
+    const qty = qtyInput?.value === '' ? 0 : parseFloat(qtyInput?.value) || 0;
+    const itemCurrency = currencySelect ? currencySelect.value : 'LE';
     
-    if (result && result.bUSD) {
-      rates = {
-        USD: result.bUSD,
-        EUR: result.bEUR,
-        GBP: result.bGBP,
-        LE: result.bLE || 1
-      };
+    if (price > 0 && qty > 0) {
+        // تحويل السعر إلى LE ثم إلى عملة الفاتورة
+        const priceInLE = price * (cachedUpsellRates[itemCurrency] || 1);
+        const priceInSaleCurrency = priceInLE / (cachedUpsellRates[currentUpsellCurrency] || 1);
+        totalInSaleCurrency += priceInSaleCurrency * qty;
     }
-  } catch(e) {
-    console.error('Failed to fetch exchange rates:', e);
   }
   
-  // ❌ إذا لم تنجح في جلب الأسعار، لا تحسب المتبقي
-  if (!rates) {
-    console.warn('⚠️ No exchange rates available, skipping calculation');
-    document.getElementById('remainingAmount').textContent = '?';
-    return;
-  }
-  
-  console.log('✅ Using rates from server:', rates);
-  
-  const saleCurrency = currentUpsellCurrency || 'USD';
-  const saleRateToLE = rates[saleCurrency];
-  
-  // ❌ إذا كانت العملة غير موجودة في الأسعار
-  if (!saleRateToLE) {
-    console.warn(`⚠️ Exchange rate for ${saleCurrency} not found`);
-    document.getElementById('remainingAmount').textContent = '?';
-    return;
-  }
-  
-  // 3️⃣ تحويل الإجمالي إلى جنيه
+  const saleRateToLE = cachedUpsellRates[currentUpsellCurrency];
   const totalInLE = totalInSaleCurrency * saleRateToLE;
   
-  // 4️⃣ جمع المدفوعات وتحويلها إلى جنيه
   let paidInLE = 0;
-  
   const getValue = (id) => {
-  const el = document.getElementById(id);
-  if (!el) return 0;
-  let val = parseFloat(el.value);
-  return isNaN(val) ? 0 : val;
-};
+    const el = document.getElementById(id);
+    if (!el) return 0;
+    let val = parseFloat(el.value);
+    return isNaN(val) ? 0 : val;
+  };
   
-  paidInLE += getValue('cashUSD') * rates.USD;
-  paidInLE += getValue('cashEUR') * rates.EUR;
-  paidInLE += getValue('cashGBP') * rates.GBP;
-  paidInLE += getValue('cashLE') * rates.LE;
-  paidInLE += getValue('visaUSD') * rates.USD;
-  paidInLE += getValue('visaEUR') * rates.EUR;
-  paidInLE += getValue('visaGBP') * rates.GBP;
-  paidInLE += getValue('visaLE') * rates.LE;
+  paidInLE += getValue('cashUSD') * cachedUpsellRates.USD;
+  paidInLE += getValue('cashEUR') * cachedUpsellRates.EUR;
+  paidInLE += getValue('cashGBP') * cachedUpsellRates.GBP;
+  paidInLE += getValue('cashLE') * cachedUpsellRates.LE;
+  paidInLE += getValue('visaUSD') * cachedUpsellRates.USD;
+  paidInLE += getValue('visaEUR') * cachedUpsellRates.EUR;
+  paidInLE += getValue('visaGBP') * cachedUpsellRates.GBP;
+  paidInLE += getValue('visaLE') * cachedUpsellRates.LE;
   
-  // 5️⃣ حساب المتبقي
   const remainingInLE = totalInLE - paidInLE;
   const remainingInSaleCurrency = remainingInLE / saleRateToLE;
   
-  // 6️⃣ تحديث الواجهة
   document.getElementById('totalAmount').textContent = totalInSaleCurrency.toFixed(2);
   document.getElementById('remainingAmount').textContent = remainingInSaleCurrency > 0 ? remainingInSaleCurrency.toFixed(2) : '0.00';
-  document.getElementById('totalCurrency').textContent = getCurrencySymbol(saleCurrency);
-  document.getElementById('remainingCurrency').textContent = getCurrencySymbol(saleCurrency);
+  document.getElementById('totalCurrency').textContent = getCurrencySymbol(currentUpsellCurrency);
+  document.getElementById('remainingCurrency').textContent = getCurrencySymbol(currentUpsellCurrency);
   
   const createBtn = document.getElementById('createUpsellBtn');
- if (createBtn) createBtn.disabled = false;  // الزر دائماً مفعل
-}
-  function calculateTotalInBaseCurrency() {
-  let total = 0;
-  const rows = document.querySelectorAll('#upsellModal tbody tr');
-  rows.forEach(row => {
-    const priceCell = row.cells[1];
-    const qtyCell = row.cells[2];
-    if (priceCell && qtyCell) {
-      const price = parseFloat(priceCell.textContent) || 0;
-      const qty = parseFloat(qtyCell.textContent) || 0;
-      total += price * qty;
-    }
-  });
-  return total;
+  if (createBtn) createBtn.disabled = false;
 }
 
 
