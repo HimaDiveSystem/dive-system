@@ -3170,19 +3170,34 @@ async function openAssignBoats(voucherNo) {
     document.getElementById('assignBoatsContent').innerHTML = '<div class="loader"><div class="spinner"></div>Loading...</div>';
     openModal('assignBoatsModal');
 
-    const rows = [];
+       const rows = [];
+    // ✅ جلب تعيينات اليوم لمعرفة أي مركب مرتبط بأي رحلة
+    let currentBoatTripMap = {};
+    try {
+        const assignmentsRes = await gas('getDailyAssignments', { date: currentDate, centerName: currentUser?.centerName });
+        if (assignmentsRes?.success && assignmentsRes.data?.boatTripMap) {
+            currentBoatTripMap = assignmentsRes.data.boatTripMap;
+        }
+    } catch(e) {}
+
     for (const boatId of relevantBoatIds) {
         const boat = cachedBoats.find(b => b.id === boatId);
         if (!boat) continue;
+        
+        // ✅ فلترة المراكب: إظهار المركب إذا كان مرتبطاً بهذه الرحلة، أو لم يتم تعيينه لأي رحلة
+        const assignedTrip = currentBoatTripMap[boatId];
+        if (assignedTrip && assignedTrip !== tripName) {
+            continue; // تخطي المركب لأنه مرتبط برحلة أخرى
+        }
+        
         const capacity = parseInt(boat.capacity) || 0;
         
-        // ✅ نحسب المشغول من الفواتير الأخرى فقط (لأن هذه الفاتورة لم تُحفظ بعد أو تُستبعد بواسطة excludeVoucher)
+        // ✅ نحسب المشغول من الفواتير الأخرى فقط
         const used = getBoatUsedSeats(currentDate, boatId, tripName, voucherNo);
         
         const saved = savedBoats.find(b => b.boatId === boatId) || {};
         rows.push({ boat, capacity, used, saved });
     }
-
     if (rows.length === 0) {
         document.getElementById('assignBoatsContent').innerHTML = 
             `<div style="padding:20px;text-align:center;">⚠️ No boats available</div>`;
@@ -3490,30 +3505,25 @@ async function openAssignInstructors(voucherNo) {
     }
     
     // ✅ بناء نص بنود الرحلة (تجاهل Adult, Child, Inf)
-    const tripItemsList = [];
+       // ✅ بناء نص بنود الرحلة (من ActivitiesText مباشرة)
+    let tripItemsText = invoice.activitiesText || '';
     
-    // ✅ الكلمات الممنوعة (يتم تجاهلها تماماً)
-    const excludedKeywords = ['adult', 'child', 'inf', 'infant'];
-    
-    // ✅ الأنشطة من الأعمدة الصحيحة
-    const divingColumns = [
-        { col: 'extra', name: '1 Intro' },
-        { col: 'camel', name: '2 Intro' },
-        { col: 'dinner', name: 'Diver' },
-        { col: 'vipDinner', name: 'C.D.' },
-        { col: 'starGazing', name: 'S.R.' },
-        { col: 'privateTrip', name: 'Private Trip' },
-        { col: 'privateTransfer', name: 'Private Transfer' }
-    ];
-    
-    for (const act of divingColumns) {
-        const qty = parseInt(invoice[act.col]) || 0;
-        if (qty > 0) {
-            tripItemsList.push(`${qty} × ${act.name}`);
+    // ✅ إذا كان النص فارغاً، ابحث في TripDefinitions
+    if (!tripItemsText) {
+        try {
+            const tripDef = await gas('getTripDefinition', { tripName: invoice.trip, centerName: currentUser?.centerName });
+            if (tripDef && tripDef.success && tripDef.items && tripDef.items.length > 0) {
+                tripItemsText = tripDef.items.join(' | ');
+            }
+        } catch(e) {
+            console.warn('فشل جلب بنود الرحلة:', e);
         }
     }
     
-    const tripItemsText = tripItemsList.join(' | ');
+    // ✅ إذا كان لا يزال فارغاً، استخدم القيم الافتراضية
+    if (!tripItemsText) {
+        tripItemsText = 'No items';
+    }
     
     document.getElementById('assignInstructorsContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري تحميل البيانات...</div>';
     openModal('assignInstructorsModal');
@@ -4944,16 +4954,19 @@ async function saveTimeUpdate() {
     });
     
     if (result?.success) {
-      // تحديث الوقت في البيانات المحلية
-      for (let inv of allInvoices) {
-        if (inv.voucherNo === currentTimeVoucher) {
-          inv.time = newTime;
-          break;
+      // ✅ التعديل: تحديث الوقت في المصفوفات المحلية
+      const updateLocal = (arr) => {
+        for (let inv of arr) {
+          if (inv.voucherNo === currentTimeVoucher) {
+            inv.time = newTime;
+          }
         }
-      }
+      };
+      updateLocal(allInvoices);
+      updateLocal(filteredInvoices);
       
-      renderTable();
-        showToast('✅ تم تحديث الوقت بنجاح', 'success');
+      renderTable(); // إعادة رسم الجدول
+      showToast('✅ تم تحديث الوقت بنجاح', 'success');
       closeModal('timeModal');
     } else {
       showToast('❌ فشل تحديث الوقت', 'error');
@@ -4962,6 +4975,7 @@ async function saveTimeUpdate() {
     showToast('خطأ: ' + e.message, 'error');
   }
 }
+  
 let currentUpsellVoucher = null;
 let currentUpsellInvoice = null;
 let currentUpsellItems = [];
@@ -5059,8 +5073,15 @@ async function openUpsell(voucherNo) {
               </div>
             </div>
 
-            <div style="margin-bottom: 20px; overflow-x: auto;">
-              <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                        <div style="margin-bottom: 20px; overflow-x: auto; width: 100%;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 12px; min-width: 600px;">
+                <colgroup>
+                  <col style="width: 30%;">
+                  <col style="width: 15%;">
+                  <col style="width: 20%;">
+                  <col style="width: 15%;">
+                  <col style="width: 20%;">
+                </colgroup>
                 <thead>
                   <tr style="background: #f1f5f9; border-bottom: 2px solid #e2e8f0;">
                     <th style="padding: 10px; text-align: left;">Activity</th>
