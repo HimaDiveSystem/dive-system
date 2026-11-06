@@ -4227,191 +4227,156 @@ function showBoatDetails(voucherNo, boatId) {
 }
   
 function showInstructorDetails(voucherNo, instructorId) {
-    if (window.event) {
-        window.event.stopPropagation();
-        window.event.preventDefault();
-    }
+    if (window.event) { window.event.stopPropagation(); window.event.preventDefault(); }
     
     const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
     if (!invoice) return;
     
-    let instructorsData = [];
-    try { instructorsData = JSON.parse(invoice.InstructorsExecution || '[]'); } catch(e) {}
+    // ✅ 1. جلب كل الفواتير التي شارك فيها هذا المدرب في نفس اليوم
+    const currentDate = invoice.activeDate;
+    const relatedInvoices = [];
+    let totalIntro = 0, totalDblIntro = 0, totalDiver = 0, totalCourse = 0, totalCD = 0, totalSR = 0, totalDSD = 0;
     
-    const instructor = instructorsData.find(i => i.instructorId === instructorId);
-    if (!instructor) { showToast('Instructor data not found', 'error'); return; }
-    
-    const cachedInstructor = cachedInstructors.find(i => i.id === instructorId);
-    
-    // ✅ Helper: أيقونة النشاط
-    const getActivityIcon = (activityName) => {
-        const lower = (activityName || '').toLowerCase();
-        if (lower.includes('intro'))    return '⭐';
-        if (lower.includes('diver'))    return '🤿';
-        if (lower.includes('course'))   return '📚';
-        if (lower.includes('c.d.') || lower.includes('check')) return '✅';
-        if (lower.includes('s.r.') || lower.includes('scuba review')) return '🔄';
-        if (lower.includes('snorkel'))  return '🐠';
-        if (lower.includes('guide'))    return '🧭';
-        if (lower.includes('equipment')) return '🎒';
-        if (lower.includes('private'))  return '🎯';
-        return '📌';
-    };
-    
-    // ✅ تجميع
-    let introTotal = 0, diverTotal = 0, courseTotal = 0;
-    const activitiesWithIcons = [];
-    let totalActivities = 0;
-    
-   if (instructor.activities && instructor.activities.length > 0) {
-        instructor.activities.forEach(act => {
-            const name = act.displayName || act.activityName || '';
-            // ✅ استخدام الكمية الفعلية إذا وجدت، وإلا الكمية العادية
-            const qty = act.actualQuantity !== undefined ? act.actualQuantity : (act.quantity || 0); 
-            const icon = getActivityIcon(name);
-            const lower = name.toLowerCase();
+    for (const inv of allInvoices) {
+        if (inv.activeDate !== currentDate) continue;
+        
+        let iData = [];
+        try { iData = JSON.parse(inv.InstructorsExecution || '[]'); } catch(e) {}
+        
+        const usage = iData.find(i => i.instructorId === instructorId);
+        if (!usage) continue;
+        
+        const acts = [];
+        usage.activities.forEach(act => {
+            const name = (act.displayName || act.activityName || '').toLowerCase();
+            const qty = act.actualQuantity !== undefined ? act.actualQuantity : (act.quantity || 0);
             
-            totalActivities += qty;
-            if (lower.includes('intro'))  introTotal += qty;
-            if (lower.includes('diver'))  diverTotal += qty;
-            if (lower.includes('course')) courseTotal += qty;
-            
-            activitiesWithIcons.push({ 
-                name, 
-                qty: act.quantity || 0, // نعرض المدخل (1)
-                icon 
-            });
+            if (name.includes('2 intro') || name.includes('dbl intro')) {
+                totalDblIntro += qty;
+                acts.push({ name: '2 Intro', qty: act.quantity, actual: qty, icon: '🌟' });
+            } else if (name.includes('intro')) {
+                totalIntro += qty;
+                acts.push({ name: '1 Intro', qty: act.quantity, actual: qty, icon: '⭐' });
+            } else if (name.includes('diver')) {
+                totalDiver += qty;
+                acts.push({ name: 'Diver', qty: act.quantity, actual: qty, icon: '🤿' });
+            } else if (name.includes('course')) {
+                totalCourse += qty;
+                acts.push({ name: 'Course', qty: act.quantity, actual: qty, icon: '📚' });
+            } else if (name.includes('check') || name.includes('c.d')) {
+                totalCD += qty;
+                acts.push({ name: 'C.D.', qty: act.quantity, actual: qty, icon: '✅' });
+            } else if (name.includes('scuba') || name.includes('s.r')) {
+                totalSR += qty;
+                acts.push({ name: 'S.R.', qty: act.quantity, actual: qty, icon: '🔄' });
+            } else if (name.includes('dsd')) {
+                totalDSD += qty;
+                acts.push({ name: 'DSD', qty: act.quantity, actual: qty, icon: '🎓' });
+            }
+        });
+        
+        relatedInvoices.push({
+            voucherNo: inv.voucherNo,
+            trip: inv.trip,
+            activities: acts
         });
     }
     
-    const instructorName = instructor.instructorName || cachedInstructor?.name || '—';
+    const cachedInstructor = cachedInstructors.find(i => i.id === instructorId);
+    const instructorName = cachedInstructor?.name || '—';
     const instructorPhone = cachedInstructor?.phone || '—';
-    
-    // ✅ صورة المدرب
+    const freeIntro = parseInt(cachedInstructor?.freeIntroPerDay) || 0;
+    const freeDives = parseInt(cachedInstructor?.freeDivesPerDay) || 0;
     const instructorImage = cachedInstructor?.imgPhoto || cachedInstructor?.licensePhoto || '';
     
-    // ✅ QR Code
-    const qrText = `Instructor: ${instructorName}\nID: ${instructorId}\nInvoice: ${voucherNo}\nTrip: ${invoice.trip}\nDiver: ${diverTotal} | Course: ${courseTotal} | Intro: ${introTotal}`;
-    const qrUrl = generateQRCode(qrText, 120);
+    const tdStyle = "padding:8px; color: #0f1f3d !important; background-color: #ffffff !important; border-bottom: 1px solid #e2e8f0;";
+    const thStyle = "padding:8px; color: #f5c842 !important; background-color: #0f1f3d !important;";
+
+    let tableHtml = `
+      <table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px;">
+        <thead><tr>
+            <th style="${thStyle} text-align:right;">Voucher No.</th>
+            <th style="${thStyle} text-align:right;">Trip</th>
+            <th style="${thStyle} text-align:right;">Activities</th>
+            <th style="${thStyle} text-align:center;">Total (Actual)</th>
+        </tr></thead><tbody>
+    `;
+    
+    relatedInvoices.forEach(inv => {
+        let actsText = inv.activities.map(a => `${a.icon} ${a.name} (x${a.actual})`).join('<br>');
+        let totalActual = inv.activities.reduce((sum, a) => sum + a.actual, 0);
+        if (!actsText) actsText = '—';
+        
+        tableHtml += `
+          <tr>
+            <td style="${tdStyle} font-weight:700;">${escapeHtml(inv.voucherNo)}</td>
+            <td style="${tdStyle}">${escapeHtml(inv.trip)}</td>
+            <td style="${tdStyle} line-height:1.6;">${actsText}</td>
+            <td style="${tdStyle} text-align:center; font-weight:700; background-color: #eff6ff !important; color: #1d4ed8 !important;">${totalActual}</td>
+          </tr>
+        `;
+    });
+    
+    // ✅ حساب الاستقطاعات
+    const totalIntroActual = totalIntro + totalDblIntro; // الدبل إنترو تعادل 2
+    const introDeducted = Math.min(totalIntroActual, freeIntro);
+    const introPaid = totalIntroActual - introDeducted;
+    
+    const diverDeducted = Math.min(totalDiver, freeDives);
+    const diverPaid = totalDiver - diverDeducted;
+    
+    const totalAllActivities = totalIntro + totalDblIntro + totalDiver + totalCourse + totalCD + totalSR + totalDSD;
+
+    tableHtml += `
+        </tbody><tfoot><tr style="background:#fef3c7;">
+            <td colspan="3" style="padding:8px; text-align:right; font-weight:800; color:#92400e !important; background-color:#fef3c7 !important; border-top:2px solid #f5c842;">TOTAL ACTIVITIES</td>
+            <td style="padding:8px; text-align:center; font-weight:800; font-size:14px; color:#b45309 !important; background-color:#fef3c7 !important; border-top:2px solid #f5c842;">${totalAllActivities}</td>
+        </tr></tfoot>
+      </table>
+    `;
+    
+    let deductionsHtml = '';
+    if (introDeducted > 0 || diverDeducted > 0) {
+        deductionsHtml = `
+            <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 10px; margin-top: 12px;">
+                <div style="font-weight: 800; color: #991b1b; font-size: 12px; margin-bottom: 6px;">⚠️ Free Deductions Applied:</div>
+                <div style="font-size: 12px; color: #7f1d1d;">
+                    ${introDeducted > 0 ? `<div>⭐ Intro: -${introDeducted} (Free limit: ${freeIntro})</div>` : ''}
+                    ${diverDeducted > 0 ? `<div>🤿 Diver: -${diverDeducted} (Free limit: ${freeDives})</div>` : ''}
+                </div>
+            </div>
+        `;
+    }
     
     const html = `
         <div style="padding: 4px;">
-            
-            <!-- Header (with image) -->
             <div style="background: linear-gradient(135deg, #0f1f3d, #1a3260); color: #f5c842; padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; display: flex; align-items: center; gap: 12px;">
-                <div style="flex-shrink: 0;">
-                    ${renderImage(instructorImage, '👨‍🏫', 40)}
-                </div>
+                <div style="flex-shrink: 0;">${renderImage(instructorImage, '👨‍🏫', 40)}</div>
                 <div style="flex: 1;">
                     <div style="font-size: 15px; font-weight: 900; color: #f5c842;">${escapeHtml(instructorName)}</div>
                     <div style="font-size: 9px; color: #94a3b8; letter-spacing: 0.5px;">${escapeHtml(instructorId)}</div>
                 </div>
-                <div style="text-align: right;">
-                    <div style="font-size: 9px; color: #94a3b8;">Activities</div>
-                    <div style="font-size: 18px; font-weight: 900; color: #f5c842;">${totalActivities}</div>
-                </div>
             </div>
             
-            <!-- Phone -->
             <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
                 <span style="font-size: 11px; font-weight: 700; color: #64748b;">📞 Phone</span>
-                <span style="font-size: 12px; color: #1e293b; font-weight: 600; direction: ltr;">${escapeHtml(instructorPhone)}</span>
+                <span style="font-size: 12px; color: #1e293b; font-weight: 600; direction:ltr;">${escapeHtml(instructorPhone)}</span>
             </div>
             
-            <!-- Accordion: Summary -->
-            <div style="border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px; overflow: hidden;">
-                <div onclick="toggleAccordion('acc_inst_sum')" style="background: #f1f5f9; padding: 8px 12px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none;">
-                    <span style="font-size: 11px; font-weight: 700; color: #1e293b;">📊 Activity Summary</span>
-                    <span id="acc_inst_sum_icon" style="transition: transform 0.3s; font-size: 12px; color: #64748b;">▼</span>
-                </div>
-                <div id="acc_inst_sum" style="max-height: 0px; overflow: hidden; transition: max-height 0.3s, opacity 0.3s; opacity: 0;">
-                    <div style="padding: 8px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px;">
-                        <div style="background: #eff6ff; border: 1px solid #3b82f6; border-radius: 6px; padding: 6px; text-align: center;">
-                            <div style="font-size: 14px;">🤿</div>
-                            <div style="font-size: 16px; font-weight: 900; color: #2563eb;">${diverTotal}</div>
-                            <div style="font-size: 8px; color: #64748b; font-weight: 600; text-transform: uppercase;">Diver</div>
-                        </div>
-                        <div style="background: #f0fdf4; border: 1px solid #16a34a; border-radius: 6px; padding: 6px; text-align: center;">
-                            <div style="font-size: 14px;">📚</div>
-                            <div style="font-size: 16px; font-weight: 900; color: #16a34a;">${courseTotal}</div>
-                            <div style="font-size: 8px; color: #64748b; font-weight: 600; text-transform: uppercase;">Course</div>
-                        </div>
-                        <div style="background: #fffbeb; border: 1px solid #f59e0b; border-radius: 6px; padding: 6px; text-align: center;">
-                            <div style="font-size: 14px;">⭐</div>
-                            <div style="font-size: 16px; font-weight: 900; color: #f59e0b;">${introTotal}</div>
-                            <div style="font-size: 8px; color: #64748b; font-weight: 600; text-transform: uppercase;">Intro</div>
-                        </div>
-                    </div>
-                </div>
+            <div style="font-weight: 800; color: #0f1f3d; font-size: 13px; margin-top: 12px;">📋 Trips Details</div>
+            <div style="overflow-x:auto;">${tableHtml}</div>
+            
+            ${deductionsHtml}
+            
+            <div style="display: flex; justify-content: flex-end; margin-top: 16px;">
+                <button onclick="printModalContent('Instructor Details - ${escapeHtml(instructorName)}')" style="padding: 10px 24px; background: #0f1f3d; color: #f5c842; border: none; border-radius: 6px; font-weight: 700; cursor: pointer; font-size: 13px;">🖨️ Print</button>
             </div>
-            
-            <!-- Accordion: Breakdown -->
-            ${activitiesWithIcons.length > 0 ? `
-                <div style="border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px; overflow: hidden;">
-                    <div onclick="toggleAccordion('acc_inst_break')" style="background: #f1f5f9; padding: 8px 12px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none;">
-                        <span style="font-size: 11px; font-weight: 700; color: #1e293b;">📋 Activity Breakdown</span>
-                        <span id="acc_inst_break_icon" style="transition: transform 0.3s; font-size: 12px; color: #64748b;">▼</span>
-                    </div>
-                    <div id="acc_inst_break" style="max-height: 0px; overflow: hidden; transition: max-height 0.3s, opacity 0.3s; opacity: 0;">
-                        <div style="background: #f8fafc;">
-                            ${activitiesWithIcons.map((item, idx) => `
-                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; ${idx < activitiesWithIcons.length - 1 ? 'border-bottom: 1px solid #e2e8f0;' : ''}">
-                                    <div style="display: flex; align-items: center; gap: 8px;">
-                                        <span style="font-size: 14px;">${item.icon}</span>
-                                        <span style="font-size: 12px; font-weight: 600; color: #1e293b;">${escapeHtml(item.name)}</span>
-                                    </div>
-                                    <span style="background: #0f1f3d; color: #f5c842; padding: 2px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; min-width: 24px; text-align: center;">${item.qty}</span>
-                                </div>
-                            `).join('')}
-                        </div>
-                    </div>
-                </div>
-            ` : ''}
-            
-            <!-- Accordion: QR Code -->
-            <div style="border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px; overflow: hidden;">
-                <div onclick="toggleAccordion('acc_inst_qr')" style="background: #f1f5f9; padding: 8px 12px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none;">
-                    <span style="font-size: 11px; font-weight: 700; color: #1e293b;">📱 QR Code</span>
-                    <span id="acc_inst_qr_icon" style="transition: transform 0.3s; font-size: 12px; color: #64748b;">▼</span>
-                </div>
-                <div id="acc_inst_qr" style="max-height: 0px; overflow: hidden; transition: max-height 0.3s, opacity 0.3s; opacity: 0;">
-                    <div style="padding: 12px; text-align: center; background: white;">
-                        <img src="${qrUrl}" alt="QR Code" style="width: 120px; height: 120px; border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px; background: white;">
-                        <div style="font-size: 9px; color: #64748b; margin-top: 6px;">Scan for instructor details</div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Total -->
-            ${totalActivities > 0 ? `
-                <div style="background: linear-gradient(135deg, #f5c842, #e6b800); border-radius: 6px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
-                    <span style="font-size: 11px; font-weight: 800; color: #0f1f3d; text-transform: uppercase; letter-spacing: 0.5px;">📊 Total Activities</span>
-                    <span style="font-size: 18px; font-weight: 900; color: #0f1f3d;">${totalActivities}</span>
-                </div>
-            ` : ''}
-            
-            <!-- Action Buttons -->
-            <div style="display: flex; gap: 8px; margin-top: 12px;">
-                <button onclick="printModalContent('Instructor Details - ${escapeHtml(instructorName)}')" style="flex: 1; padding: 8px; background: #0f1f3d; color: #f5c842; border: none; border-radius: 6px; font-weight: 700; font-size: 11px; cursor: pointer;">
-                    🖨️ Print
-                </button>
-                <button onclick="closeModal('detailsModal')" style="flex: 1; padding: 8px; background: #f1f5f9; color: #1e293b; border: 1px solid #e2e8f0; border-radius: 6px; font-weight: 700; font-size: 11px; cursor: pointer;">
-                    ✕ Close
-                </button>
-            </div>
-            
         </div>
     `;
     
     document.getElementById('detailsModalContent').innerHTML = html;
     document.getElementById('detailsModalTitle').innerHTML = '👨‍🏫 Instructor Details';
     openModal('detailsModal');
-    
-    // ✅ فتح الأقسام تلقائياً
-    setTimeout(() => {
-        toggleAccordion('acc_inst_sum');
-        toggleAccordion('acc_inst_break');
-    }, 100);
 }
   // ============================================================
 // OTHER FUNCTIONS
