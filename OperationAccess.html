@@ -4025,56 +4025,107 @@ function renderImage(imageUrl, emoji, size) {
 }
 function showVehicleDetails(voucherNo, vehicleId) {
     if (window.event) {
-        window.event.stopPropagation();
-        window.event.preventDefault();
+      window.event.stopPropagation();
+      window.event.preventDefault();
     }
     
     const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
     if (!invoice) { showToast('Invoice not found', 'error'); return; }
     
-    let vehiclesData = [];
-    try { vehiclesData = JSON.parse(invoice.VehiclesUsed || '[]'); } catch(e) {}
+    // ✅ 1. جلب كل الفواتير التي استخدمت هذه السيارة في نفس اليوم
+    const currentDate = invoice.activeDate;
+    const relatedInvoices = [];
+    let totalAdults = 0, totalChildren = 0, totalInfants = 0;
+    let totalGo = 0, totalReturn = 0;
     
-    const vehicle = vehiclesData.find(v => v.vehicleId === vehicleId);
-    if (!vehicle) { showToast('Vehicle data not found', 'error'); return; }
-    
-    const cachedVehicle = cachedVehicles.find(v => v.id === vehicleId);
-    
-    // ✅ Fallback A/C/I
-    let adults   = parseInt(vehicle.adults)   || 0;
-    let children = parseInt(vehicle.children) || 0;
-    let infants  = parseInt(vehicle.infants)  || 0;
-    if (adults === 0 && children === 0 && infants === 0) {
-        adults   = parseInt(invoice.sgl) || 0;
-        children = parseInt(invoice.dbl) || 0;
-        infants  = parseInt(invoice.trpl) || 0;
+    for (const inv of allInvoices) {
+        if (inv.activeDate !== currentDate) continue;
+        
+        let vData = [];
+        try { vData = JSON.parse(inv.VehiclesUsed || '[]'); } catch(e) {}
+        
+        const usage = vData.find(v => v.vehicleId === vehicleId);
+        if (!usage) continue;
+        
+        const a = parseInt(usage.adults) || 0;
+        const c = parseInt(usage.children) || 0;
+        const i = parseInt(usage.infants) || 0;
+        const go = parseInt(usage.goCount) || 0;
+        const ret = parseInt(usage.returnCount) || 0;
+        
+        relatedInvoices.push({
+            voucherNo: inv.voucherNo,
+            adults: a, children: c, infants: i,
+            go: go, ret: ret,
+            totalPax: a + c + i
+        });
+        
+        totalAdults += a;
+        totalChildren += c;
+        totalInfants += i;
+        totalGo += go;
+        totalReturn += ret;
     }
     
-    const goCount = parseInt(vehicle.goCount) || 0;
-    const returnCount = parseInt(vehicle.returnCount) || 0;
-    
-    // ✅ حساب:
-    // - Total Passengers For Voucher: كل الأفراد في هذه الفاتورة (A+C+I)
-    // - Total Passengers For Vehicle: الأماكن المشغولة فعلياً (A+C فقط)
-    const totalForVoucher = adults + children + infants;
-    const totalForVehicle = adults + children;
-    
-    const licensePlate = vehicle.licensePlate || cachedVehicle?.licensePlate || '—';
-    const driverName = vehicle.driverName || cachedVehicle?.driverName || '—';
+    const cachedVehicle = cachedVehicles.find(v => v.id === vehicleId);
+    const licensePlate = cachedVehicle?.licensePlate || '—';
     const capacity = cachedVehicle?.capacity || '—';
-    
+    const driverName = cachedVehicle?.driverName || '—';
     const vehicleImage = cachedVehicle?.licensePhoto || '';
     
-    const qrText = `Vehicle: ${licensePlate}\nID: ${vehicleId}\nInvoice: ${voucherNo}\nDate: ${invoice.activeDate}\nTrip: ${invoice.trip}\nGo: ${goCount} | Return: ${returnCount}\nPassengers: A${adults} C${children} I${infants}`;
+    const qrText = `Vehicle: ${licensePlate}\nID: ${vehicleId}\nDate: ${currentDate}\nTotal Trips: Go ${totalGo} | Ret ${totalReturn}`;
     const qrUrl = generateQRCode(qrText, 120);
+    
+    let tableHtml = `
+      <table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px;">
+        <thead>
+          <tr style="background:#0f1f3d; color:#f5c842;">
+            <th style="padding:8px; text-align:right;">Voucher No.</th>
+            <th style="padding:8px; text-align:center;">Adults</th>
+            <th style="padding:8px; text-align:center;">Children</th>
+            <th style="padding:8px; text-align:center;">Infants</th>
+            <th style="padding:8px; text-align:center;">Go</th>
+            <th style="padding:8px; text-align:center;">Return</th>
+            <th style="padding:8px; text-align:center;">Total Pax</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+    
+    relatedInvoices.forEach(inv => {
+        tableHtml += `
+          <tr style="border-bottom:1px solid #e2e8f0;">
+            <td style="padding:8px; font-weight:700; color:#0f1f3d;">${escapeHtml(inv.voucherNo)}</td>
+            <td style="padding:8px; text-align:center;">${inv.adults || ''}</td>
+            <td style="padding:8px; text-align:center;">${inv.children || ''}</td>
+            <td style="padding:8px; text-align:center;">${inv.infants || ''}</td>
+            <td style="padding:8px; text-align:center;">${inv.go || ''}</td>
+            <td style="padding:8px; text-align:center;">${inv.ret || ''}</td>
+            <td style="padding:8px; text-align:center; font-weight:700; background:#eff6ff;">${inv.totalPax || ''}</td>
+          </tr>
+        `;
+    });
+    
+    tableHtml += `
+        </tbody>
+        <tfoot>
+          <tr style="background:#fef3c7; font-weight:800; border-top:2px solid #f5c842;">
+            <td style="padding:8px; text-align:right;">TOTAL</td>
+            <td style="padding:8px; text-align:center;">${totalAdults}</td>
+            <td style="padding:8px; text-align:center;">${totalChildren}</td>
+            <td style="padding:8px; text-align:center;">${totalInfants}</td>
+            <td style="padding:8px; text-align:center;">${totalGo}</td>
+            <td style="padding:8px; text-align:center;">${totalReturn}</td>
+            <td style="padding:8px; text-align:center; font-size:14px; color:#b45309;">${totalAdults + totalChildren + totalInfants}</td>
+          </tr>
+        </tfoot>
+      </table>
+    `;
     
     const html = `
         <div style="padding: 4px;">
-            
             <div style="background: linear-gradient(135deg, #7c3aed, #5b21b6); color: #f5c842; padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; display: flex; align-items: center; gap: 12px;">
-                <div style="flex-shrink: 0;">
-                    ${renderImage(vehicleImage, '🚗', 40)}
-                </div>
+                <div style="flex-shrink: 0;">${renderImage(vehicleImage, '🚗', 40)}</div>
                 <div style="flex: 1;">
                     <div style="font-size: 15px; font-weight: 900; color: #f5c842;">${escapeHtml(licensePlate)}</div>
                     <div style="font-size: 9px; color: #ddd6fe; letter-spacing: 0.5px;">${escapeHtml(vehicleId)}</div>
@@ -4090,151 +4141,115 @@ function showVehicleDetails(voucherNo, vehicleId) {
                 <span style="font-size: 12px; color: #1e293b; font-weight: 600;">${escapeHtml(driverName)}</span>
             </div>
             
-            <div style="border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px; overflow: hidden;">
-                <div onclick="toggleAccordion('acc_trips')" style="background: #f1f5f9; padding: 8px 12px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none;">
-                    <span style="font-size: 11px; font-weight: 700; color: #1e293b;">🛣️ Trips Summary</span>
-                    <span id="acc_trips_icon" style="transition: transform 0.3s; font-size: 12px; color: #64748b;">▼</span>
-                </div>
-                <div id="acc_trips" style="max-height: 0px; overflow: hidden; transition: max-height 0.3s, opacity 0.3s; opacity: 0;">
-                    <div style="padding: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
-                        <div style="background: #dbeafe; border: 1px solid #3b82f6; border-radius: 6px; padding: 6px; text-align: center;">
-                            <div style="font-size: 9px; color: #1e40af; font-weight: 700; text-transform: uppercase;">🔄 Go</div>
-                            <div style="font-size: 18px; font-weight: 900; color: #1d4ed8;">${goCount}</div>
-                        </div>
-                        <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 6px; padding: 6px; text-align: center;">
-                            <div style="font-size: 9px; color: #92400e; font-weight: 700; text-transform: uppercase;">🔙 Return</div>
-                            <div style="font-size: 18px; font-weight: 900; color: #b45309;">${returnCount}</div>
-                        </div>
-                    </div>
-                </div>
+            <div style="font-weight: 800; color: #0f1f3d; font-size: 13px; margin-top: 12px;">📋 Trips Details</div>
+            <div style="overflow-x:auto;">${tableHtml}</div>
+            
+            <div style="background: linear-gradient(135deg, #f5c842, #e6b800); border-radius: 6px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; margin-top: 12px;">
+                <span style="font-size: 11px; font-weight: 800; color: #0f1f3d; text-transform: uppercase;">📊 Total Passengers For Vehicle</span>
+                <span style="font-size: 18px; font-weight: 900; color: #0f1f3d;">${totalAdults + totalChildren + totalInfants}</span>
             </div>
             
-            <div style="border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px; overflow: hidden;">
-                <div onclick="toggleAccordion('acc_passengers')" style="background: #f1f5f9; padding: 8px 12px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none;">
-                    <span style="font-size: 11px; font-weight: 700; color: #1e293b;">👥 Passengers Summary</span>
-                    <span id="acc_passengers_icon" style="transition: transform 0.3s; font-size: 12px; color: #64748b;">▼</span>
-                </div>
-                <div id="acc_passengers" style="max-height: 0px; overflow: hidden; transition: max-height 0.3s, opacity 0.3s; opacity: 0;">
-                    <div style="padding: 8px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px;">
-                        <div style="background: #eff6ff; border: 1px solid #3b82f6; border-radius: 6px; padding: 6px; text-align: center;">
-                            <div style="font-size: 14px;">👤</div>
-                            <div style="font-size: 16px; font-weight: 900; color: #2563eb;">${adults}</div>
-                            <div style="font-size: 8px; color: #64748b; font-weight: 600; text-transform: uppercase;">Adults</div>
-                        </div>
-                        <div style="background: #f0fdf4; border: 1px solid #16a34a; border-radius: 6px; padding: 6px; text-align: center;">
-                            <div style="font-size: 14px;">👶</div>
-                            <div style="font-size: 16px; font-weight: 900; color: #16a34a;">${children}</div>
-                            <div style="font-size: 8px; color: #64748b; font-weight: 600; text-transform: uppercase;">Children</div>
-                        </div>
-                        <div style="background: #fff7ed; border: 1px solid #f59e0b; border-radius: 6px; padding: 6px; text-align: center;">
-                            <div style="font-size: 14px;">🍼</div>
-                            <div style="font-size: 16px; font-weight: 900; color: #f59e0b;">${infants}</div>
-                            <div style="font-size: 8px; color: #64748b; font-weight: 600; text-transform: uppercase;">Infants</div>
-                        </div>
-                    </div>
-                </div>
+            <div style="display: flex; gap: 8px; margin-top: 16px;">
+                <button onclick="printModalContent('Vehicle Details - ${escapeHtml(licensePlate)}')" style="flex: 1; padding: 10px; background: #0f1f3d; color: #f5c842; border: none; border-radius: 6px; font-weight: 700; cursor: pointer;">🖨️ Print</button>
+                <button onclick="closeModal('detailsModal')" style="flex: 1; padding: 10px; background: #f1f5f9; color: #1e293b; border: 1px solid #e2e8f0; border-radius: 6px; font-weight: 700; cursor: pointer;">✕ Close</button>
             </div>
-            
-            <div style="border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px; overflow: hidden;">
-                <div onclick="toggleAccordion('acc_qr')" style="background: #f1f5f9; padding: 8px 12px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none;">
-                    <span style="font-size: 11px; font-weight: 700; color: #1e293b;">📱 QR Code</span>
-                    <span id="acc_qr_icon" style="transition: transform 0.3s; font-size: 12px; color: #64748b;">▼</span>
-                </div>
-                <div id="acc_qr" style="max-height: 0px; overflow: hidden; transition: max-height 0.3s, opacity 0.3s; opacity: 0;">
-                    <div style="padding: 12px; text-align: center; background: white;">
-                        <img src="${qrUrl}" alt="QR Code" style="width: 120px; height: 120px; border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px; background: white;">
-                        <div style="font-size: 9px; color: #64748b; margin-top: 6px;">Scan for vehicle details</div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- ✅ Total Passengers for Voucher -->
-            ${totalForVoucher > 0 ? `
-                <div style="background: linear-gradient(135deg, #f5c842, #e6b800); border-radius: 6px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
-                    <span style="font-size: 11px; font-weight: 800; color: #0f1f3d; text-transform: uppercase; letter-spacing: 0.5px;">📊 Total Passengers For Voucher</span>
-                    <span style="font-size: 18px; font-weight: 900; color: #0f1f3d;">${totalForVoucher}</span>
-                </div>
-            ` : ''}
-            
-            <!-- ✅ Total Passengers for Vehicle (بدون الرضع) -->
-            ${totalForVehicle > 0 ? `
-                <div style="background: linear-gradient(135deg, #7c3aed, #5b21b6); border-radius: 6px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; margin-top: 6px; color: white;">
-                    <span style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">📊 Total Passengers For Vehicle</span>
-                    <span style="font-size: 18px; font-weight: 900;">${totalForVehicle}</span>
-                </div>
-            ` : ''}
-            
-            <div style="display: flex; gap: 8px; margin-top: 12px;">
-                <button onclick="printModalContent('Vehicle Details - ${escapeHtml(licensePlate)}')" style="flex: 1; padding: 8px; background: #0f1f3d; color: #f5c842; border: none; border-radius: 6px; font-weight: 700; font-size: 11px; cursor: pointer;">
-                    🖨️ Print
-                </button>
-                <button onclick="closeModal('detailsModal')" style="flex: 1; padding: 8px; background: #f1f5f9; color: #1e293b; border: 1px solid #e2e8f0; border-radius: 6px; font-weight: 700; font-size: 11px; cursor: pointer;">
-                    ✕ Close
-                </button>
-            </div>
-            
         </div>
     `;
     
     document.getElementById('detailsModalContent').innerHTML = html;
     document.getElementById('detailsModalTitle').innerHTML = '🚗 Vehicle Details';
     openModal('detailsModal');
-    
-    setTimeout(() => {
-        toggleAccordion('acc_trips');
-        toggleAccordion('acc_passengers');
-    }, 100);
-}
-  
+}  
   
 function showBoatDetails(voucherNo, boatId) {
     if (window.event) {
-        window.event.stopPropagation();
-        window.event.preventDefault();
+      window.event.stopPropagation();
+      window.event.preventDefault();
     }
     
     const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
     if (!invoice) { showToast('Invoice not found', 'error'); return; }
     
-    let boatsData = [];
-    try { boatsData = JSON.parse(invoice.BoatsUsed || '[]'); } catch(e) {}
+    const currentDate = invoice.activeDate;
+    const relatedInvoices = [];
+    let totalAdults = 0, totalChildren = 0, totalInfants = 0;
     
-    const boat = boatsData.find(b => b.boatId === boatId);
-    if (!boat) { showToast('Boat data not found', 'error'); return; }
-    
-    const cachedBoat = cachedBoats.find(b => b.id === boatId);
-    const boatName = boat.boatName || cachedBoat?.name || boatId || '—';
-    
-    // ✅ بيانات الفاتورة الحالية
-    let adults   = parseInt(boat.adults)   || 0;
-    let children = parseInt(boat.children) || 0;
-    let infants  = parseInt(boat.infants)  || 0;
-    if (adults === 0 && children === 0 && infants === 0) {
-        adults   = parseInt(invoice.sgl) || 0;
-        children = parseInt(invoice.dbl) || 0;
-        infants  = parseInt(invoice.trpl) || 0;
+    for (const inv of allInvoices) {
+        if (inv.activeDate !== currentDate) continue;
+        
+        let bData = [];
+        try { bData = JSON.parse(inv.BoatsUsed || '[]'); } catch(e) {}
+        
+        const usage = bData.find(b => b.boatId === boatId);
+        if (!usage) continue;
+        
+        const a = parseInt(usage.adults) || 0;
+        const c = parseInt(usage.children) || 0;
+        const i = parseInt(usage.infants) || 0;
+        
+        relatedInvoices.push({
+            voucherNo: inv.voucherNo,
+            adults: a, children: c, infants: i,
+            totalPax: a + c + i
+        });
+        
+        totalAdults += a;
+        totalChildren += c;
+        totalInfants += i;
     }
     
-    const totalForVoucher = adults + children + infants;
-    
-    // ✅ حساب إجمالي المركب (نستخدم الدالة التي تستبعد الفاتورة الحالية ثم نضيف مسافريها)
-    const currentDate = invoice.activeDate;
-    const otherInvoicesUsed = getBoatUsedSeats(currentDate, boatId, null, voucherNo); // null لعدم الفلترة بالرحلة
-    const totalForBoat = otherInvoicesUsed.total + totalForVoucher;
-    
+    const cachedBoat = cachedBoats.find(b => b.id === boatId);
+    const boatName = cachedBoat?.name || boatId;
     const capacity = cachedBoat?.capacity || '—';
     const boatImage = cachedBoat?.licensePhoto || '';
     
-    const qrText = `Boat: ${boatName}\nID: ${boatId}\nInvoice: ${voucherNo}\nDate: ${invoice.activeDate}\nTrip: ${invoice.trip}\nPassengers: A${adults} C${children} I${infants}`;
+    const qrText = `Boat: ${boatName}\nID: ${boatId}\nDate: ${currentDate}`;
     const qrUrl = generateQRCode(qrText, 120);
+    
+    let tableHtml = `
+      <table style="width:100%; border-collapse:collapse; font-size:12px; margin-top:8px;">
+        <thead>
+          <tr style="background:#0f1f3d; color:#f5c842;">
+            <th style="padding:8px; text-align:right;">Voucher No.</th>
+            <th style="padding:8px; text-align:center;">Adults</th>
+            <th style="padding:8px; text-align:center;">Children</th>
+            <th style="padding:8px; text-align:center;">Infants</th>
+            <th style="padding:8px; text-align:center;">Total Pax</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+    
+    relatedInvoices.forEach(inv => {
+        tableHtml += `
+          <tr style="border-bottom:1px solid #e2e8f0;">
+            <td style="padding:8px; font-weight:700; color:#0f1f3d;">${escapeHtml(inv.voucherNo)}</td>
+            <td style="padding:8px; text-align:center;">${inv.adults || ''}</td>
+            <td style="padding:8px; text-align:center;">${inv.children || ''}</td>
+            <td style="padding:8px; text-align:center;">${inv.infants || ''}</td>
+            <td style="padding:8px; text-align:center; font-weight:700; background:#eff6ff;">${inv.totalPax || ''}</td>
+          </tr>
+        `;
+    });
+    
+    tableHtml += `
+        </tbody>
+        <tfoot>
+          <tr style="background:#fef3c7; font-weight:800; border-top:2px solid #f5c842;">
+            <td style="padding:8px; text-align:right;">TOTAL</td>
+            <td style="padding:8px; text-align:center;">${totalAdults}</td>
+            <td style="padding:8px; text-align:center;">${totalChildren}</td>
+            <td style="padding:8px; text-align:center;">${totalInfants}</td>
+            <td style="padding:8px; text-align:center; font-size:14px; color:#b45309;">${totalAdults + totalChildren + totalInfants}</td>
+          </tr>
+        </tfoot>
+      </table>
+    `;
     
     const html = `
         <div style="padding: 4px;">
-            
             <div style="background: linear-gradient(135deg, #0f1f3d, #1a3260); color: #f5c842; padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; display: flex; align-items: center; gap: 12px;">
-                <div style="flex-shrink: 0;">
-                    ${renderImage(boatImage, '⛵', 40)}
-                </div>
+                <div style="flex-shrink: 0;">${renderImage(boatImage, '⛵', 40)}</div>
                 <div style="flex: 1;">
                     <div style="font-size: 15px; font-weight: 900; color: #f5c842;">${escapeHtml(boatName)}</div>
                     <div style="font-size: 9px; color: #94a3b8; letter-spacing: 0.5px;">${escapeHtml(boatId)}</div>
@@ -4245,80 +4260,24 @@ function showBoatDetails(voucherNo, boatId) {
                 </div>
             </div>
             
-            <div style="border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px; overflow: hidden;">
-                <div onclick="toggleAccordion('acc_boat_pax')" style="background: #f1f5f9; padding: 8px 12px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none;">
-                    <span style="font-size: 11px; font-weight: 700; color: #1e293b;">👥 Passengers Summary</span>
-                    <span id="acc_boat_pax_icon" style="transition: transform 0.3s; font-size: 12px; color: #64748b;">▼</span>
-                </div>
-                <div id="acc_boat_pax" style="max-height: 0px; overflow: hidden; transition: max-height 0.3s, opacity 0.3s; opacity: 0;">
-                    <div style="padding: 8px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px;">
-                        <div style="background: #eff6ff; border: 1px solid #3b82f6; border-radius: 6px; padding: 6px; text-align: center;">
-                            <div style="font-size: 14px;">👤</div>
-                            <div style="font-size: 16px; font-weight: 900; color: #2563eb;">${adults}</div>
-                            <div style="font-size: 8px; color: #64748b; font-weight: 600; text-transform: uppercase;">Adults</div>
-                        </div>
-                        <div style="background: #f0fdf4; border: 1px solid #16a34a; border-radius: 6px; padding: 6px; text-align: center;">
-                            <div style="font-size: 14px;">👶</div>
-                            <div style="font-size: 16px; font-weight: 900; color: #16a34a;">${children}</div>
-                            <div style="font-size: 8px; color: #64748b; font-weight: 600; text-transform: uppercase;">Children</div>
-                        </div>
-                        <div style="background: #fff7ed; border: 1px solid #f59e0b; border-radius: 6px; padding: 6px; text-align: center;">
-                            <div style="font-size: 14px;">🍼</div>
-                            <div style="font-size: 16px; font-weight: 900; color: #f59e0b;">${infants}</div>
-                            <div style="font-size: 8px; color: #64748b; font-weight: 600; text-transform: uppercase;">Infants</div>
-                        </div>
-                    </div>
-                </div>
+            <div style="font-weight: 800; color: #0f1f3d; font-size: 13px; margin-top: 12px;">📋 Trips Details</div>
+            <div style="overflow-x:auto;">${tableHtml}</div>
+            
+            <div style="background: linear-gradient(135deg, #0f1f3d, #1a3260); border-radius: 6px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; margin-top: 12px; color: white;">
+                <span style="font-size: 11px; font-weight: 800; text-transform: uppercase;">📊 Total Passengers For Boat</span>
+                <span style="font-size: 18px; font-weight: 900; color: #f5c842;">${totalAdults + totalChildren + totalInfants}</span>
             </div>
             
-            <div style="border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px; overflow: hidden;">
-                <div onclick="toggleAccordion('acc_boat_qr')" style="background: #f1f5f9; padding: 8px 12px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none;">
-                    <span style="font-size: 11px; font-weight: 700; color: #1e293b;">📱 QR Code</span>
-                    <span id="acc_boat_qr_icon" style="transition: transform 0.3s; font-size: 12px; color: #64748b;">▼</span>
-                </div>
-                <div id="acc_boat_qr" style="max-height: 0px; overflow: hidden; transition: max-height 0.3s, opacity 0.3s; opacity: 0;">
-                    <div style="padding: 12px; text-align: center; background: white;">
-                        <img src="${qrUrl}" alt="QR Code" style="width: 120px; height: 120px; border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px; background: white;">
-                        <div style="font-size: 9px; color: #64748b; margin-top: 6px;">Scan for boat details</div>
-                    </div>
-                </div>
+            <div style="display: flex; gap: 8px; margin-top: 16px;">
+                <button onclick="printModalContent('Boat Details - ${escapeHtml(boatName)}')" style="flex: 1; padding: 10px; background: #0f1f3d; color: #f5c842; border: none; border-radius: 6px; font-weight: 700; cursor: pointer;">🖨️ Print</button>
+                <button onclick="closeModal('detailsModal')" style="flex: 1; padding: 10px; background: #f1f5f9; color: #1e293b; border: 1px solid #e2e8f0; border-radius: 6px; font-weight: 700; cursor: pointer;">✕ Close</button>
             </div>
-            
-            <!-- ✅ Total Passengers for Voucher -->
-            ${totalForVoucher > 0 ? `
-                <div style="background: linear-gradient(135deg, #f5c842, #e6b800); border-radius: 6px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
-                    <span style="font-size: 11px; font-weight: 800; color: #0f1f3d; text-transform: uppercase; letter-spacing: 0.5px;">📊 Total Passengers For Voucher</span>
-                    <span style="font-size: 18px; font-weight: 900; color: #0f1f3d;">${totalForVoucher}</span>
-                </div>
-            ` : ''}
-            
-            <!-- ✅ Total Passengers for Boat -->
-            ${totalForBoat > 0 ? `
-                <div style="background: linear-gradient(135deg, #0f1f3d, #1a3260); border-radius: 6px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; margin-top: 6px; color: white;">
-                    <span style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">📊 Total Passengers For Boat</span>
-                    <span style="font-size: 18px; font-weight: 900; color: #f5c842;">${totalForBoat}</span>
-                </div>
-            ` : ''}
-            
-            <div style="display: flex; gap: 8px; margin-top: 12px;">
-                <button onclick="printModalContent('Boat Details - ${escapeHtml(boatName)}')" style="flex: 1; padding: 8px; background: #0f1f3d; color: #f5c842; border: none; border-radius: 6px; font-weight: 700; font-size: 11px; cursor: pointer;">
-                    🖨️ Print
-                </button>
-                <button onclick="closeModal('detailsModal')" style="flex: 1; padding: 8px; background: #f1f5f9; color: #1e293b; border: 1px solid #e2e8f0; border-radius: 6px; font-weight: 700; font-size: 11px; cursor: pointer;">
-                    ✕ Close
-                </button>
-            </div>
-            
         </div>
     `;
     
     document.getElementById('detailsModalContent').innerHTML = html;
     document.getElementById('detailsModalTitle').innerHTML = '⛵ Boat Details';
     openModal('detailsModal');
-    
-    setTimeout(() => {
-        toggleAccordion('acc_boat_pax');
-    }, 100);
 }
   
 function showInstructorDetails(voucherNo, instructorId) {
