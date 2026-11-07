@@ -1358,21 +1358,25 @@ function gas(action, params = {}) {
 let activeToast = null;
 // ✅ دالة توست محلية لصفحة OperationAccess.html (تظهر في المنتصف فوق كل المودالات)
 function showToast(msg, type) {
-    // إزالة أي توست قديم
-    const existing = document.querySelector('.oa-toast');
-    if (existing) existing.remove();
+    // ✅ اسمح بوجود 3 toasts كحد أقصى (للاستدعاءات السريعة)
+    const existing = document.querySelectorAll('.oa-toast');
+    if (existing.length >= 3) {
+        existing[0].remove();
+    }
 
     const toast = document.createElement('div');
     toast.className = 'oa-toast';
     
-    let bg = '#27ae60'; // success
+    let bg = '#27ae60';
     if (type === 'error') bg = '#dc2626';
     else if (type === 'info') bg = '#3b82f6';
     else if (type === 'warning') bg = '#f39c12';
 
+    const offsetY = existing.length > 0 ? (existing.length * 70) : 0;
+
     toast.style.cssText = `
         position: fixed;
-        top: 50%;
+        top: calc(50% + ${offsetY}px);
         left: 50%;
         transform: translate(-50%, -50%) scale(0.9);
         background: ${bg};
@@ -1396,18 +1400,16 @@ function showToast(msg, type) {
 
     document.body.appendChild(toast);
 
-    // تأثير الظهور
     setTimeout(() => {
         toast.style.opacity = '1';
         toast.style.transform = 'translate(-50%, -50%) scale(1)';
     }, 10);
 
-    // الإخفاء بعد 3 ثواني
     setTimeout(() => {
         toast.style.opacity = '0';
         toast.style.transform = 'translate(-50%, -50%) scale(0.9)';
         setTimeout(() => toast.remove(), 300);
-    }, 3000);
+    }, 3500);
 }
   // ============================================================
 // ✅ دوال مساعدة للتاريخ
@@ -5030,28 +5032,43 @@ async function openUpsell(voucherNo) {
   try {
     const invoice = filteredInvoices.find(i => i.voucherNo === voucherNo);
     if (!invoice) { showToast('Invoice not found', 'error'); return; }
-    
+        // ═══════════════════════════════════════════════════════════
+    // ✅ فحص مبكر لأسعار الصرف (قبل أي شيء)
+    // ═══════════════════════════════════════════════════════════
+    if (!cachedUpsellRates) {
+        showToast('⏳ جاري تحميل أسعار الصرف...', 'info');
+        try {
+            const ratesResult = await gas('getLatestExchangeRates', { centerName: currentUser?.centerName });
+            if (ratesResult && ratesResult.bUSD) {
+                cachedUpsellRates = {
+                    USD: ratesResult.bUSD,
+                    EUR: ratesResult.bEUR,
+                    GBP: ratesResult.bGBP,
+                    LE: ratesResult.bLE || 1
+                };
+            } else {
+                showToast('❌ فشل تحميل أسعار الصرف', 'error');
+                alert('لا توجد أسعار صرف في هذا المركز. يرجى إضافتها أولاً من صفحة Exchange Rates.');
+                return;
+            }
+        } catch(e) {
+            showToast('❌ خطأ في تحميل أسعار الصرف', 'error');
+            alert('خطأ: ' + (e.message || e));
+            return;
+        }
+    }
+
+    if (!cachedUpsellRates.USD || cachedUpsellRates.USD === 0) {
+        showToast('⚠️ سعر صرف الدولار = 0', 'error');
+        alert('سعر صرف الدولار = 0. يرجى إضافته أولاً.');
+        return;
+    }
     const activities = getActivitiesFromInvoice(invoice);
     if (activities.length === 0) { showToast('No activities found for upsell', 'error'); return; }
     
     const leadName = invoice.guestName || 'Customer';
     
-    if (!cachedUpsellRates) {
-        showToast('⏳ جاري تحميل أسعار الصرف...', 'info');
-        const ratesResult = await gas('getLatestExchangeRates', { centerName: currentUser?.centerName });
-        if (ratesResult && ratesResult.bUSD) {
-            cachedUpsellRates = {
-                USD: ratesResult.bUSD,
-                EUR: ratesResult.bEUR,
-                GBP: ratesResult.bGBP,
-                LE: ratesResult.bLE || 1
-            };
-        } else {
-            showToast('❌ فشل تحميل أسعار الصرف', 'error');
-            return;
-        }
-    }
-    
+        
     let allInstructors = cachedInstructors;
     if (!allInstructors || allInstructors.length === 0) {
         allInstructors = await gas('getInstructors', { centerName: currentUser?.centerName });
@@ -5284,23 +5301,41 @@ async function createUpsell() {
       currency: currentUpsellCurrency
     });
     
-    if (result?.success) {
-      const userConfirmed = await showConfirmDialog('✅ تم إنشاء الفاتورة بنجاح!', `تم إنشاء فاتورة UpSell برقم: ${result.voucherNo}\n\nهل تريد إغلاق النافذة؟`);
+        if (result?.success) {
+      const userConfirmed = await showConfirmDialog(
+        '✅ تم إنشاء الفاتورة بنجاح!', 
+        `تم إنشاء فاتورة UpSell برقم: ${result.voucherNo}\n\nهل تريد إغلاق النافذة؟`
+      );
       if (userConfirmed) closeUpsellModal();
       
       await loadInvoices();
       renderTable();
       showToast(`✅ تم إنشاء فاتورة UpSell: ${result.voucherNo}`, 'success');
     } else {
-      showToast('❌ Failed to create Upsell: ' + (result?.message || 'Unknown error'), 'error');
+      console.error('❌ UpSell failed — full result:', result);
+      const errMsg = (result && result.message) 
+        ? String(result.message) 
+        : 'Unknown error (no message from server)';
+      showToast('❌ فشل: ' + errMsg, 'error');
+      setTimeout(() => {
+        alert('❌ فشل إنشاء فاتورة UpSell:\n\n' + errMsg);
+      }, 300);
     }
   } catch(e) {
-    showToast('Error: ' + e.message, 'error');
+    console.error('❌ createUpsell catch — full error:', e);
+    console.error('   message:', e?.message);
+    console.error('   stack:', e?.stack);
+    
+    const errMsg = (e && e.message) ? String(e.message) : String(e || 'خطأ غير معروف');
+    showToast('❌ خطأ: ' + errMsg, 'error');
+    setTimeout(() => {
+      alert('❌ خطأ في إنشاء UpSell:\n\n' + errMsg);
+    }, 300);
   } finally {
     if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Create UpSell'; }
   }
 }
-
+  
 // ✅ دالة عرض رسالة تأكيد
 function showConfirmDialog(title, message) {
   return new Promise((resolve) => {
