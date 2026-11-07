@@ -3528,39 +3528,53 @@ async function openAssignInstructors(voucherNo) {
     document.getElementById('assignInstructorsContent').innerHTML = '<div class="loader"><div class="spinner"></div>جاري تحميل البيانات...</div>';
     openModal('assignInstructorsModal');
     
+       // ✅ بناء الأنشطة من activitiesText مباشرة
     let activityItems = [];
     let activityMapping = [];
     
-    try {
-        const tripDef = await gas('getTripDefinition', { tripName: invoice.trip });
-        if (tripDef && tripDef.items && Array.isArray(tripDef.items)) {
-            for (const item of tripDef.items) {
-                const itemLower = (item || '').toLowerCase();
-                
-                // ✅ تجاهل Adult, Child, Inf تماماً
-                const isExcluded = excludedKeywords.some(keyword => itemLower === keyword);
-                if (isExcluded) {
-                    console.log(`⏭️ تم تجاهل البند: ${item}`);
+    if (invoice.activitiesText) {
+        const parts = invoice.activitiesText.split('|');
+        for (let part of parts) {
+            part = part.trim();
+            if (!part) continue;
+            
+            // فصل الاسم عن الكمية (مثلاً "Course×2" إلى Course و 2)
+            const match = part.match(/^(.+?)×(\d+)$/);
+            if (match) {
+                const itemName = match[1].trim();
+                // تجاهل Adult, Child, Infant, Inf
+                if (['adult', 'child', 'inf', 'infant'].includes(itemName.toLowerCase())) {
                     continue;
                 }
                 
-                const classified = classifyActivity(item);
-                if (classified && !activityMapping.find(a => a.display === classified.display)) {
-                    activityMapping.push(classified);
+                // إضافة النشاط
+                const classified = classifyActivity(itemName);
+                if (classified) {
                     activityItems.push(classified.display);
-                } else if (!classified && item && item.trim() !== '') {
-                    activityItems.push(item);
+                    activityMapping.push(classified);
+                } else {
+                    activityItems.push(itemName);
                     activityMapping.push({
-                        type: item.toLowerCase().replace(/ /g, '_'),
+                        type: itemName.toLowerCase().replace(/ /g, '_'),
                         column: 'extra',
                         multiplier: 1,
-                        display: item
+                        display: itemName
                     });
                 }
             }
         }
-    } catch(e) { 
-        console.warn('Failed to load trip definition:', e); 
+    }
+    
+    // ✅ إذا كانت القائمة فارغة، استخدم القيم الافتراضية
+    if (activityItems.length === 0) {
+        activityItems = ['1 Intro', '2 Intro', 'Diver', 'C.D.', 'S.R.'];
+        activityMapping = [
+            { type: 'single_intro', column: 'extra', multiplier: 1, display: '1 Intro' },
+            { type: 'double_intro', column: 'extra', multiplier: 2, display: '2 Intro' },
+            { type: 'diver', column: 'sgl', multiplier: 1, display: 'Diver' },
+            { type: 'check_dive', column: 'sgl', multiplier: 1, display: 'C.D.' },
+            { type: 'scuba_review', column: 'dbl', multiplier: 1, display: 'S.R.' }
+        ];
     }
     
     // ✅ القيم الافتراضية إذا لم يتم العثور على بنود
@@ -3609,8 +3623,10 @@ async function openAssignInstructors(voucherNo) {
             ${hasBoat ? `🚤 Boats: ${escapeHtml(boatNames)}<br>👨🏫 Available Instructors: ${escapeHtml(relevantInstructorNames)}<br>` : `🏖️ Beach Instructors: ${escapeHtml(relevantInstructorNames)}<br>`}
             🚌 Trip: ${escapeHtml(invoice.trip)}<br>
             <span style="font-size: 12px; color: var(--gold);">📋 ${escapeHtml(tripItemsText) || 'No items'}</span><br>
-            👤 Adults: ${adults} | 👶 Children: ${children} | 🍼 Infants: ${infants}
-        </div>
+
+         
+                 
+                 </div>
         <div style="overflow-x: auto; max-height: 400px;">
             <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
                 <thead><tr style="background: var(--navy); color: var(--gold);">${headersHtml}</tr></thead>
