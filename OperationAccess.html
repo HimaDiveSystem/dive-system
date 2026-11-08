@@ -2685,12 +2685,8 @@ async function openAssignVehicles(voucherNo) {
     }
     
     if (selectedVehicles.length === 0) {
-        if (currentAssignments?.vehicleTripMap) {
-            selectedVehicles = Object.keys(currentAssignments.vehicleTripMap);
-        } else {
-            showToast('⚠️ Select vehicles first from 🚗 Vehicles button', 'error');
-            return;
-        }
+        showToast('⚠️ Select vehicles first from 🚗 Vehicles button', 'error');
+        return;
     }
     
     currentAssignVoucher = voucherNo;
@@ -2701,71 +2697,81 @@ async function openAssignVehicles(voucherNo) {
     const adults = parseInt(invoice.sgl) || 0;
     const children = parseInt(invoice.dbl) || 0;
     const infants = parseInt(invoice.trpl) || 0;
+    const totalAC = adults + children; // البالغين + الأطفال فقط (بدون رضع)
     
-    // ✅ عرض جميع السيارات المُعيّنة (بدون فلترة الرحلة)
-    let relevantVehicleIds = [...new Set(selectedVehicles)];
+    // ✅ جلب اتجاه السيارات من VehicleTripRecords
+    let vehicleTrips = [];
+    try {
+        const result = await gas('getVehicleTripRecords', { date: currentDate, centerName: currentUser?.centerName });
+        if (result?.success && Array.isArray(result.data)) {
+            vehicleTrips = result.data;
+        }
+    } catch(e) { console.warn('Failed to load vehicle trips:', e); }
     
     let savedVehicles = [];
     try { savedVehicles = JSON.parse(invoice.VehiclesUsed || '[]'); } catch(e) {}
     
+    let relevantVehicleIds = [...new Set(selectedVehicles)];
     for (const sv of savedVehicles) {
-        if (sv.vehicleId && !relevantVehicleIds.includes(sv.vehicleId)) {
-            relevantVehicleIds.push(sv.vehicleId);
-        }
+        if (sv.vehicleId && !relevantVehicleIds.includes(sv.vehicleId)) relevantVehicleIds.push(sv.vehicleId);
     }
     
     document.getElementById('assignVehiclesContent').innerHTML = '<div class="loader"><div class="spinner"></div>Loading...</div>';
     openModal('assignVehiclesModal');
     
-    // ✅ بناء الصفوف — حساب usedGo/usedRet بدون الرضع
     const rows = [];
     for (const vehId of relevantVehicleIds) {
         const vehicle = cachedVehicles.find(v => v.id === vehId);
         if (!vehicle) continue;
+        
+        // ✅ البحث عن اتجاه السيارة في السجلات (لمعرفة الـ Go/Return المتاح)
+        const tripRecord = vehicleTrips.find(t => t.VehicleID === vehId && t.TripName === tripName) || 
+                           vehicleTrips.find(t => t.VehicleID === vehId);
+        
+        const masterGo = tripRecord ? (parseInt(tripRecord.GoCount) || 0) : 0;
+        const masterReturn = tripRecord ? (parseInt(tripRecord.ReturnCount) || 0) : 0;
+        
         const capacity = parseInt(vehicle.capacity) || 0;
-        
-        // ✅ حساب المشغول من فواتير أخرى (بدون هذه الفاتورة)
-        // ⚠️ نمرر infants=0 لأننا نريد احتساب الأماكن المشغولة الفعلية فقط
         const used = getVehicleUsedSeatsExcludingInfants(currentDate, vehId, null, voucherNo);
-        
         const saved = savedVehicles.find(v => v.vehicleId === vehId) || {};
-        rows.push({ vehicle, capacity, usedGo: used.go, usedRet: used.ret, saved });
+        
+        rows.push({ vehicle, capacity, usedGo: used.go, usedRet: used.ret, saved, masterGo, masterReturn });
     }
     
     if (rows.length === 0) {
-        document.getElementById('assignVehiclesContent').innerHTML = 
-            `<div style="padding:20px;text-align:center;">⚠️ No vehicles available for this date</div>`;
+        document.getElementById('assignVehiclesContent').innerHTML = `<div style="padding:20px;text-align:center;">⚠️ No vehicles available</div>`;
         return;
     }
     
-    // بناء HTML — English labels
     let html = `
       <div style="background:var(--navy);color:white;padding:12px;border-radius:8px;margin-bottom:14px;">
         <strong>📊 ${escapeHtml(tripName)}</strong><br>
         👤 Adults: ${adults} | 👶 Children: ${children} | 🍼 Infants: ${infants}
-        <br>🚗 Vehicles: ${rows.length}
+        <br><span style="font-size:11px;color:var(--gold);">* الرضع لا يشغلون مقعداً في السيارة</span>
       </div>
       <div style="overflow-x:auto;max-height:400px;">
         <table style="width:100%;font-size:12px;border-collapse:collapse;">
           <thead><tr style="background:var(--navy);color:var(--gold);">
-            <th>🚗 Vehicle</th><th>🎫 Capacity</th>
-            <th>🔄 Go Used</th><th>🔙 Return Used</th>
-            <th>🟢 Go Available</th><th>🟢 Return Available</th>
-            <th>📌 Go</th><th>📌 Return</th>
-            <th>👤</th><th>👶</th><th>🍼</th><th>☑️</th>
+            <th>🚗 Vehicle</th><th>🎫 Capacity</th><th>🔄 Go Used</th><th>🔙 Return Used</th>
+            <th>🟢 Go Avail</th><th>🟢 Return Avail</th>
+            <th>📌 Go</th><th>📌 Return</th><th>👤</th><th>👶</th><th>🍼</th><th>☑️</th>
           </tr></thead>
           <tbody>
     `;
     
-    for (const { vehicle, capacity, usedGo, usedRet, saved } of rows) {
+    for (const { vehicle, capacity, usedGo, usedRet, saved, masterGo, masterReturn } of rows) {
         const availGo = Math.max(0, capacity - usedGo);
         const availRet = Math.max(0, capacity - usedRet);
         const goPct = capacity > 0 ? Math.min(100, Math.round(usedGo / capacity * 100)) : 0;
         const retPct = capacity > 0 ? Math.min(100, Math.round(usedRet / capacity * 100)) : 0;
         
-        // ✅ القيمة الأولية: من المحفوظ، أو عدد (Adults + Children) فقط
-        const initGo = saved.goCount || Math.min(adults + children, availGo);
-        const initRet = saved.returnCount || Math.min(adults + children, availRet);
+        // ✅ إذا كانت masterGo = 0، يعني السيارة غير مخصصة للذهاب → عطل حقل Go
+        const isGoAllowed = masterGo > 0 || saved.goCount > 0;
+        const isReturnAllowed = masterReturn > 0 || saved.returnCount > 0;
+        
+        // ✅ القيمة الافتراضية: إجمالي Adults + Children (بدون رضع)
+        const initGo = saved.goCount || (isGoAllowed ? Math.min(totalAC, availGo) : 0);
+        const initRet = saved.returnCount || (isReturnAllowed ? Math.min(totalAC, availRet) : 0);
         
         html += `
           <tr>
@@ -2789,12 +2795,12 @@ async function openAssignVehicles(voucherNo) {
             </td>
             <td><input type="number" class="assign-go" data-id="${vehicle.id}" 
                        data-max="${availGo}" data-base-used="${usedGo}" data-capacity="${capacity}"
-                       value="${initGo}" min="0" max="${availGo}"
-                       style="width:55px;text-align:center;padding:4px;border:2px solid var(--border);border-radius:6px;font-weight:700;"></td>
+                       value="${initGo}" min="0" max="${availGo}" ${!isGoAllowed ? 'disabled' : ''}
+                       style="width:55px;text-align:center;padding:4px;border:2px solid var(--border);border-radius:6px;font-weight:700; ${!isGoAllowed ? 'opacity:0.5;background:#f1f5f9;' : ''}"></td>
             <td><input type="number" class="assign-return" data-id="${vehicle.id}" 
                        data-max="${availRet}" data-base-used="${usedRet}" data-capacity="${capacity}"
-                       value="${initRet}" min="0" max="${availRet}"
-                       style="width:55px;text-align:center;padding:4px;border:2px solid var(--border);border-radius:6px;font-weight:700;"></td>
+                       value="${initRet}" min="0" max="${availRet}" ${!isReturnAllowed ? 'disabled' : ''}
+                       style="width:55px;text-align:center;padding:4px;border:2px solid var(--border);border-radius:6px;font-weight:700; ${!isReturnAllowed ? 'opacity:0.5;background:#f1f5f9;' : ''}"></td>
             <td><input type="number" class="assign-adult" data-id="${vehicle.id}" value="${saved.adults || ''}" min="0" style="width:45px;text-align:center;padding:4px;border:1px solid var(--border);border-radius:6px;"></td>
             <td><input type="number" class="assign-child" data-id="${vehicle.id}" value="${saved.children || ''}" min="0" style="width:45px;text-align:center;padding:4px;border:1px solid var(--border);border-radius:6px;"></td>
             <td><input type="number" class="assign-infant" data-id="${vehicle.id}" value="${saved.infants || ''}" min="0" style="width:45px;text-align:center;padding:4px;border:1px solid var(--border);border-radius:6px;"></td>
@@ -2809,11 +2815,7 @@ async function openAssignVehicles(voucherNo) {
       </div>
       <div style="margin-top:12px;padding:10px;background:#fef3c7;border-radius:8px;border-right:4px solid var(--gold);font-size:11px;">
         <strong style="color:#92400e;">💡 Note:</strong>
-        <span style="color:#78350f;">
-          Max in "Go" = available seats (Go). Max in "Return" = available seats (Return).
-          Infants are recorded but <strong>do not consume seats</strong>.
-          Time conflicts > 1 hour will trigger a warning.
-        </span>
+        <span style="color:#78350f;">الحقول المظللة بالرمادي معطلة لأن السيارة غير مخصصة لهذا الاتجاه في خطة اليوم.</span>
       </div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
         <button class="btn btn-secondary" onclick="closeModal('assignVehiclesModal')">Cancel</button>
@@ -2822,22 +2824,19 @@ async function openAssignVehicles(voucherNo) {
     `;
     
     document.getElementById('assignVehiclesContent').innerHTML = html;
-    
     setTimeout(() => attachVehicleAssignmentEvents(), 50);
 }
   
 // ✅ دالة مساعدة لربط الأحداث في Assign Vehicles
 function attachVehicleAssignmentEvents() {
-  
   // ═══════════════════════════════════════════════════════════
-  // ✅ دالة حساب لحظي
+  // ✅ دالة حساب لحظي (تحديث أشرطة السعة)
   // ═══════════════════════════════════════════════════════════
-   function recalcRow(vehicleId) {
+  function recalcRow(vehicleId) {
     const goInput = document.querySelector(`#assignVehiclesModal .assign-go[data-id="${vehicleId}"]`);
     const returnInput = document.querySelector(`#assignVehiclesModal .assign-return[data-id="${vehicleId}"]`);
     const adultInput = document.querySelector(`#assignVehiclesModal .assign-adult[data-id="${vehicleId}"]`);
     const childInput = document.querySelector(`#assignVehiclesModal .assign-child[data-id="${vehicleId}"]`);
-    const infantInput = document.querySelector(`#assignVehiclesModal .assign-infant[data-id="${vehicleId}"]`);
     
     if (!goInput || !returnInput) return;
     
@@ -2845,14 +2844,11 @@ function attachVehicleAssignmentEvents() {
     const returnVal = parseInt(returnInput.value) || 0;
     const adultVal = parseInt(adultInput?.value) || 0;
     const childVal = parseInt(childInput?.value) || 0;
-    const infantVal = parseInt(infantInput?.value) || 0;
     
-    // ✅ هنا الخطأ: الكود يستخدم baseUsed (القيمة القديمة) ولا يتأثر بتغيير الحقول الأخرى
     const baseGo = parseInt(goInput.dataset.baseUsed) || 0;
     const baseRet = parseInt(returnInput.dataset.baseUsed) || 0;
     const capacity = parseInt(goInput.dataset.capacity) || 0;
     
-    // ✅ المستخدم الكلي = محجوز في فواتير أخرى + قيمة هذه الفاتورة
     const totalGoUsed = baseGo + goVal;
     const totalRetUsed = baseRet + returnVal;
     
@@ -2863,19 +2859,6 @@ function attachVehicleAssignmentEvents() {
     if (!row) return;
     
     const cells = row.querySelectorAll('td');
-    // cells[0] = vehicle name
-    // cells[1] = capacity
-    // cells[2] = go used
-    // cells[3] = return used
-    // cells[4] = go available
-    // cells[5] = return available
-    // cells[6] = go input
-    // cells[7] = return input
-    // cells[8] = adults input
-    // cells[9] = children input
-    // cells[10] = infants input
-    // cells[11] = checkbox
-    
     const goPct = capacity > 0 ? Math.min(100, Math.round(totalGoUsed / capacity * 100)) : 0;
     const retPct = capacity > 0 ? Math.min(100, Math.round(totalRetUsed / capacity * 100)) : 0;
     
@@ -2901,7 +2884,7 @@ function attachVehicleAssignmentEvents() {
     goInput.dataset.max = availGo;
     returnInput.dataset.max = availRet;
     
-    // ✅ فحص تجاوز السعة (Adults + Children فقط — بدون الرضع)
+    // فحص تجاوز السعة (Adults + Children فقط — بدون الرضع)
     const totalAC = adultVal + childVal;
     if (totalAC > capacity + 1) {
       row.style.background = '#fee2e2';
@@ -2921,7 +2904,7 @@ function attachVehicleAssignmentEvents() {
   }
   
   // ═══════════════════════════════════════════════════════════
-  // ✅ ربط حقول Go / Return (لها data-max)
+  // ✅ ربط حقول Go / Return (تحديث السعة فقط، دون فرض قيم)
   // ═══════════════════════════════════════════════════════════
   document.querySelectorAll('#assignVehiclesModal .assign-go, #assignVehiclesModal .assign-return').forEach(input => {
     const newInput = input.cloneNode(true);
@@ -2945,9 +2928,10 @@ function attachVehicleAssignmentEvents() {
   });
   
   // ═══════════════════════════════════════════════════════════
-  // ✅ ربط حقول Adults / Children / Infants (بدون data-max)
+  // ✅ ربط حقول Adults / Children / Infants
+  // (تم إزالة التحديث التلقائي لـ Go/Return، والاكتفاء بحساب السعة)
   // ═══════════════════════════════════════════════════════════
-    document.querySelectorAll('#assignVehiclesModal .assign-adult, #assignVehiclesModal .assign-child, #assignVehiclesModal .assign-infant').forEach(input => {
+  document.querySelectorAll('#assignVehiclesModal .assign-adult, #assignVehiclesModal .assign-child, #assignVehiclesModal .assign-infant').forEach(input => {
     const newInput = input.cloneNode(true);
     input.parentNode.replaceChild(newInput, input);
     const vehId = newInput.dataset.id;
@@ -2955,24 +2939,7 @@ function attachVehicleAssignmentEvents() {
     newInput.addEventListener('input', () => {
       const val = parseInt(newInput.value) || 0;
       if (val < 0) newInput.value = 0;
-      
-      // ✅ التعديل الجديد: تحديث حقول Go/Return تلقائياً بناءً على Adults + Children
-      const adultInput = document.querySelector(`#assignVehiclesModal .assign-adult[data-id="${vehId}"]`);
-      const childInput = document.querySelector(`#assignVehiclesModal .assign-child[data-id="${vehId}"]`);
-      
-      if (adultInput && childInput) {
-        const totalAC = (parseInt(adultInput.value) || 0) + (parseInt(childInput.value) || 0);
-        const goInput = document.querySelector(`#assignVehiclesModal .assign-go[data-id="${vehId}"]`);
-        const returnInput = document.querySelector(`#assignVehiclesModal .assign-return[data-id="${vehId}"]`);
-        
-        if (goInput && returnInput) {
-          // ✅ تحديث قيم Go و Return لتساوي مجموع Adults + Children
-          goInput.value = totalAC;
-          returnInput.value = totalAC;
-        }
-      }
-      
-      recalcRow(vehId);
+      recalcRow(vehId); // فقط تحديث السعة، لا تغيير في Go/Return
     });
     newInput.addEventListener('change', () => recalcRow(vehId));
   });
@@ -2993,12 +2960,15 @@ function attachVehicleAssignmentEvents() {
         `#assignVehiclesModal .assign-infant[data-id="${vehicleId}"]`
       );
       inputs.forEach(inp => {
+        // لا تفعل شيئاً إذا كان الحقل معطلاً مسبقاً (اتجاه غير متاح)
+        if (inp.hasAttribute('data-locked')) return;
         inp.disabled = !e.target.checked;
         inp.style.opacity = e.target.checked ? '1' : '0.5';
       });
     });
   });
 }
+  
 async function saveVehicleAssignment(forceSave = false) {
   const saveBtn = document.querySelector('#assignVehiclesModal .btn-primary');
   if (saveBtn?.disabled) return;
@@ -3274,9 +3244,16 @@ async function openAssignBoats(voucherNo) {
         const pct = capacity > 0 ? Math.min(100, Math.round(totalUsed / capacity * 100)) : 0;
         
         // القيمة الأولية: (بالغين + أطفال + رضع) لأنهم يشغلون أماكن في المركب
-        const initTotal = saved.adults || saved.children || saved.infants 
-            ? (parseInt(saved.adults)||0) + (parseInt(saved.children)||0) + (parseInt(saved.infants)||0)
-            : Math.min(adults + children + infants, available);
+       // ✅ التعديل الجديد: إذا لم تكن هناك بيانات محفوظة، املأ من الفاتورة الأصلية
+const savedAdults = saved.adults !== undefined ? saved.adults : (saved.boatId ? saved.adults : adults);
+const savedChildren = saved.children !== undefined ? saved.children : (saved.boatId ? saved.children : children);
+const savedInfants = saved.infants !== undefined ? saved.infants : (saved.boatId ? saved.infants : infants);
+
+// إذا لم يكن هناك أي بيانات محفوظة (سواء adults أو children أو infants)، نستخدم قيم الفاتورة
+const hasSavedData = saved.boatId && (saved.adults !== undefined || saved.children !== undefined || saved.infants !== undefined);
+const finalAdults = hasSavedData ? (parseInt(saved.adults) || 0) : adults;
+const finalChildren = hasSavedData ? (parseInt(saved.children) || 0) : children;
+const finalInfants = hasSavedData ? (parseInt(saved.infants) || 0) : infants;
 
         html += `
           <tr>
@@ -3291,11 +3268,12 @@ async function openAssignBoats(voucherNo) {
             <td style="text-align:center;font-weight:700;color:${available === 0 ? 'red' : 'green'}">
               <span style="background:${available === 0 ? '#fee2e2' : '#dcfce7'};padding:3px 8px;border-radius:6px;">${available}</span>
             </td>
-            <td><input type="number" class="assign-boat-adult" data-id="${boat.id}" data-capacity="${capacity}" data-base-used="${totalUsed}" value="${saved.adults || ''}" min="0" style="width:50px;text-align:center;padding:4px;border:1px solid var(--border);border-radius:6px;"></td>
-            <td><input type="number" class="assign-boat-child" data-id="${boat.id}" data-capacity="${capacity}" data-base-used="${totalUsed}" value="${saved.children || ''}" min="0" style="width:50px;text-align:center;padding:4px;border:1px solid var(--border);border-radius:6px;"></td>
-            <td><input type="number" class="assign-boat-infant" data-id="${boat.id}" data-capacity="${capacity}" data-base-used="${totalUsed}" value="${saved.infants || ''}" min="0" style="width:50px;text-align:center;padding:4px;border:1px solid var(--border);border-radius:6px;"></td>
-            <td><input type="checkbox" class="assign-select" data-id="${boat.id}" ${(saved.adults || saved.children || saved.infants) ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer;"></td>
+            <td><input type="number" class="assign-boat-adult" data-id="${boat.id}" data-capacity="${capacity}" data-base-used="${totalUsed}" value="${hasSavedData ? (saved.adults || '') : finalAdults}" min="0" style="width:50px;text-align:center;padding:4px;border:1px solid var(--border);border-radius:6px;"></td>
+            <td><input type="number" class="assign-boat-child" data-id="${boat.id}" data-capacity="${capacity}" data-base-used="${totalUsed}" value="${hasSavedData ? (saved.children || '') : finalChildren}" min="0" style="width:50px;text-align:center;padding:4px;border:1px solid var(--border);border-radius:6px;"></td>
+            <td><input type="number" class="assign-boat-infant" data-id="${boat.id}" data-capacity="${capacity}" data-base-used="${totalUsed}" value="${hasSavedData ? (saved.infants || '') : finalInfants}" min="0" style="width:50px;text-align:center;padding:4px;border:1px solid var(--border);border-radius:6px;"></td>
+            <td><input type="checkbox" class="assign-select" data-id="${boat.id}" ${(saved.adults || saved.children || saved.infants || (!hasSavedData && finalAdults > 0)) ? 'checked' : ''} style="width:18px;height:18px;cursor:pointer;"></td>
           </tr>
+         
         `;
     }
 
