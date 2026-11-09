@@ -449,7 +449,132 @@ function calculatePassengerCount(invoice) {
   const infants = parseInt(invoice.trpl) || 0;
   return { adults, children, infants, total: adults + children + infants };
 }
-
+// ═══════════════════════════════════════════════════════════════
+// 👨‍🏫 INSTRUCTORS COST REPORT — المرحلة الثانية
+// ═══════════════════════════════════════════════════════════════
+async function loadInstructorsCostReport(fromDate, toDate) {
+  const container = document.getElementById('reportContainer');
+  const summaryDiv = document.getElementById('summaryContainer');
+  
+  try {
+    const result = await gas('getInstructorsCostReport', {
+      fromDate: fromDate,
+      toDate: toDate,
+      centerName: currentUser?.centerName
+    });
+    
+    if (!result || !result.success) {
+      throw new Error(result?.message || 'فشل تحميل تقرير المدربين');
+    }
+    
+    const { instructors, summary, period } = result;
+    
+    // ✅ عرض الملخص
+    summaryDiv.style.display = 'block';
+    summaryDiv.innerHTML = `
+      <div class="summary-title">📊 ملخص تكاليف المدربين</div>
+      <div class="summary-grid">
+        <div class="summary-item">
+          <div class="label">👨‍🏫 عدد المدربين</div>
+          <div class="value">${summary.totalInstructors}</div>
+        </div>
+        <div class="summary-item" style="background: var(--navy); color: white;">
+          <div class="label" style="color: var(--gold);">💰 الإجمالي الكلي</div>
+          <div class="value" style="color: var(--gold);">${summary.totalCost.toFixed(2)} LE</div>
+        </div>
+        <div class="summary-item">
+          <div class="label">📅 الفترة</div>
+          <div class="value" style="font-size: 14px;">${period.from} ← ${period.to}</div>
+        </div>
+      </div>
+    `;
+    
+    // ✅ عرض الجدول
+    if (instructors.length === 0) {
+      container.innerHTML = '<div class="loader">🚫 لا توجد بيانات مدربين في هذه الفترة</div>';
+      return;
+    }
+    
+    let html = `<div style="padding: 12px 16px; background: var(--navy); color: var(--gold); font-weight: 800; font-size: 14px;">
+      👨‍🏫 تكاليف المدربين (${instructors.length} مدرب)
+    </div>`;
+    
+    html += `<table><thead><tr>
+      <th>ID</th>
+      <th>Name</th>
+      <th>Role</th>
+      <th>Type</th>
+      <th>Days</th>
+      <th>Base Salary</th>
+      <th>Mgmt Salary</th>
+      <th>Daily Rate</th>
+      <th>Exec Comm</th>
+      <th>UpSell Comm</th>
+      <th>Total Comm</th>
+      <th>Cuts</th>
+      <th>Advances</th>
+      <th>Total</th>
+      <th>Net</th>
+    </tr></thead><tbody>`;
+    
+    let totalBase = 0, totalMgmt = 0, totalDaily = 0;
+    let totalExec = 0, totalUpSell = 0, totalCutsSum = 0;
+    let totalAdvancesSum = 0, totalGrossSum = 0, totalNetSum = 0;
+    
+    for (const inst of instructors) {
+      totalBase += inst.baseSalaryProrated;
+      totalMgmt += inst.managementSalaryProrated;
+      totalDaily += inst.dailyRateTotal;
+      totalExec += inst.execCommission;
+      totalUpSell += inst.upSellCommission;
+      totalCutsSum += inst.cuts;
+      totalAdvancesSum += inst.advances;
+      totalGrossSum += inst.total;
+      totalNetSum += inst.net;
+      
+      html += `<tr>
+        <td>${escapeHtml(inst.id)}</td>
+        <td><strong>${escapeHtml(inst.name)}</strong></td>
+        <td>${escapeHtml(inst.role)}</td>
+        <td>${escapeHtml(inst.employmentType)}</td>
+        <td style="text-align:center; font-weight:700;">${inst.workingDays}</td>
+        <td>${inst.baseSalaryProrated > 0 ? inst.baseSalaryProrated.toFixed(2) : '—'}</td>
+        <td>${inst.managementSalaryProrated > 0 ? inst.managementSalaryProrated.toFixed(2) : '—'}</td>
+        <td>${inst.dailyRateTotal > 0 ? inst.dailyRateTotal.toFixed(2) : '—'}</td>
+        <td>${inst.execCommission > 0 ? inst.execCommission.toFixed(2) : '—'}</td>
+        <td>${inst.upSellCommission > 0 ? inst.upSellCommission.toFixed(2) : '—'}</td>
+        <td><strong style="color:var(--success);">${inst.totalCommission.toFixed(2)}</strong></td>
+        <td style="color:var(--danger);">${inst.cuts > 0 ? inst.cuts.toFixed(2) : '—'}</td>
+        <td style="color:var(--danger);">${inst.advances > 0 ? inst.advances.toFixed(2) : '—'}</td>
+        <td><strong>${inst.total.toFixed(2)}</strong></td>
+        <td style="background: #fef3c7;"><strong style="color:var(--primary);">${inst.net.toFixed(2)}</strong></td>
+      </tr>`;
+    }
+    
+    html += `<tr style="background: var(--gray-100); font-weight: bold; border-top: 2px solid var(--border);">
+      <td colspan="4">TOTAL</td>
+      <td></td>
+      <td>${totalBase.toFixed(2)}</td>
+      <td>${totalMgmt.toFixed(2)}</td>
+      <td>${totalDaily.toFixed(2)}</td>
+      <td>${totalExec.toFixed(2)}</td>
+      <td>${totalUpSell.toFixed(2)}</td>
+      <td>${(totalExec + totalUpSell).toFixed(2)}</td>
+      <td>${totalCutsSum.toFixed(2)}</td>
+      <td>${totalAdvancesSum.toFixed(2)}</td>
+      <td>${totalGrossSum.toFixed(2)}</td>
+      <td style="background: var(--navy); color: var(--gold);">${totalNetSum.toFixed(2)}</td>
+    </tr>`;
+    
+    html += '</tbody></table>';
+    container.innerHTML = html;
+    
+  } catch(e) {
+    console.error('❌ loadInstructorsCostReport error:', e);
+    container.innerHTML = `<div class="loader" style="color:var(--danger);">❌ خطأ: ${escapeHtml(e.message)}</div>`;
+    summaryDiv.style.display = 'none';
+  }
+}
 // ============================================================
 // VEHICLES REPORT
 // ============================================================
@@ -901,6 +1026,11 @@ async function loadReport() {
       reportData = await generateInstructorsReport(fromDate, toDate, centerName);
       html = renderInstructorsTable(reportData);
       document.getElementById('vehicleFilterGroup').style.display = 'none';
+    }
+      else if (currentTab === 'instructorsCost') {
+      await loadInstructorsCostReport(fromDate, toDate);
+      document.getElementById('vehicleFilterGroup').style.display = 'none';
+      return;
     }
     else if (currentTab === 'customers') {
       reportData = await generateCustomersReport(allInvoices, centerName);
