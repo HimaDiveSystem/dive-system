@@ -683,27 +683,132 @@ async function loadReport() {
   let html = '';
   
   try {
+    // ✅ التبويب الجديد (Fleet Cost)
     if (currentTab === 'fleet') {
       await loadFleetCostReport(fromDate, toDate);
       return;
     }
 
+    // ✅ التبويب الجديد (Instructors Cost)
     if (currentTab === 'instructorsCost') {
       await loadInstructorsCostReport(fromDate, toDate);
       document.getElementById('vehicleFilterGroup').style.display = 'none';
       return;
     }
 
-    // ... باقي التبويبات القديمة ...
-    // (يمكنك تركها كما هي، لقد حذفتها للاختصار)
-    
+    // ✅ التبويبات القديمة
+    if (currentTab === 'vehicles') {
+      await loadVehiclesFilter();
+      reportData = await generateVehiclesReport(allInvoices, fromDate, toDate, vehicles, centerName);
+      if (vehicleFilter) reportData = reportData.filter(r => r.vehicleId === vehicleFilter);
+      html = renderVehiclesTable(reportData);
+      document.getElementById('vehicleFilterGroup').style.display = 'flex';
+    }
+    else if (currentTab === 'logistics') {
+      await loadVehiclesFilter();
+      reportData = await generateLogisticsReport(fromDate, toDate, vehicles, centerName);
+      if (vehicleFilter) reportData = reportData.filter(r => r.vehicleId === vehicleFilter);
+      html = renderLogisticsTable(reportData);
+      document.getElementById('vehicleFilterGroup').style.display = 'flex';
+    }
+    else if (currentTab === 'cost') {
+      await loadVehiclesFilter();
+      reportData = await generateDailyCostReport(fromDate, toDate, centerName);
+      if (vehicleFilter) reportData = reportData.filter(r => r.vehicleId === vehicleFilter);
+      html = renderDailyCostTable(reportData);
+      document.getElementById('vehicleFilterGroup').style.display = 'flex';
+    }
+    else if (currentTab === 'boats') {
+      reportData = await generateBoatsReport(fromDate, toDate, centerName);
+      html = renderBoatsTable(reportData);
+      document.getElementById('vehicleFilterGroup').style.display = 'none';
+    }
+    else if (currentTab === 'instructors') {
+      reportData = await generateInstructorsReport(fromDate, toDate, centerName);
+      html = renderInstructorsTable(reportData);
+      document.getElementById('vehicleFilterGroup').style.display = 'none';
+    }
+    else if (currentTab === 'customers') {
+      reportData = await generateCustomersReport(allInvoices, centerName);
+      html = renderCustomersTable(reportData);
+      document.getElementById('vehicleFilterGroup').style.display = 'none';
+    }
+    container.innerHTML = html;
+    if (reportData && reportData.length > 0) {
+      updateSummary(reportData, currentTab);
+    } else {
+      document.getElementById('summaryContainer').style.display = 'none';
+    }
   } catch(e) {
     console.error('loadReport error:', e);
     container.innerHTML = `<div class="loader">❌ Error: ${escapeHtml(e.message)}</div>`;
     document.getElementById('summaryContainer').style.display = 'none';
   }
 }
+// ============================================================
+// 📎 تصدير البيانات إلى Excel (CSV)
+// ============================================================
+function exportToExcel() {
+  try {
+    const container = document.getElementById('reportContainer');
+    const table = container.querySelector('table');
+    
+    if (!table) {
+      showToast('⚠️ لا توجد بيانات لتصديرها. يرجى الضغط على "Show Report" أولاً.', 'error');
+      return;
+    }
 
+    let csv = [];
+    const rows = table.querySelectorAll('tr');
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const cols = row.querySelectorAll('td, th');
+      const rowData = [];
+      
+      for (let j = 0; j < cols.length; j++) {
+        // تنظيف النص من أي HTML أو فواصل أسطر
+        let text = cols[j].innerText.replace(/(\r\n|\n|\r)/gm, " ").trim();
+        // وضع النص بين علامات تنصيص لتفادي مشاكل الفواصل
+        rowData.push('"' + text.replace(/"/g, '""') + '"');
+      }
+      
+      // إذا كان الصف يحتوي على بيانات وليس فارغاً
+      if (rowData.length > 0 && rowData.join('').trim() !== '""""""""""""""""""""""""""""""""""""') {
+        csv.push(rowData.join(','));
+      }
+    }
+
+    if (csv.length === 0) {
+      showToast('⚠️ الجدول فارغ.', 'error');
+      return;
+    }
+
+    // إضافة BOM لضمان قراءة اللغة العربية بشكل صحيح في Excel
+    const csvString = '\uFEFF' + csv.join('\n');
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    
+    // إنشاء رابط التحميل
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    
+    // اسم الملف مع التاريخ
+    const dateStr = new Date().toISOString().split('T')[0];
+    link.setAttribute("download", `Report_${currentTab}_${dateStr}.csv`);
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    showToast('✅ تم تصدير الملف بنجاح', 'success');
+
+  } catch (e) {
+    console.error('Export Error:', e);
+    showToast('❌ حدث خطأ أثناء التصدير: ' + e.message, 'error');
+  }
+}
 // ============================================================
 // INITIALIZATION
 // ============================================================
