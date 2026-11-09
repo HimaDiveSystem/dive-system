@@ -121,7 +121,33 @@
     .modal-icon{font-size:44px;margin-bottom:10px;}
     .modal-msg{color:var(--navy);font-size:15px;font-weight:700;margin-bottom:18px;white-space:pre-wrap;line-height:1.6;}
     .modal-btns{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;}
-    .sig-canvas{border:2px solid var(--border);border-radius:11px;background:white;width:100%;height:180px;cursor:crosshair;touch-action:none;margin:12px 0;}
+    .sig-canvas{
+  border:2px solid var(--border);
+  border-radius:14px;
+  background:white;
+  width:100%;
+  height:280px;
+  cursor:crosshair;
+  touch-action:none;
+  margin:14px 0;
+  box-shadow: inset 0 2px 8px rgba(0,0,0,.04);
+  transition: border-color .2s, box-shadow .2s;
+}
+.sig-canvas:active{
+  border-color: var(--gold);
+  box-shadow: inset 0 2px 8px rgba(0,0,0,.06), 0 0 0 3px rgba(245,200,66,.18);
+}
+#signatureModal .modal-box{
+  max-width: 680px;
+  padding: 32px;
+  animation: sigPop .3s ease;
+}
+@keyframes sigPop{
+  from{ transform:scale(.92); opacity:0; }
+  to{ transform:scale(1); opacity:1; }
+}
+.modal-icon{ font-size:54px; margin-bottom:14px; }
+.sig-actions .btn{ padding:12px 26px; font-size:13px; }
     .sig-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;}
     .pdf-ov{display:none;position:fixed;inset:0;background:rgba(10,22,40,.88);z-index:99999;align-items:center;justify-content:center;flex-direction:column;gap:18px;backdrop-filter:blur(4px);}
     .pdf-ov.show{display:flex;}
@@ -201,7 +227,7 @@
   <div class="modal-box">
     <div class="modal-icon">✍️</div>
     <div class="modal-msg">Guest Signature</div>
-    <canvas id="signatureCanvas" class="sig-canvas" width="440" height="180"></canvas>
+    <canvas id="signatureCanvas" class="sig-canvas" width="880" height="280"></canvas>
     <div class="sig-actions">
       <button class="btn btn-new" onclick="confirmSignature()">✅ Confirm</button>
       <button class="btn btn-clear" onclick="clearSigCanvas()">🔄 Clear</button>
@@ -303,42 +329,23 @@ function setCachedList(key, list) {
 // ============================================
 // 1. Core functions (gas, gasWithSig)
 // ============================================
+async function postToGAS(action, data = {}) {
+  const response = await fetch(CONFIG.GAS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ ...data, action: action }),
+    redirect: 'follow'
+  });
+  if (!response.ok) throw new Error('HTTP ' + response.status);
+  return await response.json();
+}
+
 function gas(action, params = {}) {
-  const u = new URL(CONFIG.GAS_URL);
-  u.searchParams.set('action', action);
-  
-  // إضافة المعاملات بشكل آمن
-  Object.entries(params).forEach(([k, v]) => {
-    if (v === undefined || v === null || v === '') return;
-    if (k === 'signatureData' || k === 'sigPart1' || k === 'sigPart2') return;
-    
-    if (typeof v === 'object') {
-      u.searchParams.set(k, JSON.stringify(v));
-    } else {
-      u.searchParams.set(k, String(v));
-    }
-  });
+  return postToGAS(action, params);
+}
 
-  // إضافة طابع زمني لكسر الكاش (مهم جداً لـ Google Apps Script)
-  u.searchParams.set('_t', Date.now());
-
-  return fetch(u.toString(), { 
-    method: 'GET', 
-    redirect: 'follow',
-    cache: 'no-store'
-  })
-  .then(r => {
-    if (!r.ok) {
-      return r.text().then(text => {
-        throw new Error(`Server returned ${r.status}: ${text.substring(0, 100)}`);
-      });
-    }
-    return r.json();
-  })
-  .catch(err => {
-    console.error(`❌ ${action} failed:`, err);
-    throw err;
-  });
+async function gasWithSig(action, params) {
+  return postToGAS(action, params);
 }
 function sanitizeText(text) {
     if (!text) return '';
@@ -365,51 +372,7 @@ function safeDisplay(text) {
     return sanitizeText(text);
 }
 
-async function gasWithSig(action, params) {
-  const sigData = params.signatureData || '';
-  const baseParams = { ...params };
-  delete baseParams.signatureData;
 
-  // ✅ إذا لم يوجد توقيع، استخدم GET العادي
-  if (!sigData || !sigData.startsWith('data:image')) {
-    return gas(action, baseParams);
-  }
-
-  // ✅ إذا وجد توقيع، استخدم POST لتجاوز حد طول الرابط
-  try {
-    const formData = new URLSearchParams();
-    formData.append('action', action);
-    
-    Object.entries(baseParams).forEach(([k, v]) => {
-      if (v !== undefined && v !== null && v !== '') {
-        if (typeof v === 'object') {
-          formData.append(k, JSON.stringify(v));
-        } else {
-          formData.append(k, String(v));
-        }
-      }
-    });
-    
-    // ✅ إضافة التوقيع إلى body (وليس URL)
-    formData.append('signatureData', sigData);
-
-    const response = await fetch(CONFIG.GAS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: formData.toString(),
-      redirect: 'follow'
-    });
-
-    if (!response.ok) {
-      throw new Error(`Server returned ${response.status}`);
-    }
-
-    return await response.json();
-  } catch (err) {
-    console.error('❌ gasWithSig POST failed:', err);
-    throw err;
-  }
-}
 // ============================================
 // 2. Utility Functions
 // ============================================
@@ -2020,20 +1983,31 @@ function confirmClock() {
 // ============================================
 function openSigModal() {
   document.getElementById('signatureModal').classList.add('open');
-  sigCanvas = document.getElementById('signatureCanvas');
+  
+  // إعادة إنشاء الـ canvas لفصل أي مستمعات قديمة
+  const oldCanvas = document.getElementById('signatureCanvas');
+  const newCanvas = oldCanvas.cloneNode(true);
+  oldCanvas.parentNode.replaceChild(newCanvas, oldCanvas);
+  
+  sigCanvas = newCanvas;
   sigCtx = sigCanvas.getContext('2d');
-  sigCtx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
+  
+  sigCtx.fillStyle = '#ffffff';
+  sigCtx.fillRect(0, 0, sigCanvas.width, sigCanvas.height);
   sigCtx.strokeStyle = '#0f1f3d';
-  sigCtx.lineWidth = 2.5;
+  sigCtx.lineWidth = 3.4;
   sigCtx.lineCap = 'round';
   sigCtx.lineJoin = 'round';
+  sigCtx.imageSmoothingEnabled = true;
+  sigCtx.imageSmoothingQuality = 'high';
+  
   sigCanvas.addEventListener('touchstart', tStart, { passive: false });
   sigCanvas.addEventListener('touchmove', tMove, { passive: false });
-  sigCanvas.addEventListener('touchend', () => isDrawing = false);
+  sigCanvas.addEventListener('touchend', () => { isDrawing = false; });
   sigCanvas.addEventListener('mousedown', mDown);
   sigCanvas.addEventListener('mousemove', mMove);
-  sigCanvas.addEventListener('mouseup', () => isDrawing = false);
-  sigCanvas.addEventListener('mouseleave', () => isDrawing = false);
+  sigCanvas.addEventListener('mouseup', () => { isDrawing = false; });
+  sigCanvas.addEventListener('mouseleave', () => { isDrawing = false; });
 }
 
 function closeSigModal() {
@@ -2064,21 +2038,29 @@ function confirmSignature() {
 
 function getPos(c, e) {
   const r = c.getBoundingClientRect();
-  return { x: (e.clientX - r.left) * (c.width / r.width), y: (e.clientY - r.top) * (c.height / r.height) };
+  return {
+    x: (e.clientX - r.left) * (c.width / r.width),
+    y: (e.clientY - r.top) * (c.height / r.height)
+  };
 }
 
 function mDown(e) {
   isDrawing = true;
   const p = getPos(sigCanvas, e);
   lastX = p.x; lastY = p.y;
+  sigCtx.beginPath();
+  sigCtx.arc(p.x, p.y, sigCtx.lineWidth / 2, 0, Math.PI * 2);
+  sigCtx.fill();
 }
 
 function mMove(e) {
   if (!isDrawing) return;
   const p = getPos(sigCanvas, e);
+  const midX = (lastX + p.x) / 2;
+  const midY = (lastY + p.y) / 2;
   sigCtx.beginPath();
   sigCtx.moveTo(lastX, lastY);
-  sigCtx.lineTo(p.x, p.y);
+  sigCtx.quadraticCurveTo(lastX, lastY, midX, midY);
   sigCtx.stroke();
   lastX = p.x; lastY = p.y;
 }
@@ -2089,6 +2071,9 @@ function tStart(e) {
   const p = getPos(sigCanvas, t);
   isDrawing = true;
   lastX = p.x; lastY = p.y;
+  sigCtx.beginPath();
+  sigCtx.arc(p.x, p.y, sigCtx.lineWidth / 2, 0, Math.PI * 2);
+  sigCtx.fill();
 }
 
 function tMove(e) {
@@ -2096,9 +2081,11 @@ function tMove(e) {
   if (!isDrawing) return;
   const t = e.touches[0];
   const p = getPos(sigCanvas, t);
+  const midX = (lastX + p.x) / 2;
+  const midY = (lastY + p.y) / 2;
   sigCtx.beginPath();
   sigCtx.moveTo(lastX, lastY);
-  sigCtx.lineTo(p.x, p.y);
+  sigCtx.quadraticCurveTo(lastX, lastY, midX, midY);
   sigCtx.stroke();
   lastX = p.x; lastY = p.y;
 }
