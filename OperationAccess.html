@@ -4828,10 +4828,13 @@ async function saveAllVehicleTripRows() {
         const tripName = row.querySelector('.trip-select')?.value || '';
         const goCount = parseInt(row.querySelector('.go-count')?.value) || 0;
         const returnCount = parseInt(row.querySelector('.return-count')?.value) || 0;
-        if (vehicleId && tripName && (goCount > 0 || returnCount > 0)) {
+        
+        // ✅ التأكد من أن السيارة مختارة ولها رحلة
+        if (vehicleId && tripName) {
+            // ✅ إرسال البيانات حتى لو كانت الأرقام 0 (لأن 0 يعني اتجاه غير مفعل)
             records.push({ vehicleId, tripName, goCount, returnCount });
             if (!selectedVehicleIds.includes(vehicleId)) selectedVehicleIds.push(vehicleId);
-            vehicleTripMapNew[vehicleId] = tripName;  // ✅ حفظ الرحلة لكل سيارة
+            vehicleTripMapNew[vehicleId] = tripName;
         }
     });
 
@@ -4839,38 +4842,39 @@ async function saveAllVehicleTripRows() {
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '⏳ جاري الحفظ...'; }
 
     try {
+        // 1. حفظ سجلات التشغيل
         const result = await gas('saveVehicleTripRecords', { 
             date: currentDate, 
             records: JSON.stringify(records), 
             centerName: currentUser?.centerName 
         });
         
-        // داخل saveAllVehicleTripRows() - بعد result?.success
-if (result?.success) {
-    selectedVehicles = selectedVehicleIds;
-    if (!currentAssignments) currentAssignments = {};
-    currentAssignments.vehicleTripMap = vehicleTripMapNew;
-    currentAssignments.vehicles = selectedVehicles;
-    // ✅ تحديث الجلسة بعد الحفظ
-    if (currentUser) {
-        currentUser.lastActivity = new Date().toISOString();
-        Session.save(currentUser);
-    }
-    // ✅ ✅ ✅ إضافة: تحديث currentAssignments في النطاق العام
-    window.currentAssignments = currentAssignments;
-    
-    // ✅ حفظ في DailyAssignments
-    await gas('saveDailyAssignments', {
-        date: currentDate,
-        data: JSON.stringify(currentAssignments),
-        centerName: currentUser?.centerName
-    });
-    
-    updateSelectionBadges();
-    await loadAndPopulateAssignments(currentDate);
-    showToast(`✅ تم حفظ ${records.length} سيارة`, 'success');
-    closeModal('vehiclesModal');
-} else showToast('❌ فشل الحفظ: ' + (result?.message || ''), 'error');
+        if (result?.success) {
+            selectedVehicles = selectedVehicleIds;
+            if (!currentAssignments) currentAssignments = {};
+            currentAssignments.vehicleTripMap = vehicleTripMapNew;
+            currentAssignments.vehicles = selectedVehicles;
+            
+            if (currentUser) {
+                currentUser.lastActivity = new Date().toISOString();
+                Session.save(currentUser);
+            }
+            window.currentAssignments = currentAssignments;
+            
+            // 2. حفظ التعيينات اليومية
+            await gas('saveDailyAssignments', {
+                date: currentDate,
+                data: JSON.stringify(currentAssignments),
+                centerName: currentUser?.centerName
+            });
+            
+            updateSelectionBadges();
+            await loadAndPopulateAssignments(currentDate);
+            showToast(`✅ تم حفظ ${records.length} سيارة`, 'success');
+            closeModal('vehiclesModal');
+        } else {
+            showToast('❌ فشل الحفظ: ' + (result?.message || ''), 'error');
+        }
     } catch(e) { showToast('خطأ: ' + e.message, 'error'); }
     finally { if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '✅ حفظ الكل'; } }
 }
