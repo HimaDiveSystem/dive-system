@@ -1354,29 +1354,63 @@ async function loadTripsForFilter() {
 async function loadFleetCostReport(fromDate, toDate) {
   const container = document.getElementById('reportContainer');
   const summaryDiv = document.getElementById('summaryContainer');
+  
   try {
-    const result = await gas('calculateFleetCostReport', {
-      fromDate: fromDate,
-      toDate: toDate
-    });
-    if (!result || !result.success) {
-      throw new Error(result?.error || 'فشل تحميل تقرير التكاليف');
+    // ✅ 1. جلب البيانات بالتوازي (Fleet + Instructors) لتسريع الأداء
+    const [fleetResult, instructorsResult] = await Promise.all([
+      gas('calculateFleetCostReport', { fromDate: fromDate, toDate: toDate }),
+      gas('getInstructorsCostReport', { fromDate: fromDate, toDate: toDate, centerName: currentUser?.centerName })
+    ]);
+
+    if (!fleetResult || !fleetResult.success) {
+      throw new Error(fleetResult?.error || 'فشل تحميل تقرير التكاليف');
     }
     
-    const { passengerVehicles, logisticsVehicles, boats, summary, period } = result;
+    // ✅ 2. استخراج القيم
+    const { passengerVehicles, logisticsVehicles, boats, summary, period } = fleetResult;
     
+    let totalInstructorsCost = 0;
+    let instructorsCount = 0;
+    if (instructorsResult && instructorsResult.success) {
+      totalInstructorsCost = instructorsResult.summary?.totalCost || 0;
+      instructorsCount = instructorsResult.summary?.totalInstructors || 0;
+    }
+    
+    const grandTotalWithInstructors = summary.grandTotal + totalInstructorsCost;
+    
+    // ✅ 3. عرض الملخص (مع إضافة المدربين والإجمالي الشامل)
     summaryDiv.style.display = 'block';
     summaryDiv.innerHTML = `
-      <div class="summary-title">📊 ملخص التكاليف</div>
+      <div class="summary-title">📊 ملخص التكاليف الشامل</div>
       <div class="summary-grid">
-        <div class="summary-item"><div class="label">🚗 سيارات الركاب</div><div class="value">${summary.totalPassengerVehiclesCost.toFixed(2)} LE</div></div>
-        <div class="summary-item"><div class="label">🚛 سيارات اللوجستيات</div><div class="value">${summary.totalLogisticsVehiclesCost.toFixed(2)} LE</div></div>
-        <div class="summary-item"><div class="label">⛵ المراكب</div><div class="value">${summary.totalBoatsCost.toFixed(2)} LE</div></div>
-        <div class="summary-item" style="background: var(--navy); color: white;"><div class="label" style="color: var(--gold);">💰 الإجمالي الكلي</div><div class="value" style="color: var(--gold);">${summary.grandTotal.toFixed(2)} LE</div></div>
-        <div class="summary-item"><div class="label">📅 الفترة</div><div class="value" style="font-size: 14px;">${period.from} ← ${period.to}</div></div>
+        <div class="summary-item">
+          <div class="label">🚗 سيارات الركاب</div>
+          <div class="value">${summary.totalPassengerVehiclesCost.toFixed(2)} LE</div>
+        </div>
+        <div class="summary-item">
+          <div class="label">🚛 سيارات اللوجستيات</div>
+          <div class="value">${summary.totalLogisticsVehiclesCost.toFixed(2)} LE</div>
+        </div>
+        <div class="summary-item">
+          <div class="label">⛵ المراكب</div>
+          <div class="value">${summary.totalBoatsCost.toFixed(2)} LE</div>
+        </div>
+        <div class="summary-item" style="background: #e0f2fe; border: 1px solid #bae6fd;">
+          <div class="label" style="color: #0369a1;">👨‍🏫 المدربين (${instructorsCount})</div>
+          <div class="value" style="color: #0369a1;">${totalInstructorsCost.toFixed(2)} LE</div>
+        </div>
+        <div class="summary-item" style="background: var(--navy); color: white;">
+          <div class="label" style="color: var(--gold);">💰 الإجمالي الكلي الشامل</div>
+          <div class="value" style="color: var(--gold);">${grandTotalWithInstructors.toFixed(2)} LE</div>
+        </div>
+        <div class="summary-item">
+          <div class="label">📅 الفترة</div>
+          <div class="value" style="font-size: 14px;">${period.from} ← ${period.to}</div>
+        </div>
       </div>
     `;
     
+    // ✅ 4. رسم جداول السيارات والمراكب (كما كانت)
     let html = '';
     
     // 1. سيارات الركاب
@@ -1446,7 +1480,7 @@ async function loadFleetCostReport(fromDate, toDate) {
     }
     
     if (passengerVehicles.length === 0 && logisticsVehicles.length === 0 && boats.length === 0) {
-      html = '<div class="loader">🚫 لا توجد تكاليف مسجلة في هذه الفترة</div>';
+      html = '<div class="loader">🚫 لا توجد تكاليف سيارات أو مراكب مسجلة في هذه الفترة</div>';
     }
     
     container.innerHTML = html;
