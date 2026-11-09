@@ -485,7 +485,7 @@ async function loadFleetCostReport(fromDate, toDate) {
       </tr></tbody></table>`;
     }
     
-    // 2. سيارات اللوجستيات
+       // 2. سيارات اللوجستيات
     if (logisticsVehicles.length > 0) {
       html += `<div style="padding: 12px 16px; background: var(--navy); color: var(--gold); font-weight: 800; font-size: 14px; margin-top: 16px;">🚛 سيارات اللوجستيات (${logisticsVehicles.length} سجل)</div>`;
       html += `<table><thead><tr>
@@ -505,8 +505,7 @@ async function loadFleetCostReport(fromDate, toDate) {
         <td colspan="5" style="text-align: center;">إجمالي سيارات اللوجستيات</td>
         <td>${summary.totalLogisticsVehiclesCost.toFixed(2)}</td>
       </tr></tbody></table>`;
-    }
-    
+    }    
     // 3. المراكب
     if (boats.length > 0) {
       html += `<div style="padding: 12px 16px; background: var(--navy); color: var(--gold); font-weight: 800; font-size: 14px; margin-top: 16px;">⛵ المراكب (${boats.length} سجل)</div>`;
@@ -780,6 +779,7 @@ function filterByVehicle() { loadReport(); }
 async function generateVehiclesReport(invoices, fromDate, toDate, vehicles, centerName) {
   const tripRecords = await gas('getVehicleTripRecords', { fromDate, toDate, centerName });
   const records = tripRecords?.data || (Array.isArray(tripRecords) ? tripRecords : []);
+  
   const vehiclesMap = new Map();
   
   for (const record of records) {
@@ -788,65 +788,56 @@ async function generateVehiclesReport(invoices, fromDate, toDate, vehicles, cent
     const vehicleId = record.VehicleID || record.vehicleId || '';
     const goCount = parseInt(record.GoCount || record.goCount || 0);
     const returnCount = parseInt(record.ReturnCount || record.returnCount || 0);
+    
+    // ✅ نقرأ الأعداد مباشرة من السجل (لأننا أصلحنا الحفظ)
+    const adults = parseInt(record.Adults || record.adults || 0);
+    const children = parseInt(record.Children || record.children || 0);
+    const infants = parseInt(record.Infants || record.infants || 0);
+    
     if (!vehicleId) continue;
+    
     const vehicle = vehicles.find(v => v.id === vehicleId);
     const licensePlate = vehicle?.licensePlate || vehicleId;
     const key = `${vehicleId}|${date}|${tripName}`;
+    
     if (!vehiclesMap.has(key)) {
-      vehiclesMap.set(key, { vehicleId, licensePlate, date, tripName, goCount: 0, returnCount: 0, adults: 0, children: 0, infants: 0, totalPassengers: 0, invoices: [] });
+      vehiclesMap.set(key, { 
+        vehicleId, 
+        licensePlate, 
+        date, 
+        tripName, 
+        goCount: 0, 
+        returnCount: 0, 
+        adults: 0, 
+        children: 0, 
+        infants: 0, 
+        totalPassengers: 0, 
+        invoices: [] 
+      });
     }
+    
     const r = vehiclesMap.get(key);
     r.goCount += goCount;
     r.returnCount += returnCount;
-  }
-  
-  for (const inv of invoices) {
-    const date = inv.activeDate || inv.ActiveDate || '';
-    const tripName = inv.trip || inv.Trip || '';
-    let vehiclesData = [];
-    try { vehiclesData = JSON.parse(inv.VehiclesUsed || '[]'); } catch(e) {}
-    for (const v of vehiclesData) {
-      if (!v.vehicleId) continue;
-      const key = `${v.vehicleId}|${date}|${tripName}`;
-      if (vehiclesMap.has(key)) {
-        const r = vehiclesMap.get(key);
-        const adults = parseInt(inv.sgl) || 0;
-        const children = parseInt(inv.dbl) || 0;
-        const infants = parseInt(inv.trpl) || 0;
-        r.adults += adults;
-        r.children += children;
-        r.infants += infants;
-        r.totalPassengers += (adults + children + infants);
-        if (!r.invoices.includes(inv.voucherNo)) r.invoices.push(inv.voucherNo);
-      }
+    r.adults += adults;
+    r.children += children;
+    r.infants += infants;
+    r.totalPassengers += (adults + children + infants);
+    
+    if (record.VoucherNo && !r.invoices.includes(record.VoucherNo)) {
+      r.invoices.push(record.VoucherNo);
     }
   }
+  
   return Array.from(vehiclesMap.values());
 }
 
 async function generateLogisticsReport(fromDate, toDate, vehicles, centerName) {
   const result = await gas('getLogisticsRecords', { fromDate, toDate, centerName });
   const records = result?.data || [];
-  const logisticsMap = new Map();
   
-  for (const record of records) {
-    const date = record.Date || '';
-    const tripName = record.TripName || '';
-    const vehicleId = record.VehicleID || '';
-    const goCount = parseInt(record.GoCount || 0);
-    const returnCount = parseInt(record.ReturnCount || 0);
-    if (!vehicleId) continue;
-    const vehicle = vehicles.find(v => v.id === vehicleId);
-    const licensePlate = vehicle?.licensePlate || vehicleId;
-    const key = `${vehicleId}|${date}|${tripName}`;
-    if (!logisticsMap.has(key)) {
-      logisticsMap.set(key, { vehicleId, licensePlate, date, tripName, goCount: 0, returnCount: 0 });
-    }
-    const r = logisticsMap.get(key);
-    r.goCount += goCount;
-    r.returnCount += returnCount;
-  }
-  return Array.from(logisticsMap.values());
+  // البيانات أصبحت جاهزة من الخادم مع التكاليف
+  return records; 
 }
 
 function renderVehiclesTable(data) {
@@ -876,20 +867,51 @@ function renderVehiclesTable(data) {
 
 function renderLogisticsTable(data) {
   if (!data.length) return '<div class="loader">🚫 No logistics records found</div>';
+  
   let html = `<table><thead><tr>
-    <th>Date</th><th>Vehicle ID</th><th>License Plate</th><th>Trip</th>
-    <th>Go</th><th>Return</th><th>Total Trips</th>
+    <th>Date</th>
+    <th>Vehicle</th>
+    <th>Plate</th>
+    <th>Driver</th>
+    <th>Trip</th>
+    <th>Go</th>
+    <th>Return</th>
+    <th>Total Trips</th>
+    <th style="background: var(--color-teal);">Base Cost</th>
+    <th style="background: var(--color-teal);">Driver Cost</th>
+    <th style="background: var(--color-success-dark); color: white;">Total Cost</th>
   </tr></thead><tbody>`;
+  
+  let totalBase = 0, totalDriver = 0, totalGrand = 0;
+  
   for (const row of data) {
+    totalBase += row.BaseCost || 0;
+    totalDriver += row.DriverCost || 0;
+    totalGrand += row.TotalCost || 0;
+    
     html += `<tr>
-      <td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.vehicleId)}</td>
-      <td><strong>${escapeHtml(row.licensePlate)}</strong></td>
-      <td>${escapeHtml(row.tripName)}</td>
-      <td>${row.goCount || '—'}</td><td>${row.returnCount || '—'}</td>
-      <td><strong>${row.goCount + row.returnCount}</strong></td>
+      <td>${escapeHtml(row.Date)}</td>
+      <td>${escapeHtml(row.VehicleID)}</td>
+      <td><strong>${escapeHtml(row.LicensePlate)}</strong></td>
+      <td>${escapeHtml(row.DriverName)}</td>
+      <td>${escapeHtml(row.TripName)}</td>
+      <td>${row.GoCount || '—'}</td>
+      <td>${row.ReturnCount || '—'}</td>
+      <td><strong>${row.TotalTrips}</strong></td>
+      <td style="color: var(--color-text-light);">${row.BaseCost > 0 ? row.BaseCost.toFixed(2) : '—'}</td>
+      <td style="color: var(--color-text-light);">${row.DriverCost > 0 ? row.DriverCost.toFixed(2) : '—'}</td>
+      <td style="background: #f0fdf4; color: var(--color-success-dark); font-weight: 800;">${row.TotalCost > 0 ? row.TotalCost.toFixed(2) : '—'}</td>
     </tr>`;
   }
-  html += '</tbody></table>';
+  
+  // صف الإجماليات
+  html += `<tr style="background: var(--gray-100); font-weight: bold; color: var(--navy);">
+    <td colspan="8" style="text-align: center;">TOTAL</td>
+    <td>${totalBase.toFixed(2)}</td>
+    <td>${totalDriver.toFixed(2)}</td>
+    <td style="background: var(--navy); color: var(--gold); font-size: 14px;">${totalGrand.toFixed(2)} LE</td>
+  </tr></tbody></table>`;
+  
   return html;
 }
 
