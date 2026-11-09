@@ -342,13 +342,7 @@ async function loadInvoices() {
   }
 }
 
-async function getVehicles(centerName) {
-  try {
-    const result = await gas('getVehicles', { centerName: centerName });
-    if (Array.isArray(result)) return result;
-    return [];
-  } catch(e) { return []; }
-}
+
 
 // ============================================================
 // UPDATE SUMMARY FUNCTION
@@ -744,6 +738,310 @@ async function loadReport() {
     container.innerHTML = `<div class="loader">❌ Error: ${escapeHtml(e.message)}</div>`;
     document.getElementById('summaryContainer').style.display = 'none';
   }
+}
+  // ============================================================
+// ✅ الدوال المساعدة للتقارير (تمت إضافتها لحل مشكلة ReferenceError)
+// ============================================================
+
+async function loadVehiclesFilter() {
+  try {
+    const centerName = currentUser?.centerName || '';
+    const vehicles = await getVehicles(centerName);
+    const select = document.getElementById('filterVehicle');
+    if (!select) return;
+    const currentValue = select.value;
+    select.innerHTML = '<option value="">All Vehicles</option>';
+    if (vehicles && vehicles.length > 0) {
+      vehicles.forEach(vehicle => {
+        const option = document.createElement('option');
+        option.value = vehicle.id;
+        option.textContent = `${vehicle.id} - ${vehicle.licensePlate || ''}`;
+        select.appendChild(option);
+      });
+      if (currentValue) select.value = currentValue;
+    }
+  } catch (error) {
+    console.error('❌ Error loading vehicles filter:', error);
+  }
+}
+
+async function getVehicles(centerName) {
+  try {
+    const result = await gas('getVehicles', { centerName: centerName });
+    if (Array.isArray(result)) return result;
+    return [];
+  } catch(e) {
+    return [];
+  }
+}
+
+function filterByVehicle() { loadReport(); }
+
+async function generateVehiclesReport(invoices, fromDate, toDate, vehicles, centerName) {
+  const tripRecords = await gas('getVehicleTripRecords', { fromDate, toDate, centerName });
+  const records = tripRecords?.data || (Array.isArray(tripRecords) ? tripRecords : []);
+  const vehiclesMap = new Map();
+  
+  for (const record of records) {
+    const date = record.Date || record.date || '';
+    const tripName = record.TripName || record.tripName || '';
+    const vehicleId = record.VehicleID || record.vehicleId || '';
+    const goCount = parseInt(record.GoCount || record.goCount || 0);
+    const returnCount = parseInt(record.ReturnCount || record.returnCount || 0);
+    if (!vehicleId) continue;
+    const vehicle = vehicles.find(v => v.id === vehicleId);
+    const licensePlate = vehicle?.licensePlate || vehicleId;
+    const key = `${vehicleId}|${date}|${tripName}`;
+    if (!vehiclesMap.has(key)) {
+      vehiclesMap.set(key, { vehicleId, licensePlate, date, tripName, goCount: 0, returnCount: 0, adults: 0, children: 0, infants: 0, totalPassengers: 0, invoices: [] });
+    }
+    const r = vehiclesMap.get(key);
+    r.goCount += goCount;
+    r.returnCount += returnCount;
+  }
+  
+  for (const inv of invoices) {
+    const date = inv.activeDate || inv.ActiveDate || '';
+    const tripName = inv.trip || inv.Trip || '';
+    let vehiclesData = [];
+    try { vehiclesData = JSON.parse(inv.VehiclesUsed || '[]'); } catch(e) {}
+    for (const v of vehiclesData) {
+      if (!v.vehicleId) continue;
+      const key = `${v.vehicleId}|${date}|${tripName}`;
+      if (vehiclesMap.has(key)) {
+        const r = vehiclesMap.get(key);
+        const adults = parseInt(inv.sgl) || 0;
+        const children = parseInt(inv.dbl) || 0;
+        const infants = parseInt(inv.trpl) || 0;
+        r.adults += adults;
+        r.children += children;
+        r.infants += infants;
+        r.totalPassengers += (adults + children + infants);
+        if (!r.invoices.includes(inv.voucherNo)) r.invoices.push(inv.voucherNo);
+      }
+    }
+  }
+  return Array.from(vehiclesMap.values());
+}
+
+async function generateLogisticsReport(fromDate, toDate, vehicles, centerName) {
+  const result = await gas('getLogisticsRecords', { fromDate, toDate, centerName });
+  const records = result?.data || [];
+  const logisticsMap = new Map();
+  
+  for (const record of records) {
+    const date = record.Date || '';
+    const tripName = record.TripName || '';
+    const vehicleId = record.VehicleID || '';
+    const goCount = parseInt(record.GoCount || 0);
+    const returnCount = parseInt(record.ReturnCount || 0);
+    if (!vehicleId) continue;
+    const vehicle = vehicles.find(v => v.id === vehicleId);
+    const licensePlate = vehicle?.licensePlate || vehicleId;
+    const key = `${vehicleId}|${date}|${tripName}`;
+    if (!logisticsMap.has(key)) {
+      logisticsMap.set(key, { vehicleId, licensePlate, date, tripName, goCount: 0, returnCount: 0 });
+    }
+    const r = logisticsMap.get(key);
+    r.goCount += goCount;
+    r.returnCount += returnCount;
+  }
+  return Array.from(logisticsMap.values());
+}
+
+function renderVehiclesTable(data) {
+  if (!data.length) return '<div class="loader">🚫 No vehicle trip records found</div>';
+  let html = `<table><thead><tr>
+    <th>Date</th><th>Vehicle ID</th><th>License Plate</th><th>Trip</th>
+    <th>Go</th><th>Return</th><th>Total Trips</th>
+    <th>Adults</th><th>Children</th><th>Infants</th><th>Total Pax</th>
+    <th>Invoices</th>
+  </tr></thead><tbody>`;
+  
+  for (const row of data) {
+    html += `<tr>
+      <td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.vehicleId)}</td>
+      <td><strong>${escapeHtml(row.licensePlate)}</strong></td>
+      <td>${escapeHtml(row.tripName)}</td>
+      <td>${row.goCount || '—'}</td><td>${row.returnCount || '—'}</td>
+      <td><strong>${row.goCount + row.returnCount}</strong></td>
+      <td>${row.adults || '—'}</td><td>${row.children || '—'}</td>
+      <td>${row.infants || '—'}</td><td><strong>${row.totalPassengers || '—'}</strong></td>
+      <td style="font-size:9px;">${(row.invoices || []).join(', ')}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  return html;
+}
+
+function renderLogisticsTable(data) {
+  if (!data.length) return '<div class="loader">🚫 No logistics records found</div>';
+  let html = `<table><thead><tr>
+    <th>Date</th><th>Vehicle ID</th><th>License Plate</th><th>Trip</th>
+    <th>Go</th><th>Return</th><th>Total Trips</th>
+  </tr></thead><tbody>`;
+  for (const row of data) {
+    html += `<tr>
+      <td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.vehicleId)}</td>
+      <td><strong>${escapeHtml(row.licensePlate)}</strong></td>
+      <td>${escapeHtml(row.tripName)}</td>
+      <td>${row.goCount || '—'}</td><td>${row.returnCount || '—'}</td>
+      <td><strong>${row.goCount + row.returnCount}</strong></td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  return html;
+}
+
+async function generateDailyCostReport(fromDate, toDate, centerName) {
+  // دالة مبسطة لتجنب الأخطاء
+  return [];
+}
+
+function renderDailyCostTable(data) {
+  return '<div class="loader">تقرير التكلفة اليومية قيد التطوير</div>';
+}
+
+async function generateBoatsReport(fromDate, toDate) {
+  const boats = await gas('getBoats', { centerName: currentUser?.centerName });
+  const boatsArray = Array.isArray(boats) ? boats : [];
+  const boatsMap = new Map();
+  boatsArray.forEach(boat => {
+    boatsMap.set(boat.id, { name: boat.name || boat.id, capacity: parseInt(boat.capacity || 0) });
+  });
+
+  const result = await gas('getTripBoatsRecords', { fromDate, toDate, centerName: currentUser?.centerName });
+  const tripRecords = result?.data || (Array.isArray(result) ? result : []);
+  const aggregatedMap = new Map();
+
+  for (const record of tripRecords) {
+    const date = record.Date || '';
+    const tripName = record.TripName || '';
+    const boatId = record.BoatID || '';
+    const adults = parseInt(record.Adults) || 0;
+    const children = parseInt(record.Children) || 0;
+    const infants = parseInt(record.Infants) || 0;
+    const totalSeats = adults + children + infants;
+    if (!date || !boatId) continue;
+    
+    const key = `${boatId}|${date}|${tripName}`;
+    if (!aggregatedMap.has(key)) {
+      aggregatedMap.set(key, { boatId, boatName: boatsMap.get(boatId)?.name || boatId, capacity: boatsMap.get(boatId)?.capacity || 0, date, tripName, adults: 0, children: 0, infants: 0, totalPassengers: 0, utilization: 0 });
+    }
+    const entry = aggregatedMap.get(key);
+    entry.adults += adults;
+    entry.children += children;
+    entry.infants += infants;
+    entry.totalPassengers += totalSeats;
+    if (entry.capacity > 0) entry.utilization = (entry.totalPassengers / entry.capacity) * 100;
+  }
+  return Array.from(aggregatedMap.values());
+}
+
+function renderBoatsTable(data) {
+  if (!data.length) return '<div class="loader">🚫 No boat data found</div>';
+  let html = `<table><thead><tr>
+    <th>Date</th><th>Boat ID</th><th>Boat Name</th>
+    <th>Capacity</th><th>Trip</th><th>Adults</th>
+    <th>Children</th><th>Infants</th><th>Total Pax</th><th>Utilization</th>
+  </tr></thead><tbody>`;
+  for (const row of data) {
+    const utilColor = row.utilization > 80 ? '#16a34a' : (row.utilization > 50 ? '#eab308' : '#dc2626');
+    html += `<tr>
+      <td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.boatId)}</td>
+      <td><strong>${escapeHtml(row.boatName)}</strong></td>
+      <td>${row.capacity || '—'}</td><td>${escapeHtml(row.tripName)}</td>
+      <td>${row.adults || '—'}</td><td>${row.children || '—'}</td>
+      <td>${row.infants || '—'}</td><td><strong>${row.totalPassengers}</strong></td>
+      <td style="color: ${utilColor}; font-weight: bold;">${row.utilization > 0 ? row.utilization.toFixed(1) + '%' : '—'}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  return html;
+}
+
+async function generateInstructorsReport(fromDate, toDate) {
+  const logsResult = await gas('getInstructorDailyLogs', { fromDate, toDate, centerName: currentUser?.centerName });
+  const logs = logsResult?.data || [];
+  const reportData = [];
+  
+  for (const log of logs) {
+    reportData.push({
+      date: log.Date || '', instructorId: log.InstructorID || '',
+      instructorName: log.InstructorID || '', role: 'Instructor',
+      tripName: log.Trip || '', activityName: log.ActivityType || '',
+      quantity: parseInt(log.Quantity) || 0,
+      executionAmount: parseFloat(log.ExecutionCommission) || 0,
+      upSellAmount: parseFloat(log.UpSellCommission) || 0,
+      totalAmount: (parseFloat(log.ExecutionCommission) || 0) + (parseFloat(log.UpSellCommission) || 0)
+    });
+  }
+  return reportData;
+}
+
+function renderInstructorsTable(data) {
+  if (!data.length) return '<div class="loader">🚫 No instructor data found</div>';
+  let html = `<table><thead><tr>
+    <th>Date</th><th>Instructor ID</th><th>Instructor Name</th>
+    <th>Role</th><th>Trip</th><th>Activity</th>
+    <th>Qty</th><th>Execution</th><th>UpSell</th><th>Total</th>
+  </tr></thead><tbody>`;
+  for (const row of data) {
+    html += `<tr>
+      <td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.instructorId)}</td>
+      <td><strong>${escapeHtml(row.instructorName)}</strong></td>
+      <td>${escapeHtml(row.role)}</td><td>${escapeHtml(row.tripName)}</td>
+      <td>${escapeHtml(row.activityName)}</td>
+      <td>${row.quantity || '—'}</td>
+      <td>${row.executionAmount > 0 ? row.executionAmount.toFixed(2) : '—'}</td>
+      <td>${row.upSellAmount > 0 ? row.upSellAmount.toFixed(2) : '—'}</td>
+      <td><strong>${row.totalAmount.toFixed(2)}</strong></td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  return html;
+}
+
+async function generateCustomersReport(invoices) {
+  const reportData = [];
+  for (const inv of invoices) {
+    const passengers = {
+      adults: parseInt(inv.sgl) || 0,
+      children: parseInt(inv.dbl) || 0,
+      infants: parseInt(inv.trpl) || 0
+    };
+    reportData.push({
+      date: inv.activeDate || '', tripName: inv.trip || '',
+      voucherNo: inv.voucherNo || '', guestName: inv.guestName || '',
+      nationality: inv.nationality || '', hotel: inv.hotel || '',
+      roomNo: inv.roomNo || '', adults: passengers.adults,
+      children: passengers.children, infants: passengers.infants,
+      totalPassengers: passengers.adults + passengers.children + passengers.infants
+    });
+  }
+  return reportData;
+}
+
+function renderCustomersTable(data) {
+  if (!data.length) return '<div class="loader">🚫 No customer data found</div>';
+  let html = `<table><thead><tr>
+    <th>Date</th><th>Trip</th><th>Voucher</th>
+    <th>Guest Name</th><th>Nationality</th><th>Hotel</th>
+    <th>Room</th><th>Adults</th><th>Children</th>
+    <th>Infants</th><th>Total</th>
+  </tr></thead><tbody>`;
+  for (const row of data) {
+    html += `<tr>
+      <td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.tripName)}</td>
+      <td><strong>${escapeHtml(row.voucherNo)}</strong></td>
+      <td>${escapeHtml(row.guestName)}</td><td>${escapeHtml(row.nationality)}</td>
+      <td>${escapeHtml(row.hotel)}</td><td>${escapeHtml(row.roomNo)}</td>
+      <td>${row.adults || '—'}</td><td>${row.children || '—'}</td>
+      <td>${row.infants || '—'}</td><td><strong>${row.totalPassengers}</strong></td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  return html;
 }
 // ============================================================
 // 📎 تصدير البيانات إلى Excel (CSV)
