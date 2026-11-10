@@ -2683,67 +2683,55 @@ async function openAssignVehicles(voucherNo) {
         } catch(e) { showToast('❌ Failed to load vehicles', 'error'); return; }
     }
     
-    if (selectedVehicles.length === 0) {
-        showToast('⚠️ Select vehicles first from 🚗 Vehicles button', 'error');
-        return;
-    }
-    
     currentAssignVoucher = voucherNo;
     currentAssignInvoice = invoice;
     const currentDate = getCurrentDateISO();
     const tripName = invoice.trip || '';
     
-    const adults = parseInt(invoice.sgl) || 0;
-    const children = parseInt(invoice.dbl) || 0;
-    const infants = parseInt(invoice.trpl) || 0;
+    const invAdults = parseInt(invoice.sgl) || 0;
+    const invChildren = parseInt(invoice.dbl) || 0;
+    const invInfants = parseInt(invoice.trpl) || 0;
     
-    // ✅ 1. جلب خطة التشغيل (Go/Return) من السجلات المحفوظة
+    // ✅ جلب خطة التشغيل (Go/Return) والركاب المحفوظين مسبقاً
     let vehicleTrips = [];
     try {
         const result = await gas('getVehicleTripRecords', { date: currentDate, centerName: currentUser?.centerName });
-        if (result?.success && Array.isArray(result.data)) vehicleTrips = result.data;
+        if (result?.success && Array.isArray(result.data)) {
+            // نأخذ فقط السيارات المخططة لهذا اليوم (Go > 0 أو Ret > 0)
+            vehicleTrips = result.data.filter(t => t.GoCount > 0 || t.ReturnCount > 0);
+        }
     } catch(e) { console.warn('Failed to load vehicle trips:', e); }
+    
+    if (vehicleTrips.length === 0) {
+        showToast('⚠️ لا توجد سيارات مخططة لهذا اليوم. يرجى الذهاب لزر 🚗 Vehicles أولاً', 'error');
+        return;
+    }
     
     let savedVehicles = [];
     try { savedVehicles = JSON.parse(invoice.VehiclesUsed || '[]'); } catch(e) {}
     
-    let relevantVehicleIds = [...new Set(selectedVehicles)];
+    // ✅ حساب الركاب المتبقين من الفاتورة
+    let remAdults = invAdults;
+    let remChildren = invChildren;
+    let remInfants = invInfants;
+    
+    // خصم الركاب المحفوظين مسبقاً في هذه الفاتورة
     for (const sv of savedVehicles) {
-        if (sv.vehicleId && !relevantVehicleIds.includes(sv.vehicleId)) relevantVehicleIds.push(sv.vehicleId);
+        remAdults -= (parseInt(sv.adults) || 0);
+        remChildren -= (parseInt(sv.children) || 0);
+        remInfants -= (parseInt(sv.infants) || 0);
     }
     
     document.getElementById('assignVehiclesContent').innerHTML = '<div class="loader"><div class="spinner"></div>Loading...</div>';
     openModal('assignVehiclesModal');
     
-    const rows = [];
-    for (const vehId of relevantVehicleIds) {
-        const vehicle = cachedVehicles.find(v => v.id === vehId);
-        if (!vehicle) continue;
-        
-        // ✅ 2. مطابقة السيارة مع خطتها لهذا اليوم
-        const tripRecord = vehicleTrips.find(t => t.VehicleID === vehId && t.TripName === tripName) || 
-                           vehicleTrips.find(t => t.VehicleID === vehId);
-        
-        const masterGo = tripRecord ? (parseInt(tripRecord.GoCount) || 0) : 0;
-        const masterReturn = tripRecord ? (parseInt(tripRecord.ReturnCount) || 0) : 0;
-        
-        const capacity = parseInt(vehicle.capacity) || 0;
-        const used = getVehicleUsedSeatsExcludingInfants(currentDate, vehId, null, voucherNo);
-        const saved = savedVehicles.find(v => v.vehicleId === vehId) || {};
-        
-        rows.push({ vehicle, capacity, usedGo: used.go, usedRet: used.ret, saved, masterGo, masterReturn });
-    }
-    
-    if (rows.length === 0) {
-        document.getElementById('assignVehiclesContent').innerHTML = `<div style="padding:20px;text-align:center;">⚠️ No vehicles available</div>`;
-        return;
-    }
-    
     let html = `
       <div style="background:var(--navy);color:white;padding:12px;border-radius:8px;margin-bottom:14px;">
         <strong>📊 ${escapeHtml(tripName)}</strong><br>
-        👤 Adults: ${adults} | 👶 Children: ${children} | 🍼 Infants: ${infants}
-        <br><span style="font-size:11px;color:var(--gold);">* الرضع لا يشغلون مقعداً في السيارة</span>
+        👤 Adults: ${invAdults} | 👶 Children: ${invChildren} | 🍼 Infants: ${invInfants}
+        <div style="margin-top:6px; font-size:11px; color:var(--gold);" id="remainingPaxIndicator">
+            المتبقي للتوزيع: 👤 ${remAdults} | 👶 ${remChildren} | 🍼 ${remInfants}
+        </div>
       </div>
       <div style="overflow-x:auto;max-height:400px;">
         <table style="width:100%;font-size:12px;border-collapse:collapse;">
@@ -2755,35 +2743,53 @@ async function openAssignVehicles(voucherNo) {
           <tbody>
     `;
     
-    for (const { vehicle, capacity, usedGo, usedRet, saved, masterGo, masterReturn } of rows) {
-        const availGo = Math.max(0, capacity - usedGo);
-        const availRet = Math.max(0, capacity - usedRet);
+    for (const trip of vehicleTrips) {
+        const vehicle = cachedVehicles.find(v => v.id === trip.VehicleID);
+        if (!vehicle) continue;
         
-        // ✅ 3. إذا كانت الخطة Go=0 أو Return=0 يتم تعطيل الخانة
-        const isGoAllowed = masterGo > 0 || saved.goCount > 0;
-        const isReturnAllowed = masterReturn > 0 || saved.returnCount > 0;
+        const capacity = parseInt(vehicle.capacity) || 0;
+        const masterGo = parseInt(trip.GoCount) || 0;
+        const masterRet = parseInt(trip.ReturnCount) || 0;
         
-        // ✅ 4. الملء التلقائي: إذا لم يكن هناك بيانات محفوظة سابقة، يتم وضع الأعداد من الفاتورة
-        const initAdults = saved.adults !== undefined ? saved.adults : (isGoAllowed || isReturnAllowed ? adults : '');
-        const initChildren = saved.children !== undefined ? saved.children : (isGoAllowed || isReturnAllowed ? children : '');
-        const initInfants = saved.infants !== undefined ? saved.infants : (isGoAllowed || isReturnAllowed ? infants : '');
+        // ✅ حساب السعة الإجمالية بناءً على عدد التشغيلات
+        const totalGoCapacity = capacity * masterGo;
+        const totalRetCapacity = capacity * masterRet;
+        
+        // حساب المشغول من الفواتير الأخرى
+        const used = getVehicleUsedSeatsExcludingInfants(currentDate, vehicle.id, null, voucherNo);
+        
+        const availGo = Math.max(0, totalGoCapacity - used.go);
+        const availRet = Math.max(0, totalRetCapacity - used.ret);
+        
+        const saved = savedVehicles.find(v => v.vehicleId === vehicle.id) || {};
+        const isSelected = saved.vehicleId ? true : false;
+        
+        const initAdults = saved.adults || '';
+        const initChildren = saved.children || '';
+        const initInfants = saved.infants || '';
+        
+        const isGoAllowed = masterGo > 0;
+        const isReturnAllowed = masterRet > 0;
         
         html += `
-          <tr>
+          <tr id="row-${vehicle.id}">
             <td style="background:var(--navy);color:var(--gold);font-weight:700;padding:8px;">
               <strong>${escapeHtml(vehicle.licensePlate || vehicle.id)}</strong>
             </td>
             <td style="text-align:center;font-weight:700">${capacity}</td>
-            <td style="text-align:center">${usedGo} / ${capacity}</td>
-            <td style="text-align:center">${usedRet} / ${capacity}</td>
-            <td style="text-align:center;font-weight:700;color:${availGo === 0 ? 'red' : 'green'}">${availGo}</td>
-            <td style="text-align:center;font-weight:700;color:${availRet === 0 ? 'red' : 'green'}">${availRet}</td>
-            <td><input type="number" class="assign-go" data-id="${vehicle.id}" value="${saved.goCount !== undefined ? saved.goCount : (isGoAllowed ? 1 : 0)}" min="0" max="1" ${!isGoAllowed ? 'disabled' : ''} style="width:50px; text-align:center; ${!isGoAllowed ? 'background:#f1f5f9;' : ''}"></td>
-            <td><input type="number" class="assign-return" data-id="${vehicle.id}" value="${saved.returnCount !== undefined ? saved.returnCount : (isReturnAllowed ? 1 : 0)}" min="0" max="1" ${!isReturnAllowed ? 'disabled' : ''} style="width:50px; text-align:center; ${!isReturnAllowed ? 'background:#f1f5f9;' : ''}"></td>
-            <td><input type="number" class="assign-adult" data-id="${vehicle.id}" value="${initAdults}" min="0" style="width:45px;text-align:center;"></td>
-            <td><input type="number" class="assign-child" data-id="${vehicle.id}" value="${initChildren}" min="0" style="width:45px;text-align:center;"></td>
-            <td><input type="number" class="assign-infant" data-id="${vehicle.id}" value="${initInfants}" min="0" style="width:45px;text-align:center;"></td>
-            <td><input type="checkbox" class="assign-select" data-id="${vehicle.id}" ${(initAdults > 0 || saved.goCount > 0) ? 'checked' : ''} style="width:18px;height:18px;"></td>
+            <td style="text-align:center" class="go-used-cell">${used.go} / ${totalGoCapacity}</td>
+            <td style="text-align:center" class="ret-used-cell">${used.ret} / ${totalRetCapacity}</td>
+            <td style="text-align:center;font-weight:700;color:${availGo === 0 ? 'red' : 'green'}" class="go-avail-cell">${availGo}</td>
+            <td style="text-align:center;font-weight:700;color:${availRet === 0 ? 'red' : 'green'}" class="ret-avail-cell">${availRet}</td>
+            
+            <!-- تعطيل حقول Go و Return لأنها للعرض فقط -->
+            <td><input type="number" value="${masterGo}" disabled style="width:50px;text-align:center;background:#f1f5f9;"></td>
+            <td><input type="number" value="${masterRet}" disabled style="width:50px;text-align:center;background:#f1f5f9;"></td>
+            
+            <td><input type="number" class="assign-adult" data-id="${vehicle.id}" value="${initAdults}" min="0" style="width:45px;text-align:center;" ${!isSelected ? 'disabled' : ''}></td>
+            <td><input type="number" class="assign-child" data-id="${vehicle.id}" value="${initChildren}" min="0" style="width:45px;text-align:center;" ${!isSelected ? 'disabled' : ''}></td>
+            <td><input type="number" class="assign-infant" data-id="${vehicle.id}" value="${initInfants}" min="0" style="width:45px;text-align:center;" ${!isSelected ? 'disabled' : ''}></td>
+            <td><input type="checkbox" class="assign-select" data-id="${vehicle.id}" data-capacity="${capacity}" data-max-go="${totalGoCapacity}" data-max-ret="${totalRetCapacity}" ${isSelected ? 'checked' : ''} style="width:18px;height:18px;"></td>
           </tr>
         `;
     }
@@ -2791,216 +2797,145 @@ async function openAssignVehicles(voucherNo) {
     html += `</tbody></table></div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
         <button class="btn btn-secondary" onclick="closeModal('assignVehiclesModal')">Cancel</button>
-        <button class="btn btn-primary" onclick="saveVehicleAssignment()">✅ Assign</button>
+        <button class="btn btn-primary" onclick="saveVehicleAssignmentV2()">✅ Assign</button>
       </div>
     `;
     
     document.getElementById('assignVehiclesContent').innerHTML = html;
-    setTimeout(() => attachVehicleAssignmentEvents(), 50);
+    setTimeout(() => attachVehicleAssignmentEventsV2(), 50);
 }
-  
-// ✅ دالة مساعدة لربط الأحداث في Assign Vehicles
-function attachVehicleAssignmentEvents() {
-  // ═══════════════════════════════════════════════════════════
-  // ✅ دالة حساب لحظي (تحديث أشرطة السعة)
-  // ═══════════════════════════════════════════════════════════
-  function recalcRow(vehicleId) {
-    const goInput = document.querySelector(`#assignVehiclesModal .assign-go[data-id="${vehicleId}"]`);
-    const returnInput = document.querySelector(`#assignVehiclesModal .assign-return[data-id="${vehicleId}"]`);
-    const adultInput = document.querySelector(`#assignVehiclesModal .assign-adult[data-id="${vehicleId}"]`);
-    const childInput = document.querySelector(`#assignVehiclesModal .assign-child[data-id="${vehicleId}"]`);
+  function attachVehicleAssignmentEventsV2() {
+  // دالة لحساب المتبقي وتحديث الواجهة
+  function updateRemainingPax() {
+    const invAdults = parseInt(currentAssignInvoice.sgl) || 0;
+    const invChildren = parseInt(currentAssignInvoice.dbl) || 0;
+    const invInfants = parseInt(currentAssignInvoice.trpl) || 0;
     
-    if (!goInput || !returnInput) return;
+    let totalAssignedAdults = 0;
+    let totalAssignedChildren = 0;
+    let totalAssignedInfants = 0;
     
-    const goVal = parseInt(goInput.value) || 0;
-    const returnVal = parseInt(returnInput.value) || 0;
-    const adultVal = parseInt(adultInput?.value) || 0;
-    const childVal = parseInt(childInput?.value) || 0;
+    document.querySelectorAll('#assignVehiclesModal .assign-select:checked').forEach(cb => {
+        const vId = cb.getAttribute('data-id');
+        totalAssignedAdults += parseInt(document.querySelector(`.assign-adult[data-id="${vId}"]`).value) || 0;
+        totalAssignedChildren += parseInt(document.querySelector(`.assign-child[data-id="${vId}"]`).value) || 0;
+        totalAssignedInfants += parseInt(document.querySelector(`.assign-infant[data-id="${vId}"]`).value) || 0;
+    });
     
-    const baseGo = parseInt(goInput.dataset.baseUsed) || 0;
-    const baseRet = parseInt(returnInput.dataset.baseUsed) || 0;
-    const capacity = parseInt(goInput.dataset.capacity) || 0;
+    const remA = invAdults - totalAssignedAdults;
+    const remC = invChildren - totalAssignedChildren;
+    const remI = invInfants - totalAssignedInfants;
     
-    const totalGoUsed = baseGo + goVal;
-    const totalRetUsed = baseRet + returnVal;
+    document.getElementById('remainingPaxIndicator').innerHTML = `المتبقي للتوزيع: 👤 ${remA} | 👶 ${remC} | 🍼 ${remI}`;
     
-    const availGo = Math.max(0, capacity - totalGoUsed);
-    const availRet = Math.max(0, capacity - totalRetUsed);
-    
-    const row = goInput.closest('tr');
-    if (!row) return;
-    
-    const cells = row.querySelectorAll('td');
-    const goPct = capacity > 0 ? Math.min(100, Math.round(totalGoUsed / capacity * 100)) : 0;
-    const retPct = capacity > 0 ? Math.min(100, Math.round(totalRetUsed / capacity * 100)) : 0;
-    
-    if (cells[2]) {
-      cells[2].innerHTML = `
-        <div class="seat-bar-wrap"><div class="seat-bar-fill ${goPct >= 100 ? 'full' : goPct >= 75 ? 'warn' : ''}" style="width:${goPct}%"></div></div>
-        <div class="seat-count-text">${totalGoUsed} / ${capacity}</div>
-      `;
-    }
-    if (cells[3]) {
-      cells[3].innerHTML = `
-        <div class="seat-bar-wrap"><div class="seat-bar-fill ${retPct >= 100 ? 'full' : retPct >= 75 ? 'warn' : ''}" style="width:${retPct}%"></div></div>
-        <div class="seat-count-text">${totalRetUsed} / ${capacity}</div>
-      `;
-    }
-    if (cells[4]) {
-      cells[4].innerHTML = `<span style="background:${availGo === 0 ? '#fee2e2' : '#dcfce7'};padding:3px 8px;border-radius:6px;font-weight:700;color:${availGo === 0 ? 'red' : 'green'};">${availGo}</span>`;
-    }
-    if (cells[5]) {
-      cells[5].innerHTML = `<span style="background:${availRet === 0 ? '#fee2e2' : '#dcfce7'};padding:3px 8px;border-radius:6px;font-weight:700;color:${availRet === 0 ? 'red' : 'green'};">${availRet}</span>`;
-    }
-    
-    goInput.dataset.max = availGo;
-    returnInput.dataset.max = availRet;
-    
-    // فحص تجاوز السعة (Adults + Children فقط — بدون الرضع)
-    const totalAC = adultVal + childVal;
-    if (totalAC > capacity + 1) {
-      row.style.background = '#fee2e2';
-      if (!row.querySelector('.over-cap-warn')) {
-        const warn = document.createElement('div');
-        warn.className = 'over-cap-warn';
-        warn.style.cssText = 'position:absolute;right:5px;top:5px;background:#dc2626;color:white;font-size:9px;padding:2px 6px;border-radius:8px;font-weight:700;';
-        warn.textContent = `⚠️ Over Capacity +${totalAC - capacity}`;
-        row.style.position = 'relative';
-        row.appendChild(warn);
-      }
-    } else {
-      row.style.background = '';
-      const existingWarn = row.querySelector('.over-cap-warn');
-      if (existingWarn) existingWarn.remove();
-    }
+    return { remA, remC, remI };
   }
-  
-  // ═══════════════════════════════════════════════════════════
-  // ✅ ربط حقول Go / Return (تحديث السعة فقط، دون فرض قيم)
-  // ═══════════════════════════════════════════════════════════
-  document.querySelectorAll('#assignVehiclesModal .assign-go, #assignVehiclesModal .assign-return').forEach(input => {
-    const newInput = input.cloneNode(true);
-    input.parentNode.replaceChild(newInput, input);
-    
-    const vehId = newInput.dataset.id;
-    
-    newInput.addEventListener('input', () => {
-      const max = parseInt(newInput.dataset.max) || 0;
-      const val = parseInt(newInput.value) || 0;
-      if (val < 0) newInput.value = 0;
-      if (val > max) {
-        newInput.value = max;
-        newInput.style.borderColor = '#dc2626';
-        setTimeout(() => newInput.style.borderColor = 'var(--border)', 1000);
-      }
-      recalcRow(vehId);
-    });
-    
-    newInput.addEventListener('change', () => recalcRow(vehId));
-  });
-  
-  // ═══════════════════════════════════════════════════════════
-  // ✅ ربط حقول Adults / Children / Infants
-  // (تم إزالة التحديث التلقائي لـ Go/Return، والاكتفاء بحساب السعة)
-  // ═══════════════════════════════════════════════════════════
-  document.querySelectorAll('#assignVehiclesModal .assign-adult, #assignVehiclesModal .assign-child, #assignVehiclesModal .assign-infant').forEach(input => {
-    const newInput = input.cloneNode(true);
-    input.parentNode.replaceChild(newInput, input);
-    const vehId = newInput.dataset.id;
-    
-    newInput.addEventListener('input', () => {
-      const val = parseInt(newInput.value) || 0;
-      if (val < 0) newInput.value = 0;
-      recalcRow(vehId); // فقط تحديث السعة، لا تغيير في Go/Return
-    });
-    newInput.addEventListener('change', () => recalcRow(vehId));
-  });
-  
-  // ═══════════════════════════════════════════════════════════
-  // ✅ ربط الـ Checkbox
-  // ═══════════════════════════════════════════════════════════
+
+  // ربط الـ Checkbox
   document.querySelectorAll('#assignVehiclesModal .assign-select').forEach(cb => {
     const newCb = cb.cloneNode(true);
     cb.parentNode.replaceChild(newCb, cb);
+    
     newCb.addEventListener('change', (e) => {
-      const vehicleId = e.target.dataset.id;
-      const inputs = document.querySelectorAll(
-        `#assignVehiclesModal .assign-go[data-id="${vehicleId}"],` +
-        `#assignVehiclesModal .assign-return[data-id="${vehicleId}"],` +
-        `#assignVehiclesModal .assign-adult[data-id="${vehicleId}"],` +
-        `#assignVehiclesModal .assign-child[data-id="${vehicleId}"],` +
-        `#assignVehiclesModal .assign-infant[data-id="${vehicleId}"]`
-      );
-      inputs.forEach(inp => {
-        // لا تفعل شيئاً إذا كان الحقل معطلاً مسبقاً (اتجاه غير متاح)
-        if (inp.hasAttribute('data-locked')) return;
-        inp.disabled = !e.target.checked;
-        inp.style.opacity = e.target.checked ? '1' : '0.5';
-      });
+      const vId = e.target.dataset.id;
+      const isChecked = e.target.checked;
+      
+      const aInput = document.querySelector(`.assign-adult[data-id="${vId}"]`);
+      const cInput = document.querySelector(`.assign-child[data-id="${vId}"]`);
+      const iInput = document.querySelector(`.assign-infant[data-id="${vId}"]`);
+      
+      aInput.disabled = !isChecked;
+      cInput.disabled = !isChecked;
+      iInput.disabled = !isChecked;
+      
+      if (isChecked) {
+          // ✅ التوزيع التلقائي: نأخذ الأرقام المتبقية من الفاتورة
+          const { remA, remC, remI } = updateRemainingPax(); // نحدث المتبقي أولاً
+          
+          // الحصول على السعة القصوى للسيارة
+          const capacity = parseInt(e.target.dataset.capacity) || 0;
+          
+          // نوزع فقط ما يمكن للسيارة استيعابه
+          const assignA = Math.min(remA, capacity);
+          const assignC = Math.min(remC, capacity - assignA);
+          const assignI = Math.min(remI, capacity - assignA - assignC); // الرضع لا يشغلون مقعداً في السيارة (حسب طلبك السابق)
+          
+          aInput.value = assignA > 0 ? assignA : '';
+          cInput.value = assignC > 0 ? assignC : '';
+          iInput.value = assignI > 0 ? assignI : '';
+      } else {
+          aInput.value = '';
+          cInput.value = '';
+          iInput.value = '';
+      }
+      
+      updateRemainingPax();
+    });
+  });
+  
+  // ربط حقول الركاب (لمنع التجاوز)
+  document.querySelectorAll('#assignVehiclesModal .assign-adult, .assign-child, .assign-infant').forEach(input => {
+    const newInput = input.cloneNode(true);
+    input.parentNode.replaceChild(newInput, input);
+    
+    newInput.addEventListener('input', () => {
+        const vId = newInput.dataset.id;
+        const cap = parseInt(document.querySelector(`.assign-select[data-id="${vId}"]`).dataset.capacity) || 0;
+        
+        const a = parseInt(document.querySelector(`.assign-adult[data-id="${vId}"]`).value) || 0;
+        const c = parseInt(document.querySelector(`.assign-child[data-id="${vId}"]`).value) || 0;
+        const i = parseInt(document.querySelector(`.assign-infant[data-id="${vId}"]`).value) || 0;
+        
+        // التحقق من حمولة السيارة (البالغين + الأطفال)
+        if (a + c > cap) {
+            showToast(`⚠️ تجاوزت حمولة السيارة (${cap} مقعد)`, 'error');
+            // إعادة تصفير الحقل الذي تسبب في التجاوز (تبسيطاً)
+            newInput.value = Math.max(0, cap - (newInput.classList.contains('assign-adult') ? c : a));
+        }
+        
+        updateRemainingPax();
     });
   });
 }
-  
-async function saveVehicleAssignment(forceSave = false) {
+  async function saveVehicleAssignmentV2() {
   const saveBtn = document.querySelector('#assignVehiclesModal .btn-primary');
   if (saveBtn?.disabled) return;
   
   let selectedVehiclesData = [];
   const errors = [];
   
+  const invAdults = parseInt(currentAssignInvoice.sgl) || 0;
+  const invChildren = parseInt(currentAssignInvoice.dbl) || 0;
+  const invInfants = parseInt(currentAssignInvoice.trpl) || 0;
+  
+  let totalA = 0, totalC = 0, totalI = 0;
+  
   document.querySelectorAll('#assignVehiclesModal .assign-select:checked').forEach(cb => {
     const vehId = cb.getAttribute('data-id');
-    const goInput = document.querySelector(`.assign-go[data-id="${vehId}"]`);
-    const returnInput = document.querySelector(`.assign-return[data-id="${vehId}"]`);
-    const adultInput = document.querySelector(`.assign-adult[data-id="${vehId}"]`);
-    const childInput = document.querySelector(`.assign-child[data-id="${vehId}"]`);
-    const infantInput = document.querySelector(`.assign-infant[data-id="${vehId}"]`);
+    const adult = parseInt(document.querySelector(`.assign-adult[data-id="${vehId}"]`).value) || 0;
+    const child = parseInt(document.querySelector(`.assign-child[data-id="${vehId}"]`).value) || 0;
+    const infant = parseInt(document.querySelector(`.assign-infant[data-id="${vehId}"]`).value) || 0;
     
-    const goCount = parseInt(goInput?.value) || 0;
-    const returnCount = parseInt(returnInput?.value) || 0;
-    const adult = parseInt(adultInput?.value) || 0;
-    const child = parseInt(childInput?.value) || 0;
-    const infant = parseInt(infantInput?.value) || 0;
+    totalA += adult;
+    totalC += child;
+    totalI += infant;
     
-    const maxGo = parseInt(goInput?.dataset.max) || 0;
-    const maxRet = parseInt(returnInput?.dataset.max) || 0;
-    const vehicle = cachedVehicles.find(v => v.id === vehId);
-    const label = vehicle?.licensePlate || vehId;
+    // جلب التشغيلات من الحقول المعطلة
+    const goCount = parseInt(document.querySelector(`.assign-go[data-id="${vehId}"]`)?.value) || 0;
+    const returnCount = parseInt(document.querySelector(`.assign-return[data-id="${vehId}"]`)?.value) || 0;
     
-    // ✅ التحقق من التجاوز (Adults + Children فقط)
-    const totalAC = adult + child;
-    const vehicleCapacity = parseInt(vehicle?.capacity) || 0;
-    if (totalAC > vehicleCapacity + 1) {
-      errors.push(`🚗 ${label}: Passengers (${totalAC}) > Capacity+1 (${vehicleCapacity + 1})`);
-    }
-    
-    if (goCount > maxGo) errors.push(`🚗 ${label}: Go (${goCount}) > Available (${maxGo})`);
-    if (returnCount > maxRet) errors.push(`🚗 ${label}: Return (${returnCount}) > Available (${maxRet})`);
-    
-       selectedVehiclesData.push({
-      vehicleId: vehId, 
-      goCount, 
-      returnCount, 
-      adults: adult, 
-      children: child, 
-      infants: infant,
-      // ✅ totalSeats = A + C فقط (بدون الرضع) — وهو الأماكن المشغولة
-      totalSeats: adult + child
+    selectedVehiclesData.push({
+      vehicleId: vehId, goCount, returnCount,
+      adults: adult, children: child, infants: infant, totalSeats: adult + child
     });
   });
   
-  if (selectedVehiclesData.length === 0) {
-    showToast('⚠️ Select at least one vehicle', 'error');
-    return;
-  }
+  if (selectedVehiclesData.length === 0) { showToast('⚠️ Select at least one vehicle', 'error'); return; }
   
-  // ✅ فحص تعارض الأوقات (إلا إذا forceSave)
-  if (!forceSave) {
-    const conflict = checkTimeConflicts(selectedVehiclesData);
-    if (conflict.hasConflict) {
-      showTimeConflictDialog(conflict.conflicts, () => saveVehicleAssignment(true));
+  // ✅ منع تجاوز إجمالي الفاتورة
+  if (totalA > invAdults || totalC > invChildren || totalI > invInfants) {
+      showToast(`❌ لا يمكن توزيع ركاب أكثر من الفاتورة!\nالفاتورة: 👤${invAdults} | 👶${invChildren} | 🍼${invInfants}\nالموزع: 👤${totalA} | 👶${totalC} | 🍼${totalI}`, 'error');
       return;
-    }
   }
   
   if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '⏳ Saving...'; }
@@ -4025,7 +3960,7 @@ function showVehicleDetails(voucherNo, vehicleId) {
         relatedInvoices.push({
             voucherNo: inv.voucherNo, adults: a, children: c, infants: i,
             go: parseInt(usage.goCount) || 0, ret: parseInt(usage.returnCount) || 0,
-            totalPax: a + c // الرضع لا يشغلون مقعداً في السيارة
+            totalPax: a + c // ✅ للسيارة: البالغين + الأطفال فقط (الرضع لا يشغلون مقعد)
         });
         totalAdults += a; totalChildren += c; totalInfants += i;
         totalGo += parseInt(usage.goCount) || 0; totalReturn += parseInt(usage.returnCount) || 0;
@@ -4037,7 +3972,6 @@ function showVehicleDetails(voucherNo, vehicleId) {
     const driverName = cachedVehicle?.driverName || '—';
     const vehicleImage = cachedVehicle?.licensePhoto || '';
     
-    // ✅ إجبار لون النص والخلفية لتجنب أي تنسيقات عامة
     const tdStyle = "padding:8px; color: #0f1f3d !important; background-color: #ffffff !important; border-bottom: 1px solid #e2e8f0;";
     const thStyle = "padding:8px; color: #f5c842 !important; background-color: #0f1f3d !important;";
 
