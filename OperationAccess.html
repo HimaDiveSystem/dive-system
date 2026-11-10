@@ -2756,10 +2756,19 @@ async function openAssignVehicles(voucherNo) {
         const totalRetCapacity = capacity * masterRet;
         
         // حساب المشغول من الفواتير الأخرى
+               // حساب المشغول من الفواتير الأخرى
         const used = getVehicleUsedSeatsExcludingInfants(currentDate, vehicle.id, null, voucherNo);
         
-        const availGo = Math.max(0, totalGoCapacity - used.go);
-        const availRet = Math.max(0, totalRetCapacity - used.ret);
+        // المشغول الحالي لهذه الفاتورة (إذا كانت محفوظة مسبقاً)
+        const saved = savedVehicles.find(v => v.vehicleId === vehicle.id) || {};
+        const savedPax = (parseInt(saved.adults) || 0) + (parseInt(saved.children) || 0);
+        
+        // إجمالي المستخدم = المشغول من الآخرين + المشغول في هذه الفاتورة
+        const totalGoUsed = used.go + savedPax;
+        const totalRetUsed = used.ret + savedPax;
+        
+        const availGo = Math.max(0, totalGoCapacity - totalGoUsed);
+        const availRet = Math.max(0, totalRetCapacity - totalRetUsed);
         
         const saved = savedVehicles.find(v => v.vehicleId === vehicle.id) || {};
         const isSelected = saved.vehicleId ? true : false;
@@ -2777,8 +2786,8 @@ async function openAssignVehicles(voucherNo) {
               <strong>${escapeHtml(vehicle.licensePlate || vehicle.id)}</strong>
             </td>
             <td style="text-align:center;font-weight:700">${capacity}</td>
-            <td style="text-align:center" class="go-used-cell">${used.go} / ${totalGoCapacity}</td>
-            <td style="text-align:center" class="ret-used-cell">${used.ret} / ${totalRetCapacity}</td>
+                        <td style="text-align:center" class="go-used-cell">${totalGoUsed} / ${totalGoCapacity}</td>
+            <td style="text-align:center" class="ret-used-cell">${totalRetUsed} / ${totalRetCapacity}</td>
             <td style="text-align:center;font-weight:700;color:${availGo === 0 ? 'red' : 'green'}" class="go-avail-cell">${availGo}</td>
             <td style="text-align:center;font-weight:700;color:${availRet === 0 ? 'red' : 'green'}" class="ret-avail-cell">${availRet}</td>
             
@@ -2804,8 +2813,9 @@ async function openAssignVehicles(voucherNo) {
     document.getElementById('assignVehiclesContent').innerHTML = html;
     setTimeout(() => attachVehicleAssignmentEventsV2(), 50);
 }
-  function attachVehicleAssignmentEventsV2() {
-  // دالة لحساب المتبقي وتحديث الواجهة
+ function attachVehicleAssignmentEventsV2() {
+  
+  // ✅ دالة لحساب المتبقي وتحديث الواجهة
   function updateRemainingPax() {
     const invAdults = parseInt(currentAssignInvoice.sgl) || 0;
     const invChildren = parseInt(currentAssignInvoice.dbl) || 0;
@@ -2815,6 +2825,7 @@ async function openAssignVehicles(voucherNo) {
     let totalAssignedChildren = 0;
     let totalAssignedInfants = 0;
     
+    // نجمع فقط من السيارات المختارة
     document.querySelectorAll('#assignVehiclesModal .assign-select:checked').forEach(cb => {
         const vId = cb.getAttribute('data-id');
         totalAssignedAdults += parseInt(document.querySelector(`.assign-adult[data-id="${vId}"]`).value) || 0;
@@ -2826,9 +2837,50 @@ async function openAssignVehicles(voucherNo) {
     const remC = invChildren - totalAssignedChildren;
     const remI = invInfants - totalAssignedInfants;
     
-    document.getElementById('remainingPaxIndicator').innerHTML = `المتبقي للتوزيع: 👤 ${remA} | 👶 ${remC} | 🍼 ${remI}`;
+    const indicator = document.getElementById('remainingPaxIndicator');
+    if (indicator) {
+        indicator.innerHTML = `المتبقي للتوزيع: 👤 ${remA} | 👶 ${remC} | 🍼 ${remI}`;
+    }
     
     return { remA, remC, remI };
+  }
+
+  // ✅ دالة تحديث السعة (Go Used / Ret Used / Avail)
+  function recalcSeats(vehicleId) {
+      const row = document.getElementById(`row-${vehicleId}`);
+      if (!row) return;
+
+      const cap = parseInt(document.querySelector(`.assign-select[data-id="${vehicleId}"]`).dataset.capacity) || 0;
+      const maxGo = parseInt(document.querySelector(`.assign-select[data-id="${vehicleId}"]`).dataset.maxGo) || 0;
+      const maxRet = parseInt(document.querySelector(`.assign-select[data-id="${vehicleId}"]`).dataset.maxRet) || 0;
+      
+      // الحصول على المشغول من الفواتير الأخرى
+      const used = getVehicleUsedSeatsExcludingInfants(currentDate, vehicleId, null, currentAssignVoucher);
+      
+      // حساب الأرقام المدخلة حالياً
+      const currentA = parseInt(document.querySelector(`.assign-adult[data-id="${vehicleId}"]`).value) || 0;
+      const currentC = parseInt(document.querySelector(`.assign-child[data-id="${vehicleId}"]`).value) || 0;
+      const currentPax = currentA + currentC; // الرضع لا يشغلون مقعداً في السيارة
+      
+      // حساب الإجمالي (المشغول + المدخل حالياً)
+      const totalGoUsed = used.go + currentPax;
+      const totalRetUsed = used.ret + currentPax;
+      
+      // حساب المتاح
+      const availGo = Math.max(0, maxGo - totalGoUsed);
+      const availRet = Math.max(0, maxRet - totalRetUsed);
+      
+      // تحديث الخلايا
+      row.querySelector('.go-used-cell').innerHTML = `${totalGoUsed} / ${maxGo}`;
+      row.querySelector('.ret-used-cell').innerHTML = `${totalRetUsed} / ${maxRet}`;
+      
+      const goAvailEl = row.querySelector('.go-avail-cell');
+      const retAvailEl = row.querySelector('.ret-avail-cell');
+      
+      goAvailEl.textContent = availGo;
+      goAvailEl.style.color = availGo === 0 ? 'red' : 'green';
+      retAvailEl.textContent = availRet;
+      retAvailEl.style.color = availRet === 0 ? 'red' : 'green';
   }
 
   // ربط الـ Checkbox
@@ -2850,15 +2902,14 @@ async function openAssignVehicles(voucherNo) {
       
       if (isChecked) {
           // ✅ التوزيع التلقائي: نأخذ الأرقام المتبقية من الفاتورة
-          const { remA, remC, remI } = updateRemainingPax(); // نحدث المتبقي أولاً
+          const { remA, remC, remI } = updateRemainingPax(); 
           
-          // الحصول على السعة القصوى للسيارة
-          const capacity = parseInt(e.target.dataset.capacity) || 0;
+          const cap = parseInt(e.target.dataset.capacity) || 0;
           
           // نوزع فقط ما يمكن للسيارة استيعابه
-          const assignA = Math.min(remA, capacity);
-          const assignC = Math.min(remC, capacity - assignA);
-          const assignI = Math.min(remI, capacity - assignA - assignC); // الرضع لا يشغلون مقعداً في السيارة (حسب طلبك السابق)
+          const assignA = Math.min(remA, cap);
+          const assignC = Math.min(remC, cap - assignA);
+          const assignI = Math.min(remI, cap - assignA - assignC);
           
           aInput.value = assignA > 0 ? assignA : '';
           cInput.value = assignC > 0 ? assignC : '';
@@ -2870,11 +2921,12 @@ async function openAssignVehicles(voucherNo) {
       }
       
       updateRemainingPax();
+      recalcSeats(vId);
     });
   });
   
   // ربط حقول الركاب (لمنع التجاوز)
-  document.querySelectorAll('#assignVehiclesModal .assign-adult, .assign-child, .assign-infant').forEach(input => {
+  document.querySelectorAll('#assignVehiclesModal .assign-adult, #assignVehiclesModal .assign-child, #assignVehiclesModal .assign-infant').forEach(input => {
     const newInput = input.cloneNode(true);
     input.parentNode.replaceChild(newInput, input);
     
@@ -2884,19 +2936,18 @@ async function openAssignVehicles(voucherNo) {
         
         const a = parseInt(document.querySelector(`.assign-adult[data-id="${vId}"]`).value) || 0;
         const c = parseInt(document.querySelector(`.assign-child[data-id="${vId}"]`).value) || 0;
-        const i = parseInt(document.querySelector(`.assign-infant[data-id="${vId}"]`).value) || 0;
         
         // التحقق من حمولة السيارة (البالغين + الأطفال)
         if (a + c > cap) {
             showToast(`⚠️ تجاوزت حمولة السيارة (${cap} مقعد)`, 'error');
-            // إعادة تصفير الحقل الذي تسبب في التجاوز (تبسيطاً)
             newInput.value = Math.max(0, cap - (newInput.classList.contains('assign-adult') ? c : a));
         }
         
         updateRemainingPax();
+        recalcSeats(vId);
     });
   });
-} 
+}
   async function saveVehicleAssignmentV2() {
   const saveBtn = document.querySelector('#assignVehiclesModal .btn-primary');
   if (saveBtn?.disabled) return;
@@ -4560,18 +4611,8 @@ async function openVehiclesModal() {
     }
     
     // ✅ ✅ ✅ 3. الجديد: إظهار جميع السيارات المتاحة (حتى لو لم تكن مختارة)
-    for (const v of passengerVehicles) {
-      if (!alreadyShownIds.has(v.id)) {
-        rowsToShow.push({
-          vehicleId: v.id,
-          tripName: tripsOnDate[0] || '',
-          goCount: 0,
-          returnCount: 0,
-          fromSaved: false
-        });
-        alreadyShownIds.add(v.id);
-      }
-    }
+       // ✅ 3. إظهار السيارات التي لها تشغيلات فقط (لإخفاء السيارات الفارغة)
+    // (تم إزالة الحلقة التي كانت تظهر كل السيارات)
     
     // ✅ 5. بناء HTML
     let html = `
