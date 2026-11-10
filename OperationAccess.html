@@ -2747,30 +2747,39 @@ async function openAssignVehicles(voucherNo) {
         const vehicle = cachedVehicles.find(v => v.id === trip.VehicleID);
         if (!vehicle) continue;
         
-        const capacity = parseInt(vehicle.capacity) || 0;
+               const capacity = parseInt(vehicle.capacity) || 0;
         const masterGo = parseInt(trip.GoCount) || 0;
         const masterRet = parseInt(trip.ReturnCount) || 0;
         
-        // ✅ حساب السعة الإجمالية بناءً على عدد التشغيلات
         const totalGoCapacity = capacity * masterGo;
         const totalRetCapacity = capacity * masterRet;
         
-        // حساب المشغول من الفواتير الأخرى
-               // حساب المشغول من الفواتير الأخرى
-        const used = getVehicleUsedSeatsExcludingInfants(currentDate, vehicle.id, null, voucherNo);
+        // ✅ التعديل: حساب المشغول من الفواتير الأخرى (مع مراعاة الرحلة والتاريخ)
+        let totalOtherGoUsed = 0;
+        let totalOtherRetUsed = 0;
         
-        // المشغول الحالي لهذه الفاتورة (إذا كانت محفوظة مسبقاً)
+        for (const inv of allInvoices) {
+            if (inv.voucherNo === voucherNo) continue; // استبعاد الفاتورة الحالية
+            if (inv.activeDate !== currentDate) continue;
+            // لا نقيد بالرحلة هنا لأن السيارة قد تخدم أكثر من رحلة في نفس اليوم
+            // if (inv.trip !== tripName) continue; 
+            
+            let vData = [];
+            try { vData = JSON.parse(inv.VehiclesUsed || '[]'); } catch(e) {}
+            
+            const usage = vData.find(v => v.vehicleId === vehicle.id);
+            if (usage) {
+                const pax = (parseInt(usage.adults) || 0) + (parseInt(usage.children) || 0);
+                totalOtherGoUsed += pax;
+                totalOtherRetUsed += pax;
+            }
+        }
+        
+        const availGo = Math.max(0, totalGoCapacity - totalOtherGoUsed);
+        const availRet = Math.max(0, totalRetCapacity - totalOtherRetUsed);
+        
         const savedData = savedVehicles.find(v => v.vehicleId === vehicle.id) || {};
-        const savedPax = (parseInt(savedData.adults) || 0) + (parseInt(savedData.children) || 0);        
-        // إجمالي المستخدم = المشغول من الآخرين + المشغول في هذه الفاتورة
-        const totalGoUsed = used.go + savedPax;
-        const totalRetUsed = used.ret + savedPax;
-        
-        const availGo = Math.max(0, totalGoCapacity - totalGoUsed);
-        const availRet = Math.max(0, totalRetCapacity - totalRetUsed);
-        
-        const saved = savedVehicles.find(v => v.vehicleId === vehicle.id) || {};
-        const isSelected = saved.vehicleId ? true : false;
+        const isSelected = savedData.vehicleId ? true : false;
         
         const initAdults = savedData.adults || '';
         const initChildren = savedData.children || '';
@@ -2785,8 +2794,10 @@ async function openAssignVehicles(voucherNo) {
               <strong>${escapeHtml(vehicle.licensePlate || vehicle.id)}</strong>
             </td>
             <td style="text-align:center;font-weight:700">${capacity}</td>
-                        <td style="text-align:center" class="go-used-cell">${totalGoUsed} / ${totalGoCapacity}</td>
-            <td style="text-align:center" class="ret-used-cell">${totalRetUsed} / ${totalRetCapacity}</td>
+                                   <!-- عرض المشغول من الآخرين في البداية -->
+            <td style="text-align:center" class="go-used-cell">${totalOtherGoUsed} / ${totalGoCapacity}</td>
+            <td style="text-align:center" class="ret-used-cell">${totalOtherRetUsed} / ${totalRetCapacity}</td>
+            
             <td style="text-align:center;font-weight:700;color:${availGo === 0 ? 'red' : 'green'}" class="go-avail-cell">${availGo}</td>
             <td style="text-align:center;font-weight:700;color:${availRet === 0 ? 'red' : 'green'}" class="ret-avail-cell">${availRet}</td>
             
@@ -2797,7 +2808,13 @@ async function openAssignVehicles(voucherNo) {
             <td><input type="number" class="assign-adult" data-id="${vehicle.id}" value="${initAdults}" min="0" style="width:45px;text-align:center;" ${!isSelected ? 'disabled' : ''}></td>
             <td><input type="number" class="assign-child" data-id="${vehicle.id}" value="${initChildren}" min="0" style="width:45px;text-align:center;" ${!isSelected ? 'disabled' : ''}></td>
             <td><input type="number" class="assign-infant" data-id="${vehicle.id}" value="${initInfants}" min="0" style="width:45px;text-align:center;" ${!isSelected ? 'disabled' : ''}></td>
-            <td><input type="checkbox" class="assign-select" data-id="${vehicle.id}" data-capacity="${capacity}" data-max-go="${totalGoCapacity}" data-max-ret="${totalRetCapacity}" ${isSelected ? 'checked' : ''} style="width:18px;height:18px;"></td>
+            <td><input type="checkbox" class="assign-select" data-id="${vehicle.id}" 
+            data-capacity="${capacity}" 
+            data-base-go="${totalOtherGoUsed}" 
+            data-base-ret="${totalOtherRetUsed}" 
+            data-max-go="${totalGoCapacity}" 
+            data-max-ret="${totalRetCapacity}" 
+            ${isSelected ? 'checked' : ''} style="width:18px;height:18px;"></td>
           </tr>
         `;
     }
@@ -2844,35 +2861,32 @@ async function openAssignVehicles(voucherNo) {
     return { remA, remC, remI };
   }
 
-  // ✅ دالة تحديث السعة (تستبعد الرضع من حساب المقاعد)
-   // ✅ دالة تحديث السعة (Go Used / Ret Used / Avail)
+    // ✅ دالة تحديث السعة (Go Used / Ret Used / Avail)
   function recalcSeats(vehicleId) {
       const row = document.getElementById(`row-${vehicleId}`);
       if (!row) return;
 
-      const cap = parseInt(document.querySelector(`.assign-select[data-id="${vehicleId}"]`).dataset.capacity) || 0;
-      const maxGo = parseInt(document.querySelector(`.assign-select[data-id="${vehicleId}"]`).dataset.maxGo) || 0;
-      const maxRet = parseInt(document.querySelector(`.assign-select[data-id="${vehicleId}"]`).dataset.maxRet) || 0;
+      const cb = document.querySelector(`.assign-select[data-id="${vehicleId}"]`);
+      const maxGo = parseInt(cb.dataset.maxGo) || 0;
+      const maxRet = parseInt(cb.dataset.maxRet) || 0;
       
-      const isChecked = document.querySelector(`.assign-select[data-id="${vehicleId}"]`).checked;
-      const currentDate = currentAssignInvoice.activeDate;
+      // ✅ قراءة المشغول من الفواتير الأخرى من الـ attributes
+      const baseGo = parseInt(cb.dataset.baseGo) || 0;
+      const baseRet = parseInt(cb.dataset.baseRet) || 0;
       
-      // الحصول على المشغول من الفواتير الأخرى
-      const used = getVehicleUsedSeatsExcludingInfants(currentDate, vehicleId, null, currentAssignVoucher);
-      
+      // ✅ قراءة الركاب المضافين حالياً للفاتورة (إذا كانت مختارة)
       let currentPax = 0;
-      if (isChecked) {
-          // إذا كانت السيارة مختارة، نضيف الركاب الحاليين
+      if (cb.checked) {
           const currentA = parseInt(document.querySelector(`.assign-adult[data-id="${vehicleId}"]`).value) || 0;
           const currentC = parseInt(document.querySelector(`.assign-child[data-id="${vehicleId}"]`).value) || 0;
           currentPax = currentA + currentC; 
       }
       
-      // حساب الإجمالي (المشغول + المدخل حالياً إذا كانت مختارة)
-      const totalGoUsed = used.go + currentPax;
-      const totalRetUsed = used.ret + currentPax;
+      // ✅ الإجمالي = المشغول من الآخرين + ركاب الفاتورة الحالية
+      const totalGoUsed = baseGo + currentPax;
+      const totalRetUsed = baseRet + currentPax;
       
-      // حساب المتاح
+      // ✅ المتاح = السعة الإجمالية - الإجمالي المشغول
       const availGo = Math.max(0, maxGo - totalGoUsed);
       const availRet = Math.max(0, maxRet - totalRetUsed);
       
@@ -2888,6 +2902,7 @@ async function openAssignVehicles(voucherNo) {
       retAvailEl.textContent = availRet;
       retAvailEl.style.color = availRet === 0 ? 'red' : 'green';
   }
+   
   
   // ربط الـ Checkbox
   document.querySelectorAll('#assignVehiclesModal .assign-select').forEach(cb => {
