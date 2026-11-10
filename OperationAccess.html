@@ -2829,9 +2829,8 @@ async function openAssignVehicles(voucherNo) {
     document.getElementById('assignVehiclesContent').innerHTML = html;
     setTimeout(() => attachVehicleAssignmentEventsV2(), 50);
 }
- function attachVehicleAssignmentEventsV2() {
+function attachVehicleAssignmentEventsV2() {
   
-  // ✅ دالة لحساب المتبقي وتحديث الواجهة
   function updateRemainingPax() {
     const invAdults = parseInt(currentAssignInvoice.sgl) || 0;
     const invChildren = parseInt(currentAssignInvoice.dbl) || 0;
@@ -2841,7 +2840,6 @@ async function openAssignVehicles(voucherNo) {
     let totalAssignedChildren = 0;
     let totalAssignedInfants = 0;
     
-    // نجمع فقط من السيارات المختارة
     document.querySelectorAll('#assignVehiclesModal .assign-select:checked').forEach(cb => {
         const vId = cb.getAttribute('data-id');
         totalAssignedAdults += parseInt(document.querySelector(`.assign-adult[data-id="${vId}"]`).value) || 0;
@@ -2861,7 +2859,6 @@ async function openAssignVehicles(voucherNo) {
     return { remA, remC, remI };
   }
 
-    // ✅ دالة تحديث السعة (Go Used / Ret Used / Avail)
   function recalcSeats(vehicleId) {
       const row = document.getElementById(`row-${vehicleId}`);
       if (!row) return;
@@ -2869,12 +2866,9 @@ async function openAssignVehicles(voucherNo) {
       const cb = document.querySelector(`.assign-select[data-id="${vehicleId}"]`);
       const maxGo = parseInt(cb.dataset.maxGo) || 0;
       const maxRet = parseInt(cb.dataset.maxRet) || 0;
-      
-      // ✅ قراءة المشغول من الفواتير الأخرى من الـ attributes
       const baseGo = parseInt(cb.dataset.baseGo) || 0;
       const baseRet = parseInt(cb.dataset.baseRet) || 0;
       
-      // ✅ قراءة الركاب المضافين حالياً للفاتورة (إذا كانت مختارة)
       let currentPax = 0;
       if (cb.checked) {
           const currentA = parseInt(document.querySelector(`.assign-adult[data-id="${vehicleId}"]`).value) || 0;
@@ -2882,15 +2876,19 @@ async function openAssignVehicles(voucherNo) {
           currentPax = currentA + currentC; 
       }
       
-      // ✅ الإجمالي = المشغول من الآخرين + ركاب الفاتورة الحالية
       const totalGoUsed = baseGo + currentPax;
       const totalRetUsed = baseRet + currentPax;
       
-      // ✅ المتاح = السعة الإجمالية - الإجمالي المشغول
       const availGo = Math.max(0, maxGo - totalGoUsed);
       const availRet = Math.max(0, maxRet - totalRetUsed);
       
-      // تحديث الخلايا
+      if (totalGoUsed > maxGo || totalRetUsed > maxRet) {
+          showToast(`⚠️ تم تجاوز سعة السيارة! المتاح: ${availGo}`, 'error');
+          row.style.background = '#fee2e2'; 
+      } else {
+          row.style.background = '';
+      }
+      
       row.querySelector('.go-used-cell').innerHTML = `${totalGoUsed} / ${maxGo}`;
       row.querySelector('.ret-used-cell').innerHTML = `${totalRetUsed} / ${maxRet}`;
       
@@ -2902,7 +2900,6 @@ async function openAssignVehicles(voucherNo) {
       retAvailEl.textContent = availRet;
       retAvailEl.style.color = availRet === 0 ? 'red' : 'green';
   }
-   
   
   // ربط الـ Checkbox
   document.querySelectorAll('#assignVehiclesModal .assign-select').forEach(cb => {
@@ -2922,16 +2919,11 @@ async function openAssignVehicles(voucherNo) {
       iInput.disabled = !isChecked;
       
       if (isChecked) {
-          // ✅ التوزيع التلقائي: نأخذ الأرقام المتبقية من الفاتورة
           const { remA, remC, remI } = updateRemainingPax(); 
-          
           const cap = parseInt(e.target.dataset.capacity) || 0;
           
-          // نوزع فقط ما يمكن للسيارة استيعابه (البالغين والأطفال يشغلون مقاعد)
           const assignA = Math.min(remA, cap);
           const assignC = Math.min(remC, cap - assignA);
-          
-          // ✅ الرضع لا يشغلون مقاعد، لذا يمكن أخذهم جميعاً طالما تبقى مكان في الفاتورة
           const assignI = remI; 
           
           aInput.value = assignA > 0 ? assignA : '';
@@ -2955,15 +2947,47 @@ async function openAssignVehicles(voucherNo) {
     
     newInput.addEventListener('input', () => {
         const vId = newInput.dataset.id;
-        const cap = parseInt(document.querySelector(`.assign-select[data-id="${vId}"]`).dataset.capacity) || 0;
+        const cb = document.querySelector(`.assign-select[data-id="${vId}"]`);
+        const maxGo = parseInt(cb.dataset.maxGo) || 0;
+        const baseGo = parseInt(cb.dataset.baseGo) || 0;
         
         const a = parseInt(document.querySelector(`.assign-adult[data-id="${vId}"]`).value) || 0;
         const c = parseInt(document.querySelector(`.assign-child[data-id="${vId}"]`).value) || 0;
         
-        // التحقق من حمولة السيارة (البالغين + الأطفال فقط)
-        if (a + c > cap) {
-            showToast(`⚠️ تجاوزت حمولة السيارة (${cap} مقعد)`, 'error');
-            newInput.value = Math.max(0, cap - (newInput.classList.contains('assign-adult') ? c : a));
+        const actualMaxCapacity = maxGo - baseGo;
+        
+        if (a + c > actualMaxCapacity) {
+            showToast(`⚠️ تجاوزت السعة المتاحة (${actualMaxCapacity})`, 'error');
+            newInput.value = Math.max(0, actualMaxCapacity - (newInput.classList.contains('assign-adult') ? c : a));
+        }
+        
+        updateRemainingPax();
+        recalcSeats(vId);
+    });
+  });
+}
+  
+  // ربط حقول الركاب (لمنع التجاوز)
+  document.querySelectorAll('#assignVehiclesModal .assign-adult, #assignVehiclesModal .assign-child, #assignVehiclesModal .assign-infant').forEach(input => {
+    const newInput = input.cloneNode(true);
+    input.parentNode.replaceChild(newInput, input);
+       newInput.addEventListener('input', () => {
+        const vId = newInput.dataset.id;
+        const cb = document.querySelector(`.assign-select[data-id="${vId}"]`);
+        const maxGo = parseInt(cb.dataset.maxGo) || 0;
+        const baseGo = parseInt(cb.dataset.baseGo) || 0;
+        
+        const a = parseInt(document.querySelector(`.assign-adult[data-id="${vId}"]`).value) || 0;
+        const c = parseInt(document.querySelector(`.assign-child[data-id="${vId}"]`).value) || 0;
+        
+        // ✅ السعة القصوى الفعلية = (السعة الإجمالية - المشغول مسبقاً)
+        const actualMaxCapacity = maxGo - baseGo;
+        
+        // التحقق من حمولة السيارة
+        if (a + c > actualMaxCapacity) {
+            showToast(`⚠️ تجاوزت السعة المتاحة (${actualMaxCapacity})`, 'error');
+            // إعادة ضبط القيمة الأخيرة
+            newInput.value = Math.max(0, actualMaxCapacity - (newInput.classList.contains('assign-adult') ? c : a));
         }
         
         updateRemainingPax();
