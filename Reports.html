@@ -408,27 +408,37 @@ async function loadFleetCostReport(fromDate, toDate) {
   const container = document.getElementById('reportContainer');
   const summaryDiv = document.getElementById('summaryContainer');
   
+  // ✅ 1. دالة تحويل التاريخ من ISO (2026-10-22) إلى النصي (22/Oct/2026)
+  const toDDMMMYYYY = (iso) => {
+    if (!iso) return '';
+    if (iso.includes('/')) return iso; // إذا كان أصلاً بصيغة نصية
+    const [y, m, d] = iso.split('-');
+    const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return `${d}/${MN[+m - 1]}/${y}`;
+  };
+
+  const formattedFrom = toDDMMMYYYY(fromDate);
+  const formattedTo = toDDMMMYYYY(toDate);
+
   try {
-    // 1. جلب البيانات بالتوازي
+    // ✅ إرسال التاريخ بالصيغة الصحيحة للخادم
     const [fleetResult, instructorsResult] = await Promise.all([
-      gas('calculateFleetCostReport', { fromDate: fromDate, toDate: toDate }),
-      gas('getInstructorsCostReport', { fromDate: fromDate, toDate: toDate, centerName: currentUser?.centerName })
+      gas('calculateFleetCostReport', { fromDate: formattedFrom, toDate: formattedTo }),
+      gas('getInstructorsCostReport', { fromDate: formattedFrom, toDate: formattedTo, centerName: currentUser?.centerName })
     ]);
 
     if (!fleetResult || !fleetResult.success) {
       throw new Error(fleetResult?.error || 'فشل تحميل التقرير');
     }
     
-    // 2. استخراج المصفوفات
     const pVehicles = fleetResult.passengerVehicles || [];
     const lVehicles = fleetResult.logisticsVehicles || [];
     const boats = fleetResult.boats || [];
-    const period = fleetResult.period || { from: fromDate, to: toDate };
+    const period = fleetResult.period || { from: formattedFrom, to: formattedTo };
     
-    // 3. دالة قراءة التكلفة
-    const getCost = (item) => parseFloat(item.totalCost) || parseFloat(item.dailyCost) || 0;
+    // ✅ دالة قراءة التكلفة
+    const getCost = (item) => parseFloat(item.totalCost) || parseFloat(item.TotalCost) || parseFloat(item.dailyCost) || 0;
     
-    // 4. حساب الإجماليات
     const totalPassengerCost = pVehicles.reduce((sum, v) => sum + getCost(v), 0);
     const totalLogisticsCost = lVehicles.reduce((sum, v) => sum + getCost(v), 0);
     const totalBoatsCost = boats.reduce((sum, b) => sum + getCost(b), 0);
@@ -444,7 +454,7 @@ async function loadFleetCostReport(fromDate, toDate) {
     
     const grandTotal = totalPassengerCost + totalLogisticsCost + totalBoatsCost + totalInstructorsCost;
     
-    // 5. عرض الملخص
+    // ✅ 2. عرض الملخص (تحديث HTML المباشر)
     summaryDiv.style.display = 'block';
     summaryDiv.innerHTML = `
       <div class="summary-title">📊 ملخص التكاليف الشامل</div>
@@ -461,7 +471,7 @@ async function loadFleetCostReport(fromDate, toDate) {
       </div>
     `;
     
-    // 6. رسم الجداول
+    // ✅ 3. رسم الجداول
     let html = '';
     
     // سيارات الركاب
@@ -515,7 +525,6 @@ async function loadFleetCostReport(fromDate, toDate) {
     document.getElementById('summaryContainer').style.display = 'none';
   }
 }
-
 // ============================================================
 // OTHER REPORTS (أبقيت دوالك القديمة كما هي)
 // ============================================================
