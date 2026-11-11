@@ -760,7 +760,8 @@ function buildDaysUI() {
   for (let i = 0; i < packageDaysCount; i++) {
     const dayNum = i + 1;
     const day = dayData[i] || { 
-      date: '', time: '', tripName: '', tripDef: [], tripPrices: [], items: []
+      date: '', time: '', tripName: '', tripDef: [], tripPrices: [], items: [],
+      adults: 0, children: 0, infants: 0
     };
     
     html += `
@@ -770,6 +771,33 @@ function buildDaysUI() {
           <span class="day-subtotal" id="daySubtotal_${i}">0.00</span>
         </div>
         <div class="day-body">
+          
+          <!-- ✅ حقول الأفراد (Pax) لكل يوم -->
+          <div style="background:#f0f7ff;border:2px solid #3b82f6;border-radius:12px;padding:12px;margin-bottom:14px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;color:#1e40af;font-weight:800;font-size:12px;">
+              <span style="font-size:16px;">👥</span>
+              <span>Day ${dayNum} Occupancy</span>
+              <span style="background:#dbeafe;color:#1e40af;font-size:9px;padding:2px 8px;border-radius:20px;margin-left:auto;">إلزامي</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+              <div class="fgroup">
+                <label class="req" style="color:#1e40af;">Adults</label>
+                <input type="tel" inputmode="numeric" class="compact-num" id="dayAdults_${i}" value="${day.adults || ''}" min="0" max="999" placeholder="0" oninput="onDayPaxChange(${i})">
+              </div>
+              <div class="fgroup">
+                <label class="req" style="color:#1e40af;">Children</label>
+                <input type="tel" inputmode="numeric" class="compact-num" id="dayChildren_${i}" value="${day.children || ''}" min="0" max="999" placeholder="0" oninput="onDayPaxChange(${i})">
+              </div>
+              <div class="fgroup">
+                <label class="req" style="color:#1e40af;">Infants</label>
+                <input type="tel" inputmode="numeric" class="compact-num" id="dayInfants_${i}" value="${day.infants || ''}" min="0" max="999" placeholder="0" oninput="onDayPaxChange(${i})">
+              </div>
+            </div>
+            <div id="dayPaxError_${i}" style="display:none;margin-top:8px;background:#fef2f2;border:1px solid #dc2626;color:#991b1b;padding:6px 10px;border-radius:8px;font-size:11px;font-weight:600;text-align:center;">
+              ⚠️ يجب إدخال عدد أفراد لهذا اليوم
+            </div>
+          </div>
+
           <div class="day-row">
             <div class="fgroup"><label class="req">Execution Date</label><input type="date" class="fc" id="dayDate_${i}" onchange="onDayDateChange(${i})"></div>
             <div class="fgroup"><label class="req">Departure Time</label><input type="hidden" id="dayTime_${i}"><button type="button" class="time-btn-display" onclick="openClockModalForDay(${i})"><span id="dayTimeDisplay_${i}" class="ph">Select time...</span><span style="font-size:18px">🕐</span></button></div>
@@ -797,6 +825,8 @@ function buildDaysUI() {
       if (day.tripDef && day.tripDef.length) {
         renderTripTableForDay(i, day.tripDef, day.tripPrices, day.items);
       }
+      // تحديث حالة Pax لهذا اليوم
+      onDayPaxChange(i);
     }
   }
   scheduleTotalCalc();
@@ -1181,13 +1211,23 @@ async function collectPackageData() {
         });
       }
     }
+    
+    // ✅ قراءة أعداد الأفراد لهذا اليوم
+    const dayAdults   = parseInt(document.getElementById(`dayAdults_${i}`)?.value)   || 0;
+    const dayChildren = parseInt(document.getElementById(`dayChildren_${i}`)?.value) || 0;
+    const dayInfants  = parseInt(document.getElementById(`dayInfants_${i}`)?.value)  || 0;
+    
     days.push({
       dayIndex: i + 1,
       date: day.date || '',
       time: day.time || '',
       tripName: day.tripName || '',
       items: items,
-      subtotal: day.subtotal || 0
+      subtotal: day.subtotal || 0,
+      // ✅ أعداد الأفراد
+      adults: dayAdults,
+      children: dayChildren,
+      infants: dayInfants
     });
   }
   
@@ -1218,6 +1258,7 @@ async function collectPackageData() {
 }
 
 async function validatePackage() {
+  // ✅ 1. التحقق من بيانات العميل
   const inv = await collectPackageData();
   
   if (!inv.guestName || inv.guestName.trim() === '') {
@@ -1252,8 +1293,19 @@ async function validatePackage() {
     return null;
   }
   
+  // ✅ 2. التحقق من بيانات الأيام (بما فيها Pax)
   for (let i = 0; i < inv.packageDays; i++) {
     const day = inv.packageData[i];
+    
+    // ✅ التحقق من Pax
+    const dayPaxCheck = validateDayPax(i);
+    if (!dayPaxCheck.valid) {
+      showAlert(`⚠️ Day ${i+1}: يجب إدخال عدد الأفراد (بالغ / طفل / رضيع) — واحد على الأقل`, '⚠️');
+      document.getElementById(`dayAdults_${i}`)?.focus();
+      return null;
+    }
+    
+    // باقي التحقق
     if (!day.date || day.date.trim() === '') {
       showAlert(`⚠️ Please enter date for day ${i+1}`, '⚠️');
       return null;
@@ -1277,6 +1329,7 @@ async function validatePackage() {
     }
   }
   
+  // ✅ 3. التحقق من المبالغ
   if (inv.totalAmount === 0) {
     showAlert('⚠️ Package total cannot be zero. Please add items.', '⚠️');
     return null;
@@ -1290,9 +1343,18 @@ async function validatePackage() {
   
   return inv;
 }
-
 async function savePackageInvoice() {
   try {
+    // ✅ فحص مبكر لـ Pax (قبل أي شيء)
+    for (let i = 0; i < packageDaysCount; i++) {
+      const dayPaxCheck = validateDayPax(i);
+      if (!dayPaxCheck.valid) {
+        showAlert(`⚠️ Day ${i+1}: يجب إدخال عدد الأفراد (بالغ / طفل / رضيع) — واحد على الأقل قبل الحفظ`, '⚠️');
+        document.getElementById(`dayAdults_${i}`)?.focus();
+        return;
+      }
+    }
+
     if (!currentUser?.centerName) {
       showAlert('⚠️ Your account is not linked to a center. Contact admin.', '⚠️');
       return;
@@ -1591,6 +1653,8 @@ function clearFormFull() {
   dayData = [];
   packageDaysCount = 3;
   document.getElementById('packageDays').value = 3;
+  
+  // ✅ تفريغ كل الحقول
   ['phoneNumber','guestName','nationality','hotel','roomNo','adultCount','childCount','infantCount','invoiceCurrency','notes','discount'].forEach(id => {
     const e = document.getElementById(id);
     if (e) e.value = '';
@@ -1599,6 +1663,7 @@ function clearFormFull() {
     const e = document.getElementById(id);
     if (e) e.value = '';
   });
+  
   buildDaysUI();
   updateSessionBadge();
   scheduleTotalCalc();
@@ -1751,24 +1816,27 @@ function renderForm() {
       </div>
     </div>
     
-    <div style="display: grid; grid-template-columns: 0.8fr 0.8fr 0.8fr 0.8fr; gap: 12px;">
-      <div class="fgroup">
-        <label>Room No.</label>
-        <input type="tel" inputmode="numeric" class="fc" id="roomNo" maxlength="5" placeholder="000" style="text-align:center">
-      </div>
-      <div class="fgroup">
-        <label>Adults</label>
-        <input type="tel" inputmode="numeric" class="fc" id="adultCount" min="0" max="99" placeholder="0" style="text-align:center">
-      </div>
-      <div class="fgroup">
-        <label>Children</label>
-        <input type="tel" inputmode="numeric" class="fc" id="childCount" min="0" max="99" placeholder="0" style="text-align:center">
-      </div>
-      <div class="fgroup">
-        <label>Infants</label>
-        <input type="tel" inputmode="numeric" class="fc" id="infantCount" min="0" max="99" placeholder="0" style="text-align:center">
-      </div>
-    </div>
+  <div style="display: grid; grid-template-columns: 0.8fr 0.8fr 0.8fr 0.8fr; gap: 12px;">
+  <div class="fgroup">
+    <label>Room No.</label>
+    <input type="tel" inputmode="numeric" class="fc" id="roomNo" maxlength="5" placeholder="000" style="text-align:center">
+  </div>
+  <div class="fgroup">
+    <label>Adults</label>
+    <input type="tel" inputmode="numeric" class="fc" id="adultCount" min="0" max="99" placeholder="0" style="text-align:center" oninput="onCustomerPaxChange()">
+  </div>
+  <div class="fgroup">
+    <label>Children</label>
+    <input type="tel" inputmode="numeric" class="fc" id="childCount" min="0" max="99" placeholder="0" style="text-align:center" oninput="onCustomerPaxChange()">
+  </div>
+  <div class="fgroup">
+    <label>Infants</label>
+    <input type="tel" inputmode="numeric" class="fc" id="infantCount" min="0" max="99" placeholder="0" style="text-align:center" oninput="onCustomerPaxChange()">
+  </div>
+</div>
+<div id="customerPaxNote" style="display:none;margin-top:8px;padding:8px 12px;background:#fffbeb;border:1px solid #f59e0b;color:#92400e;border-radius:8px;font-size:11px;font-weight:600;text-align:center;">
+  ℹ️ ملاحظة: الأعداد الحقيقية للأفراد تُدخَل داخل كل يوم من أيام الباكيدج.
+</div>
   </div></div>
 
   <div class="card"><div class="card-head"><span class="ch-icon">🏝️</span><h3>Diving Package</h3></div><div class="card-body">
@@ -2102,7 +2170,49 @@ function drawLine(x, y) {
   lastX = x;
   lastY = y;
 }
+// ═══════════════════════════════════════════════════════════════════
+// 👥 PAX Helpers للباكيدج (لكل يوم)
+// ═══════════════════════════════════════════════════════════════════
+function onDayPaxChange(dayIndex) {
+  const adults   = parseInt(document.getElementById(`dayAdults_${dayIndex}`)?.value)   || 0;
+  const children = parseInt(document.getElementById(`dayChildren_${dayIndex}`)?.value) || 0;
+  const infants  = parseInt(document.getElementById(`dayInfants_${dayIndex}`)?.value)  || 0;
+  const total    = adults + children + infants;
 
+  if (!dayData[dayIndex]) dayData[dayIndex] = {};
+  dayData[dayIndex].adults   = adults;
+  dayData[dayIndex].children = children;
+  dayData[dayIndex].infants  = infants;
+
+  const errEl = document.getElementById(`dayPaxError_${dayIndex}`);
+  if (errEl) {
+    errEl.style.display = total === 0 ? 'block' : 'none';
+  }
+}
+
+function onCustomerPaxChange() {
+  const a = parseInt(document.getElementById('adultCount')?.value)  || 0;
+  const c = parseInt(document.getElementById('childCount')?.value)  || 0;
+  const i = parseInt(document.getElementById('infantCount')?.value) || 0;
+  const noteEl = document.getElementById('customerPaxNote');
+  if (noteEl) {
+    noteEl.style.display = (a + c + i) > 0 ? 'block' : 'none';
+  }
+}
+  /**
+ * التحقق من صحة Pax ليوم معين
+ */
+function validateDayPax(dayIndex) {
+  const adults   = parseInt(document.getElementById(`dayAdults_${dayIndex}`)?.value)   || 0;
+  const children = parseInt(document.getElementById(`dayChildren_${dayIndex}`)?.value) || 0;
+  const infants  = parseInt(document.getElementById(`dayInfants_${dayIndex}`)?.value)  || 0;
+  const total    = adults + children + infants;
+
+  return {
+    valid: total > 0,
+    adults: adults, children: children, infants: infants, total: total
+  };
+}
 // ============================================
 // 11. DOMContentLoaded
 // ============================================
