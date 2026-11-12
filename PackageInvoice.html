@@ -484,14 +484,45 @@ function R2(n) {
 // ============================================
 async function getRate(dateStr, centerName) {
   if (!dateStr) return C.rate || null;
-  if (C.rateByDate[dateStr]) return C.rateByDate[dateStr];
+  
+  // ✅ 1. تحويل dateStr إلى dd/MMM/yyyy (مفتاح موحّد)
+  let normalizedDate = dateStr;
+  if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+    // من input type="date" → YYYY-MM-DD
+    const parts = dateStr.split('-');
+    const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    normalizedDate = `${parts[2].padStart(2,'0')}/${MN[parseInt(parts[1])-1]}/${parts[0]}`;
+  }
+  
+  // ✅ 2. التحقق من الكاش
+  if (C.rateByDate[normalizedDate]) {
+    return C.rateByDate[normalizedDate];
+  }
+  
   try {
-    const r = await gas('getExchangeRate', { dateStr, centerName: centerName || currentUser?.centerName });
-    if (r) { C.rateByDate[dateStr] = r; return r; }
-  } catch (e) { console.warn('rate fetch error:', e); }
+    // ✅ 3. إرسال التاريخ بصيغة dd/MMM/yyyy
+    const r = await gas('getExchangeRate', { 
+      dateStr: normalizedDate, 
+      centerName: centerName || currentUser?.centerName 
+    });
+    
+    if (r) {
+      C.rateByDate[normalizedDate] = r;
+      
+      // ✅ إذا كان Fallback، سجّل تحذير
+      if (r.isFallback) {
+        console.warn(`⚠️ Using fallback rate from ${r.date} for requested date ${r.requestedDate}`);
+      }
+      
+      return r;
+    }
+  } catch (e) {
+    console.warn('rate fetch error:', e);
+  }
+  
+  // ✅ 4. Fallback عام
   return C.rate || null;
 }
-
 function rateFields(r) {
   if (!r) return null;
   if (r.cash) return r;
@@ -503,21 +534,51 @@ function rateFields(r) {
 
 async function validateExchangeRateForDate(dateStr) {
   if (!dateStr) {
-    return { valid: false, message: '⚠️ Date is required' };
+    return { valid: false, message: '⚠️ التاريخ مطلوب' };
   }
+  
   const r = await getRate(dateStr, currentUser?.centerName);
+  
+  // ✅ إذا لم يوجد سعر → رسالة واضحة
   if (!r) {
-    return { valid: false, message: `⚠️ No exchange rate for ${dateStr}. Please add one first.` };
+    return { 
+      valid: false, 
+      message: `⚠️ لا يوجد سعر صرف مسجل للتاريخ ${dateStr}.\n\n` +
+               `الحل:\n` +
+               `1. افتح صفحة "أسعار الصرف" (Exchange Rates).\n` +
+               `2. أضف سعراً لهذا التاريخ أو أي تاريخ أقرب.\n` +
+               `3. أعد المحاولة.`
+    };
   }
+  
+  // ✅ التحقق من اكتمال البيانات
   if (!r.cash) {
-    return { valid: false, message: `⚠️ Incomplete exchange rate data for ${dateStr}` };
+    return { 
+      valid: false, 
+      message: `⚠️ بيانات سعر الصرف غير مكتملة للتاريخ ${dateStr}.\n` +
+               `تأكد من إدخال جميع الأسعار (USD, EUR, GBP).`
+    };
   }
-  if (r.cash.USD === undefined || r.cash.USD === 0) {
-    return { valid: false, message: `⚠️ Invalid USD rate for ${dateStr}` };
+  
+  if (!r.cash.USD || r.cash.USD === 0) {
+    return { 
+      valid: false, 
+      message: `⚠️ سعر صرف الدولار (USD) = 0 للتاريخ ${dateStr}.\n` +
+               `يرجى تصحيحه في صفحة أسعار الصرف.`
+    };
   }
+  
+  // ✅ إذا كان Fallback → تحذير (لكن يُقبل)
+  if (r.isFallback) {
+    return { 
+      valid: true, 
+      warning: `⚠️ لا يوجد سعر محدد للتاريخ ${dateStr}، تم استخدام سعر ${r.date} كاحتياطي.`,
+      isFallback: true
+    };
+  }
+  
   return { valid: true };
 }
-
 // ============================================
 // 4. Customer + AutoComplete Functions
 // ============================================
@@ -722,14 +783,17 @@ function ensureTripsDatalist() {
     console.log('✅ Trips datalist created');
   }
   
-  if (C.divingTrips && C.divingTrips.length) {
-    dl.innerHTML = C.divingTrips.map(t => `<option value="${t}">`).join('');
-    console.log(`✅ ${C.divingTrips.length} trips added to datalist`);
+  // ✅ C.divingTrips مرتبة أبجدياً مسبقاً في loadBackgroundData
+  if (C.divingTrips && C.divingTrips.length > 0) {
+    dl.innerHTML = C.divingTrips.map(t => `<option value="${esc(t)}"></option>`).join('');
+    console.log(`✅ ${C.divingTrips.length} diving trips added to datalist (sorted)`);
+    
     document.querySelectorAll('[list="tripsList"]').forEach(input => {
       input.setAttribute('list', 'tripsList');
     });
   } else {
-    setTimeout(ensureTripsDatalist, 500);
+    // إذا لم تكن هناك رحلات، لا تفعل شيئاً
+    console.warn('⚠️ No diving trips available');
   }
 }
 
@@ -1743,10 +1807,35 @@ function loadBackgroundData() {
       }
 
       // --- Trips ---
-      if (res.trips && Array.isArray(res.trips)) {
-        C.divingTrips = res.trips.map(t => t.name || t);
-        ensureTripsDatalist();
-      }
+     // --- Trips (Diving Only) ---
+// --- Trips (Diving Only + Sorted Alphabetically) ---
+if (res.trips && Array.isArray(res.trips)) {
+  // ✅ 1. قائمة الكلمات المفتاحية لرحلات الغوص
+  const divingKeywords = [
+    'diving', 'dive', 'scuba', 'intro', 'diver', 'course', 
+    'snorkel', 'owd', 'aowd', 'rescue', 'divemaster', 'check dive'
+  ];
+
+  // ✅ 2. تصفية الرحلات
+  C.divingTrips = res.trips
+    .filter(t => {
+      const name = (t.name || t || '').toString().toLowerCase();
+      const category = (t.category || '').toString().toLowerCase();
+      
+      // إذا كانت الفئة "diving" أو "غوص" → نقبلها فوراً
+      if (category === 'diving' || category === 'غوص') return true;
+      
+      // وإلا نتحقق من الكلمات المفتاحية
+      return divingKeywords.some(kw => name.includes(kw));
+    })
+    .map(t => t.name || t)
+    // ✅ 3. الترتيب الأبجدي (A-Z)
+    .sort((a, b) => a.localeCompare(b, 'en'));
+
+  console.log(`✅ Loaded ${C.divingTrips.length} diving trips (sorted):`, C.divingTrips);
+  
+  ensureTripsDatalist();
+}
 
       // --- Customers ---
       if (res.customers && Array.isArray(res.customers)) {
@@ -1816,26 +1905,11 @@ function renderForm() {
       </div>
     </div>
     
-  <div style="display: grid; grid-template-columns: 0.8fr 0.8fr 0.8fr 0.8fr; gap: 12px;">
+  <div style="display: grid; grid-template-columns: 1fr; gap: 12px;">
   <div class="fgroup">
     <label>Room No.</label>
     <input type="tel" inputmode="numeric" class="fc" id="roomNo" maxlength="5" placeholder="000" style="text-align:center">
   </div>
-  <div class="fgroup">
-    <label>Adults</label>
-    <input type="tel" inputmode="numeric" class="fc" id="adultCount" min="0" max="99" placeholder="0" style="text-align:center" oninput="onCustomerPaxChange()">
-  </div>
-  <div class="fgroup">
-    <label>Children</label>
-    <input type="tel" inputmode="numeric" class="fc" id="childCount" min="0" max="99" placeholder="0" style="text-align:center" oninput="onCustomerPaxChange()">
-  </div>
-  <div class="fgroup">
-    <label>Infants</label>
-    <input type="tel" inputmode="numeric" class="fc" id="infantCount" min="0" max="99" placeholder="0" style="text-align:center" oninput="onCustomerPaxChange()">
-  </div>
-</div>
-<div id="customerPaxNote" style="display:none;margin-top:8px;padding:8px 12px;background:#fffbeb;border:1px solid #f59e0b;color:#92400e;border-radius:8px;font-size:11px;font-weight:600;text-align:center;">
-  ℹ️ ملاحظة: الأعداد الحقيقية للأفراد تُدخَل داخل كل يوم من أيام الباكيدج.
 </div>
   </div></div>
 
