@@ -1538,33 +1538,55 @@ function buildWhatsAppMessage(data) {
         if (!text) return '';
         return String(text).replace(/^\uFEFF/, '').replace(/[\u200B-\u200D\u2060\u00A0]/g, ' ').replace(/\uFFFD/g, '').replace(/[<>"']/g, '');
     };
+    
     let msg = '';
     msg += `${EMOJI.INVOICE} *Diving Package Confirmation*\n\n`;
     msg += `Dear ${sanitize(data.guestName)},\n`;
     msg += `Thank you for booking with *${sanitize(data.centerName)}*.\n\n`;
     msg += `*Package Details*\n`;
     msg += `Package ID: ${sanitize(data.packageId)}\n`;
-    msg += `Days: ${data.packageDays}\n\n`;
-    data.packageData.forEach((day, i) => {
-        const dayNum = i + 1;
-        msg += `  ${EMOJI.CALENDAR} Day ${dayNum}: ${sanitize(day.tripName)} (${sanitize(day.date)} at ${day.time})\n`;
-        day.items.forEach(item => {
-            msg += `    ${item.name}: ${item.quantity} × ${item.price} = ${item.total}\n`;
+    msg += `Days: ${data.packageDays || 0}\n\n`;
+    
+    // ✅ الحماية: التأكد من أن packageData هي مصفوفة صالحة
+    const packageDaysList = Array.isArray(data.packageData) ? data.packageData : [];
+    
+    if (packageDaysList.length > 0) {
+        packageDaysList.forEach((day, i) => {
+            const dayNum = day.dayIndex || (i + 1);
+            msg += `  ${EMOJI.CALENDAR} Day ${dayNum}: ${sanitize(day.tripName)} (${sanitize(day.date)} at ${sanitize(day.time)})\n`;
+            
+            // ✅ حماية إضافية: التأكد من أن items هي مصفوفة
+            const items = Array.isArray(day.items) ? day.items : [];
+            items.forEach(item => {
+                msg += `    ${sanitize(item.name)}: ${item.quantity} × ${item.price} = ${item.total}\n`;
+            });
         });
-    });
+    } else {
+        msg += `  (No detailed day data available)\n`;
+    }
+    
     msg += `\n*Financial Summary*\n`;
-    msg += `Total Amount: ${data.totalAmount.toFixed(2)} ${data.invoiceCurrency}\n`;
-    msg += `Discount: ${data.discount.toFixed(2)} ${data.invoiceCurrency}\n`;
-    msg += `After Discount: ${data.totalAfterDiscount.toFixed(2)} ${data.invoiceCurrency}\n`;
-    msg += `Paid: ${data.paymentPrice.toFixed(2)} ${data.invoiceCurrency}\n`;
-    msg += `Balance Due: ${data.rest.toFixed(2)} ${data.invoiceCurrency}\n\n`;
-    msg += `${EMOJI.DOC} *Invoice PDF:* ${data.pdfUrl}\n\n`;
-    msg += `Vouchers: ${data.voucherNos.join(', ')}\n\n`;
+    msg += `Total Amount: ${(data.totalAmount || 0).toFixed(2)} ${data.invoiceCurrency || 'USD'}\n`;
+    msg += `Discount: ${(data.discount || 0).toFixed(2)} ${data.invoiceCurrency || 'USD'}\n`;
+    msg += `After Discount: ${(data.totalAfterDiscount || 0).toFixed(2)} ${data.invoiceCurrency || 'USD'}\n`;
+    msg += `Paid: ${(data.paymentPrice || 0).toFixed(2)} ${data.invoiceCurrency || 'USD'}\n`;
+    msg += `Balance Due: ${(data.rest || 0).toFixed(2)} ${data.invoiceCurrency || 'USD'}\n\n`;
+    
+    if (data.pdfUrl) {
+        msg += `${EMOJI.DOC} *Invoice PDF:* ${data.pdfUrl}\n\n`;
+    }
+    
+    // ✅ حماية: التأكد من أن voucherNos هي مصفوفة
+    const vouchers = Array.isArray(data.voucherNos) ? data.voucherNos : [];
+    if (vouchers.length > 0) {
+        msg += `Vouchers: ${vouchers.join(', ')}\n\n`;
+    }
+    
     msg += `We look forward to welcoming you soon! ${EMOJI.PRAY}\n`;
     msg += `— *${sanitize(data.centerName)}*`;
+    
     return msg;
 }
-
 function openWhatsAppSmart(phone, encodedMessage) {
     const cleanPhone = phone.replace('+', '').replace(/\s/g, '');
     const waMeUrl = `https://wa.me/${cleanPhone}?text=${encodedMessage}`;
@@ -1595,6 +1617,7 @@ async function sharePackageWhatsApp(packageId) {
             packageId: packageId,
             centerName: currentUser?.centerName 
         });
+        
         if (!result?.success || !result?.data) {
             hidePDFOv();
             showAlert('❌ Failed to get package data', '❌');
@@ -1603,12 +1626,13 @@ async function sharePackageWhatsApp(packageId) {
         
         const data = result.data;
         
-        // ✅ استخراج أرقام الفواتير بشكل صحيح
-        const vouchersList = (data.packageData || []).map(d => d.voucherNo).filter(Boolean);
+        // ✅ الحماية: التأكد من وجود packageData قبل استخراج أرقام الفواتير
+        const packageDaysList = Array.isArray(data.packageData) ? data.packageData : [];
+        const vouchersList = packageDaysList.map(d => d.voucherNo).filter(Boolean);
 
         const packageData = {
             guestName: data.guestName || 'Guest',
-            centerName: data.centerName || 'Scorpion Diving Center',
+            centerName: data.centerName || 'Diving Center',
             packageId: data.packageId || packageId,
             packageDays: data.packageDays || 0,
             totalAmount: data.totalAmount || 0,
@@ -1618,17 +1642,20 @@ async function sharePackageWhatsApp(packageId) {
             discount: data.discount || 0,
             invoiceCurrency: data.invoiceCurrency || 'USD',
             pdfUrl: data.pdfUrl || '',
-            voucherNos: vouchersList // ✅ إضافة أرقام الفواتير هنا
+            voucherNos: vouchersList,
+            packageData: packageDaysList // ✅ تمرير المصفوفة المحمية
         };
         
         const message = buildWhatsAppMessage(packageData);
         let phone = data.contactNo || '';
         phone = cleanPhoneForWhatsApp(phone);
+        
         if (!phone || phone === '+' || phone === '+20' || phone.length < 8) {
             hidePDFOv();
             showAlert('❌ No valid phone number found', '❌');
             return;
         }
+        
         const encodedMessage = encodeURIComponent(message);
         openWhatsAppSmart(phone, encodedMessage);
         hidePDFOv();
@@ -1638,7 +1665,6 @@ async function sharePackageWhatsApp(packageId) {
         showAlert('❌ Error: ' + err.message, '❌');
     }
 }
-
 async function sharePackageInvoiceWhatsApp(voucherNo) {
     try {
         showPDFOv('📱 Preparing WhatsApp...');
