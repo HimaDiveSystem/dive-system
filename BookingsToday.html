@@ -1936,8 +1936,8 @@ function renderTable() {
     const vn = inv.VoucherNo || inv.voucherNo || '';
     const restHtml = fmtRest(inv);
    // ✅ زر PDF ذكي: يفتح إذا موجود، أو ينشئ إذا محذوف
-const pdfBtn = `<button class="act-btn act-pdf" onclick="event.stopPropagation();handlePDFView('${escHtml(vn)}')" title="عرض / إنشاء PDF" style="background:#ea580c;color:white;padding:2px 6px;border:none;border-radius:8px;font-size:9px;cursor:pointer;">📄</button>`;
-    
+// ✅ زر PDF ذكي: يفتح إذا موجود، أو ينشئ إذا محذوف
+const pdfBtn = `<button class="act-btn act-pdf" onclick="event.stopPropagation();handlePDFView('${escHtml(vn)}')" title="عرض / إنشاء PDF" style="background:#ea580c;color:white;padding:2px 6px;border:none;border-radius:8px;font-size:9px;cursor:pointer;">📄</button>`;    
     const safeVal = (val) => val !== undefined && val !== null && val !== '' ? val : '';
     const safeNum = (val) => {
       const num = parseFloat(val);
@@ -2531,50 +2531,73 @@ window.onafterprint = function() {
 // 📄 handlePDFView — عرض PDF إذا موجود، أو إعادة إنشائه إذا محذوف
 // ═══════════════════════════════════════════════════════════════════
 async function handlePDFView(voucherNo) {
-  // 1. البحث في القائمة المعروضة أولاً، ثم في الكل
-  let invoice = filtInv.find(i => (i.VoucherNo || i.voucherNo) === voucherNo);
-  if (!invoice) {
-    invoice = allInv.find(i => (i.VoucherNo || i.voucherNo) === voucherNo);
-  }
-  if (!invoice) {
-    showToast('❌ الفاتورة غير موجودة', 'error');
-    return;
-  }
+  let invoice = filtInv.find(i => (i.VoucherNo || i.voucherNo) === voucherNo) || allInv.find(i => (i.VoucherNo || i.voucherNo) === voucherNo);
+  if (!invoice) { showToast('❌ الفاتورة غير موجودة', 'error'); return; }
 
-  // 2. إذا كان رابط PDF موجوداً وصالحاً → افتحه مباشرة
   const existingLink = invoice.invoicePdf || invoice.Invoice_PDF || invoice.pdfLink || '';
-  if (existingLink && existingLink.startsWith('http')) {
-    window.open(existingLink, '_blank');
+  const user = Session.getUser();
+
+  if (!existingLink || !existingLink.startsWith('http')) {
+    showToast('⏳ جاري إنشاء ملف PDF...', 'info');
+    await requestRegeneratePDF(voucherNo, user, invoice);
     return;
   }
 
-  // 3. الرابط غير موجود (محذوف بعد 30 يوماً) → أعد إنشاءه
-  showToast('⏳ جاري إنشاء ملف PDF...', 'info');
-
+  showToast('⏳ جاري التحقق من الملف...', 'info');
   try {
-    const user = Session.getUser();
+    const checkResult = await gas('checkFileExists', { fileUrl: existingLink });
+    if (checkResult && checkResult.exists) {
+      window.open(existingLink, '_blank');
+    } else {
+      showToast('⚠️ الملف محذوف، جاري إنشاء نسخة جديدة...', 'info');
+      await requestRegeneratePDF(voucherNo, user, invoice);
+    }
+  } catch (e) {
+    await requestRegeneratePDF(voucherNo, user, invoice);
+  }
+}
+
+async function requestRegeneratePDF(voucherNo, user, invoice) {
+  try {
     const result = await gas('regenerateInvoicePDF', {
       voucherNo: voucherNo,
       centerName: user?.centerName || currentUser?.centerName || ''
     });
 
     if (result?.success && result.url) {
-      // تحديث الرابط محلياً في الذاكرة
       invoice.invoicePdf = result.url;
       invoice.Invoice_PDF = result.url;
-
-      // فتح الملف الجديد في تاب جديد
       window.open(result.url, '_blank');
-
       showToast('✅ تم إنشاء PDF بنجاح', 'success');
-
-      // إعادة رسم الجدول لتحديث حالة الزر (اختياري)
-      renderTable();
+      renderTable(); 
     } else {
       showToast('❌ فشل إنشاء PDF: ' + (result?.message || 'خطأ غير معروف'), 'error');
     }
   } catch (e) {
-    console.error('❌ handlePDFView error:', e);
+    console.error('❌ requestRegeneratePDF error:', e);
+    showToast('❌ خطأ: ' + e.message, 'error');
+  }
+}
+
+// دالة مساعدة لطلب الإنشاء من السيرفر
+async function requestRegeneratePDF(voucherNo, user, invoice) {
+  try {
+    const result = await gas('regenerateInvoicePDF', {
+      voucherNo: voucherNo,
+      centerName: user?.centerName || currentUser?.centerName || ''
+    });
+
+    if (result?.success && result.url) {
+      invoice.invoicePdf = result.url;
+      invoice.Invoice_PDF = result.url;
+      window.open(result.url, '_blank');
+      showToast('✅ تم إنشاء PDF بنجاح', 'success');
+      renderTable(); // تحديث الجدول
+    } else {
+      showToast('❌ فشل إنشاء PDF: ' + (result?.message || 'خطأ غير معروف'), 'error');
+    }
+  } catch (e) {
+    console.error('❌ requestRegeneratePDF error:', e);
     showToast('❌ خطأ: ' + e.message, 'error');
   }
 }
