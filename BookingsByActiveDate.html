@@ -2618,35 +2618,7 @@ setTimeout(async () => {
     fixStickyHeaderManually();
   }, 500);
 }, 100);
-// ═══════════════════════════════════════════════════════════════════
-// 📄 handlePDFView — عرض PDF إذا موجود، أو إعادة إنشائه إذا محذوف
-// ═══════════════════════════════════════════════════════════════════
-async function handlePDFView(voucherNo) {
-  let invoice = filtInv.find(i => (i.VoucherNo || i.voucherNo) === voucherNo) || allInv.find(i => (i.VoucherNo || i.voucherNo) === voucherNo);
-  if (!invoice) { showToast('❌ الفاتورة غير موجودة', 'error'); return; }
 
-  const existingLink = invoice.invoicePdf || invoice.Invoice_PDF || invoice.pdfLink || '';
-  const user = Session.getUser();
-
-  if (!existingLink || !existingLink.startsWith('http')) {
-    showToast('⏳ جاري إنشاء ملف PDF...', 'info');
-    await requestRegeneratePDF(voucherNo, user, invoice);
-    return;
-  }
-
-  showToast('⏳ جاري التحقق من الملف...', 'info');
-  try {
-    const checkResult = await gas('checkFileExists', { fileUrl: existingLink });
-    if (checkResult && checkResult.exists) {
-      window.open(existingLink, '_blank');
-    } else {
-      showToast('⚠️ الملف محذوف، جاري إنشاء نسخة جديدة...', 'info');
-      await requestRegeneratePDF(voucherNo, user, invoice);
-    }
-  } catch (e) {
-    await requestRegeneratePDF(voucherNo, user, invoice);
-  }
-}
 
 async function requestRegeneratePDF(voucherNo, user, invoice) {
   try {
@@ -2669,6 +2641,71 @@ async function requestRegeneratePDF(voucherNo, user, invoice) {
     showToast('❌ خطأ: ' + e.message, 'error');
   }
 }
+ // ═══════════════════════════════════════════════════════════════════
+// 📄 دوال عرض وإعادة إنشاء الـ PDF بذكاء
+// ═══════════════════════════════════════════════════════════════════
+async function handlePDFView(voucherNo) {
+  let invoice = filtInv.find(i => (i.VoucherNo || i.voucherNo) === voucherNo) 
+             || allInv.find(i => (i.VoucherNo || i.voucherNo) === voucherNo);
+             
+  if (!invoice) { 
+    showToast('❌ الفاتورة غير موجودة', 'error'); 
+    return; 
+  }
+
+  const existingLink = invoice.invoicePdf || invoice.Invoice_PDF || invoice.pdfLink || '';
+  const user = Session.getUser();
+
+  // 1. إذا لم يكن هناك رابط -> إنشاء جديد
+  if (!existingLink || !existingLink.startsWith('http')) {
+    showToast('⏳ جاري إنشاء ملف PDF...', 'info');
+    await requestRegeneratePDF(voucherNo, user, invoice);
+    return;
+  }
+
+  // 2. إذا كان هناك رابط -> فحصه أولاً
+  showToast('⏳ جاري التحقق من الملف...', 'info');
+  try {
+    const checkResult = await gas('checkFileExists', { fileUrl: existingLink });
+    
+    if (checkResult && checkResult.exists) {
+      window.open(existingLink, '_blank'); // الملف موجود، افتحه
+    } else {
+      showToast('⚠️ الملف محذوف، جاري إنشاء نسخة جديدة...', 'info');
+      await requestRegeneratePDF(voucherNo, user, invoice); // الملف محذوف، أنشئه
+    }
+  } catch (e) {
+    // في حال فشل الفحص، جرب إنشاءه احتياطياً
+    await requestRegeneratePDF(voucherNo, user, invoice);
+  }
+}
+
+async function requestRegeneratePDF(voucherNo, user, invoice) {
+  try {
+    const result = await gas('regenerateInvoicePDF', {
+      voucherNo: voucherNo,
+      centerName: user?.centerName || currentUser?.centerName || ''
+    });
+
+    if (result?.success && result.url) {
+      // تحديث الرابط في الذاكرة
+      invoice.invoicePdf = result.url;
+      invoice.Invoice_PDF = result.url;
+      
+      // فتح الملف الجديد
+      window.open(result.url, '_blank');
+      showToast('✅ تم إنشاء PDF بنجاح', 'success');
+      
+      // إعادة رسم الجدول لتحديث حالة الزر
+      if (typeof renderTable === 'function') renderTable(); 
+    } else {
+      showToast('❌ فشل إنشاء PDF: ' + (result?.message || 'خطأ غير معروف'), 'error');
+    }
+  } catch (e) {
+    console.error('❌ requestRegeneratePDF error:', e);
+    showToast('❌ خطأ: ' + e.message, 'error');
+  }
+} 
 window.addEventListener('scroll', hideAll);
 });  
 </script>
