@@ -1938,10 +1938,8 @@ function renderTable() {
   pdata.forEach((inv, index) => {
     const vn = inv.VoucherNo || inv.voucherNo || '';
     const restHtml = fmtRest(inv);
-    const pdfLink = inv.invoicePdf || inv.Invoice_PDF || '';
-    const pdf = (pdfLink && pdfLink.startsWith('http'))
-      ? `<a href="${pdfLink}" target="_blank" class="act-btn act-pdf" onclick="event.stopPropagation()">🖨️</a>`
-      : `<span class="act-btn act-na">📄</span>`;
+    // ✅ زر PDF ذكي: يفتح إذا موجود، أو ينشئ إذا محذوف
+const pdfBtn = `<button class="act-btn act-pdf" onclick="event.stopPropagation();handlePDFView('${escHtml(vn)}')" title="عرض / إنشاء PDF" style="background:#ea580c;color:white;padding:2px 6px;border:none;border-radius:8px;font-size:9px;cursor:pointer;">📄</button>`;
     
     const safeVal = (val) => val !== undefined && val !== null && val !== '' ? val : '';
     const safeNum = (val) => {
@@ -1987,7 +1985,7 @@ function renderTable() {
         <div style="display:flex; gap:3px; justify-content:center;">
           <button class="act-btn act-edit" onclick="editInvoice('${escHtml(vn)}')" style="padding:2px 6px; border:none; border-radius:8px; font-size:9px; cursor:pointer; background:#3b82f6; color:white;">✏️</button>
           <button class="act-btn act-del" onclick="showDeleteConfirmModal('${escHtml(vn)}')" style="padding:2px 6px; border:none; border-radius:8px; font-size:9px; cursor:pointer; background:#dc2626; color:white;">🗑️</button>
-          ${pdf}
+          ${pdfBtn} 
         </div>
       </td>
     </tr>`;
@@ -2620,7 +2618,57 @@ setTimeout(async () => {
     fixStickyHeaderManually();
   }, 500);
 }, 100);
+// ═══════════════════════════════════════════════════════════════════
+// 📄 handlePDFView — عرض PDF إذا موجود، أو إعادة إنشائه إذا محذوف
+// ═══════════════════════════════════════════════════════════════════
+async function handlePDFView(voucherNo) {
+  // 1. البحث في القائمة المعروضة أولاً، ثم في الكل
+  let invoice = filtInv.find(i => (i.VoucherNo || i.voucherNo) === voucherNo);
+  if (!invoice) {
+    invoice = allInv.find(i => (i.VoucherNo || i.voucherNo) === voucherNo);
+  }
+  if (!invoice) {
+    showToast('❌ الفاتورة غير موجودة', 'error');
+    return;
+  }
 
+  // 2. إذا كان رابط PDF موجوداً وصالحاً → افتحه مباشرة
+  const existingLink = invoice.invoicePdf || invoice.Invoice_PDF || invoice.pdfLink || '';
+  if (existingLink && existingLink.startsWith('http')) {
+    window.open(existingLink, '_blank');
+    return;
+  }
+
+  // 3. الرابط غير موجود (محذوف بعد 30 يوماً) → أعد إنشاءه
+  showToast('⏳ جاري إنشاء ملف PDF...', 'info');
+
+  try {
+    const user = Session.getUser();
+    const result = await gas('regenerateInvoicePDF', {
+      voucherNo: voucherNo,
+      centerName: user?.centerName || currentUser?.centerName || ''
+    });
+
+    if (result?.success && result.url) {
+      // تحديث الرابط محلياً في الذاكرة
+      invoice.invoicePdf = result.url;
+      invoice.Invoice_PDF = result.url;
+
+      // فتح الملف الجديد في تاب جديد
+      window.open(result.url, '_blank');
+
+      showToast('✅ تم إنشاء PDF بنجاح', 'success');
+
+      // إعادة رسم الجدول لتحديث حالة الزر (اختياري)
+      renderTable();
+    } else {
+      showToast('❌ فشل إنشاء PDF: ' + (result?.message || 'خطأ غير معروف'), 'error');
+    }
+  } catch (e) {
+    console.error('❌ handlePDFView error:', e);
+    showToast('❌ خطأ: ' + e.message, 'error');
+  }
+}
 window.addEventListener('scroll', hideAll);
 });  
 </script>
