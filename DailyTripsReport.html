@@ -1216,9 +1216,8 @@ function renderTripCard(tripName, invoices, index, tripItems, remainingHTML = ''
     const restClass = rest > 0 ? 'num-col' : 'zero-col';
     const restDisplay = rest > 0 ? rest.toFixed(2) + ' ' + currency : '✓';
     
-    const pdfBtn = (inv.invoicePdf && inv.invoicePdf.startsWith('http'))
-      ? `<a href="${escHtml(inv.invoicePdf)}" target="_blank" class="pdf-btn" title="Open PDF">📄</a>`
-      : `<span class="pdf-btn disabled" title="No PDF">—</span>`;
+    // ✅ زر PDF الذكي: يعرض إذا موجود، أو ينشئ إذا محذوف
+const pdfBtn = `<button class="pdf-btn" onclick="handlePDFView('${escHtml(inv.voucherNo)}')" title="View/Create PDF">📄</button>`;
     
     const vehiclesCell = renderVehiclesCell(inv);
     const actionsCell = renderVehicleActionCell(inv, isSingleDate);
@@ -2633,7 +2632,52 @@ document.addEventListener('keydown', function(e) {
   if (e.key === 'Enter' && e.target.id === 'filterSearch') applySearch();
   if (e.key === 'Escape') closeAlert();
 });
+// ═══════════════════════════════════════════════════════════════════
+// 📄 handlePDFView — عرض أو إنشاء PDF بذكاء
+// ═══════════════════════════════════════════════════════════════════
+async function handlePDFView(voucherNo) {
+  const invoice = allInvoices.find(i => i.voucherNo === voucherNo);
+  if (!invoice) {
+    showAlert('❌ الفاتورة غير موجودة', '❌');
+    return;
+  }
 
+  // 1. إذا كان الرابط موجوداً → افتحه
+  if (invoice.invoicePdf && invoice.invoicePdf.startsWith('http')) {
+    window.open(invoice.invoicePdf, '_blank');
+    return;
+  }
+
+  // 2. إذا لم يكن موجوداً → أعد إنشاءه
+  showAlert('⏳ جاري إنشاء ملف PDF...', '⏳');
+  
+  try {
+    const result = await gas('regenerateInvoicePDF', {
+      voucherNo: voucherNo,
+      centerName: currentUser?.centerName
+    });
+
+    if (result?.success && result.url) {
+      // تحديث الرابط محلياً
+      invoice.invoicePdf = result.url;
+      
+      // فتح الملف الجديد
+      window.open(result.url, '_blank');
+      
+      // إغلاق رسالة الانتظار (إعادة استخدام showAlert)
+      closeAlert();
+      
+      // إعادة رسم الجدول لتحديث حالة الزر
+      renderTrips(groupedTrips, window._tripItemsMap || {});
+      
+    } else {
+      showAlert('❌ فشل إنشاء PDF: ' + (result?.message || 'خطأ غير معروف'), '❌');
+    }
+  } catch(e) {
+    console.error('❌ handlePDFView error:', e);
+    showAlert('❌ خطأ: ' + e.message, '❌');
+  }
+}
 // ✅ تصدير للـ window
 window.goBackSmart = goBack;
 window.goBack = goBack;
