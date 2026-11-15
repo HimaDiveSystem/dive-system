@@ -1201,10 +1201,8 @@ function renderTable() {
   
   h += '<tbody>';
   for (let inv of pdata) {
-    const pdf = (inv.invoicePdf && inv.invoicePdf.startsWith('http')) 
-      ? `<a href="${inv.invoicePdf}" target="_blank" style="display:inline-block; background:#ea580c; color:white; padding:4px 8px; border-radius:20px; text-decoration:none; font-size:10px; font-weight:bold;">PDF</a>`
-      : `<span style="display:inline-block; background:#cbd5e1; color:white; padding:4px 8px; border-radius:20px; font-size:10px; font-weight:bold;">N/A</span>`;
-    
+   // ✅ زر PDF ذكي (يعرض أو ينشئ)
+const pdf = `<button onclick="handlePDFView('${inv.voucherNo || inv.voucherNo}')" style="display:inline-block; background:#ea580c; color:white; padding:4px 8px; border-radius:20px; border:none; text-decoration:none; font-size:10px; font-weight:bold; cursor:pointer;">📄 PDF</button>`;    
     h += '<tr style="border-bottom:1px solid #eef2f9;">';
     h += `<td style="padding:6px 5px;">${fmtRest(inv)}</td>`;
     h += `<td style="padding:6px 5px;">${inv.voucherNo || ''}</td>`;
@@ -1341,6 +1339,71 @@ document.addEventListener('DOMContentLoaded', () => {
   switchTab('all');
   loadInv();
 });
+  // ═══════════════════════════════════════════════════════════════════
+// 📄 دوال عرض وإعادة إنشاء الـ PDF بذكاء
+// ═══════════════════════════════════════════════════════════════════
+async function handlePDFView(voucherNo) {
+  let invoice = filtInv.find(i => (i.voucherNo || i.VoucherNo) === voucherNo) 
+             || allInv.find(i => (i.voucherNo || i.VoucherNo) === voucherNo);
+             
+  if (!invoice) { 
+    showAlert('❌ الفاتورة غير موجودة', '⚠️'); 
+    return; 
+  }
+
+  const existingLink = invoice.invoicePdf || invoice.Invoice_PDF || invoice.pdfLink || '';
+  const user = (typeof Session !== 'undefined' && Session.getUser) ? Session.getUser() : currentUser;
+
+  // 1. إذا لم يكن هناك رابط -> إنشاء جديد
+  if (!existingLink || !existingLink.startsWith('http')) {
+    showToast('⏳ جاري إنشاء ملف PDF...', 'info');
+    await requestRegeneratePDF(voucherNo, user, invoice);
+    return;
+  }
+
+  // 2. إذا كان هناك رابط -> فحصه أولاً
+  showToast('⏳ جاري التحقق من الملف...', 'info');
+  try {
+    const checkResult = await gas('checkFileExists', { fileUrl: existingLink });
+    
+    if (checkResult && checkResult.exists) {
+      window.open(existingLink, '_blank'); // الملف موجود، افتحه
+    } else {
+      showToast('⚠️ الملف محذوف، جاري إنشاء نسخة جديدة...', 'info');
+      await requestRegeneratePDF(voucherNo, user, invoice); // الملف محذوف، أنشئه
+    }
+  } catch (e) {
+    // في حال فشل الفحص، جرب إنشاءه احتياطياً
+    await requestRegeneratePDF(voucherNo, user, invoice);
+  }
+}
+
+async function requestRegeneratePDF(voucherNo, user, invoice) {
+  try {
+    const result = await gas('regenerateInvoicePDF', {
+      voucherNo: voucherNo,
+      centerName: user?.centerName || currentUser?.centerName || ''
+    });
+
+    if (result?.success && result.url) {
+      // تحديث الرابط في الذاكرة
+      invoice.invoicePdf = result.url;
+      invoice.Invoice_PDF = result.url;
+      
+      // فتح الملف الجديد
+      window.open(result.url, '_blank');
+      showToast('✅ تم إنشاء PDF بنجاح', 'success');
+      
+      // إعادة رسم الجدول لتحديث حالة الزر
+      if (typeof renderTable === 'function') renderTable(); 
+    } else {
+      showToast('❌ فشل إنشاء PDF: ' + (result?.message || 'خطأ غير معروف'), 'error');
+    }
+  } catch (e) {
+    console.error('❌ requestRegeneratePDF error:', e);
+    showToast('❌ خطأ: ' + e.message, 'error');
+  }
+}
 </script>
 </body>
 </html>
