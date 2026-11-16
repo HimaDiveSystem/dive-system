@@ -422,7 +422,7 @@
       ru: {
         tabInfo: 'О центре', tabTrips: 'Туры', tabBook: 'Бронирование', tabFeedback: 'Отзывы',
         loading: 'Загрузка...', error: 'Ошибка', bookTitle: 'Детали бронирования',
-        msgPhoneCode: '⚠️ يرجى إضافة كود الدولة (مثال: +20 لمصر)',
+       msgPhoneCode: '⚠️ Пожалуйста, укажите код страны (например, +79 )',
         lblName: 'Имя', lblPhone: 'Телефон', lblNationality: 'Национальность',
         lblHotel: 'Отель', lblRoom: 'Номер', btnProceed: 'Перейти к бронированию',
         fbTitle: 'Оцените ваш опыт', btnCheck: 'Мои туры',
@@ -581,114 +581,182 @@
       // ═══════════════════════════════════════════════════════════════
     // ✅ Tab 1: Info
     // ═══════════════════════════════════════════════════════════════
-    async function loadCenterData() {
-      try {
-        const result = await callGAS('getCenterPublicInfo', { centerName });
-        if (!result || !result.success) throw new Error(result?.message || 'Not found');
-        
-        centerData = result.data;
-        document.getElementById('headerCenterName').textContent = centerData.centerName;
-        
-        if (centerData.centerLogo) {
-          const logoImg = document.getElementById('centerLogo');
-          logoImg.src = getDriveDirectUrl(centerData.centerLogo);
-          logoImg.style.display = 'block';
-        }
+   // ═══════════════════════════════════════════════════════════════
+// ✅ Tab 1: Info — نسخة محسّنة (طلب واحد)
+// ═══════════════════════════════════════════════════════════════
+async function loadCenterData() {
+  try {
+    // ✅ طلب واحد بدل 4
+    let result = await callGAS('getCenterPortalAboutBootstrap', {
+      centerName: centerName,
+      feedbackLimit: 10
+    });
 
-        document.getElementById('infoLoading').style.display = 'none';
-        document.getElementById('infoContent').style.display = 'block';
-        renderInfoTab();
-      } catch (e) {
-        console.error(e);
-        document.getElementById('infoLoading').innerHTML = `<div style="color:red; text-align:center; padding:20px;">
-          <h3>❌ Error</h3><p>${e.message}</p>
-          <button class="btn btn-outline" onclick="location.reload()" style="margin-top:10px; width:auto;">Retry</button>
-        </div>`;
-      }
+    // ✅ دعم أكثر من شكل استجابة
+    if (!result || !result.success) {
+      throw new Error(result?.message || 'Center not found');
     }
 
-    async function renderInfoTab() {
-      const infoEl = document.getElementById('infoContent');
-      
-      let html = `
-        <div class="card">
-          <div class="card-body">
-            <h3 class="section-title">🏢 ${t('infoTitle')}</h3>
-            <div class="info-grid">
-              <div class="info-item"><div class="icon">🏢</div><div class="text"><strong>Name</strong><span>${centerData.centerName}</span></div></div>
-              <div class="info-item"><div class="icon">📞</div><div class="text"><strong>Phone</strong><span dir="ltr">${centerData.phone || '—'}</span></div></div>
-              <div class="info-item"><div class="icon">📍</div><div class="text"><strong>Address</strong><span>${centerData.address || '—'}</span></div></div>
+    const payload = result.data || {};
+    // نحاول استخراج center من عدة أشكال محتملة
+    centerData = payload.center || payload.centerData || payload;
+    const branches = payload.branches || [];
+    const rating   = payload.rating || payload.ratingSummary || null;
+    const feedback = payload.feedback || payload.feedbackList || [];
+
+    // ✅ header
+    document.getElementById('headerCenterName').textContent = centerData.centerName || centerName;
+    if (centerData.centerLogo) {
+      const logoImg = document.getElementById('centerLogo');
+      logoImg.src = getDriveDirectUrl(centerData.centerLogo);
+      logoImg.style.display = 'block';
+      logoImg.onerror = () => { logoImg.style.display = 'none'; };
+    }
+
+    document.getElementById('infoLoading').style.display = 'none';
+    document.getElementById('infoContent').style.display = 'block';
+    window.__lastAboutPayload = { branches, rating, feedback };
+    renderInfoTab({ branches, rating, feedback });
+
+  } catch (e) {
+    console.error(e);
+    document.getElementById('infoLoading').innerHTML = `<div style="color:red; text-align:center; padding:20px;">
+      <h3>❌ ${t('error')}</h3><p>${escapeHtml(e.message)}</p>
+      <button class="btn btn-outline" onclick="location.reload()" style="margin-top:10px; width:auto;">Retry</button>
+    </div>`;
+  }
+}
+
+function renderInfoTab(payload) {
+  payload = payload || {};
+  const branches = payload.branches || [];
+  const rating   = payload.rating   || null;
+  const feedback = payload.feedback || [];
+  const infoEl   = document.getElementById('infoContent');
+
+  // ═══ 1) بطاقة معلومات المركز ═══
+  let html = `
+    <div class="card">
+      <div class="card-body">
+        <h3 class="section-title">🏢 ${t('infoTitle')}</h3>
+        <div class="info-grid">
+          <div class="info-item">
+            <div class="icon">🏢</div>
+            <div class="text"><strong>${t('lblCenterName')}</strong>
+              <span>${escapeHtml(centerData.centerName || '—')}</span></div>
+          </div>
+          <div class="info-item">
+            <div class="icon">📞</div>
+            <div class="text"><strong>${t('lblCenterPhone')}</strong>
+              ${phoneLinkHtml(centerData.phone)}
             </div>
+          </div>
+          <div class="info-item">
+            <div class="icon">📍</div>
+            <div class="text"><strong>${t('lblCenterAddress')}</strong>
+              <span>${escapeHtml(centerData.address || t('lblNoData'))}</span></div>
           </div>
         </div>
-      `;
+      </div>
+    </div>`;
 
-      const branchesRes = await callGAS('getCenterBranchesPublic', { centerName });
-      if (branchesRes && branchesRes.success && branchesRes.data.length > 0) {
-        let bHtml = '';
-        branchesRes.data.forEach(b => {
-          bHtml += `
-            <div class="info-item" style="margin-bottom:12px; background:#f8fafd; padding:10px; border-radius:8px;">
-              <div class="icon">🏛️</div>
-              <div class="text"><strong>${b.branchName}</strong><span dir="ltr">${b.phone || ''}</span></div>
-            </div>
-          `;
-        });
-        html += `<div class="card"><div class="card-body"><h3 class="section-title">🌿 ${t('branchesTitle')}</h3>${bHtml}</div></div>`;
-      }
-
-           const ratingRes = await callGAS('getCenterRatingSummary', { centerName });
-      
-      // ✅ جلب 10 تقييمات بدلاً من 3
-      const feedbackRes = await callGAS('getCenterFeedbackList', { centerName, limit: 10 });
-      
-      let rHtml = '';
-      if (ratingRes && ratingRes.success && ratingRes.data.totalReviews > 0) {
-        rHtml += `
-          <div style="text-align:center; margin-bottom:15px;">
-            <div class="rating-big">${ratingRes.data.avgOverall.toFixed(1)}</div>
-            <div class="rating-stars">${'★'.repeat(Math.round(ratingRes.data.avgOverall))}</div>
-            <div style="font-size:12px; color:var(--text-lt); margin-top:5px;">(${ratingRes.data.totalReviews} تقييم)</div>
+  // ═══ 2) الفروع (مع WhatsApp + كود مصر) ═══
+  if (branches && branches.length > 0) {
+    let bHtml = '';
+    branches.forEach(b => {
+      bHtml += `
+        <div class="info-item" style="margin-bottom:12px; background:#f8fafd; padding:10px; border-radius:8px;">
+          <div class="icon">🏛️</div>
+          <div class="text" style="flex:1;">
+            <strong>${escapeHtml(b.branchName || '—')}</strong>
+            ${b.phone ? phoneLinkHtml(b.phone) : `<span style="color:var(--text-lt);">—</span>`}
           </div>
-        `;
+        </div>`;
+    });
+    html += `<div class="card"><div class="card-body">
+      <h3 class="section-title">🌿 ${t('branchesTitle')}</h3>${bHtml}
+    </div></div>`;
+  }
+
+  // ═══ 3) التقييمات (مع المعايير) ═══
+  let rHtml = '';
+
+  if (rating && Number(rating.totalReviews) > 0) {
+    const avg = parseFloat(rating.avgOverall) || 0;
+    const stars = Math.max(0, Math.min(5, Math.round(avg)));
+    rHtml += `
+      <div style="text-align:center; margin-bottom:15px;">
+        <div class="rating-big">${avg.toFixed(1)}</div>
+        <div class="rating-stars">${'★'.repeat(stars)}</div>
+        <div style="font-size:12px; color:var(--text-lt); margin-top:5px;">
+          (${rating.totalReviews})
+        </div>
+      </div>`;
+  }
+
+  if (feedback && feedback.length > 0) {
+    feedback.forEach((fb, index) => {
+      const hiddenStyle = index >= 3 ? 'display:none;' : '';
+      const tripInfo = fb.tripName
+        ? `<div style="font-size:11px; color:var(--navy); margin-bottom:6px; font-weight:700;">
+             🏝️ ${escapeHtml(fb.tripName)}
+             ${fb.tripDate ? `<span style="color:#999; font-weight:normal; font-size:10px;">(${escapeHtml(fb.tripDate)})</span>` : ''}
+           </div>`
+        : '';
+
+      // ✅ النجوم بأمان
+      const overall = Math.max(0, Math.min(5, parseInt(fb.overallRating) || 0));
+      const overallStars = '★'.repeat(overall);
+
+      // ✅ المعايير (criteriaRatings)
+      let criteriaHtml = '';
+      let critObj = fb.criteriaRatings;
+      if (typeof critObj === 'string') {
+        try { critObj = JSON.parse(critObj); } catch(_) { critObj = null; }
       }
-
-      if (feedbackRes && feedbackRes.success && feedbackRes.data.length > 0) {
-        feedbackRes.data.forEach((fb, index) => {
-          // ✅ إخفاء التقييمات بعد الثالث (سيتم إظهارها بالزر)
-          const hiddenStyle = index >= 3 ? 'display:none;' : '';
-          
-          // ✅ استخراج اسم الرحلة وتاريخها
-          const tripInfo = fb.tripName ? `<div style="font-size:11px; color:var(--navy); margin-bottom:4px; font-weight:700;">🏝️ ${fb.tripName} <span style="color:#999; font-weight:normal; font-size:10px;">(${fb.tripDate})</span></div>` : '';
-
-          rHtml += `
-            <div class="review-card review-item" style="${hiddenStyle}">
-              ${tripInfo}
-              <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-                <strong>${fb.guestName}</strong>
-                <div class="rating-stars" style="font-size:12px;">${'★'.repeat(fb.overallRating)}</div>
-              </div>
-              <div style="font-size:13px;">"${fb.comment}"</div>
-            </div>
-          `;
+      if (critObj && typeof critObj === 'object' && Object.keys(critObj).length > 0) {
+        let rows = '';
+        Object.keys(critObj).forEach(key => {
+          const val = Math.max(0, Math.min(6, parseInt(critObj[key]) || 0));
+          // نستخدم مقياس 6 نجوم للمعايير كما في النموذج
+          rows += `<div style="font-size:11px; color:var(--text-lt); display:flex; justify-content:space-between; margin-bottom:2px;">
+            <span>${escapeHtml(key)}</span>
+            <span style="color:var(--gold); letter-spacing:1px;">${'★'.repeat(val)}</span>
+          </div>`;
         });
-
-        // ✅ إضافة زر "عرض المزيد" إذا كان هناك أكثر من 3 تقييمات
-        if (feedbackRes.data.length > 3) {
-          rHtml += `
-            <div style="text-align:center; margin-top:15px;">
-              <button class="btn btn-outline" style="width:auto; padding:8px 20px; font-size:12px;" onclick="showAllReviews(this)">عرض المزيد...</button>
-            </div>
-          `;
+        if (rows) {
+          criteriaHtml = `<div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">${rows}</div>`;
         }
-
-      } else {
-        rHtml += `<div style="text-align:center; color:#999; font-size:13px;">${t('noReviews')}</div>`;
       }
 
-      html += `<div class="card"><div class="card-body"><h3 class="section-title">⭐ ${t('reviewsTitle')}</h3>${rHtml}</div></div>`;
-      infoEl.innerHTML = html;
+      rHtml += `
+        <div class="review-card review-item" style="${hiddenStyle}">
+          ${tripInfo}
+          <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+            <strong>${escapeHtml(fb.guestName || '—')}</strong>
+            <div class="rating-stars" style="font-size:12px;">${overallStars}</div>
+          </div>
+          ${fb.comment ? `<div style="font-size:13px;">"${escapeHtml(fb.comment)}"</div>` : ''}
+          ${criteriaHtml}
+        </div>`;
+    });
+
+    if (feedback.length > 3) {
+      rHtml += `<div style="text-align:center; margin-top:15px;">
+        <button class="btn btn-outline" style="width:auto; padding:8px 20px; font-size:12px;" 
+                onclick="showAllReviews(this)">${t('btnMoreReviews')}</button>
+      </div>`;
     }
+  } else {
+    rHtml += `<div style="text-align:center; color:#999; font-size:13px;">${t('noReviews')}</div>`;
+  }
+
+  html += `<div class="card"><div class="card-body">
+    <h3 class="section-title">⭐ ${t('reviewsTitle')}</h3>${rHtml}
+  </div></div>`;
+
+  infoEl.innerHTML = html;
+}
 
     // ═══════════════════════════════════════════════════════════════
     // ✅ Tab 2: Trips
@@ -1051,26 +1119,34 @@
       });
       btn.parentElement.style.display = 'none'; // إخفاء الزر بعد الضغط
     }
-       function changeLanguage(lang) {
-      currentLang = lang;
-      document.getElementById('langSelector').value = lang;
-      
-      // تغيير اتجاه الصفحة للعربية
-      document.documentElement.dir = (lang === 'ar') ? 'rtl' : 'ltr';
-      document.documentElement.lang = lang;
-      
-      // تحديث النصوص
-      document.querySelectorAll('[data-i18n]').forEach(el => {
-        el.textContent = t(el.getAttribute('data-i18n'));
-      });
+      function changeLanguage(lang) {
+  currentLang = lang;
+  document.getElementById('langSelector').value = lang;
+  document.documentElement.dir = (lang === 'ar') ? 'rtl' : 'ltr';
+  document.documentElement.lang = lang;
 
-      if (centerData) renderInfoTab();
-      if (document.getElementById('tab-trips').classList.contains('active')) {
-        tripsData = []; 
-        loadTrips();
-      }
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    el.textContent = t(el.getAttribute('data-i18n'));
+  });
+
+  // ✅ إعادة تحميل About من الصفر لضمان تحديث العناوين
+  if (centerData) {
+    // نخزّن آخر payload إن وُجد
+    if (window.__lastAboutPayload) {
+      renderInfoTab(window.__lastAboutPayload);
+    } else {
+      // fallback: أعد التحميل
+      document.getElementById('infoLoading').style.display = 'flex';
+      document.getElementById('infoContent').style.display = 'none';
+      loadCenterData();
     }
+  }
 
+  if (document.getElementById('tab-trips').classList.contains('active')) {
+    tripsData = [];
+    loadTrips();
+  }
+}
     // ═══════════════════════════════════════════════════════════════
     // ✅ دوال عرض الصورة بالحجم الكامل
     // ═══════════════════════════════════════════════════════════════
@@ -1127,6 +1203,31 @@ function setStars(n) {
     s.style.color = (+s.dataset.v <= n) ? '#e6b800' : '#d1d5db';
     s.style.transform = (+s.dataset.v <= n) ? 'scale(1.1)' : 'scale(1)';
   });
+}
+    // ═══════════════════════════════════════════════════════════════
+// ✅ WhatsApp + كود مصر
+// ═══════════════════════════════════════════════════════════════
+function formatPhoneForWhatsApp(phone) {
+  if (!phone) return '';
+  let p = phone.toString().trim().replace(/[^\d+]/g, '');
+  if (!p) return '';
+  // 010... → +2010...
+  if (p.startsWith('0') && !p.startsWith('+')) p = '+20' + p.substring(1);
+  // 20... → +20...
+  else if (p.startsWith('20') && !p.startsWith('+')) p = '+' + p;
+  // بلا كود → +20
+  else if (!p.startsWith('+')) p = '+20' + p;
+  return p;
+}
+
+function phoneLinkHtml(phone) {
+  if (!phone) return `<span>—</span>`;
+  const wa = formatPhoneForWhatsApp(phone);
+  if (!wa) return `<span>—</span>`;
+  return `<a href="https://wa.me/${wa.replace('+','')}" target="_blank" rel="noopener"
+            style="color:var(--green); text-decoration:none; font-weight:700;" dir="ltr">
+            <span style="font-size:13px;">💬</span> ${escapeHtml(wa)}
+          </a>`;
 }
     function closeImageViewer() {
       document.getElementById('imageViewerModal').style.display = 'none';
